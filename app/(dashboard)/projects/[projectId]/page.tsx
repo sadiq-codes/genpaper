@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import { generateAndSaveOutline } from './actions'
+import { generateAndSaveOutline, generatePlaceholderReferences } from './actions'
 import { IntroductionGenerator } from './IntroductionGenerator'
 
 export default async function ProjectPage({
@@ -52,7 +52,25 @@ export default async function ProjectPage({
       // Continue without citations if this fails
     }
 
-    project = { ...result.data, citations_identified: citationsIdentified }
+    // Try to get references_list separately
+    let referencesList = []
+    try {
+      const referencesResult = await supabase
+        .from('projects')
+        .select('references_list')
+        .eq('id', projectId)
+        .eq('user_id', user.id)
+        .single()
+      
+      if (referencesResult.data?.references_list) {
+        referencesList = referencesResult.data.references_list
+      }
+    } catch (referencesError) {
+      console.error('References fetch error (non-fatal):', referencesError)
+      // Continue without references if this fails
+    }
+
+    project = { ...result.data, citations_identified: citationsIdentified, references_list: referencesList }
     error = result.error
   } catch (fetchError) {
     console.error('Error fetching project:', fetchError)
@@ -65,7 +83,7 @@ export default async function ProjectPage({
         .eq('user_id', user.id)
         .single()
       
-      project = { ...fallbackResult.data, outline: null, content: null, citations_identified: [] }
+      project = { ...fallbackResult.data, outline: null, content: null, citations_identified: [], references_list: [] }
       error = fallbackResult.error
     } catch (fallbackError) {
       console.error('Fallback fetch also failed:', fallbackError)
@@ -88,6 +106,18 @@ export default async function ProjectPage({
     
     if (result.error) {
       console.error('Failed to generate outline:', result.error)
+      // In a real app, you might want to handle this error more gracefully
+      // For now, we'll just log it as the task focuses on basic functionality
+    }
+  }
+
+  // Create a wrapper action for generating placeholder references
+  async function handleGenerateReferences() {
+    'use server'
+    const result = await generatePlaceholderReferences(projectId)
+    
+    if (result.error) {
+      console.error('Failed to generate references:', result.error)
       // In a real app, you might want to handle this error more gracefully
       // For now, we'll just log it as the task focuses on basic functionality
     }
@@ -177,6 +207,38 @@ export default async function ProjectPage({
                 </div>
               </div>
             )}
+            
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                References
+              </h3>
+              <form action={handleGenerateReferences}>
+                <button 
+                  type="submit"
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                >
+                  Generate Placeholder References
+                </button>
+              </form>
+              
+              {project.references_list && project.references_list.length > 0 && (
+                <div className="mt-4">
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">Generated References:</h4>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <ol className="space-y-2">
+                      {project.references_list.map((reference: string, index: number) => (
+                        <li key={index} className="text-sm text-gray-800">
+                          {reference}
+                        </li>
+                      ))}
+                    </ol>
+                    <p className="text-xs text-gray-600 mt-3">
+                      Total: {project.references_list.length} reference{project.references_list.length !== 1 ? 's' : ''} generated
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
