@@ -1,352 +1,79 @@
-AI Research Assistant Software Architecture
+## Updated Architecture Focus for Advanced Features
+
+The core technologies and overall layered architecture remain the same. The advancements will be in the complexity and capabilities within these layers.
+
+**Key Areas of Enhancement in Your Existing Structure:**
+
+### 1. Backend Logic (Next.js API Routes / Supabase Edge Functions) & AI Service Layer (AI SDK)
+   This is where the most significant "advanced" work will happen.
+
+   * **`app/api/research/generate/route.ts` (and potentially new, specialized API routes):**
+        * **More Sophisticated Orchestration:** This route (or new ones like `app/api/research/analyze/literature/route.ts` or `app/api/research/suggest/hypothesis/route.ts`) will manage more complex multi-step AI workflows.
+        * **Advanced Tool Calling & Management:**
+            * The AI will call a wider array of more powerful tools (defined in `lib/ai/tools/`).
+            * The API route will need robust logic to handle sequences of tool calls, aggregate results, and feed them back to the AI for synthesis or further action.
+            * Error handling for failed tool calls or unexpected API responses from external services becomes even more critical.
+        * **Deeper AI Chaining/Agentic Behavior:** You might implement patterns where the AI plans steps, calls tools, evaluates results, and decides on next actions, making your backend act more like an AI agent orchestrator.
+
+   * **`lib/ai/sdk.ts`:**
+        * May need wrappers for more specialized AI model interactions (e.g., if you use different models or prompting techniques for analysis vs. generation).
+        * Enhanced functions to support more complex tool interaction patterns.
+
+   * **`lib/ai/prompts.ts`:** ✍️
+        * **Crucial Enhancement:** Development of highly detailed and nuanced prompts will be key. These prompts will need to guide the AI through complex tasks like literature synthesis, gap identification, methodological critique, and targeted revisions. This is a major area of "advanced implementation."
+        * Prompts for eliciting structured JSON output for various new data types (e.g., hypotheses, research gaps, synthesized review points).
+
+   * **`lib/ai/tools/`:** 🛠️
+        * **Expansion with New Tools:** This directory will grow significantly. Examples:
+            * `literatureSearch.ts`: Will become more robust, potentially querying multiple academic databases (Semantic Scholar, PubMed, CORE, ArXiv via their APIs) and handling diverse result formats. May include PDF text extraction capabilities if full-text analysis is needed.
+            * `multiDocumentAnalyzer.ts`: A new tool (or set of tools/prompts) for tasks like thematic analysis across several documents, or identifying conflicting information.
+            * `methodologySuggester.ts`: Could interface with a knowledge base or use advanced prompting to suggest research methodologies.
+            * `hypothesisGenerator.ts`: Tool to help formulate or refine hypotheses.
+            * `styleAdaptationTool.ts`: (Potentially) if specific style transformations are complex enough to warrant a separate tool/AI call.
+        * **Integration with External Services:** These tools will be the primary interface to external APIs or data sources.
+
+### 2. Data & Auth Layer (Supabase)
+   * **Database Schema Evolution:** 📊
+        * **More Granular Data Storage:**
+            * `projects`: Stays largely the same.
+            * `paper_sections`: May need fields for storing structured feedback or revision history.
+            * `citations`: Will become more structured, storing detailed metadata (authors, year, title, journal, DOI, abstract snippets, links to PDFs if fetched).
+            * `references`: May be dynamically generated or stored based on the `citations` table and chosen style.
+            * **New Tables Possible:**
+                * `literature_corpus` (Optional): If you allow users to upload papers or build a project-specific library, or if the AI fetches and caches papers. Could include embeddings for semantic search.
+                * `hypotheses` or `research_questions`: To store AI-generated or user-defined hypotheses linked to projects.
+                * `synthesis_nodes` or `knowledge_graph_elements`: If you implement knowledge graph features.
+        * **Relationships:** More complex relationships between projects, sections, claims within sections, and specific citations/sources.
+   * **Supabase Storage:** Will be more critical if you start fetching and storing PDFs of research papers that the AI analyzes.
+   * **Supabase Edge Functions:** Could be used to implement some of the more data-intensive "tools" directly, especially if they need low-latency access to the database or involve pre-processing of stored literature.
+
+### 3. Frontend (Next.js)
+   * **`app/(dashboard)/projects/[projectId]/components/`:** ✨
+        * `PaperEditor.tsx`: Will need to support more interactive elements, such as:
+            * Displaying AI-suggested revisions or feedback inline.
+            * Allowing users to click on a claim to see supporting sources or trigger a new literature search.
+            * Highlighting areas identified by the AI (e.g., potential gaps, weak arguments).
+        * `CitationManager.tsx`: Will evolve to handle structured citation objects, allow users to review/edit AI-found sources, manually add citations from search results, and manage different citation styles.
+        * **New Interactive Components:**
+            * `LiteratureReviewExplorer.tsx`: To display synthesized literature review points and allow navigation through sources.
+            * `HypothesisBoard.tsx`: For viewing and interacting with AI-suggested hypotheses.
+            * `FeedbackInput.tsx`: A component for users to give granular, targeted feedback on specific text segments.
+            * `MethodologyAdvisor.tsx`: Interface for AI suggestions on research methods.
+   * **`app/(dashboard)/projects/[projectId]/page.tsx`:** Will orchestrate these more complex components and manage more sophisticated client-side state related to the advanced features.
+   * **`store/projectStore.ts` (or chosen state management):** May need to handle more complex state, like the current set of literature search results, AI suggestions, or the state of an interactive revision process.
+
+### 4. File & Folder Structure
+   The existing file and folder structure is generally sound and can accommodate these enhancements. The main changes will be:
+   * **More files within `lib/ai/tools/`**.
+   * **More files within `app/(dashboard)/projects/[projectId]/components/`** for the richer UI.
+   * Potentially more specialized API routes under `app/api/research/` if you break down functionalities (e.g., `app/api/research/literature/`, `app/api/research/critique/`).
+   * The `types/` directory will grow with more complex type definitions for structured AI outputs and database entities.
+
+---
+
+**In essence, your core architectural blueprint remains valid.** The "advanced" nature comes from:
+* 🧠 **More sophisticated AI logic** (prompts, chaining, agent-like behavior).
+* 🔧 **A richer set of powerful tools** for the AI to use.
+* 💾 **More detailed and structured data storage** in Supabase.
+* 🎨 **More interactive and feature-rich UI components** on the frontend.
 
-This document outlines the architecture for an AI-powered research assistant designed to generate standard research papers from a topic title, complete with citations and references.
-
-Core Technologies:
-
-Frontend: Next.js (App Router)
-
-Backend & Database: Supabase (PostgreSQL, Auth, Edge Functions/Storage)
-
-AI Integration: A generic AI SDK (e.g., Vercel AI SDK, LangChain.js, or vendor-specific SDKs like OpenAI's) capable of:
-
-Streaming text output
-
-Tool calling (function calling)
-
-Structured data generation
-
-1. Overall Architecture
-
-The system is primarily composed of three layers:
-
-Frontend (Next.js): The user interface where users input topics, view the generated paper, manage projects, and interact with AI-driven suggestions. It handles UI state and communicates with the backend layer.
-
-Backend Logic (Next.js API Routes / Supabase Edge Functions): This layer acts as a secure intermediary between the frontend and the AI SDK. It handles:
-
-Authenticated requests from the frontend.
-
-Orchestrating calls to the AI SDK.
-
-Executing "tools" requested by the AI (e.g., database lookups, external API calls for literature search).
-
-Processing and streaming responses from the AI SDK back to the frontend.
-
-Interacting with Supabase for data persistence.
-
-AI Service Layer (AI SDK): This is the core intelligence. It processes the input topic, uses language models to:
-
-Generate a paper outline (structured data).
-
-Draft paper sections (streaming text).
-
-Identify and suggest citations (tool calling to search literature, then structured data for citation objects).
-
-Format references.
-
-Data & Auth Layer (Supabase):
-
-Database: Stores user information, research projects, generated paper content, sections, citations, and references.
-
-Authentication: Manages user sign-up, login, and session management.
-
-Storage: (Optional) For storing any associated files, like PDFs of cited papers if fetched.
-
-2. File & Folder Structure (Next.js App Router)
-
-.
-├── app/                                # Next.js App Router
-│   ├── (auth)/                         # Routes for authentication (login, signup, etc.)
-│   │   ├── login/page.tsx
-│   │   ├── signup/page.tsx
-│   │   └── components/
-│   │       └── AuthForm.tsx
-│   ├── (dashboard)/                    # Protected routes after login
-│   │   ├── layout.tsx                  # Dashboard layout (sidebar, header)
-│   │   ├── projects/                   # User's research projects
-│   │   │   ├── page.tsx                # List existing projects, create new
-│   │   │   └── [projectId]/            # Individual project workspace
-│   │   │       ├── page.tsx            # Main editor/viewer for the paper
-│   │   │       ├── components/         # Components specific to the project view
-│   │   │       │   ├── PaperEditor.tsx     # Rich text editor for paper content
-│   │   │       │   ├── SectionOutline.tsx  # Displays and interacts with paper outline
-│   │   │       │   ├── CitationManager.tsx # Manages suggested/added citations
-│   │   │       │   └── ReferenceList.tsx   # Displays formatted bibliography
-│   │   │       └── actions.ts            # Server Actions for this route (e.g., save section)
-│   │   └── settings/
-│   │       └── page.tsx                # User settings
-│   ├── api/                            # Backend API Routes (primarily for streaming AI responses)
-│   │   └── research/
-│   │       └── generate/route.ts       # Endpoint to trigger paper generation & stream results
-│   ├── layout.tsx                      # Root layout (providers, global styles)
-│   ├── page.tsx                        # Landing page
-│   └── global.css
-├── components/                         # Shared UI components
-│   ├── ui/                             # Basic UI elements (Button, Input, Modal, etc. from Shadcn/ui or similar)
-│   └── common/                         # More complex shared components (Navbar, SidebarItem, etc.)
-├── lib/                                # Core logic, clients, utilities
-│   ├── supabase/
-│   │   ├── client.ts                   # Supabase client (browser-safe)
-│   │   ├── server.ts                   # Supabase client (server-side: RSC, API Routes, Server Actions)
-│   │   └── utils.ts                    # Supabase helper functions (e.g., fetching user profile)
-│   ├── ai/
-│   │   ├── sdk.ts                      # AI SDK client initialization & core functions
-│   │   ├── prompts.ts                  # Pre-defined prompts for various AI tasks (outline, sections, citations)
-│   │   └── tools/                      # Definitions for tools the AI can call
-│   │       ├── literatureSearch.ts
-│   │       └── citationFormatter.ts
-│   └── utils.ts                        # General utility functions (date formatting, etc.)
-├── hooks/                              # Custom React hooks
-│   └── useStreamingText.ts             # Hook to manage streamed text from AI
-├── store/                              # Global/shared client-side state (e.g., Zustand, Jotai, or React Context)
-│   └── projectStore.ts                 # State for the active project being edited/generated
-├── types/                              # TypeScript type definitions
-│   ├── db.ts                           # Auto-generated or manual types for Supabase schema
-│   └── index.ts                        # General application types (Project, Section, Citation)
-├── supabase/                           # Supabase specific files (migrations, edge functions)
-│   └── functions/
-│       └── literature-search-tool/     # Example Supabase Edge Function for an AI tool
-│           └── index.ts
-├── .env.local                          # Environment variables (Supabase keys, AI API keys)
-├── next.config.mjs
-├── package.json
-└── tsconfig.json
-
-
-3. What Each Part Does
-
-app/ (Next.js App Router)
-
-(auth) routes: Handle user authentication using Supabase Auth. AuthForm.tsx is a reusable component for login/signup.
-
-(dashboard) routes: Protected areas accessible after login.
-
-layout.tsx: Common layout for the dashboard (e.g., navigation sidebar, user menu).
-
-projects/page.tsx: Displays a list of the user's research projects and allows creation of new ones. Fetches data from Supabase.
-
-projects/[projectId]/page.tsx: The main workspace for a single research paper.
-
-Fetches project data (outline, sections, citations) from Supabase.
-
-Coordinates AI generation requests and displays streamed content.
-
-projects/[projectId]/components/:
-
-PaperEditor.tsx: A rich text editor (e.g., TipTap, Lexical, or a custom solution) to display and allow minor edits to the AI-generated paper content. Handles real-time updates from streamed text.
-
-SectionOutline.tsx: Displays the paper's outline (potentially generated by AI as structured data) and allows users to navigate or trigger generation for specific sections.
-
-CitationManager.tsx: Interface to view citations suggested by the AI, manually add/edit citations, and link them to parts of the text.
-
-ReferenceList.tsx: Displays the formatted bibliography, generated based on the citations.
-
-projects/[projectId]/actions.ts: Next.js Server Actions for mutating data related to a project (e.g., saving a manually edited section, adding a citation). These run on the server and can directly interact with Supabase.
-
-api/research/generate/route.ts:
-
-A Next.js API Route primarily used for handling requests that require streaming responses from the AI SDK.
-
-Receives the project ID and/or topic from the frontend.
-
-Authenticates the request using Supabase.
-
-Interacts with the AI SDK (lib/ai/sdk.ts):
-
-Initiates the paper generation process (e.g., "generate full paper" or "generate introduction section").
-
-Handles tool calling: If the AI decides to use a tool (e.g., "search_academic_papers"), this API route will execute the corresponding function (defined in lib/ai/tools/ or as a Supabase Edge Function) and send the results back to the AI.
-
-Receives streamed text and structured data (e.g., JSON for citations, outlines) from the AI SDK.
-
-Streams this data back to the frontend client using a ReadableStream.
-
-Can also trigger Server Actions or directly update Supabase as content is finalized.
-
-layout.tsx (root): Sets up global context providers (e.g., Supabase session provider, state management provider).
-
-components/
-
-ui/: Atomic UI components (e.g., <Button>, <Input>). Often from a library like Shadcn/UI.
-
-common/: More complex, shared components used across multiple pages (e.g., Navbar.tsx).
-
-lib/
-
-supabase/client.ts & server.ts: Initialize Supabase client instances for browser and server environments, respectively.
-
-supabase/utils.ts: Utility functions for common Supabase operations (e.g., getting current user session, fetching user profile data).
-
-ai/sdk.ts:
-
-Initializes and configures your chosen AI SDK.
-
-Provides wrapper functions to call specific AI capabilities (e.g., generateOutline(topic), streamSection(topic, sectionPrompt, previousText), findCitations(textChunk)).
-
-Manages interaction flows, including passing tool definitions to the AI and handling tool call requests/responses.
-
-ai/prompts.ts: Contains structured prompts for guiding the LLM. This is crucial for quality and consistency. Examples:
-
-SYSTEM_PROMPT_RESEARCH_PAPER_GENERATOR
-
-USER_PROMPT_GENERATE_OUTLINE(topic)
-
-USER_PROMPT_GENERATE_SECTION(sectionTitle, topic, outline, previousSectionsText)
-
-USER_PROMPT_IDENTIFY_CITATIONS(textBlock)
-
-ai/tools/: Defines functions that the AI can request to call.
-
-literatureSearch.ts: Implements logic to search academic databases (e.g., Semantic Scholar, PubMed via their APIs, or a local vector DB if you build one).
-
-citationFormatter.ts: Formats citation data into a specific style (e.g., APA, MLA).
-
-utils.ts: General helper functions.
-
-hooks/
-
-useStreamingText.ts: A custom hook to simplify fetching and managing streamed text data from the api/research/generate/route.ts endpoint on the client-side.
-
-store/
-
-projectStore.ts: (Optional, if using Zustand/Jotai) Manages client-side state for the active research project, such as:
-
-Current paper content being streamed/edited.
-
-Loading states for AI operations.
-
-Outline structure.
-
-List of citations and references.
-
-Alternatively, React Context or Server Components with Server Actions can manage much of this state.
-
-types/
-
-db.ts: TypeScript definitions for your Supabase database schema. Can be auto-generated using supabase gen types typescript.
-
-index.ts: Custom types for your application (e.g., Project, Section, CitationObject, ReferenceObject).
-
-supabase/functions/
-
-This directory is for Supabase Edge Functions. These can be used as an alternative to Next.js API routes for backend logic, especially for AI tool execution if they need direct, low-latency access to the database or are simpler to deploy as standalone units.
-
-Example: literature-search-tool/index.ts could be an Edge Function that takes a query and returns search results, callable by the AI via the Next.js API route.
-
-4. Where State Lives & How Services Connect
-
-A. User Authentication & Session Management:
-
-State: User session (JWT) managed by Supabase Auth. Available client-side via supabase.auth.getSession() and server-side (API Routes, Server Actions, RSCs) by reading cookies or headers.
-
-Connection:
-
-Frontend ((auth)/login/page.tsx) uses supabase.auth.signInWithPassword().
-
-Supabase handles auth, sets secure cookies.
-
-Subsequent requests from client to Supabase (RLS) or to backend API routes include auth information.
-
-Backend API routes/Server Actions verify the session using lib/supabase/server.ts.
-
-B. Creating a New Research Project & Initial Generation:
-
-User Input (Frontend):
-
-User enters a "topic title" in app/(dashboard)/projects/page.tsx.
-
-State: Local component state for the form.
-
-Project Creation (Frontend -> Server Action -> Supabase):
-
-On submit, a Server Action is called.
-
-The Server Action creates a new project entry in the Supabase projects table (e.g., id, user_id, title, status: 'initializing').
-
-State: New row in Supabase projects table.
-
-Triggering AI Generation (Frontend -> API Route):
-
-After project creation (or when opening an existing project to generate/regenerate), the frontend (projects/[projectId]/page.tsx) makes a POST request to /api/research/generate/route.ts with the projectId and the task (e.g., "generate_full_paper" or "generate_introduction").
-
-AI Processing (API Route <-> AI SDK <-> Tools):
-
-API Route (/api/research/generate/route.ts):
-
-Authenticates the user.
-
-Fetches project details (topic) from Supabase.
-
-Calls the AI SDK (e.g., aiSDK.streamPaper(topic, toolDefinitions)).
-
-AI SDK (lib/ai/sdk.ts):
-
-Sends initial prompts (from lib/ai/prompts.ts) to the LLM.
-
-Tool Calling Loop:
-
-LLM decides to use a tool (e.g., literatureSearch with query "benefits of X").
-
-AI SDK communicates this tool call request back to the API Route.
-
-The API Route executes the tool function (e.g., literatureSearchTool(query) defined in lib/ai/tools/ or calls a Supabase Edge Function). This tool might call external APIs (e.g., Semantic Scholar).
-
-The API Route sends the tool's output (e.g., list of paper abstracts) back to the AI SDK.
-
-AI SDK sends this output to the LLM to continue generation.
-
-Structured Data Generation: For outlines or citation objects, the AI SDK is prompted to return JSON. This JSON is parsed by the API route.
-
-Text Streaming: As the LLM generates text for sections, the AI SDK streams it.
-
-Streaming to Frontend & Persisting (API Route -> Frontend & API Route -> Supabase):
-
-API Route:
-
-Receives streamed text and structured data from AI SDK.
-
-Streams this data (e.g., using ReadableStream and Server-Sent Events or chunked HTTP response) to the frontend.
-
-As significant chunks of data (e.g., a full section, a set of citations) are finalized by the AI, the API route (or a Server Action triggered by it/client) saves this data to the relevant Supabase tables (paper_sections, citations, references).
-
-State (Backend): Temporary state in the API route for the ongoing stream.
-
-Frontend (projects/[projectId]/page.tsx & PaperEditor.tsx):
-
-Uses fetch with the API route and reads the stream. The useStreamingText hook can manage this.
-
-Updates UI components (e.g., PaperEditor, SectionOutline, CitationManager) in real-time.
-
-State (Client): Managed by projectStore or local component state (e.g., useState for the current streamed content).
-
-Supabase:
-
-Persisted state for the generated content, outline, citations, references. Supabase Realtime can be used to update other clients if collaboration is a feature.
-
-C. Data Display and Editing:
-
-State: Primarily fetched from Supabase and managed by Server Components or client-side fetching hooks (SWR/React Query) in app/(dashboard)/projects/[projectId]/page.tsx.
-
-Connection:
-
-User navigates to a project page.
-
-Next.js Server Components fetch initial data from Supabase.
-
-Client Components can re-fetch or subscribe to Realtime updates from Supabase.
-
-Manual edits in PaperEditor.tsx can trigger Server Actions (projects/[projectId]/actions.ts) to update the content in Supabase.
-
-State Management Summary:
-
-Server State / Source of Truth: Supabase database.
-
-Client-Side Cache of Server State: Managed by Next.js App Router's caching, React Server Components, or client-side data fetching libraries (if used).
-
-UI State (Client-Side): Local component state (useState, useReducer), React Context, or a global client state manager like Zustand/Jotai (store/projectStore.ts) for complex, shared UI states like the currently streaming AI response or editor selections.
-
-Form State (Client-Side): Typically local component state or libraries like React Hook Form.
-
-Ephemeral AI Interaction State (Backend): Handled within the /api/research/generate/route.ts during an active generation stream.
-
-This architecture provides a robust and scalable foundation for your AI research assistant. The key is the clear separation of concerns: Next.js for the user experience, Supabase for data and auth, and the API route/Edge Functions acting as the crucial orchestration layer for complex AI interactions involving tool usage and streaming.

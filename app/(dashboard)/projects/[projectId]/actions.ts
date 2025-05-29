@@ -228,7 +228,7 @@ export async function generateAndSaveFullPaper(projectId: string, topicTitle: st
     }
 
     // Call the full paper generation API
-    const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL ? 'https://' : 'http://localhost:3000'}/api/research/generate/full-paper`, {
+    const response = await fetch('/api/research/generate/full-paper', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -277,5 +277,40 @@ export async function generateAndSaveFullPaper(projectId: string, topicTitle: st
   } catch (error) {
     console.error('Error in generateAndSaveFullPaper:', error)
     return { error: 'Failed to generate full paper' }
+  }
+}
+
+export async function saveFullPaperContent(projectId: string, content: string) {
+  try {
+    const supabase = await createClient()
+    
+    // Get current user for authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    
+    if (authError || !user) {
+      return { error: 'User not authenticated' }
+    }
+
+    // Update the project with the full paper content
+    const { error: updateError } = await supabase
+      .from('projects')
+      .update({ content })
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+
+    if (updateError) {
+      console.error('Error updating project content:', updateError)
+      return { error: 'Failed to save generated paper' }
+    }
+
+    // Extract and save citations from the generated content
+    await extractAndSaveCitations(projectId, content)
+
+    revalidatePath(`/dashboard/projects/${projectId}`)
+    return { success: true }
+
+  } catch (error) {
+    console.error('Error in saveFullPaperContent:', error)
+    return { error: 'Failed to save full paper content' }
   }
 } 

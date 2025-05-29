@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { streamText } from 'ai'
 import { openai } from '@ai-sdk/openai'
 import { SECTION_SYSTEM_PROMPT, createSectionPrompt } from '@/lib/ai/prompts'
+import { literatureSearchTool } from '@/lib/ai/tools/literatureSearch'
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,11 +29,14 @@ export async function POST(request: NextRequest) {
     // Create the section prompt
     const userPrompt = createSectionPrompt(topicTitle, sectionName, outline)
 
-    // Call streamText with the new API
+    // Call streamText with the literatureSearch tool
     const result = streamText({
       model: openai('gpt-4o'),
       system: SECTION_SYSTEM_PROMPT,
       prompt: userPrompt,
+      tools: {
+        literatureSearch: literatureSearchTool,
+      },
       temperature: 0.7,
       maxTokens: 2000,
     })
