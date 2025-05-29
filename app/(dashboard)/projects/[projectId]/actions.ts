@@ -159,7 +159,7 @@ export async function generatePlaceholderReferences(projectId: string) {
       return { error: 'User not authenticated' }
     }
 
-    // Fetch the project's citations_identified from Supabase
+    // Fetch the project's citations_identified
     const { data: project, error: fetchError } = await supabase
       .from('projects')
       .select('citations_identified')
@@ -169,40 +169,113 @@ export async function generatePlaceholderReferences(projectId: string) {
 
     if (fetchError) {
       console.error('Error fetching project citations:', fetchError)
-      return { error: 'Failed to fetch project citations from database' }
+      return { error: 'Failed to fetch project data' }
     }
 
-    const citationsIdentified = project?.citations_identified || []
-
-    // If citations_identified is empty, return early with appropriate message
-    if (!Array.isArray(citationsIdentified) || citationsIdentified.length === 0) {
-      return { error: 'No citations identified. Generate content with citations first.' }
+    if (!project.citations_identified || project.citations_identified.length === 0) {
+      return { error: 'No citations identified to generate references from' }
     }
 
-    // Format them into a simple numbered list of placeholder references
-    const placeholderReferences = citationsIdentified.map((concept: string, index: number) => 
-      `${index + 1}. [Placeholder for: ${concept}]`
+    // Format citations into placeholder references
+    const placeholderReferences = project.citations_identified.map(
+      (citation: string, index: number) => 
+        `${index + 1}. [Placeholder for: ${citation}] - Author, A. (Year). Title of work. Journal Name.`
     )
 
-    // Save this list to the references_list field for the project
-    const { error: dbError } = await supabase
+    // Save the references list to the project
+    const { error: updateError } = await supabase
       .from('projects')
       .update({ references_list: placeholderReferences })
       .eq('id', projectId)
-      .eq('user_id', user.id) // Ensure user can only update their own projects
+      .eq('user_id', user.id)
 
-    if (dbError) {
-      console.error('Database error:', dbError)
-      return { error: 'Failed to save references to database' }
+    if (updateError) {
+      console.error('Error updating references list:', updateError)
+      return { error: 'Failed to save references' }
     }
 
-    // Revalidate the project page to show the new references
     revalidatePath(`/dashboard/projects/${projectId}`)
-
-    return { success: true, references: placeholderReferences, count: placeholderReferences.length }
+    return { success: true }
 
   } catch (error) {
     console.error('Error in generatePlaceholderReferences:', error)
-    return { error: 'An unexpected error occurred' }
+    return { error: 'Failed to generate references' }
+  }
+}
+
+export async function generateAndSaveFullPaper(projectId: string, topicTitle: string) {
+  try {
+    const supabase = await createClient()
+    
+    // Get current user for authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    
+    if (authError || !user) {
+      return { error: 'User not authenticated' }
+    }
+
+    // Fetch the project's outline if it exists
+    const { data: project, error: fetchError } = await supabase
+      .from('projects')
+      .select('outline')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (fetchError) {
+      console.error('Error fetching project:', fetchError)
+      return { error: 'Failed to fetch project data' }
+    }
+
+    // Call the full paper generation API
+    const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL ? 'https://' : 'http://localhost:3000'}/api/research/generate/full-paper`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        topicTitle,
+        outline: project.outline
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error('Failed to generate full paper')
+    }
+
+    // Read the streamed response
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+    let fullPaperContent = ''
+
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        fullPaperContent += decoder.decode(value, { stream: true })
+      }
+    }
+
+    // Update the project with the full paper content
+    const { error: updateError } = await supabase
+      .from('projects')
+      .update({ content: fullPaperContent })
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+
+    if (updateError) {
+      console.error('Error updating project content:', updateError)
+      return { error: 'Failed to save generated paper' }
+    }
+
+    // Extract and save citations from the generated content
+    await extractAndSaveCitations(projectId, fullPaperContent)
+
+    revalidatePath(`/dashboard/projects/${projectId}`)
+    return { success: true }
+
+  } catch (error) {
+    console.error('Error in generateAndSaveFullPaper:', error)
+    return { error: 'Failed to generate full paper' }
   }
 } 

@@ -2,6 +2,10 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import { generateAndSaveOutline, generatePlaceholderReferences } from './actions'
 import { IntroductionGenerator } from './IntroductionGenerator'
+import { PaperEditor } from './components/PaperEditor'
+import { CitationViewer } from './components/CitationViewer'
+import { ReferenceViewer } from './components/ReferenceViewer'
+import { FullPaperGenerator } from './components/FullPaperGenerator'
 
 export default async function ProjectPage({
   params,
@@ -124,123 +128,104 @@ export default async function ProjectPage({
   }
 
   return (
-    <div className="py-8">
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="mb-4">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">
-            {project.title}
-          </h1>
-          <p className="text-sm text-gray-500">
-            Created: {new Date(project.created_at).toLocaleDateString()}
+    <div className="space-y-8">
+      {/* Project Header */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              {project.title}
+            </h1>
+            <p className="text-sm text-gray-500 flex items-center">
+              <svg className="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3a2 2 0 012-2h4a2 2 0 012 2v4m-8 0h8M8 7H7a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2V9a2 2 0 00-2-2h-1" />
+              </svg>
+              Created {new Date(project.created_at).toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })}
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 pt-4 border-t border-gray-200">
+          <p className="text-gray-600">
+            AI-powered research paper workspace for &quot;{project.title}&quot;. Generate outlines, content, citations, and references.
           </p>
         </div>
-        
-        <div className="border-t pt-4">
-          <p className="text-gray-600 mb-6">
-            Project workspace for &quot;{project.title}&quot;. This is where you&apos;ll generate and manage your research paper content.
-          </p>
-          
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Research Paper Outline
-              </h3>
-              <form action={handleGenerateOutline}>
-                <button 
-                  type="submit"
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-                >
-                  Generate Outline
-                </button>
-              </form>
-              
-              {project.outline && (
-                <div className="mt-4">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Generated Outline:</h4>
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <pre className="text-sm text-gray-800 whitespace-pre-wrap font-sans">
-                      {project.outline}
-                    </pre>
-                  </div>
-                </div>
-              )}
-            </div>
+      </div>
+      
+      {/* Actions Section */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">
+          Generate Content
+        </h2>
+        <div className="space-y-6">
+          {/* Basic Generation Actions */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <form action={handleGenerateOutline}>
+              <button 
+                type="submit"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>Generate Outline</span>
+              </button>
+            </form>
             
             <IntroductionGenerator 
               projectId={projectId}
               projectTitle={projectTitle}
               outline={project.outline}
             />
-            
-            {project.content && (
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Saved Content
-                </h3>
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                  <div className="text-sm text-gray-800 whitespace-pre-wrap font-sans">
-                    {project.content}
-                  </div>
-                </div>
-              </div>
-            )}
-            
-            {project.citations_identified && project.citations_identified.length > 0 && (
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Citations Needed
-                </h3>
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <p className="text-sm text-yellow-800 mb-3">
-                    The following concepts require citations in your research paper:
-                  </p>
-                  <ul className="list-disc list-inside space-y-1">
-                    {project.citations_identified.map((citation: string, index: number) => (
-                      <li key={index} className="text-sm text-yellow-700">
-                        {citation}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="text-xs text-yellow-600 mt-3">
-                    Total: {project.citations_identified.length} citation{project.citations_identified.length !== 1 ? 's' : ''} needed
-                  </p>
-                </div>
-              </div>
-            )}
-            
-            <div>
+          </div>
+
+          {/* Full Paper Generation */}
+          <div className="border-t border-gray-200 pt-6">
+            <div className="mb-4">
               <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                References
+                Full-Length Document Generation
               </h3>
-              <form action={handleGenerateReferences}>
-                <button 
-                  type="submit"
-                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-                >
-                  Generate Placeholder References
-                </button>
-              </form>
-              
-              {project.references_list && project.references_list.length > 0 && (
-                <div className="mt-4">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Generated References:</h4>
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <ol className="space-y-2">
-                      {project.references_list.map((reference: string, index: number) => (
-                        <li key={index} className="text-sm text-gray-800">
-                          {reference}
-                        </li>
-                      ))}
-                    </ol>
-                    <p className="text-xs text-gray-600 mt-3">
-                      Total: {project.references_list.length} reference{project.references_list.length !== 1 ? 's' : ''} generated
-                    </p>
-                  </div>
-                </div>
-              )}
+              <p className="text-sm text-gray-600">
+                Generate a complete research paper with all sections including Introduction, Literature Review, Methodology, Results, Discussion, and Conclusion.
+              </p>
             </div>
+            <FullPaperGenerator 
+              projectId={projectId}
+              projectTitle={projectTitle}
+              outline={project.outline}
+            />
           </div>
         </div>
+      </div>
+      
+      <PaperEditor 
+        outline={project.outline}
+        content={project.content}
+      />
+      
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900 mb-3">
+          Citations Needed
+        </h3>
+        <CitationViewer citations_identified={project.citations_identified} />
+      </div>
+      
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">
+          References
+        </h3>
+        <form action={handleGenerateReferences} className="mb-4">
+          <button 
+            type="submit"
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+          >
+            Generate Placeholder References
+          </button>
+        </form>
+        <ReferenceViewer references_list={project.references_list} />
       </div>
     </div>
   )

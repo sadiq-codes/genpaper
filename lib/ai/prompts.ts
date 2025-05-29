@@ -92,4 +92,69 @@ Section to write: ${sectionName}
 REMEMBER: Include at least 3-5 citation placeholders [CN: concept needing citation] in your response for proper academic writing.
 
 Please write the content now:`
+}
+
+// System prompt for full research paper generation
+export const FULL_PAPER_SYSTEM_PROMPT = `You are an expert academic writer specialized in crafting comprehensive research papers.
+
+**CRITICAL REQUIREMENT: You MUST insert citation placeholders [CN: concept needing citation] throughout your writing wherever academic citations would be required. This is mandatory for any research claims, statistics, or references to other work.**
+
+Your task is to generate a complete, well-structured research paper. Follow these guidelines:
+
+1. Include ALL major sections of an academic paper (Introduction, Literature Review/Background, Methodology, Results/Analysis, Discussion, Conclusion)
+2. Write in a formal, academic tone throughout
+3. Ensure logical flow between sections
+4. Include proper section headings (use ## for major sections, ### for subsections)
+5. Write comprehensive content for each section (4-6 paragraphs per major section)
+6. Maintain consistent focus on the research topic
+7. **MANDATORY: Insert citation placeholders [CN: concept needing citation] extensively throughout for:**
+   - Research findings and studies
+   - Statistics or data
+   - Theories and methodologies
+   - Claims about causation or correlation
+   - Historical facts or statements
+   - Definitions from other sources
+   - Best practices or recommendations
+
+The paper should be comprehensive (3000-4000 words) and publication-ready in terms of structure and academic rigor.`
+
+// User prompt function for full paper generation
+export function generateFullPaperPrompt(topicTitle: string, outline?: string): string {
+  const outlineContext = outline 
+    ? `\n\nUse this outline as a guide for structuring your paper:\n${outline}\n\nAdapt and expand upon this outline to create comprehensive sections.`
+    : `\n\nCreate a comprehensive research paper structure appropriate for this topic.`
+
+  return `Write a complete research paper on "${topicTitle}".${outlineContext}
+
+**IMPORTANT: You MUST include extensive citation placeholders [CN: concept needing citation] throughout for academic rigor.**
+
+Generate a full-length research paper that includes:
+
+## Required Sections:
+1. **Introduction** - Problem statement, research questions, objectives, and paper overview
+2. **Literature Review/Background** - Review of existing research, theoretical framework
+3. **Methodology** (if applicable) - Research methods, data collection, analysis approaches
+4. **Results/Analysis** - Main findings, data presentation, analysis
+5. **Discussion** - Interpretation of results, implications, limitations
+6. **Conclusion** - Summary, contributions, future research directions
+
+## Requirements:
+- Use proper section headings (## for major sections, ### for subsections)
+- Write 4-6 substantial paragraphs per major section
+- Maintain academic tone and proper scholarly writing conventions
+- Ensure logical flow and coherence between sections
+- **MANDATORY: Include at least 15-20 citation placeholders [CN: concept needing citation] throughout the paper**
+- Focus specifically on "${topicTitle}" throughout all sections
+
+## Citation Requirements:
+- Every research claim needs [CN: specific research area]
+- Every statistic needs [CN: data source description]
+- Every theory reference needs [CN: theory name and origin]
+- Every methodology mention needs [CN: methodology reference]
+- Historical facts need [CN: historical source]
+- Definitions need [CN: authoritative source]
+
+Topic: ${topicTitle}
+
+Please write a comprehensive, publication-ready research paper now:`
 } 
