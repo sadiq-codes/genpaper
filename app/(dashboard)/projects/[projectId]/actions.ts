@@ -51,4 +51,55 @@ export async function generateAndSaveOutline(projectId: string, topicTitle: stri
     console.error('Error in generateAndSaveOutline:', error)
     return { error: 'An unexpected error occurred' }
   }
+}
+
+export async function saveSectionContent(projectId: string, sectionContent: string) {
+  try {
+    const supabase = await createClient()
+    
+    // Get current user for authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    
+    if (authError || !user) {
+      return { error: 'User not authenticated' }
+    }
+
+    // Get current content to append to it
+    const { data: project, error: fetchError } = await supabase
+      .from('projects')
+      .select('content')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (fetchError) {
+      console.error('Error fetching current content:', fetchError)
+      return { error: 'Failed to fetch current project content' }
+    }
+
+    // Append new section content to existing content
+    const currentContent = project?.content || ''
+    const updatedContent = currentContent ? `${currentContent}\n\n${sectionContent}` : sectionContent
+
+    // Update the project's content field in Supabase
+    const { error: dbError } = await supabase
+      .from('projects')
+      .update({ content: updatedContent })
+      .eq('id', projectId)
+      .eq('user_id', user.id) // Ensure user can only update their own projects
+
+    if (dbError) {
+      console.error('Database error:', dbError)
+      return { error: 'Failed to save section content to database' }
+    }
+
+    // Revalidate the project page to show the new content
+    revalidatePath(`/dashboard/projects/${projectId}`)
+
+    return { success: true, content: updatedContent }
+
+  } catch (error) {
+    console.error('Error in saveSectionContent:', error)
+    return { error: 'An unexpected error occurred' }
+  }
 } 

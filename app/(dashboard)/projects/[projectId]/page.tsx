@@ -113,6 +113,7 @@ export default async function ProjectPage({
             </div>
             
             <IntroductionGenerator 
+              projectId={projectId}
               projectTitle={projectTitle}
               outline={project.outline}
             />

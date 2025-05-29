@@ -1,16 +1,22 @@
 'use client'
 
 import { useStreamingText } from '@/hooks/useStreamingText'
+import { saveSectionContent } from './actions'
+import { useState } from 'react'
 
 interface IntroductionGeneratorProps {
+  projectId: string
   projectTitle: string
   outline?: string
 }
 
-export function IntroductionGenerator({ projectTitle, outline }: IntroductionGeneratorProps) {
-  const { streamedText, isLoading, error, startStreaming, reset } = useStreamingText()
+export function IntroductionGenerator({ projectId, projectTitle, outline }: IntroductionGeneratorProps) {
+  const { streamedText, isLoading, error, isComplete, startStreaming, reset } = useStreamingText()
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState(false)
 
   const handleGenerateIntroduction = async () => {
+    setSaveSuccess(false) // Reset save success state when generating new content
     await startStreaming({
       url: '/api/research/generate/section',
       body: {
@@ -21,23 +27,65 @@ export function IntroductionGenerator({ projectTitle, outline }: IntroductionGen
     })
   }
 
+  const handleSaveIntroduction = async () => {
+    if (!streamedText.trim()) return
+
+    setIsSaving(true)
+    try {
+      const result = await saveSectionContent(projectId, streamedText)
+      
+      if (result.error) {
+        console.error('Failed to save introduction:', result.error)
+        // Could add error UI here
+      } else {
+        setSaveSuccess(true)
+        // Optionally reset the streamed text after saving
+        // reset()
+      }
+    } catch (error) {
+      console.error('Error saving introduction:', error)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   return (
     <div>
       <h3 className="text-lg font-semibold text-gray-900 mb-2">
         Introduction Section
       </h3>
-      <button 
-        type="button"
-        onClick={handleGenerateIntroduction}
-        disabled={isLoading}
-        className={`px-4 py-2 rounded-lg font-medium transition-colors mb-4 ${
-          isLoading 
-            ? 'bg-gray-400 cursor-not-allowed text-white' 
-            : 'bg-green-600 hover:bg-green-700 text-white'
-        }`}
-      >
-        {isLoading ? 'Generating...' : 'Generate Introduction'}
-      </button>
+      
+      <div className="flex gap-2 mb-4">
+        <button 
+          type="button"
+          onClick={handleGenerateIntroduction}
+          disabled={isLoading}
+          className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+            isLoading 
+              ? 'bg-gray-400 cursor-not-allowed text-white' 
+              : 'bg-green-600 hover:bg-green-700 text-white'
+          }`}
+        >
+          {isLoading ? 'Generating...' : 'Generate Introduction'}
+        </button>
+
+        {isComplete && streamedText.trim() && (
+          <button 
+            type="button"
+            onClick={handleSaveIntroduction}
+            disabled={isSaving}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              isSaving 
+                ? 'bg-gray-400 cursor-not-allowed text-white'
+                : saveSuccess
+                ? 'bg-green-600 text-white'
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
+            }`}
+          >
+            {isSaving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save Introduction'}
+          </button>
+        )}
+      </div>
       
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
@@ -48,6 +96,12 @@ export function IntroductionGenerator({ projectTitle, outline }: IntroductionGen
           >
             Try again
           </button>
+        </div>
+      )}
+
+      {saveSuccess && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+          <p className="text-sm text-green-600">Introduction saved successfully!</p>
         </div>
       )}
       
