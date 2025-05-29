@@ -102,4 +102,48 @@ export async function saveSectionContent(projectId: string, sectionContent: stri
     console.error('Error in saveSectionContent:', error)
     return { error: 'An unexpected error occurred' }
   }
+}
+
+export async function extractAndSaveCitations(projectId: string, textContent: string) {
+  try {
+    const supabase = await createClient()
+    
+    // Get current user for authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    
+    if (authError || !user) {
+      return { error: 'User not authenticated' }
+    }
+
+    // Use regex to find all [CN: ...] placeholders in the text content
+    const citationRegex = /\[CN: (.*?)\]/g
+    const citationMatches = Array.from(textContent.matchAll(citationRegex))
+    
+    // Extract the concepts (the part inside the placeholder)
+    const extractedCitations = citationMatches.map(match => match[1].trim())
+    
+    // Remove duplicates by converting to Set and back to Array
+    const uniqueCitations = Array.from(new Set(extractedCitations))
+
+    // Save the array of concepts to the citations_identified field for the project
+    const { error: dbError } = await supabase
+      .from('projects')
+      .update({ citations_identified: uniqueCitations })
+      .eq('id', projectId)
+      .eq('user_id', user.id) // Ensure user can only update their own projects
+
+    if (dbError) {
+      console.error('Database error:', dbError)
+      return { error: 'Failed to save citations to database' }
+    }
+
+    // Revalidate the project page to show the extracted citations
+    revalidatePath(`/dashboard/projects/${projectId}`)
+
+    return { success: true, citations: uniqueCitations, count: uniqueCitations.length }
+
+  } catch (error) {
+    console.error('Error in extractAndSaveCitations:', error)
+    return { error: 'An unexpected error occurred' }
+  }
 } 
