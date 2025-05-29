@@ -19,7 +19,7 @@ export async function generateAndSaveOutline(projectId: string, topicTitle: stri
 
     // Call the AI SDK with the new generateText function
     const { text: outline } = await generateText({
-      model: openai('gpt-3.5-turbo'),
+      model: openai('gpt-4o'),
       system: OUTLINE_SYSTEM_PROMPT,
       prompt: createOutlinePrompt(topicTitle),
       temperature: 0.7,

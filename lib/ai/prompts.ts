@@ -32,6 +32,8 @@ Topic: ${topicTitle}`
 // System prompt for research paper section generation
 export const SECTION_SYSTEM_PROMPT = `You are an expert academic writer specialized in crafting high-quality research paper sections.
 
+**CRITICAL REQUIREMENT: You MUST insert citation placeholders [CN: concept needing citation] throughout your writing wherever academic citations would be required. This is mandatory for any research claims, statistics, or references to other work.**
+
 Your task is to generate well-written, academically sound content for specific sections of research papers. Follow these guidelines:
 
 1. Write in a formal, academic tone appropriate for scholarly publications
@@ -41,12 +43,22 @@ Your task is to generate well-written, academically sound content for specific s
 5. Ensure content aligns with the provided outline and topic
 6. Write substantial content (3-5 paragraphs typically)
 7. Use proper academic writing conventions
-8. **IMPORTANT: Insert citation placeholders where academic citations would be appropriate. Use the format [CN: concept needing citation] wherever you reference research findings, statistics, theories, or claims that would require citations in academic writing.**
+8. **MANDATORY: Insert citation placeholders [CN: concept needing citation] for ANY statement that would require a citation in academic writing, including:**
+   - Research findings and studies
+   - Statistics or data
+   - Theories and methodologies
+   - Claims about causation or correlation
+   - Historical facts or statements
+   - Definitions from other sources
+   - Best practices or recommendations
 
-For example:
-- "Studies have shown that X leads to Y [CN: studies on X leading to Y]"
-- "According to recent research [CN: recent research on topic]"
-- "This theory was first proposed [CN: original theory proposal]"
+Examples of required citation usage:
+- "Studies have shown that machine learning improves efficiency [CN: machine learning efficiency studies]"
+- "According to recent research, 85% of companies use AI [CN: AI adoption statistics]"
+- "The transformer architecture was introduced in 2017 [CN: transformer architecture paper]"
+- "Deep learning is defined as [CN: deep learning definition]"
+
+You should include at least 3-5 citation placeholders per paragraph where academic claims are made.
 
 Generate only the content for the requested section, without titles or headers.`
 
@@ -58,18 +70,26 @@ export function createSectionPrompt(topicTitle: string, sectionName: string, out
 
   return `Write the ${sectionName} section for a research paper on "${topicTitle}".${outlineContext}
 
+**IMPORTANT: You MUST include citation placeholders [CN: concept needing citation] for any academic claims. This is required for research papers.**
+
 Generate well-structured, academic content that:
 - Is appropriate for the ${sectionName} section
 - Maintains academic rigor and proper tone
 - Flows logically with clear paragraphs
 - Is substantial enough to stand as a complete section
 - Focuses specifically on ${sectionName} without including other sections
-- **INCLUDES citation placeholders using the format [CN: concept needing citation] wherever academic sources would be referenced**
+- **MANDATORY: INCLUDES multiple citation placeholders [CN: concept needing citation] wherever academic sources would be referenced**
+
+CITATION REQUIREMENTS:
+- Every research claim needs [CN: specific research area]
+- Every statistic needs [CN: data source description]
+- Every theory reference needs [CN: theory name and origin]
+- Every methodology mention needs [CN: methodology reference]
 
 Topic: ${topicTitle}
 Section to write: ${sectionName}
 
-Remember to insert [CN: concept needing citation] placeholders where citations would be needed in academic writing.
+REMEMBER: Include at least 3-5 citation placeholders [CN: concept needing citation] in your response for proper academic writing.
 
 Please write the content now:`
 } 

@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     // Call streamText with the new API
     const result = streamText({
-      model: openai('gpt-3.5-turbo'),
+      model: openai('gpt-4o'),
       system: SECTION_SYSTEM_PROMPT,
       prompt: userPrompt,
       temperature: 0.7,

@@ -1,7 +1,7 @@
 'use client'
 
 import { useStreamingText } from '@/hooks/useStreamingText'
-import { saveSectionContent } from './actions'
+import { saveSectionContent, extractAndSaveCitations } from './actions'
 import { useState } from 'react'
 
 interface IntroductionGeneratorProps {
@@ -39,6 +39,19 @@ export function IntroductionGenerator({ projectId, projectTitle, outline }: Intr
         // Could add error UI here
       } else {
         setSaveSuccess(true)
+        
+        // Automatically extract and save citations from the saved content
+        try {
+          const citationResult = await extractAndSaveCitations(projectId, streamedText)
+          if (citationResult.error) {
+            console.error('Failed to extract citations:', citationResult.error)
+          } else {
+            console.log(`Extracted ${citationResult.count} citations:`, citationResult.citations)
+          }
+        } catch (citationError) {
+          console.error('Error extracting citations:', citationError)
+        }
+        
         // Optionally reset the streamed text after saving
         // reset()
       }

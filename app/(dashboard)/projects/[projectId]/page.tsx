@@ -21,6 +21,7 @@ export default async function ProjectPage({
   // Fetch project details
   let project, error;
   try {
+    // First try to fetch without citations_identified to see if that's the issue
     const result = await supabase
       .from('projects')
       .select('id, title, outline, content, created_at')
@@ -28,7 +29,30 @@ export default async function ProjectPage({
       .eq('user_id', user.id)
       .single()
     
-    project = result.data
+    if (result.error) {
+      console.error('Primary fetch error:', result.error)
+      throw result.error
+    }
+
+    // If basic fetch works, try to get citations_identified separately
+    let citationsIdentified = []
+    try {
+      const citationsResult = await supabase
+        .from('projects')
+        .select('citations_identified')
+        .eq('id', projectId)
+        .eq('user_id', user.id)
+        .single()
+      
+      if (citationsResult.data?.citations_identified) {
+        citationsIdentified = citationsResult.data.citations_identified
+      }
+    } catch (citationsError) {
+      console.error('Citations fetch error (non-fatal):', citationsError)
+      // Continue without citations if this fails
+    }
+
+    project = { ...result.data, citations_identified: citationsIdentified }
     error = result.error
   } catch (fetchError) {
     console.error('Error fetching project:', fetchError)
@@ -41,7 +65,7 @@ export default async function ProjectPage({
         .eq('user_id', user.id)
         .single()
       
-      project = { ...fallbackResult.data, outline: null, content: null }
+      project = { ...fallbackResult.data, outline: null, content: null, citations_identified: [] }
       error = fallbackResult.error
     } catch (fallbackError) {
       console.error('Fallback fetch also failed:', fallbackError)
@@ -127,6 +151,29 @@ export default async function ProjectPage({
                   <div className="text-sm text-gray-800 whitespace-pre-wrap font-sans">
                     {project.content}
                   </div>
+                </div>
+              </div>
+            )}
+            
+            {project.citations_identified && project.citations_identified.length > 0 && (
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  Citations Needed
+                </h3>
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <p className="text-sm text-yellow-800 mb-3">
+                    The following concepts require citations in your research paper:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1">
+                    {project.citations_identified.map((citation: string, index: number) => (
+                      <li key={index} className="text-sm text-yellow-700">
+                        {citation}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-yellow-600 mt-3">
+                    Total: {project.citations_identified.length} citation{project.citations_identified.length !== 1 ? 's' : ''} needed
+                  </p>
                 </div>
               </div>
             )}
