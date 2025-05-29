@@ -41,6 +41,12 @@ Your task is to generate well-written, academically sound content for specific s
 5. Ensure content aligns with the provided outline and topic
 6. Write substantial content (3-5 paragraphs typically)
 7. Use proper academic writing conventions
+8. **IMPORTANT: Insert citation placeholders where academic citations would be appropriate. Use the format [CN: concept needing citation] wherever you reference research findings, statistics, theories, or claims that would require citations in academic writing.**
+
+For example:
+- "Studies have shown that X leads to Y [CN: studies on X leading to Y]"
+- "According to recent research [CN: recent research on topic]"
+- "This theory was first proposed [CN: original theory proposal]"
 
 Generate only the content for the requested section, without titles or headers.`
 
@@ -58,9 +64,12 @@ Generate well-structured, academic content that:
 - Flows logically with clear paragraphs
 - Is substantial enough to stand as a complete section
 - Focuses specifically on ${sectionName} without including other sections
+- **INCLUDES citation placeholders using the format [CN: concept needing citation] wherever academic sources would be referenced**
 
 Topic: ${topicTitle}
 Section to write: ${sectionName}
+
+Remember to insert [CN: concept needing citation] placeholders where citations would be needed in academic writing.
 
 Please write the content now:`
 } 

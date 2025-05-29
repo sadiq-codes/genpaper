@@ -117,6 +117,19 @@ export default async function ProjectPage({
               projectTitle={projectTitle}
               outline={project.outline}
             />
+            
+            {project.content && (
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  Saved Content
+                </h3>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <div className="text-sm text-gray-800 whitespace-pre-wrap font-sans">
+                    {project.content}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
