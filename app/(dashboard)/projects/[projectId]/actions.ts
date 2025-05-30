@@ -104,7 +104,12 @@ export async function saveSectionContent(projectId: string, sectionContent: stri
   }
 }
 
-export async function extractAndSaveCitations(projectId: string, textContent: string) {
+export async function extractAndSaveCitations(
+  projectId: string, 
+  textContent: string, 
+  sectionName?: string,
+  literatureSearchResults?: any[]
+) {
   try {
     const supabase = await createClient()
     
@@ -115,20 +120,25 @@ export async function extractAndSaveCitations(projectId: string, textContent: st
       return { error: 'User not authenticated' }
     }
 
-    // Use regex to find all [CN: ...] placeholders in the text content
-    const citationRegex = /\[CN: (.*?)\]/g
-    const citationMatches = Array.from(textContent.matchAll(citationRegex))
-    
-    // Extract the concepts (the part inside the placeholder)
-    const extractedCitations = citationMatches.map(match => match[1].trim())
-    
-    // Remove duplicates by converting to Set and back to Array
-    const uniqueCitations = Array.from(new Set(extractedCitations))
+    // Import citation utilities
+    const { extractAllCitationPlaceholders, extractStructuredCitations, saveStructuredCitations } = await import('@/lib/citations/utils');
 
-    // Save the array of concepts to the citations_identified field for the project
+    // Extract all citation placeholders
+    const { generalCitations, specificCitations, allCitations } = extractAllCitationPlaceholders(textContent);
+
+    // Process structured citations if literature search results are available
+    let structuredCitationResult: { success: boolean; citationIds: string[]; error?: string } = { success: true, citationIds: [] };
+    if (literatureSearchResults && literatureSearchResults.length > 0) {
+      const structuredCitations = extractStructuredCitations(textContent, literatureSearchResults);
+      if (structuredCitations.length > 0) {
+        structuredCitationResult = await saveStructuredCitations(projectId, structuredCitations, sectionName);
+      }
+    }
+
+    // Update the citations_identified field in projects table (existing functionality)
     const { error: dbError } = await supabase
       .from('projects')
-      .update({ citations_identified: uniqueCitations })
+      .update({ citations_identified: allCitations })
       .eq('id', projectId)
       .eq('user_id', user.id) // Ensure user can only update their own projects
 
@@ -140,7 +150,20 @@ export async function extractAndSaveCitations(projectId: string, textContent: st
     // Revalidate the project page to show the extracted citations
     revalidatePath(`/dashboard/projects/${projectId}`)
 
-    return { success: true, citations: uniqueCitations, count: uniqueCitations.length }
+    return { 
+      success: true, 
+      citations: allCitations, 
+      count: allCitations.length,
+      breakdown: {
+        general: generalCitations.length,
+        specific: specificCitations.length
+      },
+      structuredCitations: {
+        saved: structuredCitationResult.success,
+        count: structuredCitationResult.citationIds.length,
+        citationIds: structuredCitationResult.citationIds
+      }
+    }
 
   } catch (error) {
     console.error('Error in extractAndSaveCitations:', error)

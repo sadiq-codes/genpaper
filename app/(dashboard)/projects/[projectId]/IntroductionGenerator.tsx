@@ -22,7 +22,8 @@ export function IntroductionGenerator({ projectId, projectTitle, outline }: Intr
       body: {
         topicTitle: projectTitle,
         sectionName: 'Introduction',
-        outline: outline || undefined
+        outline: outline || undefined,
+        projectId: projectId
       }
     })
   }
@@ -42,7 +43,7 @@ export function IntroductionGenerator({ projectId, projectTitle, outline }: Intr
         
         // Automatically extract and save citations from the saved content
         try {
-          const citationResult = await extractAndSaveCitations(projectId, streamedText)
+          const citationResult = await extractAndSaveCitations(projectId, streamedText, 'Introduction')
           if (citationResult.error) {
             console.error('Failed to extract citations:', citationResult.error)
           } else {

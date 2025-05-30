@@ -32,8 +32,6 @@ Topic: ${topicTitle}`
 // System prompt for research paper section generation
 export const SECTION_SYSTEM_PROMPT = `You are an expert academic writer specialized in crafting high-quality research paper sections.
 
-**CRITICAL REQUIREMENT: You MUST insert citation placeholders [CN: concept needing citation] throughout your writing wherever academic citations would be required. This is mandatory for any research claims, statistics, or references to other work, UNLESS you are using the literatureSearch tool for that specific claim as instructed below.**
-
 Your task is to generate well-written, academically sound content for specific sections of research papers. Follow these guidelines:
 
 1. Write in a formal, academic tone appropriate for scholarly publications.
@@ -44,17 +42,18 @@ Your task is to generate well-written, academically sound content for specific s
 6. Write substantial content (3-5 paragraphs typically).
 7. Use proper academic writing conventions.
 
-8. **LITERATURE SEARCH TOOL USAGE (Important for this task):**
-   - As you write, identify 1-2 specific claims that require supporting evidence.
-   - For each such claim:
-     a. Clearly state the specific claim you intend to support.
-     b. Formulate a concise search query for that claim.
-     c. Call the 'literatureSearch' tool with that query.
-     d. After the tool call, explicitly state: "For the claim '[your specific claim]', I used literatureSearch with query '[your search query]' and received mock results including [mention 1-2 titles or key details from the mock results]."
-     e. You do NOT need to use the [CN: ...] placeholder for this specific claim you just searched for via the tool.
-   - For all other claims not searched via the tool, you **MUST** continue to use the [CN: concept needing citation] placeholder.
+8. **MANDATORY LITERATURE SEARCH TOOL USAGE:**
+   **YOU MUST CALL THE literatureSearch TOOL AT LEAST ONCE during your writing process.**
+   - As you write, you MUST identify at least 1 specific claim that requires supporting evidence.
+   - When you identify such a claim:
+     a. IMMEDIATELY call the 'literatureSearch' tool with a relevant query for that claim.
+     b. Evaluate the returned search results and select the most relevant result.
+     c. Extract information (authors, title, year, DOI) from the selected result.
+     d. Insert a citation placeholder like [CITE: DOI] or [CITE: Title] in your text where the citation is needed.
+   - FAILURE TO CALL THE literatureSearch TOOL IS NOT ACCEPTABLE.
 
-9. **MANDATORY (for claims not using the literatureSearch tool): Insert citation placeholders [CN: concept needing citation] for ANY statement that would require a citation in academic writing, including:**
+9. **ADDITIONAL CITATION PLACEHOLDERS:**
+   For any other claims not covered by your literatureSearch tool call(s), use [CN: concept needing citation] placeholders for:
    - Research findings and studies
    - Statistics or data
    - Theories and methodologies
@@ -69,13 +68,15 @@ Your task is to generate well-written, academically sound content for specific s
     - Do NOT include headers like "Literature Search Findings" or system messages
     - Generate ONLY the academic section text without meta-commentary
 
-Examples of required [CN: ...] placeholder usage (for claims NOT processed by literatureSearch):
+Examples of required [CITE: ...] placeholder usage (MUST have at least one from literatureSearch):
+- "Recent advances in neural networks have shown significant improvements [CITE: 10.1000/182]"
+- "As demonstrated by Smith et al., deep learning architectures [CITE: Deep Learning Architectures: A Survey]"
+
+Examples of [CN: ...] placeholder usage (for other claims):
 - "Studies have shown that machine learning improves efficiency [CN: machine learning efficiency studies]"
 - "According to recent research, 85% of companies use AI [CN: AI adoption statistics]"
-- "The transformer architecture was introduced in 2017 [CN: transformer architecture paper]"
-- "Deep learning is defined as [CN: deep learning definition]"
 
-You should include at least 3-5 [CN: ...] citation placeholders per paragraph where academic claims are made (and not covered by a direct literatureSearch tool call).
+**REMEMBER: You MUST call the literatureSearch tool at least once. This is not optional.**
 
 Generate only the content for the requested section, without titles or headers.`
 
@@ -87,17 +88,20 @@ export function createSectionPrompt(topicTitle: string, sectionName: string, out
 
   return `Write the ${sectionName} section for a research paper on "${topicTitle}".${outlineContext}
 
-**IMPORTANT TOOL USAGE & CITATION INSTRUCTIONS:**
-1.  **Tool Call for 1-2 Claims:**
-    *   Identify 1 or 2 specific claims in your writing that need a citation.
-    *   For each of these claims:
-        1.  State the claim clearly.
-        2.  Formulate a search query for it.
-        3.  Call the \`literatureSearch\` tool with your query.
-        4.  Report back the mock results you receive from the tool (e.g., "For claim X, I searched Y and got mock results Z.").
-    *   For these specific claims where you use the \`literatureSearch\` tool and report its mock results, you DO NOT need to add a [CN: ...] placeholder.
-2.  **Standard Citation Placeholders [CN: ...] for Other Claims:**
-    *   For ALL OTHER academic claims, statistics, data, or references to other work where you do NOT use the \`literatureSearch\` tool as described above, you **MUST include citation placeholders [CN: concept needing citation]**. This is required for research papers.
+**MANDATORY REQUIREMENT: YOU MUST CALL THE literatureSearch TOOL AT LEAST ONCE.**
+
+**CRITICAL TOOL USAGE INSTRUCTIONS:**
+1. **REQUIRED Literature Search (MANDATORY - NOT OPTIONAL):**
+   - You MUST identify at least 1 specific, important claim that needs literature support
+   - You MUST call the \`literatureSearch\` tool for this claim  
+   - Use the most relevant result to insert a [CITE: DOI] or [CITE: Title] placeholder
+   - This is REQUIRED - you cannot skip this step
+
+2. **Additional Citation Placeholders for Other Claims:**
+   - For all other academic claims not covered by your literatureSearch tool call, use [CN: concept needing citation] placeholders
+   - Include these for research findings, statistics, theories, methodologies, etc.
+
+**FAILURE TO CALL THE literatureSearch TOOL WILL RESULT IN INCOMPLETE WORK.**
 
 Generate well-structured, academic content that:
 - Is appropriate for the ${sectionName} section
@@ -106,26 +110,25 @@ Generate well-structured, academic content that:
 - Is substantial enough to stand as a complete section
 - Focuses specifically on ${sectionName} without including other sections
 
-CITATION REQUIREMENTS (for claims NOT using literatureSearch):
-- Every research claim needs [CN: specific research area]
-- Every statistic needs [CN: data source description]
-- Every theory reference needs [CN: theory name and origin]
-- Every methodology mention needs [CN: methodology reference]
+CITATION REQUIREMENTS:
+- MANDATORY: At least one [CITE: DOI] or [CITE: Title] placeholder from literatureSearch tool usage
+- ADDITIONAL: Multiple [CN: concept needing citation] placeholders for other claims
+- Every research claim needs appropriate citation markings
+- Every statistic needs citation markings  
+- Every theory reference needs citation markings
 
 Topic: ${topicTitle}
 Section to write: ${sectionName}
 
-REMEMBER:
-- Use the \`literatureSearch\` tool for 1-2 claims and report its mock output.
-- For all other claims, use at least 3-5 [CN: concept needing citation] placeholders as appropriate for proper academic writing.
+STEP 1: IMMEDIATELY identify a claim that needs literature support
+STEP 2: CALL the literatureSearch tool for that claim  
+STEP 3: Write your section content with proper citations
 
-Please write the content now:`
+Begin writing now - remember to call the literatureSearch tool first:`
 }
 
 // System prompt for full research paper generation
 export const FULL_PAPER_SYSTEM_PROMPT = `You are an expert academic writer specialized in crafting comprehensive research papers.
-
-**CRITICAL REQUIREMENT: You MUST insert citation placeholders [CN: concept needing citation] throughout your writing wherever academic citations would be required. This is mandatory for any research claims, statistics, or references to other work, UNLESS you are using the literatureSearch tool for that specific claim as instructed below.**
 
 Your task is to generate a complete, well-structured research paper. Follow these guidelines:
 
@@ -136,17 +139,18 @@ Your task is to generate a complete, well-structured research paper. Follow thes
 5. Write comprehensive content for each section (4-6 paragraphs per major section)
 6. Maintain consistent focus on the research topic
 
-7. **LITERATURE SEARCH TOOL USAGE (Important for comprehensive papers):**
-   - Throughout your paper writing, identify 3-5 key claims that require strong supporting evidence
+7. **MANDATORY LITERATURE SEARCH TOOL USAGE:**
+   **YOU MUST CALL THE literatureSearch TOOL AT LEAST 2-3 TIMES during your paper writing process.**
+   - Throughout your paper, you MUST identify at least 2-3 specific claims that require supporting evidence.
    - For each such claim:
-     a. Clearly state the specific claim you intend to support
-     b. Formulate a concise search query for that claim
-     c. Call the 'literatureSearch' tool with that query
-     d. After the tool call, explicitly state: "For the claim '[your specific claim]', I used literatureSearch with query '[your search query]' and found relevant papers including [mention 1-2 key titles or findings from the results]."
-     e. You do NOT need to use the [CN: ...] placeholder for claims you just searched for via the tool
-   - For all other claims not searched via the tool, you **MUST** continue to use the [CN: concept needing citation] placeholder
+     a. IMMEDIATELY call the 'literatureSearch' tool with a relevant query for that claim.
+     b. Evaluate the returned search results and select the most relevant result.
+     c. Extract information (authors, title, year, DOI) from the selected result.
+     d. Insert a citation placeholder like [CITE: DOI] or [CITE: Title] in your text where the citation is needed.
+   - FAILURE TO CALL THE literatureSearch TOOL MULTIPLE TIMES IS NOT ACCEPTABLE.
 
-8. **MANDATORY (for claims not using the literatureSearch tool): Insert citation placeholders [CN: concept needing citation] extensively throughout for:**
+8. **ADDITIONAL CITATION PLACEHOLDERS:**
+   For all other claims not covered by your literatureSearch tool calls, use [CN: concept needing citation] placeholders for:
    - Research findings and studies
    - Statistics or data
    - Theories and methodologies
@@ -162,6 +166,12 @@ Your task is to generate a complete, well-structured research paper. Follow thes
    - Do NOT output reasoning about your process or methodology choices
    - Generate ONLY the academic paper text with proper section headings and content
 
+Examples of [CITE: ...] placeholder usage (MUST have 2-3 from literatureSearch):
+- "Recent advances in neural networks have demonstrated significant improvements [CITE: 10.1000/182]"
+- "As shown by comprehensive studies, machine learning algorithms [CITE: Machine Learning in Practice: A Survey]"
+
+**REMEMBER: You MUST call the literatureSearch tool at least 2-3 times. This is not optional.**
+
 The paper should be comprehensive (4000-6000 words) and publication-ready in terms of structure and academic rigor.`
 
 // User prompt function for full paper generation
@@ -172,58 +182,33 @@ export function generateFullPaperPrompt(topicTitle: string, outline?: string): s
 
   return `Write a complete research paper on "${topicTitle}".${outlineContext}
 
-**IMPORTANT TOOL USAGE & CITATION INSTRUCTIONS:**
-1.  **Literature Search for Key Claims (LIMIT: 1-2 searches only):**
-    *   Throughout your paper, identify 1-2 MAJOR claims that would benefit most from strong literature support
-    *   Prioritize the most important claims that are central to your research topic
-    *   For each of these claims:
-        1.  State the claim clearly
-        2.  Formulate a precise search query for academic literature
-        3.  Call the \`literatureSearch\` tool with your query
-        4.  Report the results you receive (e.g., "For claim X, I searched Y and found papers Z that support this.")
-    *   For these specific claims where you use the \`literatureSearch\` tool and report its results, you DO NOT need to add a [CN: ...] placeholder
-2.  **Standard Citation Placeholders [CN: ...] for Other Claims:**
-    *   For ALL OTHER academic claims, statistics, data, or references to other work where you do NOT use the \`literatureSearch\` tool, you **MUST include citation placeholders [CN: concept needing citation]**
+**MANDATORY REQUIREMENT: YOU MUST CALL THE literatureSearch TOOL AT LEAST 2-3 TIMES.**
 
-**CRITICAL: OUTPUT ONLY THE RESEARCH PAPER CONTENT - NO META-COMMENTARY**
-- Do NOT include explanations like "I will now call the literatureSearch tool..."
-- Do NOT include headers like "Literature Search Findings" or "Tool Results"
-- Do NOT show your reasoning process or tool usage explanations
-- Generate ONLY the academic paper with proper sections and scholarly content
+**CRITICAL TOOL USAGE INSTRUCTIONS:**
+1. **REQUIRED Literature Search (MANDATORY - NOT OPTIONAL):**
+   - You MUST identify at least 2-3 specific, important claims that need literature support
+   - You MUST call the \`literatureSearch\` tool for each of these claims
+   - Use the most relevant results to insert [CITE: DOI] or [CITE: Title] placeholders
+   - This is REQUIRED - you cannot skip this step
 
-Generate a full-length research paper that includes:
+2. **Additional Citation Placeholders for Other Claims:**
+   - For all other academic claims not covered by your literatureSearch tool calls, use [CN: concept needing citation] placeholders
+   - Include these for research findings, statistics, theories, methodologies, etc.
 
-## Required Sections:
-1. **Introduction** - Problem statement, research questions, objectives, and paper overview
-2. **Literature Review/Background** - Review of existing research, theoretical framework
-3. **Methodology** (if applicable) - Research methods, data collection, analysis approaches
-4. **Results/Analysis** - Main findings, data presentation, analysis
-5. **Discussion** - Interpretation of results, implications, limitations
-6. **Conclusion** - Summary, contributions, future research directions
+**FAILURE TO CALL THE literatureSearch TOOL MULTIPLE TIMES WILL RESULT IN INCOMPLETE WORK.**
 
-## Requirements:
-- Use proper section headings (## for major sections, ### for subsections)
-- Write 4-6 substantial paragraphs per major section
-- Maintain academic tone and proper scholarly writing conventions
-- Ensure logical flow and coherence between sections
-- **Use the \`literatureSearch\` tool for ONLY 1-2 key claims (to avoid rate limits)**
-- **Include at least 15-20 [CN: concept needing citation] placeholders for other claims**
-- Focus specifically on "${topicTitle}" throughout all sections
+Generate a comprehensive research paper that includes all major sections and proper academic formatting.
 
-## Citation Requirements (for claims NOT using literatureSearch):
-- Every research claim needs [CN: specific research area]
-- Every statistic needs [CN: data source description]
-- Every theory reference needs [CN: theory name and origin]
-- Every methodology mention needs [CN: methodology reference]
-- Historical facts need [CN: historical source]
-- Definitions need [CN: authoritative source]
+CITATION REQUIREMENTS:
+- MANDATORY: At least 2-3 [CITE: DOI] or [CITE: Title] placeholders from literatureSearch tool usage
+- ADDITIONAL: Multiple [CN: concept needing citation] placeholders for other claims
+- Extensive citation coverage throughout all sections
 
 Topic: ${topicTitle}
 
-REMEMBER:
-- Use the \`literatureSearch\` tool for ONLY 1-2 major claims (not 3-5) to respect API rate limits
-- For all other claims, use at least 15-20 [CN: concept needing citation] placeholders as appropriate
-- OUTPUT ONLY the academic paper content - no process explanations or meta-commentary
+STEP 1: IMMEDIATELY identify 2-3 claims that need literature support
+STEP 2: CALL the literatureSearch tool for each claim
+STEP 3: Write your comprehensive paper with proper citations
 
-Please write a comprehensive, publication-ready research paper now:`
+Begin writing now - remember to call the literatureSearch tool multiple times first:`
 } 

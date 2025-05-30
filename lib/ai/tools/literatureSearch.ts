@@ -15,6 +15,21 @@ export interface LiteratureSearchResult {
   doi: string | null;
 }
 
+// Define structured citation schema for AI SDK structured data generation
+export const structuredCitationSchema = z.object({
+  title: z.string().describe("The title of the cited work"),
+  authors: z.array(z.object({
+    name: z.string().describe("Full name of author")
+  })).describe("Array of authors"),
+  year: z.number().nullable().describe("Publication year"),
+  doi: z.string().nullable().describe("DOI identifier if available"),
+  source_url: z.string().nullable().describe("URL to the source"),
+  citation_placeholder: z.string().describe("The placeholder to insert in text, e.g., [CITE: DOI] or [CITE: Title]"),
+  relevance_explanation: z.string().describe("Brief explanation of why this source is relevant to the claim")
+});
+
+export type StructuredCitation = z.infer<typeof structuredCitationSchema>;
+
 // Define the input schema for the literatureSearch tool using Zod
 const literatureSearchParameters = z.object({
   query: z.string().describe("The search query for academic literature, keywords, or research topics."),
