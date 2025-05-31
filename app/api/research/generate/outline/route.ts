@@ -1,12 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { generateText } from 'ai'
 import { openai } from '@/lib/ai/sdk'
-import { OUTLINE_SYSTEM_PROMPT, createOutlinePrompt } from '@/lib/ai/prompts'
+import { OUTLINE_SYSTEM_PROMPT } from '@/lib/ai/prompts'
+
+function createOutlinePrompt(topicTitle: string, requirements?: string): string {
+  const basePrompt = `Create a detailed outline for a research paper on "${topicTitle}".`
+  
+  if (requirements) {
+    return `${basePrompt}
+
+Additional requirements and focus areas:
+${requirements}
+
+Please create a comprehensive outline that addresses these specific requirements while maintaining academic rigor and logical flow.`
+  }
+  
+  return `${basePrompt}
+
+Create a comprehensive, well-structured outline suitable for an academic research paper. Include all necessary sections with clear hierarchical organization.`
+}
 
 export async function POST(request: NextRequest) {
   try {
-    // Read topicTitle from request body
-    const { topicTitle } = await request.json()
+    // Read input from request body
+    const { topicTitle, requirements } = await request.json()
     
     if (!topicTitle || typeof topicTitle !== 'string') {
       return NextResponse.json(
@@ -26,18 +44,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Call the AI SDK with prompts
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        { role: 'system', content: OUTLINE_SYSTEM_PROMPT },
-        { role: 'user', content: createOutlinePrompt(topicTitle) }
-      ],
+    // Call the AI SDK with enhanced prompts
+    const { text: outline } = await generateText({
+      model: openai('gpt-4o'),
+      system: OUTLINE_SYSTEM_PROMPT,
+      prompt: createOutlinePrompt(topicTitle, requirements),
       temperature: 0.7,
-      max_tokens: 1000,
+      maxTokens: 1500,
     })
-
-    const outline = completion.choices[0]?.message?.content
 
     if (!outline) {
       return NextResponse.json(
@@ -47,7 +61,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Return the generated outline text as JSON response
-    return NextResponse.json({ outline })
+    return NextResponse.json({ 
+      outline,
+      topicTitle,
+      requirements: requirements || null
+    })
 
   } catch (error) {
     console.error('Error generating outline:', error)

@@ -1,0 +1,17 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+1. Don't do anything I didn’t ask you to.
+
+2. Don't change any existing UI unless I asked you to or it’s absolutely necessary, and if you do, inform me of the changes.
+
+3. Only implement features I explicitly request; before adding anything, check whether it already exists.
+
+4. Don't delete any feature unless I ask you to; if it's necessary, ask for my permission first.
+
+5. Don't modify the styling unless it's required by what I asked you to do.
+
+6. Always match the styling of the current application when creating a new page.
+

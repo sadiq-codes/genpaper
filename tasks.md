@@ -1,226 +1,248 @@
+Okay, let's break down the integration of your new `ProjectWorkspace.tsx` UI into a granular, step-by-step plan. This plan focuses on replacing the old project page structure and wiring up the new UI with essential functionalities, paving the way for the full advanced features.
 
-## Advanced Features: Task Breakdown 🚀
-
-We'll organize tasks into epics. For now, all tasks are in the **"Ready for Development"** state.
-
-### Epic: Advanced Citation Management 📚
-
-This epic focuses on moving beyond placeholder citations to robust, AI-assisted citation and reference management.
-
-**Task ID: ACM-01**
-* **Title:** Design Enhanced Supabase Schema for Structured Citations
-* **Purpose:** To create the database structure necessary for storing detailed, structured citation information and linking it to project content.
-* **Steps:**
-    1.  Define fields for a `citations` table (e.g., `project_id`, `doi`, `title`, `authors` (JSONB), `year`, `journal`, `abstract`, `source_type`, `retrieved_at`).
-    2.  Define fields for a `reference_links` table to link specific text segments or claims within `paper_sections` to entries in the `citations` table.
-    3.  Define fields for storing formatted `references` within a project, possibly linked to a chosen citation style.
-    4.  Write SQL migration scripts for these new tables and relationships.
-* **Acceptance Criteria:**
-    * New `citations`, `reference_links`, and project-level `references` (or similar) tables are created in Supabase via a migration.
-    * Relationships (foreign keys) are correctly established between these tables and existing tables like `projects` and `paper_sections`.
-    * RLS policies are considered and drafted for the new tables.
-* **Estimated Effort:** M
-* **Dependencies:** MVP Database Schema
-
-**Task ID: ACM-02**
-* **Title:** Implement Basic `literatureSearch` Tool Shell
-* **Purpose:** To set up the foundational AI tool in `lib/ai/tools/literatureSearch.ts` that can be called by the AI, initially returning mock data.
-* **Steps:**
-    1.  Define the input parameters for the `literatureSearch` tool (e.g., `query: string`, `max_results: int`).
-    2.  Define the expected output structure (e.g., an array of objects, each with `title`, `authors`, `year`, `abstract_snippet`, `source_url`, `doi`).
-    3.  Implement the tool function to accept parameters and return a hardcoded list of 2-3 mock search results matching the defined output structure.
-    4.  Ensure the tool is correctly described for the AI SDK (function name, description, parameters).
-* **Acceptance Criteria:**
-    * The `literatureSearch` tool can be invoked by the AI SDK (tested via a backend script or API route).
-    * The tool returns the predefined mock search results in the correct format.
-    * The AI (via logs or simple response) indicates it "received" the mock results.
-* **Estimated Effort:** S
-* **Dependencies:** MVP AI SDK setup (`lib/ai/sdk.ts`)
-
-**Task ID: ACM-03**
-* **Title:** Update AI Prompt to Request Literature Search via Tool
-* **Purpose:** To modify an existing section generation prompt to instruct the AI to use the `literatureSearch` tool when it identifies a claim needing a citation.
-* **Steps:**
-    1.  Choose a section generation prompt (e.g., `USER_PROMPT_GENERATE_SECTION` in `lib/ai/prompts.ts`).
-    2.  Update the prompt to explicitly ask the AI to:
-        * Identify a specific claim.
-        * Formulate a search query for that claim.
-        * Call the `literatureSearch` tool with that query.
-        * Initially, just report back the mock results it received (actual citation insertion will be a later task).
-* **Acceptance Criteria:**
-    * When the AI generates a section using the updated prompt, it attempts to call the `literatureSearch` tool (verified via backend logs).
-    * The AI's response (or internal monologue if logged) indicates it has processed the (mock) results from the tool.
-* **Estimated Effort:** S
-* **Dependencies:** ACM-02
-
-**Task ID: ACM-04**
-* **Title:** Integrate Semantic Scholar API into `literatureSearch` Tool
-* **Purpose:** To replace mock data in the `literatureSearch` tool with actual search results from the Semantic Scholar API.
-* **Steps:**
-    1.  Obtain a Semantic Scholar API key (if required) and add it to environment variables.
-    2.  Modify `lib/ai/tools/literatureSearch.ts` to:
-        * Accept the search query from the AI.
-        * Make an API call to Semantic Scholar's public API using the query.
-        * Parse the API response.
-        * Transform the results into the standardized output format defined in ACM-02.
-        * Implement basic error handling for API call failures.
-* **Acceptance Criteria:**
-    * When the `literatureSearch` tool is called with a test query, it successfully fetches results from Semantic Scholar.
-    * The results are returned in the correct standardized format.
-    * API errors (e.g., network issues, invalid query) are handled gracefully (e.g., return an empty array or an error message).
-* **Estimated Effort:** M
-* **Dependencies:** ACM-02, Semantic Scholar API access
-
-**Task ID: ACM-05**
-* **Title:** Update AI Prompt to Generate Structured Citation from Tool Results
-* **Purpose:** To enable the AI to process actual literature search results and attempt to generate a structured citation object for one relevant source.
-* **Steps:**
-    1.  Update the section generation prompt (from ACM-03) or create a new one.
-    2.  Instruct the AI to:
-        * Call the `literatureSearch` tool.
-        * Evaluate the returned search results.
-        * Select the most relevant result for the claim it's trying to cite.
-        * Extract information (authors, title, year, DOI) from the selected result.
-        * Return this information as a **structured JSON object** (using the AI SDK's structured data generation capabilities).
-        * Insert a simple placeholder like `[CITE: <DOI or Title>]` in the generated text.
-* **Acceptance Criteria:**
-    * When generating a section, the AI calls `literatureSearch` and receives real results.
-    * The AI's output includes a structured JSON object representing a citation for at least one source.
-    * The generated text includes a placeholder like `[CITE: ...]`.
-* **Estimated Effort:** M
-* **Dependencies:** ACM-03, ACM-04, AI SDK supports structured data generation.
-
-**Task ID: ACM-06**
-* **Title:** Save Structured Citation and Link to Project Content
-* **Purpose:** To persist the AI-generated structured citation data into the new Supabase tables and link it to the generated text.
-* **Steps:**
-    1.  Modify the backend API route (e.g., `app/api/research/generate/section/route.ts`) that handles section generation.
-    2.  When the AI returns a structured citation object and the text with `[CITE: ...]` placeholders:
-        * Parse the structured citation JSON.
-        * Save the citation details to the `citations` table in Supabase (handle potential duplicates based on DOI).
-        * Identify the location of the `[CITE: ...]` placeholder in the generated text.
-        * Create an entry in the `reference_links` table, linking the text segment (or an identifier for it) to the new `citations` table entry.
-        * (Optional) Replace the `[CITE: ...]` placeholder with a more formal in-text citation marker if feasible at this stage.
-* **Acceptance Criteria:**
-    * A new record is created in the `citations` table with the correct structured data.
-    * A corresponding record is created in the `reference_links` table.
-    * The text saved to `paper_sections` either contains the updated marker or allows for later association.
-* **Estimated Effort:** L
-* **Dependencies:** ACM-01, ACM-05
-
-**Task ID: ACM-07**
-* **Title:** Implement Basic UI for Displaying Suggested Citations (`CitationManager.tsx`)
-* **Purpose:** To provide a user interface where users can see the citations the AI has identified and linked to the text.
-* **Steps:**
-    1.  Modify `app/(dashboard)/projects/[projectId]/components/CitationManager.tsx`.
-    2.  Fetch linked citations for the current project/section from Supabase (using `citations` and `reference_links` tables).
-    3.  Display a list of these citations (e.g., title, authors, year).
-    4.  (Optional) Highlight or allow navigation to the part of the text where the citation is relevant.
-* **Acceptance Criteria:**
-    * `CitationManager.tsx` correctly fetches and displays a list of structured citations associated with the project.
-    * The displayed information is accurate based on what's in the database.
-* **Estimated Effort:** M
-* **Dependencies:** ACM-06
-
-**Task ID: ACM-08**
-* **Title:** Generate Basic Formatted Reference List (`ReferenceList.tsx`)
-* **Purpose:** To display a simple, dynamically generated list of all unique cited works for the project.
-* **Steps:**
-    1.  Modify `app/(dashboard)/projects/[projectId]/components/ReferenceList.tsx`.
-    2.  Fetch all unique entries from the `citations` table for the current project.
-    3.  Display them as a numbered or bulleted list, formatted consistently (e.g., "Author(s). (Year). *Title*.").
-    4.  (No complex APA/MLA formatting yet, just a clean, consistent presentation).
-* **Acceptance Criteria:**
-    * `ReferenceList.tsx` displays all unique citations saved for the project.
-    * The list updates if new citations are added.
-* **Estimated Effort:** M
-* **Dependencies:** ACM-06
+All tasks are in **"Ready for Development."**
 
 ---
-### Epic: Automated Literature Review Synthesis 📝
 
-This epic aims to enable the AI to draft sections of a literature review by synthesizing information from multiple sources.
+### Epic: Workspace Foundation & UI Integration 뼈대
 
-**Task ID: ALR-01**
-* **Title:** Define AI Prompt for Multi-Document Summarization and Thematic Analysis
-* **Purpose:** To create a sophisticated prompt that guides the AI to read several provided abstracts/text snippets and identify common themes or contrasting points.
+This epic focuses on getting the new `ProjectWorkspace.tsx` rendering with basic project data and replacing the old project page.
+
+**Task ID: WFI-00 (Prerequisite)**
+* **Title:** Ensure UI Component Library & Icons are Installed
+* **Purpose:** To confirm all necessary UI building blocks (`@/components/ui/...`) and `lucide-react` icons used in `ProjectWorkspace.tsx` are available in the project.
 * **Steps:**
-    1.  Design a prompt in `lib/ai/prompts.ts` that accepts an array of text snippets (representing abstracts or key sections from multiple papers).
-    2.  Instruct the AI to:
-        * Identify 2-3 key themes or arguments present across the provided texts.
-        * For each theme, list which texts support or discuss it.
-        * (Optional) Identify any contrasting viewpoints.
-        * Return this analysis as structured JSON.
+    1.  Review `ProjectWorkspace.tsx` for all imported components from `@/components/ui/` (e.g., `Button`, `Card`, `Input`, `Textarea`, `Badge`, `Avatar`, `Progress`).
+    2.  If using Shadcn/UI, ensure these components have been added to your project (`npx shadcn-ui@latest add ...`).
+    3.  Verify `lucide-react` is installed.
 * **Acceptance Criteria:**
-    * Given a set of 3-5 sample abstracts, the AI (called via a backend test script) returns a structured JSON object accurately identifying common themes and the source snippets for each.
+    * All UI primitive components and icon libraries referenced in `ProjectWorkspace.tsx` are correctly installed and importable.
+* **Estimated Effort:** S
+* **Dependencies:** None (but essential for next tasks).
+
+**Task ID: WFI-01**
+* **Title:** Adapt `app/(dashboard)/projects/[projectId]/page.tsx` to Render `ProjectWorkspace.tsx`
+* **Purpose:** To make the new `ProjectWorkspace.tsx` the primary client component for viewing a single project, receiving initial data from a parent server component.
+* **Steps:**
+    1.  Modify the existing `app/(dashboard)/projects/[projectId]/page.tsx` (which is currently a Server Component, as per your "old code").
+    2.  This `page.tsx` (Server Component) will now:
+        * Fetch only essential initial data for the project (e.g., `id`, `title`, `user_id`, maybe `created_at`, initial `status`). Authentication check for the user remains.
+        * **Do not** fetch the full `content`, `outline`, `citations_identified`, or `references_list` here as `ProjectWorkspace.tsx` will manage fetching its detailed content requirements.
+        * Import and render the `ProjectWorkspace` client component, passing the fetched `projectId` and initial minimal project data as props.
+    3.  Move the `ProjectWorkspace.tsx` file to `app/(dashboard)/projects/[projectId]/ProjectWorkspace.tsx` (or a suitable `components` subfolder within this route segment). Ensure it has `"use client";` at the top.
+* **Acceptance Criteria:**
+    * Navigating to `/projects/[projectId]` renders the `ProjectWorkspace.tsx` UI.
+    * The `ProjectWorkspace` component receives `projectId` and basic project details (like title) as props.
+    * The old UI rendered by `ProjectPage.tsx` is no longer visible.
 * **Estimated Effort:** M
-* **Dependencies:** ACM-04 (to get multiple real abstracts for testing), AI SDK supports structured data generation.
+* **Dependencies:** WFI-00, `ProjectWorkspace.tsx` code provided by user.
 
-**Task ID: ALR-02**
-* **Title:** Implement "Synthesize Literature" API Endpoint
-* **Purpose:** To create a backend endpoint that takes a topic or a list of document identifiers, fetches their content (e.g., abstracts), and uses the ALR-01 prompt to generate a thematic analysis.
+**Task ID: WFI-02**
+* **Title:** Implement Initial Project Data Loading within `ProjectWorkspace.tsx`
+* **Purpose:** To enable `ProjectWorkspace.tsx` to fetch its required detailed project data after the initial server-rendered shell.
 * **Steps:**
-    1.  Create a new API route, e.g., `app/api/research/synthesize/literature/route.ts`.
-    2.  The endpoint should accept a `topic` or an array of `document_identifiers` (e.g., DOIs or internal IDs from a `literature_corpus` table if ACM-01 creates one).
-    3.  If `topic`, use the `literatureSearch` tool to find relevant papers and get their abstracts. If `document_identifiers`, fetch their abstracts from Supabase (if stored) or externally.
-    4.  Pass the collected abstracts to the AI using the prompt from ALR-01.
-    5.  Return the AI's structured JSON analysis.
+    1.  In `ProjectWorkspace.tsx`, utilize the `useEffect` hook (triggered by `projectId`) to fetch detailed project data from Supabase using the client-side `supabase` client. This includes:
+        * `title`, `outline` (if still used), `status`, `word_count` (overall, to be refined per section).
+        * Initially, `content` can be fetched if it's still a single blob in your `projects` table.
+    2.  Update the `project`, `editorContent`, and `wordCount` states with the fetched data.
+    3.  Handle loading and error states appropriately.
 * **Acceptance Criteria:**
-    * The API endpoint successfully retrieves abstracts for a given topic/set of IDs.
-    * It calls the AI with the thematic analysis prompt.
-    * It returns the structured JSON analysis from the AI.
-* **Estimated Effort:** L
-* **Dependencies:** ALR-01, ACM-04
-
-**Task ID: ALR-03**
-* **Title:** Develop UI for Initiating and Displaying Literature Synthesis
-* **Purpose:** To allow users to trigger the literature synthesis process and view the results.
-* **Steps:**
-    1.  Add a new section/button in `app/(dashboard)/projects/[projectId]/page.tsx` or a dedicated "Literature Review" component.
-    2.  Allow the user to input a sub-topic for synthesis.
-    3.  On submission, call the API endpoint from ALR-02.
-    4.  Display the returned structured JSON (themes, supporting sources) in a readable format.
-* **Acceptance Criteria:**
-    * User can input a sub-topic and trigger the synthesis.
-    * The UI displays a loading state while waiting for the API.
-    * The thematic analysis (themes and which papers support them) is clearly presented to the user.
+    * `ProjectWorkspace.tsx` successfully fetches and displays the project title.
+    * If `projects.content` exists, it's loaded into the `editorContent` state.
+    * Loading and error states within `ProjectWorkspace.tsx` are functional.
 * **Estimated Effort:** M
-* **Dependencies:** ALR-02
+* **Dependencies:** WFI-01, Supabase client (`@/lib/supabase/client`).
 
-**(Further tasks in this epic would involve the AI drafting actual literature review paragraphs based on this synthesis, incorporating citations, etc.)**
+**Task ID: WFI-03**
+* **Title:** Implement Basic UI Toggles in `ProjectWorkspace.tsx`
+* **Purpose:** To make the focus mode, show outline, and show citations toggles functional for controlling UI visibility.
+* **Steps:**
+    1.  Ensure the `focusMode`, `showCitations`, and `showOutline` state variables are correctly toggling the visibility of the respective UI sections (left sidebar, right sidebar, and potentially header elements for focus mode).
+    2.  The buttons in the header (`Maximize2`/`Minimize2`) and sidebar headers (`X` to close) should correctly update these state variables.
+* **Acceptance Criteria:**
+    * Clicking the focus mode toggle correctly hides/shows sidebars.
+    * Clicking the close ('X') buttons on the outline and citation sidebars correctly hides them.
+    * The UI responds visually to these state changes.
+* **Estimated Effort:** S
+* **Dependencies:** WFI-01.
 
 ---
-### Epic: Enhanced Writing & Editing Assistance ✍️
+### Epic: Core Editor & Per-Section Content Management ✍️📄
 
-Focuses on making the AI a better writing partner by improving cohesion, style, and argumentation.
+This epic adapts the editor to work with a more granular, per-section data model.
 
-**Task ID: EWE-01**
-* **Title:** Implement "Analyze Section Cohesion" AI Prompt
-* **Purpose:** To create an AI prompt that evaluates a given text section for logical flow and connection between ideas.
+**Task ID: CES-01**
+* **Title:** Create `paper_sections` Table in Supabase
+* **Purpose:** To store research paper content in distinct, manageable sections.
 * **Steps:**
-    1.  Design a prompt in `lib/ai/prompts.ts` that takes a block of text (a generated section).
-    2.  Instruct the AI to:
-        * Assess the logical flow and transitions between sentences and paragraphs.
-        * Identify any abrupt shifts or unclear connections.
-        * Suggest specific areas for improvement or rephrasing to enhance cohesion.
-        * Return feedback as structured JSON (e.g., array of suggestions with text snippets).
+    1.  Write a Supabase SQL migration script to create the `paper_sections` table:
+        * `id` (UUID PK)
+        * `project_id` (UUID FK referencing `projects.id`, ON DELETE CASCADE)
+        * `section_key` (TEXT, e.g., "introduction", "methodology", "abstract"; unique per `project_id`)
+        * `title` (TEXT, e.g., "Introduction", "Methodology")
+        * `content` (TEXT, nullable)
+        * `order` (INTEGER, for maintaining section sequence)
+        * `status` (TEXT, e.g., "pending", "draft", "ai_drafting", "completed")
+        * `word_count` (INTEGER, DEFAULT 0)
+        * `created_at`, `updated_at` (TIMESTAMPTZ)
+    2.  Add necessary indexes (on `project_id`, `project_id_section_key`, `project_id_order`).
+    3. add unique(project_id, section_key) constraint and a partial index on status = 'ai_drafting'
+    4.  Define RLS policies.
 * **Acceptance Criteria:**
-    * Given a sample text section (with some deliberate awkward transitions), the AI (called via a backend test script) returns structured feedback pinpointing cohesion issues and offering actionable suggestions.
+    * `paper_sections` table is created in Supabase with all specified columns and constraints.
+    * RLS policies are applied.
 * **Estimated Effort:** M
-* **Dependencies:** AI SDK supports structured data generation.
+* **Dependencies:** Supabase project.
 
-**Task ID: EWE-02**
-* **Title:** Add "Analyze Cohesion" Feature to Paper Editor
-* **Purpose:** To allow users to get AI feedback on the cohesion of a generated or edited section.
+**Task ID: CES-02**
+* **Title:** Load Section Data into `ProjectWorkspace.tsx` Outline and Editor
+* **Purpose:** To fetch and display content on a per-section basis from the new `paper_sections` table.
 * **Steps:**
-    1.  Add an "Analyze Cohesion" button within the `PaperEditor.tsx` component or for a selected section.
-    2.  When clicked, send the current section's text to a new API endpoint (e.g., `app/api/research/analyze/cohesion/route.ts`).
-    3.  This API route will use the prompt from EWE-01 to get feedback.
-    4.  Display the AI's cohesion feedback to the user (e.g., in a sidebar, as inline annotations if possible).
+    1.  Modify the `loadProject` function (or a new data fetching function) in `ProjectWorkspace.tsx`:
+        * Fetch all sections for the current `projectId` from the `paper_sections` table, ordered by `order`.
+        * If no sections exist for a new project, trigger a Server Action to create default sections (from `defaultSections` array in UI code) in `paper_sections` for that project.
+    2.  Update the `sections` state in `ProjectWorkspace.tsx` with the fetched/created sections from the database.
+    3.  When `activeSection` changes (user clicks in outline):
+        * Find the corresponding section in the `sections` state.
+        * Set `editorContent` to that section's `content`.
+        * Update `wordCount` based on the active section's content.
+    4.  after creating default sections, return them in the same RPC so the UI doesn’t make two round trips (create → read).
 * **Acceptance Criteria:**
-    * User can click the "Analyze Cohesion" button for a section.
-    * AI-generated feedback on cohesion is displayed in a user-friendly way.
-* **Estimated Effort:** M
-* **Dependencies:** EWE-01
+    * The "Document Outline" (left sidebar) is populated with sections fetched from `paper_sections` for the current project (or defaults if new).
+    * Clicking a section in the outline loads its specific content into the main editor area (`editorContent`).
+    * Word count updates based on the active section.
+* **Estimated Effort:** L
+* **Dependencies:** WFI-02, CES-01.
 
-**(Further tasks: style adaptation, argument strength analysis, counter-argument suggestions.)**
+**Task ID: CES-03**
+* **Title:** Adapt Auto-Save to Update `paper_sections` Table
+* **Purpose:** To ensure editor content is saved to the correct section in the database.
+* **Steps:**
+    1.  Create a new Server Action: `updateSectionContent(projectId: string, sectionKey: string, newContent: string, newWordCount: number)`.
+    2.  This action will update the `content`, `word_count`, and `updated_at` for the specific section in the `paper_sections` table (matching `projectId` and `sectionKey`).
+    3.  Modify `saveContent` function in `ProjectWorkspace.tsx` to call this new Server Action, passing the `activeSection`'s key.
+    4. call the action from a Zod-validated client helper (useSectionAutosave) with onBlur and debounce(800 ms) on change.
+* **Acceptance Criteria:**
+    * Changes made in the editor are debounced and saved to the correct section's record in the `paper_sections` table.
+    * The `word_count` for that section is updated in the database.
+* **Estimated Effort:** M
+* **Dependencies:** CES-02, Server Actions setup.
+
+**Task ID: CES-04 (Placeholder for now)**
+* **Title:** Integrate Basic `SmartEditor.tsx` Functionality (Replacing Plain `Textarea`)
+* **Purpose:** To swap the current `Textarea` with a proper rich-text editor foundation (e.g., TipTap, Plate) for future AI augmentations. Basic styling buttons non-functional.
+* **Steps:**
+    1.  Choose and install a rich-text editor library (e.g., TipTap).
+    2.  Create a basic `SmartEditor.tsx` component that wraps this library.
+    3.  Integrate this `SmartEditor.tsx` into `ProjectWorkspace.tsx` to replace the `<Textarea />`.
+    4.  Ensure `editorContent` is correctly bound (two-way) to the rich-text editor.
+    5.  Ensure `handleContentChange` and `saveContent` still function with the rich-text editor's content (may need to get HTML or specific JSON from editor).
+    6.  The toolbar buttons (`Bold`, `Italic`, etc.) are present but may not be wired up to actual formatting commands yet, or only basic ones.
+    7. TipTap: turn on the CharacterCount extension; surface word/char count via its API instead of manual split(' ').
+* **Acceptance Criteria:**
+    * The plain `Textarea` is replaced with a rich-text editor.
+    * Content loads into and saves from the rich-text editor correctly (per section).
+    * Basic typing and editing are functional.
+* **Estimated Effort:** L
+* **Dependencies:** CES-03.
+
+---
+### Epic: Connecting Mocked UI Elements & Basic AI Actions 🤖💬
+
+**Task ID: MKB-01**
+* **Title:** Populate Outline Section Stats with Real Data
+* **Purpose:** To display actual word counts and AI suggestion counts (initially 0) per section in the outline.
+* **Steps:**
+    1.  Ensure the `sections` state (from CES-02) in `ProjectWorkspace.tsx` includes `wordCount` (from `paper_sections` table) and `aiSuggestions` (can be hardcoded to 0 initially for each section).
+    2.  Update the rendering logic for each section in the outline panel to display these values.
+    3. word counts: query paper_sections.word_count AND subscribe via Realtime so stats update as your debounce saves fire.
+* **Acceptance Criteria:**
+    * Each section in the outline displays its actual `wordCount` from the database.
+    * Each section displays "0 AI suggestions" (or similar placeholder).
+* **Estimated Effort:** S
+* **Dependencies:** CES-02.
+
+**Task ID: MKB-02**
+* **Title:** Wire Up "Generate Full Draft" Button (Outline Panel) to Call Existing Server Action
+* **Purpose:** To connect the UI button to the existing `generateAndSaveFullPaper` server action logic.
+* **Steps:**
+    1.  In `ProjectWorkspace.tsx`, find the "Generate Full Draft" button in the outline panel.
+    2.  On click, call the `generateAndSaveFullPaper` server action (from your old code), passing `projectId`, `projectTitle` (from `project` state), and the current `project.outline` (fetched in WFI-02 or a dedicated field).
+    3.  Handle loading state and display success/error messages (can be simple `alert` or `console.log` initially).
+    4.  Note: The `generateAndSaveFullPaper` action itself calls `/api/research/generate/full-paper`. This task is just wiring the button.
+    5. add a pre-flight check: abort if any section status = 'ai_drafting' to stop double streams.
+* **Acceptance Criteria:**
+    * Clicking "Generate Full Draft" calls the `generateAndSaveFullPaper` server action.
+    * The action attempts to call the full paper generation API endpoint.
+    * Basic feedback (e.g., console log) is provided on initiation.
+* **Estimated Effort:** S
+* **Dependencies:** WFI-02, `generateAndSaveFullPaper` Server Action.
+
+**Task ID: MKB-03**
+* **Title:** Wire Up Basic "Ask AI" (Chat Input) to Log Message
+* **Purpose:** To make the AI assistant chat input functional for sending a message (initially just logging it).
+* **Steps:**
+    1.  In `ProjectWorkspace.tsx`, the `handleAiMessage` function should:
+        * Prevent submission if `aiMessage` is empty.
+        * `console.log` the `aiMessage` along with `projectId` or `activeSection` context.
+        * Clear the `aiMessage` input.
+    2.  (Connecting to a real AI chat API endpoint is a subsequent, more complex task).
+* **Acceptance Criteria:**
+    * Typing a message in the "Ask AI" input and pressing Enter or Send logs the message and context to the console.
+    * Input field clears after sending.
+* **Estimated Effort:** S
+* **Dependencies:** ASI-02 (UI setup).
+
+**Task ID: MKB-04**
+* **Title:** Wire Up Context Menu "Find Sources" to Log Action
+* **Purpose:** To connect the "Find Sources" button in the text selection context menu to a placeholder action.
+* **Steps:**
+    1.  In `ProjectWorkspace.tsx`, modify `handleAiAction`:
+        * If `action === 'find-sources'`, `console.log` "AI Action: find-sources on text:", `selectedText`, and the `activeSection`.
+        * Hide the context menu.
+    2.  (Connecting to real literature search is a subsequent task).
+* **Acceptance Criteria:**
+    * Selecting text and clicking "Find Sources" in the context menu logs the action, selected text, and context.
+* **Estimated Effort:** S
+* **Dependencies:** CWS-04 (Context menu UI).
+
+---
+### Epic: Integrating Real Citation Data (Replacing Mocks) 📚➡️💾
+
+This epic assumes the Supabase schema from `Task ID: ACM-01` (from the *previous* plan for "Advanced Citation Management") is in place (`citations`, `reference_links`, `formatted_references` tables).
+
+**Task ID: RCD-01**
+* **Title:** Fetch Real Structured Citations for `CitationManager`
+* **Purpose:** To replace `mockCitations` with actual structured citation data fetched from Supabase for the current project.
+* **Steps:**
+    1.  Create a Server Action or modify `loadProject` / create a new client-side fetch in `ProjectWorkspace.tsx` for the `CitationManager` sidebar.
+    2.  This logic should fetch data from the `citations` table, and potentially join with `reference_links` to get context, for the current `projectId`.
+    3.  Update the `citations` state in `ProjectWorkspace.tsx` with this real data.
+    4.  Adapt the `CitationManager` UI in `ProjectWorkspace.tsx` (the right sidebar) to correctly display the fields from your `citations` table (e.g., `doi`, `title`, `authors` JSONB, `year`, `journal`, `abstract`, `source_type`, `source_url`).
+    5.  The `formatAuthors` helper might need to be adjusted based on your `authors` JSONB structure.
+    6. fetch from a view citations_with_links (or RPC) rather than two separate queries; you already do that later in the real-time panel.
+* **Acceptance Criteria:**
+    * The "Citations & Sources" sidebar fetches and displays structured citations from the Supabase `citations` table for the current project.
+    * If no citations exist, it shows an appropriate empty state.
+    * Loading and error states are handled.
+* **Estimated Effort:** L
+* **Dependencies:** WFI-01, Schema from previous ACM-01 (or a new task to create `citations` & `reference_links` tables if not done). `ProjectWorkspace.tsx` UI for citation sidebar.
+
+**Task ID: RCD-02**
+* **Title:** Implement Dynamic Bibliography Preview from `citations` Table
+* **Purpose:** To replace the mock bibliography with a dynamically generated list from the project's actual citations.
+* **Steps:**
+    1.  In `ProjectWorkspace.tsx`, within the "Bibliography Preview" section of the Citation Manager sidebar:
+        * Use the `citations` state (populated in RCD-01).
+        * Map over the `citations` and format each one into a simple reference string (e.g., "Author(s) (Year). Title. Journal.").
+        * Display this list.
+    2.  (Full CSL styling is a more advanced step).
+* **Acceptance Criteria:**
+    * The bibliography preview dynamically displays formatted references based on the data in the `citations` state.
+    * The list updates if the `citations` state changes.
+* **Estimated Effort:** M
+* **Dependencies:** RCD-01.
+
+---
+
+This plan focuses on integrating the new UI and connecting its basic interactive parts, largely using mock data for complex AI interactions initially, but progressively wiring up the database for sections and real citation display. Subsequent epics would then replace all mock functionalities with live AI calls and the advanced features from your gap analysis (like actual AI suggestions, functional context menu actions, AI chat, advanced literature search, etc.).

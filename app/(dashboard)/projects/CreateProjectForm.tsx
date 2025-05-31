@@ -1,11 +1,20 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createProject } from './actions'
+import { supabase } from '@/lib/supabase/client'
+import { addProjectActivity } from '@/lib/projects'
 
-export function CreateProjectForm() {
+interface CreateProjectFormProps {
+  onSuccess?: () => void
+  onClose?: () => void
+}
+
+export function CreateProjectForm({ onSuccess, onClose }: CreateProjectFormProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const router = useRouter()
 
   async function handleSubmit(formData: FormData) {
     setIsSubmitting(true)
@@ -14,11 +23,26 @@ export function CreateProjectForm() {
     try {
       const result = await createProject(formData)
       
-      if (result.success) {
+      if (result.success && result.projectId) {
         setMessage({ type: 'success', text: 'Project created successfully!' })
-        // Clear the form
-        const form = document.querySelector('form') as HTMLFormElement
-        form?.reset()
+        
+        // Add activity for project creation
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          await addProjectActivity(
+            result.projectId,
+            user.id,
+            'project_created',
+            `Created new research project: ${formData.get('title')}`
+          )
+        }
+        
+        // Navigate immediately to the workspace instead of closing modal
+        router.push(`/projects/${result.projectId}`)
+        
+        // Call success callback to refresh data
+        onSuccess?.()
+        onClose?.()
       } else {
         setMessage({ type: 'error', text: result.error || 'Failed to create project' })
       }
@@ -33,23 +57,12 @@ export function CreateProjectForm() {
   return (
     <div>
       {message && (
-        <div className={`mb-6 p-4 rounded-lg flex items-start space-x-3 ${
+        <div className={`p-3 rounded-lg mb-4 ${
           message.type === 'success' 
-            ? 'bg-green-50 text-green-800 border border-green-200' 
-            : 'bg-red-50 text-red-800 border border-red-200'
+            ? 'bg-green-50 border border-green-200 text-green-700'
+            : 'bg-red-50 border border-red-200 text-red-700'
         }`}>
-          <div className="flex-shrink-0">
-            {message.type === 'success' ? (
-              <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-          </div>
-          <div className="text-sm font-medium">{message.text}</div>
+          <p className="text-sm">{message.text}</p>
         </div>
       )}
       
@@ -87,7 +100,7 @@ export function CreateProjectForm() {
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
               </svg>
-              <span>Create New Project</span>
+              <span>Create & Open Project</span>
             </>
           )}
         </button>

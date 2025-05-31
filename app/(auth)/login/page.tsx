@@ -42,7 +42,7 @@ export default function LoginPage() {
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Left Hero Panel */}
-      <div className="flex-1 bg-gradient-to-br from-blue-600 via-blue-700 to-purple-700 relative overflow-hidden">
+      <div className="flex-1 bg-gradient-to-br from-blue-100 via-blue-400 to-purple-300 relative overflow-hidden">
         <div className="absolute inset-0 bg-black/10"></div>
 
         {/* Abstract AI Graphic */}
@@ -148,8 +148,8 @@ export default function LoginPage() {
                 <Input
                   type={showPassword ? "text" : "password"}
                   placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                   className="h-11 pr-10"
                   required
                 />
@@ -162,8 +162,8 @@ export default function LoginPage() {
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </Button>
-              </div>
             </div>
+          </div>
 
             <Button 
               type="submit"

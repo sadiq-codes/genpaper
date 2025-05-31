@@ -39,7 +39,7 @@ export default function SignUpPage() {
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Left Hero Panel */}
-      <div className="flex-1 bg-gradient-to-br from-blue-600 via-blue-700 to-purple-700 relative overflow-hidden">
+      <div className="flex-1 bg-gradient-to-br from-blue-100 via-blue-400 to-purple-300 relative overflow-hidden">
         <div className="absolute inset-0 bg-black/10"></div>
 
         {/* Abstract AI Graphic */}

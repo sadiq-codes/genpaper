@@ -10,33 +10,27 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { 
   FolderOpen, 
-  BookOpen, 
   Settings, 
   Bell, 
   LogOut, 
   Search, 
   Menu, 
   X,
-  Plus,
   HelpCircle,
   Sun,
   Moon,
   Zap,
-  MoreHorizontal,
   Send,
   Paperclip,
   Mic,
   FileText,
-  PenTool,
   ImageIcon,
   User as UserIcon,
-  Code,
-  Clock
+  Code, 
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
 
 export default function DashboardLayout({
   children,
@@ -91,42 +85,11 @@ export default function DashboardLayout({
   const navigationItems = [
     { name: "Dashboard", href: "/dashboard", icon: FileText, isActive: pathname.startsWith("/dashboard") },
     { name: "Projects", href: "/projects", icon: FolderOpen, isActive: pathname.startsWith("/projects") },
-    { name: "Smart Editor", href: "/editor", icon: PenTool, isActive: pathname.startsWith("/editor") },
     { name: "Literature Search", href: "/search", icon: ImageIcon, isActive: pathname.startsWith("/search") },
     { name: "Library", href: "/library", icon: Code, isActive: pathname.startsWith("/library") },
     { name: "Citation Manager", href: "/citations", icon: UserIcon, isActive: pathname.startsWith("/citations") },
-    { name: "Notifications", href: "/notifications", icon: HelpCircle, isActive: pathname.startsWith("/notifications") },
   ]
 
-  const projects = [
-    "New Research Project",
-    "Machine Learning in Healthcare",
-    "Climate Change Analysis", 
-    "Quantum Computing Review",
-    "Neural Network Study",
-    "Biomedical Engineering",
-    "AI Ethics Research",
-  ]
-
-  const projectDescriptions = [
-    "",
-    "Exploring AI applications in medical diagnosis...",
-    "Analyzing environmental impact data...", 
-    "Comprehensive review of quantum algorithms...",
-    "Deep learning architecture comparison...",
-    "Engineering solutions for healthcare...",
-    "Ethical considerations in AI development...",
-  ]
-
-  const projectTimes = [
-    "",
-    "2 hours ago",
-    "1 day ago",
-    "3 days ago", 
-    "1 week ago",
-    "2 weeks ago",
-    "1 month ago",
-  ]
 
   if (loading) {
     return (
@@ -142,6 +105,8 @@ export default function DashboardLayout({
   if (!user) {
     return null // Will redirect to login
   }
+
+  const isProjectDetailPage = /^\/projects\/[^/]+$/.test(pathname);
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -178,24 +143,24 @@ export default function DashboardLayout({
             </button>
           </div>
 
-          <div className="relative">
+            <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
             <Input placeholder="Search" className="pl-10 bg-gray-50 border-0 h-9" />
             <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-gray-400">⌘K</span>
+            </div>
           </div>
-        </div>
 
-        {/* Navigation */}
+          {/* Navigation */}
         <div className="flex-1 p-4">
           <nav className="space-y-1">
             {navigationItems.map((item, index) => (
-              <Link
+                <Link
                 key={index}
-                href={item.href}
+                  href={item.href}
                 onClick={() => setSidebarOpen(false)}
                 className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
                   item.isActive ? "bg-blue-50 text-blue-700" : "text-gray-600 hover:bg-gray-50"
-                }`}
+                  }`}
               >
                 {item.isActive ? (
                   <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
@@ -203,7 +168,7 @@ export default function DashboardLayout({
                   <item.icon className="w-4 h-4" />
                 )}
                 <span className="text-sm font-medium">{item.name}</span>
-              </Link>
+                </Link>
             ))}
           </nav>
         </div>
@@ -254,19 +219,19 @@ export default function DashboardLayout({
                 {user.email?.charAt(0).toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-0">
               <div className="font-semibold text-sm text-gray-900">{user.email}</div>
               <div className="text-xs text-gray-500">Researcher</div>
             </div>
           </div>
 
-          <button
-            onClick={handleSignOut}
+            <button
+              onClick={handleSignOut}
             className="flex items-center w-full px-3 py-2 mt-2 text-sm text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-          >
+            >
             <LogOut className="mr-3 w-4 h-4 text-gray-400" />
-            Sign Out
-          </button>
+              Sign Out
+            </button>
         </div>
       </div>
 
@@ -292,28 +257,30 @@ export default function DashboardLayout({
         </div>
 
         {/* Main Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold text-gray-900">AI Research Assistant</h1>
+        {!isProjectDetailPage && (
+          <div className="flex items-center justify-between p-6 border-b border-gray-200">
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl font-semibold text-gray-900">AI Research Assistant</h1>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button className="bg-black text-white hover:bg-gray-800">
+                <Zap className="w-4 h-4 mr-2" />
+                Upgrade
+              </Button>
+              <Button variant="ghost" size="icon">
+                <HelpCircle className="w-4 h-4 text-gray-500" />
+              </Button>
+              <Button variant="ghost" size="icon">
+                <Bell className="w-4 h-4 text-gray-500" />
+              </Button>
+              <Avatar className="w-8 h-8">
+                <AvatarFallback className="bg-purple-200 text-purple-800">
+                  {user.email?.charAt(0).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Button className="bg-black text-white hover:bg-gray-800">
-              <Zap className="w-4 h-4 mr-2" />
-              Upgrade
-            </Button>
-            <Button variant="ghost" size="icon">
-              <HelpCircle className="w-4 h-4 text-gray-500" />
-            </Button>
-            <Button variant="ghost" size="icon">
-              <Bell className="w-4 h-4 text-gray-500" />
-            </Button>
-            <Avatar className="w-8 h-8">
-              <AvatarFallback className="bg-purple-200 text-purple-800">
-                {user.email?.charAt(0).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-          </div>
-        </div>
+        )}
 
         {/* Main Content with Chat and Projects */}
         <div className="flex-1 flex">
@@ -362,44 +329,6 @@ export default function DashboardLayout({
               </div>
             )}
           </div>
-
-          {/* Projects Section (Right side) - Only show on main dashboard */}
-          {pathname === "/dashboard" && (
-            <div className="w-80 border-l border-gray-200 bg-gray-50">
-              <div className="p-4 border-b border-gray-200 flex items-center justify-between bg-white">
-                <h3 className="font-semibold text-gray-900">Projects (7)</h3>
-                <Button variant="ghost" size="icon">
-                  <MoreHorizontal className="w-4 h-4 text-gray-500" />
-                </Button>
-              </div>
-
-              <div className="p-4 space-y-2">
-                {projects.map((project, index) => (
-                  <div
-                    key={index}
-                    className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                      index === 0 ? "bg-white shadow-sm border border-gray-200" : "hover:bg-white/50"
-                    }`}
-                  >
-                    <div className="font-medium text-sm text-gray-900 mb-1">{project}</div>
-                    {index > 0 && (
-                      <div className="text-xs text-gray-500">
-                        {projectDescriptions[index]}
-                      </div>
-                    )}
-                    {index > 0 && (
-                      <div className="flex items-center gap-1 mt-2">
-                        <Clock className="w-3 h-3 text-gray-400" />
-                        <span className="text-xs text-gray-500">
-                          {projectTimes[index]}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -1,79 +1,76 @@
-## Updated Architecture Focus for Advanced Features
+You're absolutely right to think about reusing existing code—it's often more efficient to build upon what you have! We can definitely integrate your new sophisticated UI (`ProjectWorkspace.tsx`) with the existing backend logic and Supabase setup from your MVP, adapting and enhancing as needed.
 
-The core technologies and overall layered architecture remain the same. The advancements will be in the complexity and capabilities within these layers.
+Here's the **High-Level Architecture of the Integration**:
 
-**Key Areas of Enhancement in Your Existing Structure:**
+Your goal is to replace the current server-rendered project page with the highly interactive, client-side `ProjectWorkspace.tsx`. This involves shifting how data is fetched, how UI state is managed for the workspace, and how backend actions (especially AI interactions) are triggered and their results displayed.
 
-### 1. Backend Logic (Next.js API Routes / Supabase Edge Functions) & AI Service Layer (AI SDK)
-   This is where the most significant "advanced" work will happen.
+**1. Core Shift: From Server Component to Rich Client Component for Workspace**
 
-   * **`app/api/research/generate/route.ts` (and potentially new, specialized API routes):**
-        * **More Sophisticated Orchestration:** This route (or new ones like `app/api/research/analyze/literature/route.ts` or `app/api/research/suggest/hypothesis/route.ts`) will manage more complex multi-step AI workflows.
-        * **Advanced Tool Calling & Management:**
-            * The AI will call a wider array of more powerful tools (defined in `lib/ai/tools/`).
-            * The API route will need robust logic to handle sequences of tool calls, aggregate results, and feed them back to the AI for synthesis or further action.
-            * Error handling for failed tool calls or unexpected API responses from external services becomes even more critical.
-        * **Deeper AI Chaining/Agentic Behavior:** You might implement patterns where the AI plans steps, calls tools, evaluates results, and decides on next actions, making your backend act more like an AI agent orchestrator.
+* **Current MVP:** `app/(dashboard)/projects/[projectId]/page.tsx` is likely a Server Component that fetches data and renders UI like `PaperEditor`, `CitationViewer`, etc.
+* **New Architecture:**
+    * The route `app/(dashboard)/projects/[projectId]/page.tsx` will still be a **Server Component**, but its primary role will be to perform initial data fetching (e.g., basic project details, user authentication) and then render the **`<ProjectWorkspace />` client component**, passing this initial data as props. This ensures a fast initial load and SEO benefits if applicable, while enabling rich client-side interactivity.
+    * The new `ProjectWorkspace.tsx` (marked `"use client"`) will be responsible for:
+        * Rendering the entire three-column layout (Outline, SmartEditor, Citation Manager) and all interactive elements (AI suggestion overlays, context menus, AI chat).
+        * Managing its own extensive UI state using React hooks (`useState`, `useEffect`, `useRef`, etc.).
+        * Fetching additional dynamic data or updates after the initial load if necessary (e.g., using `useEffect` with the Supabase client).
 
-   * **`lib/ai/sdk.ts`:**
-        * May need wrappers for more specialized AI model interactions (e.g., if you use different models or prompting techniques for analysis vs. generation).
-        * Enhanced functions to support more complex tool interaction patterns.
+**2. Data Flow and Backend Interactions:**
 
-   * **`lib/ai/prompts.ts`:** ✍️
-        * **Crucial Enhancement:** Development of highly detailed and nuanced prompts will be key. These prompts will need to guide the AI through complex tasks like literature synthesis, gap identification, methodological critique, and targeted revisions. This is a major area of "advanced implementation."
-        * Prompts for eliciting structured JSON output for various new data types (e.g., hypotheses, research gaps, synthesized review points).
+* **Initial Data Load:**
+    * The parent `page.tsx` (Server Component) fetches essential project data (e.g., project ID, title, initial content for the active section, user details) from Supabase.
+    * This data is passed as props to `<ProjectWorkspace />`.
+* **Real-time Content Saving (Editor):**
+    * The `ProjectWorkspace.tsx` will use its `saveContent` function (triggered by `handleContentChange` with a debounce).
+    * This `saveContent` will call a **Next.js Server Action** (adapted from your old `saveSectionContent` or a new one like `updateSectionContent`). This action will:
+        * Authenticate the user.
+        * Update the specific section's content in the `paper_sections` table in Supabase (requires the schema change from CWS-06).
+* **Triggering AI Actions (from `ProjectWorkspace.tsx`):**
+    * **Non-Streaming AI Actions:** For contextual actions like "Rephrase selected text," "Summarize," "Check Cohesion," or simpler AI suggestions that don't require continuous output, `ProjectWorkspace.tsx` will call **Next.js Server Actions.**
+        * These Server Actions will interact with your `lib/ai/sdk.ts` and `lib/ai/prompts.ts` to get results from the LLM and can update Supabase if needed.
+        * *Reusability:* Your existing Server Actions like `generateAndSaveOutline` can be called directly from buttons in the new UI.
+    * **Streaming AI Actions:** For features like streaming AI text suggestions directly into the editor, or the AI Assistant chat responses, `ProjectWorkspace.tsx` will make `fetch` requests to dedicated **Next.js API Routes** (e.g., `app/api/ai/stream-text`, `app/api/ai/chat`).
+        * These API Routes will use the AI SDK's streaming capabilities and send data back as a stream.
+    * **Long-Running AI Tasks** (e.g., "Generate Full Draft," "Analyze Paper Gaps," "Automated Literature Review Synthesis"):
+        * The UI will trigger these via a Server Action or an API Route.
+        * This backend endpoint will enqueue a job with your **AI Task Orchestrator Service** (as outlined in the gap analysis/updated architecture – potentially using Supabase Queues or BullMQ).
+        * The orchestrator will process the job asynchronously.
+        * The frontend will receive updates via a **Notification Service** (e.g., using Supabase Realtime or SSE).
+* **Citation Management:**
+    * The `CitationManager` section in `ProjectWorkspace.tsx` will:
+        * Fetch structured citations from your new `citations` and `reference_links` tables in Supabase.
+        * Trigger AI-driven literature searches (via Server Action/API Route calling the `literatureSearch` tool).
+        * Allow manual addition/editing of citations (saving via Server Actions).
+        * Interface with a "Citation Service" (can be a Server Action or API route calling `lib/ai/tools/citationFormatter.ts`) for bibliography formatting.
+    * *Reusability:* The logic in `extractAndSaveCitations` and `generatePlaceholderReferences` (from your old code) that deals with `citations_identified` and `references_list` on the main `projects` table will likely be phased out or heavily adapted to work with the new structured `citations` and `reference_links` tables. The core idea of extracting placeholders can be reused, but the saving mechanism will target the new schema.
 
-   * **`lib/ai/tools/`:** 🛠️
-        * **Expansion with New Tools:** This directory will grow significantly. Examples:
-            * `literatureSearch.ts`: Will become more robust, potentially querying multiple academic databases (Semantic Scholar, PubMed, CORE, ArXiv via their APIs) and handling diverse result formats. May include PDF text extraction capabilities if full-text analysis is needed.
-            * `multiDocumentAnalyzer.ts`: A new tool (or set of tools/prompts) for tasks like thematic analysis across several documents, or identifying conflicting information.
-            * `methodologySuggester.ts`: Could interface with a knowledge base or use advanced prompting to suggest research methodologies.
-            * `hypothesisGenerator.ts`: Tool to help formulate or refine hypotheses.
-            * `styleAdaptationTool.ts`: (Potentially) if specific style transformations are complex enough to warrant a separate tool/AI call.
-        * **Integration with External Services:** These tools will be the primary interface to external APIs or data sources.
+**3. Component Reusability & Evolution:**
 
-### 2. Data & Auth Layer (Supabase)
-   * **Database Schema Evolution:** 📊
-        * **More Granular Data Storage:**
-            * `projects`: Stays largely the same.
-            * `paper_sections`: May need fields for storing structured feedback or revision history.
-            * `citations`: Will become more structured, storing detailed metadata (authors, year, title, journal, DOI, abstract snippets, links to PDFs if fetched).
-            * `references`: May be dynamically generated or stored based on the `citations` table and chosen style.
-            * **New Tables Possible:**
-                * `literature_corpus` (Optional): If you allow users to upload papers or build a project-specific library, or if the AI fetches and caches papers. Could include embeddings for semantic search.
-                * `hypotheses` or `research_questions`: To store AI-generated or user-defined hypotheses linked to projects.
-                * `synthesis_nodes` or `knowledge_graph_elements`: If you implement knowledge graph features.
-        * **Relationships:** More complex relationships between projects, sections, claims within sections, and specific citations/sources.
-   * **Supabase Storage:** Will be more critical if you start fetching and storing PDFs of research papers that the AI analyzes.
-   * **Supabase Edge Functions:** Could be used to implement some of the more data-intensive "tools" directly, especially if they need low-latency access to the database or involve pre-processing of stored literature.
+* **`ProjectPage.tsx` (Old Server Component):** Its role as the main UI renderer for this route is taken over by `ProjectWorkspace.tsx`. It becomes a leaner Server Component, mainly for initial data fetching and rendering the client component.
+* **Server Actions (from old `actions.ts`):**
+    * `generateAndSaveOutline`: High reusability.
+    * `saveSectionContent`: High reusability, but will target the `paper_sections` table.
+    * `extractAndSaveCitations`: The *concept* of extracting placeholders is reusable. The *implementation* needs to be updated to work with the AI suggesting structured citations and saving them to the new `citations` and `reference_links` tables, rather than just a string array in `projects.citations_identified`.
+    * `generatePlaceholderReferences`: Similar to above, its output target will change to reflect structured data from the new `citations` table, eventually being replaced by proper bibliography generation.
+    * `generateAndSaveFullPaper`, `saveFullPaperContent`: The triggering UI moves to `ProjectWorkspace.tsx`. The backend Server Action that calls the `/api/research/generate/full-paper` can still be used. The API route itself will be the one handling the complex AI orchestration.
+* **UI Components (`PaperEditor`, `CitationViewer`, etc. from old `components/`):**
+    * These specific components, as rendered directly by the old `ProjectPage.tsx`, will likely be retired.
+    * Their *functionality and visual intent* will be integrated into the new, more complex components within `ProjectWorkspace.tsx` (e.g., the main editor area in `ProjectWorkspace` *is* the new "SmartEditor," the right sidebar *is* the new "Citation Manager").
+    * For instance, the `PaperEditor`'s logic of displaying outline and content will be handled by the respective panels within `ProjectWorkspace.tsx`.
 
-### 3. Frontend (Next.js)
-   * **`app/(dashboard)/projects/[projectId]/components/`:** ✨
-        * `PaperEditor.tsx`: Will need to support more interactive elements, such as:
-            * Displaying AI-suggested revisions or feedback inline.
-            * Allowing users to click on a claim to see supporting sources or trigger a new literature search.
-            * Highlighting areas identified by the AI (e.g., potential gaps, weak arguments).
-        * `CitationManager.tsx`: Will evolve to handle structured citation objects, allow users to review/edit AI-found sources, manually add citations from search results, and manage different citation styles.
-        * **New Interactive Components:**
-            * `LiteratureReviewExplorer.tsx`: To display synthesized literature review points and allow navigation through sources.
-            * `HypothesisBoard.tsx`: For viewing and interacting with AI-suggested hypotheses.
-            * `FeedbackInput.tsx`: A component for users to give granular, targeted feedback on specific text segments.
-            * `MethodologyAdvisor.tsx`: Interface for AI suggestions on research methods.
-   * **`app/(dashboard)/projects/[projectId]/page.tsx`:** Will orchestrate these more complex components and manage more sophisticated client-side state related to the advanced features.
-   * **`store/projectStore.ts` (or chosen state management):** May need to handle more complex state, like the current set of literature search results, AI suggestions, or the state of an interactive revision process.
+**4. Database Schema:**
 
-### 4. File & Folder Structure
-   The existing file and folder structure is generally sound and can accommodate these enhancements. The main changes will be:
-   * **More files within `lib/ai/tools/`**.
-   * **More files within `app/(dashboard)/projects/[projectId]/components/`** for the richer UI.
-   * Potentially more specialized API routes under `app/api/research/` if you break down functionalities (e.g., `app/api/research/literature/`, `app/api/research/critique/`).
-   * The `types/` directory will grow with more complex type definitions for structured AI outputs and database entities.
+* The integration heavily relies on the **database schema evolution** previously discussed:
+    * Adding new fields to the `projects` table.
+    * Creating the `paper_sections` table (crucial for the new editor experience).
+    * Creating the `citations`, `reference_links`, and `formatted_references` tables for advanced citation management.
+    * Creating `activity_log`, `ai_jobs`, `project_collaborators`, etc., for other advanced features shown in the new UI.
 
----
+**In summary, the integration strategy is:**
 
-**In essence, your core architectural blueprint remains valid.** The "advanced" nature comes from:
-* 🧠 **More sophisticated AI logic** (prompts, chaining, agent-like behavior).
-* 🔧 **A richer set of powerful tools** for the AI to use.
-* 💾 **More detailed and structured data storage** in Supabase.
-* 🎨 **More interactive and feature-rich UI components** on the frontend.
+1.  **Elevate `ProjectWorkspace.tsx`** to be the main client-rendered UI for the project view, hydrated with initial data from a parent Server Component.
+2.  **Adapt and reuse existing Server Actions** for data mutations where they still fit (e.g., saving, outline generation).
+3.  **Introduce new Server Actions and API Routes** to handle the richer set of AI interactions (contextual actions, chat, streaming, long-running jobs) initiated from `ProjectWorkspace.tsx`.
+4.  **Implement the necessary Supabase schema changes** to support the detailed data requirements of the new UI (per-section content, structured citations, etc.).
+5.  The specific UI rendering components from the old `ProjectPage` structure will be superseded by the more integrated design of `ProjectWorkspace.tsx`.
 
+This approach allows you to leverage your existing backend logic where appropriate while building a much more dynamic and feature-rich frontend experience.
