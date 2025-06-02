@@ -3,9 +3,9 @@ import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 
-import AuthButton from "./components/AuthButton"
-import { QueryProvider } from "@/lib/tanstack-query/provider"
-import { ErrorBoundary } from "@/components/ErrorBoundary"
+// import AuthButton from "./components/AuthButton"
+// import { QueryProvider } from '@/lib/tanstack-query/provider'
+// import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 // Initialize global error handler
 import "@/lib/error-handling/global-error-handler"
@@ -33,11 +33,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`} suppressHydrationWarning={true}>
-        <ErrorBoundary>
-          <QueryProvider>
-            <main>{children}</main>
-          </QueryProvider>
-        </ErrorBoundary>
+        {/* <ErrorBoundary> */}
+        {/* <QueryProvider> */}
+        <main>{children}</main>
+        {/* </QueryProvider> */}
+        {/* </ErrorBoundary> */}
       </body>
     </html>
   )

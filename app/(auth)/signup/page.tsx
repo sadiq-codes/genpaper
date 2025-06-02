@@ -3,6 +3,7 @@
 import type React from "react"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +14,7 @@ export default function SignUpPage() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,6 +30,7 @@ export default function SignUpPage() {
         console.error("Sign up error:", error.message)
       } else {
         console.log("Sign up successful:", data)
+        router.push("/projects")
       }
     } catch (error) {
       console.error("Unexpected error:", error)

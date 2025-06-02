@@ -8,14 +8,6 @@ const nextConfig = {
       '@supabase/supabase-js',
       '@citation-js/core'
     ],
-    turbo: {
-      rules: {
-        '*.svg': {
-          loaders: ['@svgr/webpack'],
-          as: '*.js',
-        },
-      },
-    },
   },
 
   // Bundle optimization
@@ -138,14 +130,21 @@ const nextConfig = {
     ]
   },
 
-  // Optimize font loading
-  optimizeFonts: true,
-
   // Enable gzip compression
   poweredByHeader: false,
 
   // Reduce build output
   output: 'standalone',
+
+  // Move experimental.turbo to config.turbopack
+  turbopack: {
+    rules: {
+      '*.svg': {
+        loaders: ['@svgr/webpack'],
+        as: '*.js',
+      },
+    },
+  },
 }
 
 module.exports = nextConfig 

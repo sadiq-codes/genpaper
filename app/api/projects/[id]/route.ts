@@ -1,0 +1,71 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { 
+  getResearchProject, 
+  getLatestProjectVersion, 
+  getProjectVersions,
+  getProjectCitations
+} from '@/lib/db/research'
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const supabase = await createClient()
+    
+    // Check authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const projectId = params.id
+
+    if (!projectId) {
+      return NextResponse.json({ error: 'Project ID is required' }, { status: 400 })
+    }
+
+    const url = new URL(request.url)
+    const includeVersions = url.searchParams.get('includeVersions') === 'true'
+    const includeCitations = url.searchParams.get('includeCitations') === 'true'
+    const versionLimit = url.searchParams.get('versionLimit')
+
+    // Get project details
+    const project = await getResearchProject(projectId, user.id)
+    if (!project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    }
+
+    // Get latest version
+    const latestVersion = await getLatestProjectVersion(projectId)
+
+    let versions = undefined
+    let citations = undefined
+
+    // Get versions if requested
+    if (includeVersions) {
+      const limit = versionLimit ? parseInt(versionLimit) : 10
+      versions = await getProjectVersions(projectId, limit)
+    }
+
+    // Get citations if requested
+    if (includeCitations) {
+      citations = await getProjectCitations(projectId, latestVersion?.version)
+    }
+
+    return NextResponse.json({
+      ...project,
+      latest_version: latestVersion,
+      versions,
+      citations
+    })
+
+  } catch (error) {
+    console.error('Error in projects/[id] GET API:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' }, 
+      { status: 500 }
+    )
+  }
+} 

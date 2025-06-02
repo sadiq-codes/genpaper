@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Mail, Eye, EyeOff } from "lucide-react"
+import { Mail, Eye, EyeOff, SquarePen } from "lucide-react"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -30,7 +30,7 @@ export default function LoginPage() {
         console.error("Login error:", error.message)
       } else {
         console.log("Login successful:", data)
-        router.push("/dashboard")
+        router.push("/projects")
       }
     } catch (error) {
       console.error("Unexpected error:", error)
@@ -100,7 +100,7 @@ export default function LoginPage() {
             <div className="w-10 h-10 bg-black rounded-xl flex items-center justify-center">
               <div className="w-5 h-5 bg-white rounded"></div>
             </div>
-            <div>
+            <div className="flex flex-col"> 
               <h2 className="text-2xl font-bold text-gray-900">GenPaper</h2>
               <p className="text-sm text-gray-500">AI-Powered Research Assistant</p>
             </div>

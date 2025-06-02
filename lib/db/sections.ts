@@ -93,11 +93,18 @@ export class SectionsRepository {
         { section_key: "references", title: "References", order: 8 },
       ]
 
+      // Get current user
+      const { data: { user } } = await this.supabase.auth.getUser()
+      if (!user) {
+        return { success: false, error: 'User not authenticated' }
+      }
+
       const { data, error } = await this.supabase
         .from('paper_sections')
         .insert(
           defaultSections.map(section => ({
-            project_id: projectId,
+            project_id: projectId,w
+            user_id: user.id,
             section_key: section.section_key,
             title: section.title,
             order: section.order,
@@ -138,6 +145,49 @@ export class SectionsRepository {
     } catch (error) {
       console.error('Error in hasStatus:', error)
       return false
+    }
+  }
+
+  // 🔹 OPTIMIZED: Get lightweight section list (for sidebar)
+  async getSectionList(projectId: string): Promise<SectionsResponse> {
+    try {
+      const { data, error } = await this.supabase
+        .from('paper_sections')
+        .select('id, section_key, title, order, status, word_count, updated_at')
+        .eq('project_id', projectId)
+        .order('order', { ascending: true })
+
+      if (error) {
+        console.error('Error fetching section list:', error)
+        return { success: false, error: error.message }
+      }
+
+      return { success: true, sections: data || [] }
+    } catch (error) {
+      console.error('Error in getSectionList:', error)
+      return { success: false, error: 'Failed to fetch section list' }
+    }
+  }
+
+  // 🔹 OPTIMIZED: Get individual section content
+  async getSectionContent(projectId: string, sectionKey: string): Promise<{ success: boolean; section?: Section; error?: string }> {
+    try {
+      const { data, error } = await this.supabase
+        .from('paper_sections')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('section_key', sectionKey)
+        .single()
+
+      if (error) {
+        console.error('Error fetching section content:', error)
+        return { success: false, error: error.message }
+      }
+
+      return { success: true, section: data }
+    } catch (error) {
+      console.error('Error in getSectionContent:', error)
+      return { success: false, error: 'Failed to fetch section content' }
     }
   }
 }
