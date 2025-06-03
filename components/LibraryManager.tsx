@@ -35,7 +35,8 @@ import {
   Eye,
   X,
   Check,
-  Loader2
+  Loader2,
+  Upload
 } from 'lucide-react'
 import { format } from 'date-fns'
 import type { 
@@ -45,6 +46,7 @@ import type {
   LibraryFilters,
   SearchPapersResponse
 } from '@/types/simplified'
+import FileUpload from '@/components/FileUpload'
 
 interface LibraryManagerProps {
   className?: string
@@ -203,14 +205,20 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
       })
 
       if (response.ok) {
-        await loadLibraryData()
+        setShowCollectionDialog(false)
         setNewCollectionName('')
         setNewCollectionDescription('')
-        setShowCollectionDialog(false)
+        // Reload to get updated collections
+        await loadLibraryData()
       }
     } catch (err) {
       console.error('Error creating collection:', err)
     }
+  }
+
+  const handleUploadComplete = async (uploadedPapers: any[]) => {
+    // Refresh library data to show newly uploaded papers
+    await loadLibraryData()
   }
 
   const filteredLibraryPapers = useMemo(() => {
@@ -544,6 +552,10 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
               <TabsTrigger value="all">
                 All Papers ({libraryPapers.length})
               </TabsTrigger>
+              <TabsTrigger value="upload">
+                <Upload className="h-4 w-4 mr-1" />
+                Upload
+              </TabsTrigger>
               {collections.map(collection => (
                 <TabsTrigger key={collection.id} value={collection.id}>
                   <Folder className="h-4 w-4 mr-1" />
@@ -551,6 +563,10 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                 </TabsTrigger>
               ))}
             </TabsList>
+
+            <TabsContent value="upload" className="mt-6">
+              <FileUpload onUploadComplete={handleUploadComplete} />
+            </TabsContent>
 
             <TabsContent value="all" className="mt-6">
               {loading ? (

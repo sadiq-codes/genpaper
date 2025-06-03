@@ -176,6 +176,7 @@ export interface GenerationProgress {
   progress: number
   message: string
   currentVersion?: number
+  content?: string // For streaming content updates
 }
 
 export interface LibraryFilters {

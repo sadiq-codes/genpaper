@@ -2,16 +2,11 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { 
   createResearchProject, 
-  addProjectVersion, 
-  addProjectCitation,
   updateResearchProjectStatus
 } from '@/lib/db/research'
-import { getUserLibraryPapers } from '@/lib/db/library'
-import { searchOnlinePapers, selectRelevantPapers } from '@/lib/ai/search-papers'
-import { generatePaperStream } from '@/lib/ai/generate-paper'
+import { generateDraftWithRAG } from '@/lib/ai/enhanced-generation'
 import type { 
   GenerateRequest, 
-  PaperWithAuthors,
   GenerationConfig
 } from '@/types/simplified'
 
@@ -22,18 +17,231 @@ if (!process.env.OPENAI_API_KEY) {
 
 const isDev = process.env.NODE_ENV !== 'production'
 
+interface StreamState {
+  isControllerClosed: boolean
+  heartbeat: NodeJS.Timeout | null
+}
+
 export async function OPTIONS() {
   return new Response(null, {
     status: 200,
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400'
     }
   })
 }
 
+// GET - EventSource endpoint for streaming (Task 5 requirement)
+export async function GET(request: NextRequest) {
+  if (isDev) console.log('🚀 Starting GET /api/generate/stream (EventSource)')
+  
+  let supabase
+  
+  try {
+    supabase = await createClient()
+    
+    // Check authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return new Response('Unauthorized', { status: 401 })
+    }
+
+    // Get query parameters for the generation request
+    const url = new URL(request.url)
+    const topic = url.searchParams.get('topic')
+    const libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
+    const useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
+    const length = url.searchParams.get('length') || 'medium'
+    const style = url.searchParams.get('style') || 'academic'
+    const citationStyle = url.searchParams.get('citationStyle') || 'apa'
+    const includeMethodology = url.searchParams.get('includeMethodology') !== 'false'
+
+    if (!topic?.trim()) {
+      return new Response('Topic is required', { status: 400 })
+    }
+
+    // Create generation config
+    const generationConfig: GenerationConfig = {
+      model: 'gpt-4',
+      search_parameters: {
+        sources: ['arxiv', 'pubmed'],
+        limit: 20,
+        useSemanticSearch: false
+      },
+      paper_settings: {
+        length: length as 'short' | 'medium' | 'long',
+        style: style as 'academic' | 'review' | 'survey',
+        citationStyle: citationStyle as 'apa' | 'mla' | 'chicago' | 'ieee',
+        includeMethodology
+      },
+      library_papers_used: libraryPaperIds
+    }
+
+    if (isDev) console.log('🎯 Creating research project for EventSource...')
+    // Create research project
+    const project = await createResearchProject(user.id, topic, generationConfig)
+    if (isDev) console.log('✅ Research project created:', project.id)
+
+    // Create EventSource stream
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder()
+        const streamState: StreamState = {
+          isControllerClosed: false,
+          heartbeat: null
+        }
+        
+        // Store cleanup function to be called by cancel
+        const cleanup = () => {
+          streamState.isControllerClosed = true
+          if (streamState.heartbeat) {
+            clearInterval(streamState.heartbeat)
+            streamState.heartbeat = null
+          }
+        }
+        
+        // Add heartbeat to prevent connection timeouts
+        streamState.heartbeat = setInterval(() => {
+          if (!streamState.isControllerClosed) {
+            try {
+              sendEvent({ type: 'ping', timestamp: Date.now() })
+            } catch {
+              cleanup()
+            }
+          } else {
+            if (streamState.heartbeat) clearInterval(streamState.heartbeat)
+          }
+        }, 25000)
+        
+        const sendEvent = (data: object) => {
+          if (streamState.isControllerClosed) {
+            return // Don't try to send if controller is closed
+          }
+          
+          try {
+            // More robust controller state checking
+            if (controller.desiredSize !== null && !streamState.isControllerClosed) {
+              const message = `data: ${JSON.stringify(data)}\n\n`
+              controller.enqueue(encoder.encode(message))
+            } else {
+              // Controller is no longer accepting data
+              cleanup()
+            }
+          } catch (error) {
+            // Handle specific controller closed errors
+            if (error instanceof TypeError && error.message.includes('Controller is already closed')) {
+              cleanup()
+              return // Silently ignore closed controller errors
+            }
+            console.error('Failed to send event:', error)
+            cleanup()
+          }
+        }
+
+        try {
+          // Send initial status
+          sendEvent({
+            type: 'status',
+            projectId: project.id,
+            status: 'generating',
+            progress: 0,
+            stage: 'initializing',
+            message: 'Starting enhanced paper generation with semantic search...'
+          })
+
+          // Use the new RAG-powered generation flow
+          const result = await generateDraftWithRAG({
+            projectId: project.id,
+            userId: user.id,
+            topic,
+            libraryPaperIds,
+            useLibraryOnly,
+            config: generationConfig,
+            onProgress: (progress) => {
+              if (!streamState.isControllerClosed) {
+                sendEvent({
+                  type: 'progress',
+                  projectId: project.id,
+                  progress: progress.progress,
+                  stage: progress.stage,
+                  message: progress.message,
+                  content: progress.content?.substring(0, 5000)
+                })
+                
+                // Send checkpoint events (Task 5 requirement)
+                if (progress.stage === 'complete' || progress.progress % 25 === 0) {
+                  sendEvent({
+                    type: 'checkpoint',
+                    projectId: project.id,
+                    stage: progress.stage,
+                    progress: progress.progress
+                  })
+                }
+              }
+            }
+          })
+
+          // Send final completion event
+          if (!streamState.isControllerClosed) {
+            sendEvent({
+              type: 'complete',
+              projectId: project.id,
+              progress: 100,
+              stage: 'complete',
+              message: 'Paper generation completed successfully!',
+              wordCount: result.wordCount,
+              citationCount: result.citations.length,
+              sections: result.structure.sections,
+              sourcesUsed: result.sources.length
+            })
+          }
+
+        } catch (error) {
+          console.error('RAG generation error:', error)
+          
+          try {
+            await updateResearchProjectStatus(project.id, 'failed')
+          } catch (dbError) {
+            console.error('Failed to update project status:', dbError)
+          }
+          
+          if (!streamState.isControllerClosed) {
+            sendEvent({
+              type: 'error',
+              projectId: project.id,
+              error: error instanceof Error ? error.message : 'Unknown error occurred',
+              stage: 'failed'
+            })
+          }
+        } finally {
+          cleanup()
+        }
+
+        controller.close()
+      }
+    })
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET',
+        'Access-Control-Allow-Headers': 'Content-Type'
+      }
+    })
+
+  } catch (error) {
+    console.error('❌ EventSource request processing error:', error)
+    return new Response('Internal server error', { status: 500 })
+  }
+}
+
+// POST - Start generation and return project ID (keeping existing functionality)
 export async function POST(request: NextRequest) {
   if (isDev) console.log('🚀 Starting POST /api/generate/stream')
   
@@ -99,25 +307,55 @@ export async function POST(request: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder()
+        const streamState: StreamState = {
+          isControllerClosed: false,
+          heartbeat: null
+        }
+        
+        // Store cleanup function to be called by cancel
+        const cleanup = () => {
+          streamState.isControllerClosed = true
+          if (streamState.heartbeat) {
+            clearInterval(streamState.heartbeat)
+            streamState.heartbeat = null
+          }
+        }
         
         // Add heartbeat to prevent connection timeouts
-        const heartbeat = setInterval(() => {
-          try {
-            sendEvent({ type: 'ping', timestamp: Date.now() })
-          } catch {
-            // If we can't send events, the connection is probably closed
-            clearInterval(heartbeat)
+        streamState.heartbeat = setInterval(() => {
+          if (!streamState.isControllerClosed) {
+            try {
+              sendEvent({ type: 'ping', timestamp: Date.now() })
+            } catch {
+              cleanup()
+            }
+          } else {
+            if (streamState.heartbeat) clearInterval(streamState.heartbeat)
           }
-        }, 25000) // 25 seconds
+        }, 25000)
         
         const sendEvent = (data: object) => {
+          if (streamState.isControllerClosed) {
+            return // Don't try to send if controller is closed
+          }
+          
           try {
-            const message = `data: ${JSON.stringify(data)}\n\n`
-            controller.enqueue(encoder.encode(message))
+            // More robust controller state checking
+            if (controller.desiredSize !== null && !streamState.isControllerClosed) {
+              const message = `data: ${JSON.stringify(data)}\n\n`
+              controller.enqueue(encoder.encode(message))
+            } else {
+              // Controller is no longer accepting data
+              cleanup()
+            }
           } catch (error) {
+            // Handle specific controller closed errors
+            if (error instanceof TypeError && error.message.includes('Controller is already closed')) {
+              cleanup()
+              return // Silently ignore closed controller errors
+            }
             console.error('Failed to send event:', error)
-            // Clear heartbeat if we can't send events
-            clearInterval(heartbeat)
+            cleanup()
           }
         }
 
@@ -129,147 +367,48 @@ export async function POST(request: NextRequest) {
             status: 'generating',
             progress: 0,
             stage: 'initializing',
-            message: 'Starting paper generation...'
+            message: 'Starting enhanced paper generation with semantic search...'
           })
 
-          // Gather papers
-          sendEvent({
-            type: 'progress',
-            progress: 5,
-            stage: 'searching',
-            message: 'Gathering research papers...'
-          })
-
-          let papers: PaperWithAuthors[] = []
-
-          // Get papers from library if specified
-          if (libraryPaperIds && libraryPaperIds.length > 0) {
-            try {
-              const libraryPapers = await getUserLibraryPapers(user.id)
-              papers = libraryPapers
-                .filter(lp => libraryPaperIds.includes(lp.paper_id))
-                .map(lp => lp.paper as PaperWithAuthors)
-            } catch (error) {
-              console.error('Failed to get library papers:', error)
-              throw new Error('Failed to access library papers')
-            }
-          }
-
-          // Search for additional papers if not library-only
-          if (!useLibraryOnly) {
-            sendEvent({
-              type: 'progress',
-              progress: 15,
-              stage: 'searching',
-              message: 'Searching online databases...'
-            })
-
-            try {
-              const searchResults = await searchOnlinePapers(
-                topic,
-                generationConfig?.search_parameters?.sources,
-                generationConfig?.search_parameters?.limit
-              )
-              
-              sendEvent({
-                type: 'progress',
-                progress: 25,
-                stage: 'analyzing',
-                message: 'Selecting most relevant papers...'
-              })
-
-              // Select most relevant papers
-              const selectedPapers = await selectRelevantPapers(searchResults, topic, 10)
-              papers = [...papers, ...selectedPapers]
-            } catch (error) {
-              console.error('Failed to search papers:', error)
-              throw new Error('Failed to search for papers online')
-            }
-          }
-
-          if (papers.length === 0) {
-            throw new Error('No papers found for the given topic')
-          }
-
-          sendEvent({
-            type: 'progress',
-            progress: 35,
-            stage: 'writing',
-            message: `Found ${papers.length} relevant papers. Starting paper generation...`
-          })
-
-          // Generate the research paper with streaming
-          let result
-          try {
-            result = await generatePaperStream(
-              topic,
-              papers,
-              {
-                length: generationConfig?.paper_settings?.length || 'medium',
-                style: generationConfig?.paper_settings?.style || 'academic',
-                citationStyle: generationConfig?.paper_settings?.citationStyle || 'apa',
-                includeMethodology: generationConfig?.paper_settings?.includeMethodology ?? true,
-                includeFuture: true
-              },
-              (content: string, progress: number, stage: string) => {
-                // Clamp progress to prevent exceeding 95%
-                const clampedProgress = Math.min(35 + (progress * 0.6), 95)
+          // Use the new RAG-powered generation flow
+          const result = await generateDraftWithRAG({
+            projectId: project.id,
+            userId: user.id,
+            topic,
+            libraryPaperIds,
+            useLibraryOnly,
+            config: generationConfig,
+            onProgress: (progress) => {
+              if (!streamState.isControllerClosed) {
                 sendEvent({
                   type: 'progress',
-                  progress: clampedProgress,
-                  stage: stage,
-                  message: `Writing ${stage} section...`,
-                  content: content.length > 5000 ? content.substring(0, 5000) + '...' : content
+                  projectId: project.id,
+                  progress: progress.progress,
+                  stage: progress.stage,
+                  message: progress.message,
+                  content: progress.content?.substring(0, 5000)
                 })
               }
-            )
-          } catch (error) {
-            console.error('Failed to generate paper:', error)
-            throw new Error('Failed to generate research paper')
-          }
-
-          sendEvent({
-            type: 'progress',
-            progress: 95,
-            stage: 'finalizing',
-            message: 'Saving paper and citations...'
+            }
           })
-
-          // Save the generated content as version 1
-          const version = await addProjectVersion(project.id, result.content, 1)
-
-          // Parallelize citation inserts instead of sequential
-          await Promise.all(
-            result.citations.map(citation =>
-              addProjectCitation(
-                project.id,
-                version.version,
-                citation.paperId,
-                citation.citationText,
-                citation.positionStart,
-                citation.positionEnd,
-                citation.pageRange
-              )
-            )
-          )
-
-          // Update project status to complete
-          await updateResearchProjectStatus(project.id, 'complete', new Date().toISOString())
 
           // Send final completion event
-          sendEvent({
-            type: 'complete',
-            projectId: project.id,
-            progress: 100,
-            stage: 'complete',
-            message: 'Paper generation completed successfully!',
-            wordCount: result.wordCount,
-            citationCount: result.citations.length,
-            sections: result.structure.sections
-          })
+          if (!streamState.isControllerClosed) {
+            sendEvent({
+              type: 'complete',
+              projectId: project.id,
+              progress: 100,
+              stage: 'complete',
+              message: 'Paper generation completed successfully!',
+              wordCount: result.wordCount,
+              citationCount: result.citations.length,
+              sections: result.structure.sections,
+              sourcesUsed: result.sources.length
+            })
+          }
 
         } catch (error) {
-          console.error('Streaming generation error:', error)
+          console.error('RAG generation error:', error)
           
           // Update project status to failed
           try {
@@ -278,15 +417,16 @@ export async function POST(request: NextRequest) {
             console.error('Failed to update project status:', dbError)
           }
           
-          sendEvent({
-            type: 'error',
-            projectId: project.id,
-            error: error instanceof Error ? error.message : 'Unknown error occurred',
-            stage: 'failed'
-          })
+          if (!streamState.isControllerClosed) {
+            sendEvent({
+              type: 'error',
+              projectId: project.id,
+              error: error instanceof Error ? error.message : 'Unknown error occurred',
+              stage: 'failed'
+            })
+          }
         } finally {
-          // Clean up heartbeat
-          clearInterval(heartbeat)
+          cleanup()
         }
 
         controller.close()

@@ -505,4 +505,41 @@ export const clientLibraryOperations = {
     if (error) throw error
     return data || []
   }
+}
+
+export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]> {
+  if (paperIds.length === 0) return []
+  
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('papers')
+    .select(`
+      *,
+      authors:paper_authors(
+        ordinal,
+        author:authors(*)
+      )
+    `)
+    .in('id', paperIds)
+
+  if (error) throw error
+
+  // Transform the data to include author names and create LibraryPaper structure
+  return (data || []).map((paper: any) => {
+    const authors = paper.authors
+      ?.sort((a: any, b: any) => a.ordinal - b.ordinal)
+      ?.map((pa: any) => pa.author) || []
+
+    return {
+      id: `temp-${paper.id}`, // Temporary ID since this isn't a real library entry
+      user_id: 'system',
+      paper_id: paper.id,
+      added_at: new Date().toISOString(),
+      notes: null,
+      paper: {
+        ...paper,
+        authors
+      }
+    }
+  })
 } 

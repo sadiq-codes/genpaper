@@ -153,87 +153,88 @@ export default function PaperViewer({ projectId, className }: PaperViewerProps) 
   // Custom markdown renderer with citation handling
   const MarkdownRenderer = ({ content }: { content: string }) => {
     return (
-      <ReactMarkdown
-        className="prose prose-lg max-w-none"
-        components={{
-          p: ({ children }) => {
-            if (!children) return <p />
-            
-            // Convert children to string and process citations
-            const processChildren = (nodes: React.ReactNode): React.ReactNode => {
-              if (typeof nodes === 'string') {
-                // Look for citation patterns like [AuthorYear] or (Author, Year)
-                const citationRegex = /\[([\w\s]+\d{4})\]|\(([\w\s]+,\s*\d{4})\)/g
-                const parts = nodes.split(citationRegex)
-                
-                return parts.map((part, index) => {
-                  if (!part) return null
-                  
-                  // Check if this part matches a citation pattern
-                  const citationMatch = part.match(/[\w\s]+\d{4}/)
-                  if (citationMatch && citationMap.has(`[${part}]`)) {
-                    return (
-                      <TooltipProvider key={index}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
-                              onClick={(e) => handleCitationClick(`[${part}]`, e)}
-                            >
-                              [{part}]
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Click to view citation details</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )
-                  }
-                  
-                  return part
-                })
-              }
+      <div className="prose prose-lg max-w-none">
+        <ReactMarkdown
+          components={{
+            p: ({ children }) => {
+              if (!children) return <p />
               
-              return nodes
-            }
+              // Convert children to string and process citations
+              const processChildren = (nodes: React.ReactNode): React.ReactNode => {
+                if (typeof nodes === 'string') {
+                  // Look for citation patterns like [AuthorYear] or (Author, Year)
+                  const citationRegex = /\[([\w\s]+\d{4})\]|\(([\w\s]+,\s*\d{4})\)/g
+                  const parts = nodes.split(citationRegex)
+                  
+                  return parts.map((part, index) => {
+                    if (!part) return null
+                    
+                    // Check if this part matches a citation pattern
+                    const citationMatch = part.match(/[\w\s]+\d{4}/)
+                    if (citationMatch && citationMap.has(`[${part}]`)) {
+                      return (
+                        <TooltipProvider key={index}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                                onClick={(e) => handleCitationClick(`[${part}]`, e)}
+                              >
+                                [{part}]
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Click to view citation details</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )
+                    }
+                    
+                    return part
+                  })
+                }
+                
+                return nodes
+              }
 
-            return <p className="mb-4 leading-relaxed">{processChildren(children)}</p>
-          },
-          h1: ({ children }) => (
-            <h1 className="text-3xl font-bold mb-6 text-gray-900 border-b pb-2">
-              {children}
-            </h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="text-2xl font-semibold mb-4 mt-8 text-gray-800">
-              {children}
-            </h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="text-xl font-medium mb-3 mt-6 text-gray-700">
-              {children}
-            </h3>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-blue-500 pl-4 italic my-4 text-gray-600">
-              {children}
-            </blockquote>
-          ),
-          code: ({ children }) => (
-            <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono">
-              {children}
-            </code>
-          ),
-          pre: ({ children }) => (
-            <pre className="bg-gray-100 p-4 rounded-lg overflow-x-auto my-4">
-              {children}
-            </pre>
-          )
-        }}
-      >
-        {content}
-      </ReactMarkdown>
+              return <p className="mb-4 leading-relaxed">{processChildren(children)}</p>
+            },
+            h1: ({ children }) => (
+              <h1 className="text-3xl font-bold mb-6 text-gray-900 border-b pb-2">
+                {children}
+              </h1>
+            ),
+            h2: ({ children }) => (
+              <h2 className="text-2xl font-semibold mb-4 mt-8 text-gray-800">
+                {children}
+              </h2>
+            ),
+            h3: ({ children }) => (
+              <h3 className="text-xl font-medium mb-3 mt-6 text-gray-700">
+                {children}
+              </h3>
+            ),
+            blockquote: ({ children }) => (
+              <blockquote className="border-l-4 border-blue-500 pl-4 italic my-4 text-gray-600">
+                {children}
+              </blockquote>
+            ),
+            code: ({ children }) => (
+              <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono">
+                {children}
+              </code>
+            ),
+            pre: ({ children }) => (
+              <pre className="bg-gray-100 p-4 rounded-lg overflow-x-auto my-4">
+                {children}
+              </pre>
+            )
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
     )
   }
 

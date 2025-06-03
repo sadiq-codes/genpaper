@@ -103,7 +103,7 @@ export class SectionsRepository {
         .from('paper_sections')
         .insert(
           defaultSections.map(section => ({
-            project_id: projectId,w
+            project_id: projectId,
             user_id: user.id,
             section_key: section.section_key,
             title: section.title,

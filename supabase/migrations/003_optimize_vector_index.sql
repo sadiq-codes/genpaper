@@ -19,6 +19,15 @@ WITH (lists = 100);
 CREATE INDEX IF NOT EXISTS papers_search_idx
 ON papers USING GIN (search_vector);
 
+-- ✅ RPC function to optimize vector index performance
+CREATE OR REPLACE FUNCTION analyze_papers_table()
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+AS $$
+  ANALYZE papers;
+  ANALYZE paper_chunks;
+$$;
 
 /* ───────────────────────────────
    TASK 3: Similarity Search RPC (edge-friendly)
