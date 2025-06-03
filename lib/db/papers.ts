@@ -1,7 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { createBrowserClient } from '@supabase/ssr'
 import type { Paper, Author, PaperWithAuthors, SearchPapersRequest } from '@/types/simplified'
-import { openai } from '@/lib/ai/sdk'
+import { ai } from '@/lib/ai/vercel-client'
+import { embedMany } from 'ai'
 import { v5 as uuidv5 } from 'uuid'
 import { type PaperDTO } from '@/lib/schemas/paper'
 
@@ -9,7 +10,7 @@ import { type PaperDTO } from '@/lib/schemas/paper'
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 
 // Helper function to generate deterministic UUID for papers
-function generatePaperUUID(input: string): string {
+export function generatePaperUUID(input: string): string {
   // Use UUID v5 for deterministic UUID generation based on input
   return uuidv5(input, PAPER_NAMESPACE)
 }
@@ -556,7 +557,7 @@ export async function ingestPaper(paperMeta: PaperDTO): Promise<string> {
       metadata: paperMeta.metadata,
       source: paperMeta.source || 'unknown',
       citation_count: paperMeta.citation_count || 0,
-      impact_score: paperMeta.impact_score,
+      impact_score: Math.max(paperMeta.impact_score || 0, 0),
       embedding: embedding
     })
   
@@ -572,13 +573,19 @@ export async function ingestPaper(paperMeta: PaperDTO): Promise<string> {
 
 // Generate embeddings with consistent configuration
 async function generateEmbeddings(inputs: string | string[]): Promise<number[][]> {
-  const { data } = await openai.embeddings.create({
-    model: EMBEDDING_CONFIG.model,
-    input: inputs,
-    dimensions: EMBEDDING_CONFIG.dimensions
+  // Convert single input to array for consistent processing
+  const inputArray = Array.isArray(inputs) ? inputs : [inputs]
+  
+  // Use AI SDK embedMany for batch processing with proper dimensions
+  const { embeddings } = await embedMany({
+    model: ai.embedding(EMBEDDING_CONFIG.model, {
+      dimensions: EMBEDDING_CONFIG.dimensions
+    }),
+    values: inputArray,
+    maxRetries: 3 // Built-in retry logic
   })
   
-  return data.map(item => item.embedding)
+  return embeddings
 }
 
 // Batch ingest function for processing multiple papers efficiently
@@ -636,7 +643,7 @@ async function ingestPaperWithEmbedding(paperMeta: PaperDTO, embedding: number[]
       metadata: paperMeta.metadata,
       source: paperMeta.source || 'unknown',
       citation_count: paperMeta.citation_count || 0,
-      impact_score: paperMeta.impact_score,
+      impact_score: Math.max(paperMeta.impact_score || 0, 0),
       embedding: embedding
     })
   
@@ -740,6 +747,7 @@ export async function hybridSearchPapers(
     sources?: string[]
     semanticWeight?: number
     excludePaperIds?: string[]
+    minCombinedScore?: number
   } = {}
 ): Promise<PaperWithAuthors[]> {
   const { 
@@ -747,14 +755,26 @@ export async function hybridSearchPapers(
     minYear = 2018, 
     sources, 
     semanticWeight = 0.7,
-    excludePaperIds = []
+    excludePaperIds = [],
+    minCombinedScore = 0.0001
   } = options
 
+  console.log(`🔍 Hybrid Search Starting:`)
+  console.log(`   🎯 Query: "${query}"`)
+  console.log(`   📊 Limit: ${limit}`)
+  console.log(`   📅 Min Year: ${minYear}`)
+  console.log(`   🏷️ Sources Filter: ${sources ? `[${sources.join(', ')}]` : 'None'}`)
+  console.log(`   ⚖️ Semantic Weight: ${semanticWeight}`)
+  console.log(`   🚫 Excluded IDs: ${excludePaperIds.length > 0 ? `[${excludePaperIds.join(', ')}]` : 'None'}`)
+
   // 1. Generate embedding for the query using centralized configuration
+  console.log(`🧠 Generating embedding for query...`)
   const [queryEmbedding] = await generateEmbeddings([query])
+  console.log(`✅ Embedding generated: ${queryEmbedding.length} dimensions`)
 
   // 2. Call the hybrid search RPC function
   const supabase = await createClient()
+  console.log(`🗄️ Calling hybrid_search_papers RPC...`)
   const { data: searchResults, error } = await supabase
     .rpc('hybrid_search_papers', {
       query_text: query,
@@ -764,17 +784,45 @@ export async function hybridSearchPapers(
       semantic_weight: semanticWeight
     })
 
-  if (error) throw error
+  if (error) {
+    console.error(`❌ RPC search failed:`, error)
+    throw error
+  }
+
+  console.log(`📋 RPC returned ${searchResults?.length || 0} initial results`)
+  if (searchResults && searchResults.length > 0) {
+    searchResults.slice(0, 5).forEach((result: HybridSearchResult, idx: number) => {
+      console.log(`   ${idx + 1}. Paper ID: ${result.paper_id}`)
+      console.log(`      Combined Score: ${result.combined_score}`)
+      console.log(`      Semantic Score: ${result.semantic_score}`)
+      console.log(`      Keyword Score: ${result.keyword_score}`)
+    })
+    if (searchResults.length > 5) {
+      console.log(`   ... and ${searchResults.length - 5} more results`)
+    }
+  }
 
   // 3. Filter out excluded papers
   const filteredResults = (searchResults || []).filter(
-    (result: HybridSearchResult) => !excludePaperIds.includes(result.paper_id)
+    (result: HybridSearchResult) => 
+      !excludePaperIds.includes(result.paper_id) &&
+      result.combined_score >= minCombinedScore // Apply minimum score threshold
   )
 
+  console.log(`🔧 After filtering excluded papers: ${filteredResults.length} results`)
+  if (filteredResults.length !== (searchResults?.length || 0)) {
+    const excludedCount = (searchResults?.length || 0) - filteredResults.length
+    console.log(`   🚫 Excluded ${excludedCount} papers from previous searches`)
+  }
+
   // 4. Get full paper details for the top results
-  if (filteredResults.length === 0) return []
+  if (filteredResults.length === 0) {
+    console.warn(`⚠️ No papers found after filtering`)
+    return []
+  }
 
   const topResults = filteredResults.slice(0, limit)
+  console.log(`📄 Fetching full details for top ${topResults.length} papers...`)
   
   let papersQuery = supabase
     .from('papers')
@@ -790,19 +838,28 @@ export async function hybridSearchPapers(
   // Apply source filter if provided
   if (sources && sources.length > 0) {
     papersQuery = papersQuery.in('source', sources)
+    console.log(`🏷️ Applied source filter: [${sources.join(', ')}]`)
   }
 
   const { data: papers, error: papersError } = await papersQuery
 
-  if (papersError) throw papersError
+  if (papersError) {
+    console.error(`❌ Failed to fetch paper details:`, papersError)
+    throw papersError
+  }
+
+  console.log(`📚 Retrieved ${papers?.length || 0} full paper records`)
 
   // 5. Transform and sort by hybrid score
   const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
   
-  return topResults
+  const finalResults = topResults
     .map((result: HybridSearchResult) => {
       const paper = paperMap.get(result.paper_id)
-      if (!paper) return null
+      if (!paper) {
+        console.warn(`⚠️ Paper ${result.paper_id} not found in detailed results`)
+        return null
+      }
       
       const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
       
@@ -814,6 +871,18 @@ export async function hybridSearchPapers(
       }
     })
     .filter(Boolean) as PaperWithAuthors[]
+
+  console.log(`✅ Hybrid search completed: ${finalResults.length} final papers`)
+  finalResults.forEach((paper, idx) => {
+    console.log(`   ${idx + 1}. "${paper.title}"`)
+    console.log(`      Authors: ${paper.author_names?.join(', ') || 'Unknown'}`)
+    console.log(`      Year: ${paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'Unknown'}`)
+    console.log(`      Venue: ${paper.venue || 'Unknown'}`)
+    console.log(`      Relevance: ${(paper as { relevance_score?: number }).relevance_score?.toFixed(3) || 'N/A'}`)
+    console.log(`      Source: ${paper.source}`)
+  })
+
+  return finalResults
 }
 
 export async function findSimilarPapers(
@@ -891,12 +960,21 @@ export async function searchPaperChunks(
   content: string
   score: number
 }>> {
+  console.log(`📄 Searching paper chunks:`)
+  console.log(`   🎯 Query: "${query}"`)
+  console.log(`   📊 Limit: ${options.limit || 10}`)
+  console.log(`   📋 Paper IDs: ${options.paperIds ? `[${options.paperIds.join(', ')}]` : 'All papers'}`)
+  console.log(`   🎯 Min Score: ${options.minScore || 0.5}`)
+
   const supabase = await createClient()
   
   // Generate embedding for the query using centralized configuration
+  console.log(`🧠 Generating embedding for chunk search...`)
   const [queryEmbedding] = await generateEmbeddings([query])
+  console.log(`✅ Chunk search embedding generated: ${queryEmbedding.length} dimensions`)
   
   // Search chunks using cosine similarity
+  console.log(`🗄️ Calling match_paper_chunks RPC...`)
   const { data: matches, error } = await supabase
     .rpc('match_paper_chunks', {
       query_embedding: queryEmbedding,
@@ -904,16 +982,31 @@ export async function searchPaperChunks(
       min_score: options.minScore || 0.5
     })
   
-  if (error) throw error
+  if (error) {
+    console.error(`❌ Chunk search RPC failed:`, error)
+    throw error
+  }
+
+  console.log(`📄 RPC returned ${matches?.length || 0} chunk matches`)
   
   // Filter by paper IDs if specified
+  let finalMatches = matches || []
   if (options.paperIds && options.paperIds.length > 0) {
-    return (matches || []).filter((match: { paper_id: string }) => 
+    const beforeFilter = finalMatches.length
+    finalMatches = finalMatches.filter((match: { paper_id: string }) => 
       options.paperIds!.includes(match.paper_id)
     )
+    console.log(`🔧 Filtered chunks by paper IDs: ${beforeFilter} → ${finalMatches.length}`)
   }
+
+  console.log(`✅ Final chunk results: ${finalMatches.length}`)
+  finalMatches.forEach((match: { paper_id: string; chunk_index: number; content: string; score: number }, idx: number) => {
+    console.log(`   ${idx + 1}. Paper: ${match.paper_id}, Chunk: ${match.chunk_index}`)
+    console.log(`      Score: ${match.score?.toFixed(3) || 'N/A'}`)
+    console.log(`      Content: "${match.content.substring(0, 150)}..."`)
+  })
   
-  return matches || []
+  return finalMatches
 }
 
 // Fix: Enhanced ingest paper with chunks and comprehensive error handling
@@ -949,7 +1042,7 @@ export async function ingestPaperWithChunks(
       metadata: paperMeta.metadata,
       source: paperMeta.source || 'unknown',
       citation_count: paperMeta.citation_count || 0,
-      impact_score: paperMeta.impact_score,
+      impact_score: Math.max(paperMeta.impact_score || 0, 0),
       embedding: mainEmbedding
     })
   
@@ -1209,4 +1302,110 @@ export async function upsertPaperAuthors(paperId: string, authorNames: string[])
     })
   
   if (error) throw error
+}
+
+// Check if paper exists by DOI to prevent duplicates
+export async function checkPaperExists(doi?: string, title?: string): Promise<{ exists: boolean, paperId?: string }> {
+  const supabase = await createClient()
+  
+  // First check by DOI if available
+  if (doi) {
+    const { data, error } = await supabase
+      .from('papers')
+      .select('id')
+      .eq('doi', doi)
+      .single()
+    
+    if (!error && data) {
+      return { exists: true, paperId: data.id }
+    }
+  }
+  
+  // Fallback: check by normalized title for papers without DOI
+  if (title) {
+    const normalizedTitle = title.toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    
+    const { data, error } = await supabase
+      .from('papers')
+      .select('id, title')
+      .ilike('title', `%${normalizedTitle}%`)
+      .limit(5)
+    
+    if (!error && data) {
+      // Check for close title matches
+      for (const paper of data) {
+        const paperTitle = paper.title.toLowerCase()
+          .replace(/[^\w\s]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+        
+        // Simple similarity check - if 90% of words match
+        const titleWords = normalizedTitle.split(' ')
+        const paperWords = paperTitle.split(' ')
+        const commonWords = titleWords.filter(word => paperWords.includes(word))
+        
+        if (commonWords.length / titleWords.length > 0.9) {
+          return { exists: true, paperId: paper.id }
+        }
+      }
+    }
+  }
+  
+  return { exists: false }
+}
+
+// Lightweight ingestion for Library Manager - no chunks, faster UX
+export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<string> {
+  const supabase = await createClient()
+  
+  // Check for duplicates first
+  const { exists, paperId: existingId } = await checkPaperExists(paperMeta.doi, paperMeta.title)
+  if (exists && existingId) {
+    console.log(`📚 Paper already exists, returning existing ID: ${existingId}`)
+    return existingId
+  }
+  
+  // Create text for embedding (title + abstract)
+  const text = `${paperMeta.title}\n${paperMeta.abstract || ''}`
+  
+  // Generate embedding using centralized configuration
+  const [embedding] = await generateEmbeddings([text])
+  
+  // Create deterministic UUID from DOI or content
+  const paperId = paperMeta.doi 
+    ? generatePaperUUID(paperMeta.doi)
+    : generatePaperUUID(text)
+  
+  // Upsert paper with embedding (no chunks)
+  const { error } = await supabase
+    .from('papers')
+    .upsert({
+      id: paperId,
+      title: paperMeta.title,
+      abstract: paperMeta.abstract,
+      publication_date: paperMeta.publication_date,
+      venue: paperMeta.venue,
+      doi: paperMeta.doi,
+      url: paperMeta.url,
+      pdf_url: paperMeta.pdf_url,
+      metadata: paperMeta.metadata,
+      source: paperMeta.source || 'unknown',
+      citation_count: paperMeta.citation_count || 0,
+      impact_score: Math.max(paperMeta.impact_score || 0, 0),
+      embedding: embedding
+    })
+  
+  if (error) throw error
+  
+  // Handle authors efficiently with batch operations
+  if (paperMeta.authors && paperMeta.authors.length > 0) {
+    await upsertPaperAuthors(paperId, paperMeta.authors)
+  }
+  
+  console.log(`📚 Lightweight ingestion completed: ${paperMeta.title} (ID: ${paperId})`)
+  
+  return paperId
 } 

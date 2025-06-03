@@ -1,13 +1,8 @@
 import { 
-  addProjectVersion, 
-  addProjectCitation,
   updateResearchProjectStatus
 } from '@/lib/db/research'
-import { getUserLibraryPapers } from '@/lib/db/library'
-import { enhancedSearch } from '@/lib/services/enhanced-search'
-import { generateResearchPaper } from '@/lib/ai/generate-paper'
+import { generateDraftWithRAG } from '@/lib/ai/enhanced-generation'
 import type { 
-  PaperWithAuthors,
   GenerationConfig
 } from '@/types/simplified'
 
@@ -24,68 +19,33 @@ export async function generatePaperPipeline(params: PaperGenerationParams) {
   const { projectId, userId, topic, libraryPaperIds, useLibraryOnly, generationConfig } = params
   
   try {
-    let papers: PaperWithAuthors[] = []
+    // Update project status to generating
+    await updateResearchProjectStatus(projectId, 'generating')
 
-    // Get papers from library if specified
-    if (libraryPaperIds && libraryPaperIds.length > 0) {
-      const libraryPapers = await getUserLibraryPapers(userId)
-      papers = libraryPapers
-        .filter(lp => libraryPaperIds.includes(lp.paper_id))
-        .map(lp => lp.paper as PaperWithAuthors)
-    }
-
-    // Search for additional papers if not library-only
-    if (!useLibraryOnly) {
-      const searchResult = await enhancedSearch(topic, {
-        sources: generationConfig?.search_parameters?.sources as ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core")[] | undefined,
-        maxResults: generationConfig?.search_parameters?.limit || 10,
-        useSemanticSearch: true,
-        fallbackToKeyword: true,
-        fallbackToAcademic: true,
-        minResults: 5,
-        combineResults: true
-      })
-      
-      papers = [...papers, ...searchResult.papers]
-    }
-
-    if (papers.length === 0) {
-      throw new Error(`No papers found for the topic "${topic}". Please add relevant papers to your library or check your database connection.`)
-    }
-
-    // Generate the research paper
-    const result = await generateResearchPaper(
+    // Generate the research paper using enhanced RAG generation
+    // The enhanced version handles paper discovery, database operations, and citations internally
+    const result = await generateDraftWithRAG({
+      projectId,
+      userId,
       topic,
-      papers,
-      {
+      libraryPaperIds,
+      useLibraryOnly,
+      config: {
         length: generationConfig?.paper_settings?.length || 'medium',
         style: generationConfig?.paper_settings?.style || 'academic',
         citationStyle: generationConfig?.paper_settings?.citationStyle || 'apa',
         includeMethodology: generationConfig?.paper_settings?.includeMethodology ?? true,
-        includeFuture: true
+        includeFuture: true,
+        search_parameters: generationConfig?.search_parameters,
+        paper_settings: generationConfig?.paper_settings,
+        model: 'gpt-4o',
+        temperature: generationConfig?.temperature || 0.3,
+        max_tokens: generationConfig?.max_tokens || 8000
+      },
+      onProgress: (progress) => {
+        console.log(`Generation progress: ${progress.stage} - ${progress.progress}% - ${progress.message}`)
       }
-    )
-
-    // Save the generated content as version 1
-    const version = await addProjectVersion(projectId, result.content, 1)
-
-    // Parallelize citation inserts
-    await Promise.all(
-      result.citations.map(citation =>
-        addProjectCitation(
-          projectId,
-          version.version,
-          citation.paperId,
-          citation.citationText,
-          citation.positionStart,
-          citation.positionEnd,
-          citation.pageRange
-        )
-      )
-    )
-
-    // Update project status to complete
-    await updateResearchProjectStatus(projectId, 'complete', new Date().toISOString())
+    })
 
     return result
 

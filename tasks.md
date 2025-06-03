@@ -1,153 +1,132 @@
-Below is a **battle-tested playbook** for finding high-quality papers programmatically and piping them into your Supabase-based RAG loop. I group it into: (1) where to search, (2) how to query & deduplicate, and (3) how to slot the results into your existing ingestion code.
+### 🔍 Side-by-side comparison – “legacy tool” vs. your new RAG-renderer layer
+
+| Dimension                    | **Legacy `addCitation` tool**                                                                                                   | **Current client-side CSL + `citation-js` layer**                           | 🤔 Which wins / how to merge                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Where it runs**            | Server-side (inside the Vercel/Edge function that streams content).                                                             | Pure client-side React component.                                           | Keep **both**: server for *authoritative* storage, client for *rendering / style-switching*.                                             |
+| **When it’s invoked**        | Each time the LLM calls the `addCitation` **function-call** during generation.                                                  | After the paper is saved; it parses `[CITE:id]` placeholders.               | Tool-calls are more reliable (you know *exactly* what the model meant), but you can still allow manual `[CITE:id]` markup as a fallback. |
+| **Schema validation**        | Zod schema; strict checks on title, authors, positions, etc.                                                                    | Zod schema (similar) + extra CSL fixers for rendering.                      | Combine: keep the Zod validation but extend it with CSL pre-validation so bad items never reach DB *or* renderer.                        |
+| **Uniqueness / keying**      | `generateCitationKey()` produces an MD5 hash of normalised title + year (or DOI).                                               | Uses the paper’s UUID (or arbitrary IDs) directly.                          | Use **UUID when you have it**, else keep the hash. Store *both* in DB: `id` (UUID) and `key` (hash/DOI) so renderer can map either.      |
+| **Storage model**            | `citations` (+ `citation_links`) tables. CSL JSON is persisted once per paper; link table stores section + character positions. | No storage; derives everything from `papers` array that came from Supabase. | Keep the *server* storage so you can later: deduplicate, surface a bibliography manager, fix metadata, etc.                              |
+| **Inline-position tracking** | Yes – `start_pos`, `end_pos`, `section`. Allows highlighting on hover later.                                                    | None (just replaces markup).                                                | Keep the legacy positional data; client can consume it for “hover to show source” UX.                                                    |
+| **Bibliography formatting**  | Not handled.                                                                                                                    | `citation-js` formats to APA/MLA/Chicago on the fly.                        | Keep client-side `citation-js`; server just stores CSL JSON once.                                                                        |
+| **Extensibility**            | Easy to add more fields in Zod; RPC abstracts DB details.                                                                       | Easy to add more CSL fields; citation-js supports >50 styles.               | No conflict – they serve different layers.                                                                                               |
+| **Failure modes**            | If Supabase RPC fails, function throws → generation might abort.                                                                | If `citation-js` fails, UI falls back to simple `(Author, Year)` string.    | Add retry logic & batch-insert to the server tool; keep graceful fallback in UI.                                                         |
 
 ---
 
-## 1 Public scholarly APIs worth wiring up
+### 📌 Recommendation – hybrid “best of both”
 
-| API                     | Coverage / strengths                                           | Free limits & auth                                                                                          | Best filters                                                                                          |
-| ----------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| **OpenAlex `/works`**   | >240 M docs (journals, books, datasets) + solid citation graph | No key needed; 100 k calls / day if you add `mailto=` param ([docs.openalex.org][1])                        | `search=`, `filter=from_publication_date:2024-01-01,type:journal-article`, `sort=cited_by_count:desc` |
-| **Crossref `/works`**   | DOIs from \~12 k publishers; fastest DOI look-ups              | No auth; polite rate ≈50 req/s when you pass `mailto` header ([www.crossref.org][2], [www.crossref.org][3]) | `query.bibliographic=`, `filter=has-full-text:true`                                                   |
-| **Semantic Scholar V1** | Titles + abstracts + influence metrics                         | Key gives 1 req/s; no-key pool is 1000 rps shared ([Semantic Scholar][4], [Semantic Scholar][5])            | `query`, `fields=year,citationCount,isOpenAccess,url`                                                 |
-| **arXiv API**           | 2.5 M preprints (STEM heavy)                                   | No key; follow 30 s rule of thumb; Atom feed ([arXiv Info][6])                                              | `search_query=all:"quantum error correction" AND submittedDate:[2024 TO 2025]`                        |
-| **Unpaywall**           | OA flag + direct PDF links for any DOI                         | Free; just add `?email=`; 20 M OA copies ([Unpaywall][7])                                                   | `/v2/<doi>` (one-shot lookup)                                                                         |
-| **CORE**                | 300 M OA PDFs harvested from repositories                      | Free key; JSON search endpoint ([CORE][8], [CORE][9])                                                       | `q=title:climate AND year:[2020 TO 2025]`                                                             |
+1. **Keep the server-side `addCitation` tool**
 
-> *Premium options (Dimensions, Scopus, Lens.org) add paywalled abstracts, but the free stack above is enough for most student workflows.*
+   * Pros: ground-truth DB, positional data, deduplication, easy audit.
+   * Add **CSL validation** right before the RPC call:
 
----
+     ```ts
+     const { Cite } = await import('citation-js/build/citation-browser.mjs')
+     new Cite([cslData])        // throws if malformed
+     ```
 
-## 2 Query & deduplication workflow
+2. **Store two IDs**
 
-```
-topic text
-   │
-   ├─► expand_keywords()      // synonyms, ACM terms, etc.
-   │
-   └─► parallel_search()
-        ├ OpenAlex
-        ├ Crossref
-        ├ Semantic Scholar
-        └ arXiv
-             ↓
-   merge_and_rank()
-        ├ 1️⃣ canonicalise DOI
-        ├ 2️⃣ if DOI missing → md5(title+year)
-        ├ 3️⃣ drop duplicates (same canonical_id)
-        └ 4️⃣ score = bm25 + log10(citationCount+1) + recency_boost
-             ↓
-   top-K JSON  ➜  ingestPaper()   // the upsert you already wrote
-```
+   | Column               | Example                            | Purpose                                      |
+   | -------------------- | ---------------------------------- | -------------------------------------------- |
+   | `citation_id` (UUID) | `217a…`                            | Foreign-key inside your DB.                  |
+   | `key` (hash/DOI)     | `10.1038/nature…` or `4d5e3c1a2b…` | What the LLM inserts in text (`[CITE:key]`). |
 
-### Canonical-ID tip
+3. **Client-side renderer**
 
-`coalesce(doi, md5(lower(normalise(title))))` keeps arXiv preprints and later journal versions from clashing.
+   * Keep the current `CitationCore` with `citation-js`, but **fetch citations** from `/citations?projectId=…` (or re-use the `citationsRepository`).
+   * Build a `Map<key, CSLItem>` so the renderer can replace **either** UUID or hash/DOI tokens.
 
-### Ranking heuristics
+4. **“Missing citation” fallback**
 
-```ts
-score =
-  bm25TitleAbstract            // text relevance
-+ 0.5 * log10(citationCount+1) // authority
-+ (2025 - year) * 0.1          // freshness
-```
+   Right now unknown tokens become `(missing source: id)`.
+   Instead, show a red pill in the UI that lets the user “Attach source” → calls `addCitation` manually.
 
-Adjust weights until the Source-Review screen “feels” right.
+5. **Switching style**
+
+   Keep the dropdown that re-calls
+
+   ```ts
+   cite.format('bibliography', { template: style })
+   ```
+
+   – now it will always succeed because data were pre-validated.
 
 ---
 
-## 3 Edge Function aggregator (pseudo-code)
+### ✂️ What to delete from the legacy file
 
-```ts
-// /supabase/functions/fetchSources.ts
-export const fetchSources = async (topic: string) => {
-  const [oa, cr, ss, ax] = await Promise.all([
-    openAlexSearch(topic),
-    crossrefSearch(topic),
-    semschSearch(topic),
-    arxivSearch(topic)
-  ])
-
-  const merged = dedupeAndRank([...oa, ...cr, ...ss, ...ax])
-  const top = merged.slice(0, 25)          // show in Source Review UI
-
-  // Upsert into 'papers' so embeddings run downstream
-  await Promise.all(top.map(ingestPaper))
-
-  return top                                // JSON to the client
-}
-```
-
-Each `…Search()` helper:
-
-```ts
-async function openAlexSearch(q: string) {
-  const url = `https://api.openalex.org/works?search=${encodeURIComponent(q)}&per_page=50&mailto=me@example.com`
-  const { results } = await fetch(url).then(r => r.json())
-  return results.map(x => ({
-    canonical_id: x.doi ?? md5(x.display_name + x.publication_year),
-    title: x.display_name,
-    abstract: x.abstract_inverted_index ? deInvert(x.abstract_inverted_index) : '',
-    year: x.publication_year,
-    venue: x.primary_location?.source?.display_name,
-    doi: x.doi,
-    url: x.primary_location?.landing_page_url,
-    citationCount: x.cited_by_count
-  }))
-}
-```
-
-(Write similar wrappers for Crossref, Semantic Scholar, etc.; keep them thin and stateless so they can run in parallel.)
+* `toCslJson()` logic duplicates what you already have in `paperToCSL/fixCSL`. Export one canonical helper and import it in both places.
+* `crypto` hash: keep it, but move to a shared util (so server & client agree).
 
 ---
 
-## 4 Caching and rate-limit hygiene
+### 🚦 Decision matrix
 
-| Strategy            | Implementation                                                                             |
-| ------------------- | ------------------------------------------------------------------------------------------ |
-| **Request caching** | `papers_api_cache(id TEXT PK, response JSONB, fetched_at TIMESTAMPTZ)`; expire after 48 h. |
-| **Backoff**         | If 429 from Semantic Scholar, wait `retry-after` header and drop to Crossref fallback.     |
-| **Contact header**  | Both Crossref & OpenAlex ask for `User-Agent: GenPaper/1.0 (mailto:you@uni.edu)`.          |
+| Goal                                   | Use only legacy | Use only new | **Hybrid (recommended)** |
+| -------------------------------------- | --------------- | ------------ | ------------------------ |
+| Live APA↔MLA switch                    | ❌               | ✅            | ✅                        |
+| Single source of truth in DB           | ✅               | ❌            | ✅                        |
+| Positional highlights                  | ✅               | ❌            | ✅                        |
+| Minimal code duplication               | ❌               | ❌            | **✅ (after refactor)**   |
+| Future style support (IEEE, Vancouver) | ⚠️ custom       | ✅            | ✅                        |
+
+**→ Keep the server tool for persistence + positional metadata; keep the client renderer for rich formatting; share the CSL utility functions so both layers agree on data.**
+
+This gives you the strongest, future-proof citation workflow with minimal duplication.
+
+
+I get the attraction of “one-system-to-rule-them-all.” If the **new, purely client-side CSL + citation-js layer** is already rendering citations and bibliographies, why keep the heavier server-side tool? Here’s the trade-off matrix boiled down to the essentials:
+
+| Question                                                                                                                 | Pure New (UI-only)                                                                                                                                                           | Mixed (Server tool + UI)                          |
+| ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **Works when user is offline / exports the MD file**                                                                     | ✔️  - citation-js runs in browser/offline                                                                                                                                    | ✔️                                                |
+| **Citations survive when project is reopened on a different device**                                                     | ❌ *Only* the raw `[CITE:id]` tokens are stored; you still need the original `papers` array in Supabase. If anything in that relation disappears or IDs change, tokens break. | ✔️ Server DB keeps canonical CSL, positions, etc. |
+| **Quick to iterate / less code**                                                                                         | ✔️                                                                                                                                                                           | ❌ More pieces                                     |
+| **Accurate inline-position mapping (for “click-to-highlight source” or future PDF/Word export)**                         | ❌ No char offsets stored                                                                                                                                                     | ✔️ Stored in `citation_links`                     |
+| **Deduplication across multiple sections / drafts**                                                                      | ❌ Relies on author manually avoiding duplicates                                                                                                                              | ✔️ MD5/DOI key ensures single record              |
+| **Future automation (auto-generate reference list, sync to Zotero, export BibTeX, track citation counts, analytics, …)** | ⚠️ Requires rebuilding server logic later                                                                                                                                    | ✔️ Already have CSL JSON in DB – ready to reuse   |
+| **Security / data integrity (LLM can’t accidentally overwrite someone else’s citation)**                                 | ⚠️ All logic in browser; needs extra guards                                                                                                                                  | ✔️ Checked server-side with Zod + RPC             |
+
+### When *“New only”* is good enough
+
+1. **Personal, throw-away drafts** – you don’t care about positional data or re-using citations later.
+2. **Static export** – you’ll immediately convert the rendered HTML/Markdown to PDF and never touch it again.
+3. **Ultra-lean prototype** – you’re validating UX first, not long-term persistence.
+
+### When you’ll miss the server tool
+
+1. **Collaboration / version history** – teammates editing the same project need authoritative citations.
+2. **Any future “reference manager” features** – e.g. show how many times a source was cited, replace a citation everywhere with one click, generate alt styles in bulk, export to Zotero/BibTeX.
+3. **Precision requirements** – e.g. peer-review workflow where reviewers insist every inline reference highlights the exact sentence it supports.
+
+### One-file “middle way” (if you still want fewer moving parts)
+
+If you’d like to slim down **but** keep server-side persistence:
+
+* **Merge the two helper layers** – keep one `cslUtils.ts` used by both client and server.
+* **Simplify the RPC** – instead of storing `start_pos` & `end_pos`, just store `paper_id → section`. That’s 90 % of the benefit with 10 % of the complexity.
+* **Let the UI lazily fetch full CSL**:
+
+  ```ts
+  const { data: citations } = supabase
+    .from('citations')
+    .select('key, csl_json')
+    .eq('project_id', projectId)
+  ```
+
+  Then build the `Cite` instance from that; no need to ship the whole `papers` table every time.
 
 ---
 
-## 5 Unpaywall & PDF harvesting (optional but nice)
+## TL;DR
 
-After you’ve stored a DOI, hit Unpaywall:
+*Using only the new client-side renderer **is** simpler and works for quick drafts,* but you lose:
 
-```ts
-const oadoi = await fetch(`https://api.unpaywall.org/v2/${doi}?email=me@example.com`).then(r=>r.json())
-if (oadoi.is_oa && oadoi.best_oa_location?.url_for_pdf) {
-  downloadAndStorePDF(oadoi.best_oa_location.url_for_pdf, bucketKey)
-  await supabase.from('papers').update({ pdf_url: publicUrl }).eq('doi', doi)
-}
-```
+* canonical CSL storage,
+* inline-position data,
+* deduplication,
+* and a clean upgrade path for future citation-heavy features.
 
-Now the Library can preview full-text instantly.
-
----
-
-## 6 Fallback keyword search
-
-If `match_papers()` (vector search) fetches < N items, rerun **keyword** search via `search_vector @@ plainto_tsquery(topic)` so the model never sees an empty source list.
-
----
-
-### TL;DR
-
-1. **Use OpenAlex + Crossref as your backbone;** spice it with Semantic Scholar (citations) and arXiv (preprints).
-2. Wrap each API in a thin edge-function call, **deduplicate by DOI**, and rank with a simple relevance + citations formula.
-3. Upsert the top results into your `papers` table and let your existing `ingestPaper()` pathway take care of embeddings.
-4. Add Unpaywall & CORE calls only when you need OA PDFs.
-
-Wire it once, cache aggressively, and your Source-Review step will feel instantaneous while staying completely within free-tier quotas. Happy hunting for papers—let me know if you need concrete SQL for the cache table or the de-inversion helper for OpenAlex abstracts!
-
-[1]: https://docs.openalex.org/how-to-use-the-api/api-overview?utm_source=chatgpt.com "API Overview | OpenAlex technical documentation"
-[2]: https://www.crossref.org/documentation/retrieve-metadata/rest-api/?utm_source=chatgpt.com "REST API - Crossref"
-[3]: https://www.crossref.org/documentation/retrieve-metadata/rest-api/tips-for-using-the-crossref-rest-api/?utm_source=chatgpt.com "Tips for using the Crossref REST API"
-[4]: https://www.semanticscholar.org/product/api?utm_source=chatgpt.com "Semantic Scholar Academic Graph API"
-[5]: https://www.semanticscholar.org/product/api%2Ftutorial?utm_source=chatgpt.com "Tutorial | Semantic Scholar Academic Graph API"
-[6]: https://info.arxiv.org/help/api/user-manual.html?utm_source=chatgpt.com "arXiv API User's Manual"
-[7]: https://unpaywall.org/products/api?utm_source=chatgpt.com "REST API - Unpaywall"
-[8]: https://core.ac.uk/?utm_source=chatgpt.com "CORE – Aggregating the world's open access research papers"
-[9]: https://core.ac.uk/services/api?utm_source=chatgpt.com "CORE API"
+If any of those matter to you (and they usually start mattering once users keep projects for months), keep a thin server-side citation endpoint and let the new React renderer focus on formatting.

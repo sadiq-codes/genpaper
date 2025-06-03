@@ -1,5 +1,3 @@
-import * as crypto from 'crypto'
-
 // Types for academic paper search results
 export interface AcademicPaper {
   canonical_id: string
@@ -20,7 +18,11 @@ export interface SearchOptions {
   fromYear?: number
   toYear?: number
   openAccessOnly?: boolean
+  fastMode?: boolean
 }
+
+// Import shared hash utility
+import { collisionResistantHash } from '@/lib/utils/hash'
 
 // API Response interfaces for better typing
 interface OpenAlexWork {
@@ -57,6 +59,7 @@ interface SemanticScholarPaper {
   year?: number
   abstract?: string
   venue?: string
+  doi?: string
   url?: string
   citationCount?: number
   authors?: Array<{ name: string }>
@@ -85,20 +88,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-// Fix: Exponential backoff retry wrapper
+// Fix: Exponential backoff retry wrapper with fast mode for library search
 async function retryWithBackoff<T>(
   fn: () => Promise<T>,
-  options: RetryOptions = { retries: 3, factor: 2, minTimeout: 1000, maxTimeout: 10000 }
+  options: RetryOptions & { fastMode?: boolean } = { retries: 3, factor: 2, minTimeout: 1000, maxTimeout: 10000 }
 ): Promise<T> {
-  const { retries, factor, minTimeout, maxTimeout } = options
+  const { retries, factor, minTimeout, maxTimeout, fastMode = false } = options
+  
+  // Fast mode: reduced delays and retries for library search
+  const actualRetries = fastMode ? 1 : retries
+  const actualMinTimeout = fastMode ? 200 : minTimeout
+  const actualMaxTimeout = fastMode ? 2000 : maxTimeout
+  
   let lastError: Error
   
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt <= actualRetries; attempt++) {
     try {
       // Add small delay between requests to be respectful
       if (attempt > 0) {
-        const timeout = Math.min(minTimeout * Math.pow(factor, attempt - 1), maxTimeout)
-        console.log(`Retry attempt ${attempt}/${retries} after ${timeout}ms`)
+        const timeout = Math.min(actualMinTimeout * Math.pow(factor, attempt - 1), actualMaxTimeout)
+        console.log(`Retry attempt ${attempt}/${actualRetries} after ${timeout}ms`)
         await sleep(timeout)
       }
       
@@ -108,10 +117,18 @@ async function retryWithBackoff<T>(
       
       // Check if it's a rate limit error
       if (error instanceof Error && error.message.includes('429')) {
-        console.warn(`Rate limit hit, attempt ${attempt + 1}/${retries + 1}`)
-        // Add extra delay for rate limit errors
-        if (attempt < retries) {
-          await sleep(Math.min(5000 * Math.pow(2, attempt), 30000))
+        console.warn(`Rate limit hit, attempt ${attempt + 1}/${actualRetries + 1}`)
+        
+        // In fast mode, fail fast on rate limits instead of long waits
+        if (fastMode && attempt === actualRetries) {
+          console.log(`Fast mode: skipping rate limited source`)
+          throw lastError
+        }
+        
+        // Add extra delay for rate limit errors (but less in fast mode)
+        if (attempt < actualRetries) {
+          const rateLimitDelay = fastMode ? 1000 : Math.min(5000 * Math.pow(2, attempt), 30000)
+          await sleep(rateLimitDelay)
         }
         continue
       }
@@ -125,7 +142,7 @@ async function retryWithBackoff<T>(
         throw error // Don't retry client errors
       }
       
-      if (attempt === retries) {
+      if (attempt === actualRetries) {
         throw lastError
       }
     }
@@ -143,18 +160,24 @@ function formatDateForAPI(year: number, month = 1, day = 1): string {
 
 // Helper function to create canonical ID for deduplication
 function createCanonicalId(title: string, year?: number, doi?: string, source?: string): string {
+  // Always use hash-based UUID generation for consistency
+  // DOI can be used as part of the input for uniqueness but not as the ID itself
+  let input: string
+  
   if (doi) {
-    return doi.toLowerCase().trim()
+    // Use DOI as primary identifier for uniqueness, but hash it to UUID
+    input = doi.toLowerCase().trim()
+  } else {
+    // Fallback to title + year + source for papers without DOI
+    const normalizedTitle = title.toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    input = `${normalizedTitle}${year || ''}${source || ''}`
   }
   
-  const normalizedTitle = title.toLowerCase()
-    .replace(/[^\w\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  
-  // Fix: Include source in hash to prevent collisions across different APIs
-  const input = `${normalizedTitle}${year || ''}${source || ''}`
-  return crypto.createHash('md5').update(input).digest('hex')
+  // Always return a proper UUID (not shortened)
+  return collisionResistantHash(input)
 }
 
 // Helper function to de-invert OpenAlex abstract
@@ -187,7 +210,7 @@ function deInvertAbstract(invertedIndex: Record<string, number[]>): string {
 
 // OpenAlex API integration with retry logic
 export async function searchOpenAlex(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
-  const { limit = 50, fromYear, toYear, openAccessOnly } = options
+  const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
   return retryWithBackoff(async () => {
     let url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per_page=${limit}&mailto=${process.env.CONTACT_EMAIL || 'research@example.com'}`
@@ -214,12 +237,13 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
     
     url += '&sort=cited_by_count:desc'
     
-    // Add rate limiting delay
-    await sleep(100)
+    // Reduce delay in fast mode
+    await sleep(fastMode ? 50 : 100)
     
     const response = await fetch(url, {
       headers: {
-        'User-Agent': `GenPaper/1.0 (mailto:${process.env.CONTACT_EMAIL || 'research@example.com'})`
+        'User-Agent': `GenPaper/1.0 (mailto:${process.env.CONTACT_EMAIL || 'research@example.com'})`,
+        'X-ABS-APP-ID': 'genpaper-dev'
       }
     })
     
@@ -247,12 +271,12 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
       authors: work.authorships?.map((a) => a.author?.display_name).filter(Boolean) || [],
       source: 'openalex' as const
     })) || []
-  })
+  }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
 }
 
 // Fix: Crossref API integration with proper has-full-text handling
 export async function searchCrossref(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
-  const { limit = 50, fromYear, toYear, openAccessOnly } = options
+  const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
   return retryWithBackoff(async () => {
     let url = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(query)}&rows=${limit}&sort=score&order=desc`
@@ -269,8 +293,8 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
     }
     // Note: Removed the always-applied has-full-text filter as it removes many valid papers with DOIs
     
-    // Add rate limiting delay
-    await sleep(100)
+    // Reduce delay in fast mode
+    await sleep(fastMode ? 50 : 100)
     
     const response = await fetch(url, {
       headers: {
@@ -308,36 +332,35 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
         source: 'crossref' as const
       }
     }) || []
-  })
+  }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
 }
 
-// Fix: Semantic Scholar API integration with correct year parameter format
+// Semantic Scholar API integration with retry logic
 export async function searchSemanticScholar(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
-  const { limit = 50, fromYear, toYear } = options
+  const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
   return retryWithBackoff(async () => {
-    let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${limit}&fields=paperId,title,abstract,year,venue,citationCount,isOpenAccess,url,authors`
+    let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${limit}&fields=paperId,title,abstract,year,venue,doi,url,citationCount,authors`
     
-    // Fix: Use proper year parameter format according to Semantic Scholar API docs
-    if (fromYear && toYear) {
-      url += `&year=${fromYear}-${toYear}`
-    } else if (fromYear) {
+    if (fromYear) {
       url += `&year=${fromYear}-`
-    } else if (toYear) {
-      // Fix: Changed from &year=-YYYY to &year=1900-YYYY format
-      url += `&year=1900-${toYear}`
+    }
+    if (toYear) {
+      url += `${toYear || ''}`
     }
     
-    // Add rate limiting delay
-    await sleep(100)
-    
-    const headers: Record<string, string> = {}
-    
-    if (process.env.SEMANTIC_SCHOLAR_API_KEY) {
-      headers['x-api-key'] = process.env.SEMANTIC_SCHOLAR_API_KEY
+    if (openAccessOnly) {
+      url += '&openAccessPdf'
     }
     
-    const response = await fetch(url, { headers })
+    // Reduce delay in fast mode
+    await sleep(fastMode ? 100 : 300)
+    
+    const response = await fetch(url, {
+      headers: {
+        'x-api-key': process.env.SEMANTIC_API_KEY || ''
+      }
+    })
     
     if (response.status === 429) {
       const retryAfter = response.headers.get('retry-after')
@@ -352,22 +375,23 @@ export async function searchSemanticScholar(query: string, options: SearchOption
     const data = await response.json()
     
     return data.data?.map((paper: SemanticScholarPaper) => ({
-      canonical_id: createCanonicalId(paper.title, paper.year, undefined, 'semantic_scholar'),
+      canonical_id: createCanonicalId(paper.title, paper.year, paper.doi, 'semanticscholar'),
       title: paper.title,
       abstract: paper.abstract || '',
       year: paper.year || 0,
       venue: paper.venue,
+      doi: paper.doi,
       url: paper.url,
       citationCount: paper.citationCount || 0,
-      authors: paper.authors?.map((a) => a.name).filter(Boolean) || [],
-      source: 'semantic_scholar' as const
+      authors: paper.authors?.map(a => a.name) || [],
+      source: 'semanticscholar' as const
     })) || []
-  })
+  }, { retries: 1, factor: 2, minTimeout: 300, maxTimeout: 3000, fastMode })
 }
 
 // Fix: arXiv API integration with correct search parameters
 export async function searchArxiv(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
-  const { limit = 50, fromYear, toYear } = options
+  const { limit = 50, fromYear, toYear, fastMode = false } = options
   
   return retryWithBackoff(async () => {
     let searchQuery = `all:"${query}"`
@@ -381,8 +405,8 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
     // Fix: Add searchtype=all parameter and proper sorting as per arXiv API docs
     const url = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=0&max_results=${limit}&searchtype=all&sortBy=relevance&sortOrder=descending`
     
-    // Add rate limiting delay (arXiv recommends 30s, but we'll use shorter with retry)
-    await sleep(200)
+    // Reduce delay in fast mode (arXiv can be slow, but we'll try shorter delays)
+    await sleep(fastMode ? 100 : 200)
     
     const response = await fetch(url)
     
@@ -431,12 +455,12 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
         source: 'arxiv' as const
       }
     })
-  })
+  }, { retries: 1, factor: 2, minTimeout: 300, maxTimeout: 3000, fastMode })
 }
 
 // CORE API integration with retry logic
 export async function searchCore(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
-  const { limit = 50, fromYear, toYear } = options
+  const { limit = 50, fromYear, toYear, fastMode = false } = options
   
   return retryWithBackoff(async () => {
     let searchQuery = `title:"${query}" OR abstract:"${query}"`
@@ -449,8 +473,8 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
     
     const url = `https://api.core.ac.uk/v3/search/works`
     
-    // Add rate limiting delay
-    await sleep(100)
+    // Reduce delay in fast mode
+    await sleep(fastMode ? 50 : 100)
     
     const response = await fetch(url, {
       method: 'POST',
@@ -490,7 +514,7 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
       authors: work.authors?.map((a) => a.name).filter(Boolean) || [],
       source: 'core' as const
     })) || []
-  })
+  }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
 }
 
 // Unpaywall integration for PDF access with retry logic

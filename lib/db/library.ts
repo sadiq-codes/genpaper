@@ -511,7 +511,43 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
   if (paperIds.length === 0) return []
   
   const supabase = await createClient()
-  const { data, error } = await supabase
+  
+  // First try to get from library_papers table (in case these are library paper IDs)
+  const { data: libraryData, error: libraryError } = await supabase
+    .from('library_papers')
+    .select(`
+      *,
+      paper:papers(
+        *,
+        authors:paper_authors(
+          ordinal,
+          author:authors(*)
+        )
+      )
+    `)
+    .in('id', paperIds)
+
+  if (!libraryError && libraryData && libraryData.length > 0) {
+    // Found library papers with these IDs
+    return libraryData.map((libraryPaper: any) => {
+      const paper = libraryPaper.paper
+      const authors = paper.authors
+        ?.sort((a: any, b: any) => a.ordinal - b.ordinal)
+        ?.map((pa: any) => pa.author) || []
+
+      return {
+        ...libraryPaper,
+        paper: {
+          ...paper,
+          authors,
+          author_names: authors.map((a: any) => a.name)
+        }
+      }
+    })
+  }
+
+  // If not found in library_papers, try papers table (in case these are paper IDs)
+  const { data: paperData, error: paperError } = await supabase
     .from('papers')
     .select(`
       *,
@@ -522,10 +558,10 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
     `)
     .in('id', paperIds)
 
-  if (error) throw error
+  if (paperError) throw paperError
 
   // Transform the data to include author names and create LibraryPaper structure
-  return (data || []).map((paper: any) => {
+  return (paperData || []).map((paper: any) => {
     const authors = paper.authors
       ?.sort((a: any, b: any) => a.ordinal - b.ordinal)
       ?.map((pa: any) => pa.author) || []
@@ -538,7 +574,8 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
       notes: null,
       paper: {
         ...paper,
-        authors
+        authors,
+        author_names: authors.map((a: any) => a.name)
       }
     }
   })

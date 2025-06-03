@@ -27,11 +27,16 @@ export async function POST(request: NextRequest) {
 
     // Create generation config
     const generationConfig: GenerationConfig = {
-      model: 'gpt-4',
+      temperature: 0.7,
+      max_tokens: 16000,
+      stream: false,
       search_parameters: {
-        sources: ['arxiv', 'pubmed'],
-        limit: 20,
-        useSemanticSearch: false
+        sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+        limit: 25,
+        fromYear: 1990,
+        includePreprints: false,
+        useSemanticSearch: true,
+        fallbackToAcademic: true
       },
       paper_settings: {
         length: config?.length || 'medium',

@@ -7,7 +7,7 @@ import {
   updateLibraryPaperNotes,
   isInLibrary
 } from '@/lib/db/library'
-import { getPaper } from '@/lib/db/papers'
+import { getPaper, checkPaperExists } from '@/lib/db/papers'
 import type { AddToLibraryRequest, AddToLibraryResponse, LibraryFilters } from '@/types/simplified'
 
 // GET - Retrieve user's library papers
@@ -21,41 +21,90 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const url = new URL(request.url)
-    const search = url.searchParams.get('search')
-    const collectionId = url.searchParams.get('collection')
-    const source = url.searchParams.get('source')
-    const sortBy = url.searchParams.get('sortBy') as 'added_at' | 'title' | 'publication_date' | 'citation_count'
-    const sortOrder = url.searchParams.get('sortOrder') as 'asc' | 'desc'
-    const limitParam = url.searchParams.get('limit')
-    const offsetParam = url.searchParams.get('offset')
+    const { searchParams } = new URL(request.url)
+    const search = searchParams.get('search')
+    const collection = searchParams.get('collection')
+    const source = searchParams.get('source')
+    const sortBy = searchParams.get('sortBy') || 'added_at'
+    const sortOrder = searchParams.get('sortOrder') || 'desc'
 
-    const filters: LibraryFilters = {
-      search: search || undefined,
-      collectionId: collectionId || undefined,
-      source: source || undefined,
-      sortBy: sortBy || 'added_at',
-      sortOrder: sortOrder || 'desc'
+    let query = supabase
+      .from('library_papers')
+      .select(`
+        id,
+        paper_id,
+        notes,
+        added_at,
+        papers:paper_id (
+          id,
+          title,
+          abstract,
+          publication_date,
+          venue,
+          doi,
+          url,
+          pdf_url,
+          metadata,
+          source,
+          citation_count,
+          impact_score,
+          created_at,
+          paper_authors (
+            ordinal,
+            authors (
+              id,
+              name
+            )
+          )
+        )
+      `)
+      .eq('user_id', user.id)
+
+    if (search) {
+      // Simplified search approach to avoid parsing errors
+      // Search in local notes OR in paper title/abstract
+      query = query.or(`notes.ilike.%${search}%,papers.title.ilike.%${search}%`)
     }
 
-    const limit = limitParam ? parseInt(limitParam) : 20
-    const offset = offsetParam ? parseInt(offsetParam) : 0
+    if (collection) {
+      // Filter by collection if specified
+      query = query.eq('collection_id', collection)
+    }
 
-    const libraryPapers = await getUserLibraryPapers(user.id, filters, limit, offset)
+    if (source) {
+      query = query.eq('papers.source', source)
+    }
 
-    return NextResponse.json({
-      papers: libraryPapers,
-      total: libraryPapers.length,
-      limit,
-      offset
-    })
+    // Sort
+    if (sortBy === 'title') {
+      query = query.order('title', { foreignTable: 'papers', ascending: sortOrder === 'asc' })
+    } else if (sortBy === 'publication_date') {
+      query = query.order('publication_date', { foreignTable: 'papers', ascending: sortOrder === 'asc' })
+    } else if (sortBy === 'citation_count') {
+      query = query.order('citation_count', { foreignTable: 'papers', ascending: sortOrder === 'asc' })
+    } else {
+      query = query.order(sortBy as any, { ascending: sortOrder === 'asc' })
+    }
+
+    const { data: papers, error } = await query
+
+    if (error) throw error
+
+    // Transform the data to include author names
+    const transformedPapers = (papers || []).map((item: any) => ({
+      ...item,
+      paper: {
+        ...item.papers,
+        authors: item.papers.paper_authors?.sort((a: any, b: any) => a.ordinal - b.ordinal).map((pa: any) => pa.authors) || [],
+        author_names: item.papers.paper_authors?.sort((a: any, b: any) => a.ordinal - b.ordinal).map((pa: any) => pa.authors.name) || []
+      }
+    }))
+
+    return NextResponse.json({ papers: transformedPapers })
 
   } catch (error) {
-    console.error('Error in library GET API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    console.error('Library fetch error:', error)
+    return NextResponse.json({ error: 'Failed to load library' }, { status: 500 })
   }
 }
 
@@ -70,41 +119,49 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body: AddToLibraryRequest = await request.json()
-    const { paperId, notes } = body
+    const { paperId, notes } = await request.json()
 
     if (!paperId) {
       return NextResponse.json({ error: 'Paper ID is required' }, { status: 400 })
     }
 
-    // Check if paper exists
-    const paper = await getPaper(paperId)
-    if (!paper) {
-      return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
+    // Check if paper is already in user's library
+    const { data: existingEntry, error: checkError } = await supabase
+      .from('library_papers')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('paper_id', paperId)
+      .single()
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      throw checkError
     }
 
-    // Check if already in library
-    const inLibrary = await isInLibrary(user.id, paperId)
-    if (inLibrary) {
-      return NextResponse.json({ error: 'Paper already in library' }, { status: 409 })
+    if (existingEntry) {
+      return NextResponse.json({ 
+        error: 'Paper is already in your library',
+        code: 'DUPLICATE_ENTRY'
+      }, { status: 409 })
     }
 
-    // Add to library
-    const libraryPaper = await addPaperToLibrary(user.id, paperId, notes)
+    // Add paper to user's library
+    const { data, error } = await supabase
+      .from('library_papers')
+      .insert({
+        user_id: user.id,
+        paper_id: paperId,
+        notes: notes || null
+      })
+      .select()
+      .single()
 
-    const response: AddToLibraryResponse = {
-      success: true,
-      libraryPaper
-    }
+    if (error) throw error
 
-    return NextResponse.json(response, { status: 201 })
+    return NextResponse.json({ success: true, entry: data })
 
   } catch (error) {
-    console.error('Error in library POST API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    console.error('Library add error:', error)
+    return NextResponse.json({ error: 'Failed to add paper to library' }, { status: 500 })
   }
 }
 

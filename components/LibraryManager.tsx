@@ -36,7 +36,9 @@ import {
   X,
   Check,
   Loader2,
-  Upload
+  Upload,
+  Settings,
+  Star
 } from 'lucide-react'
 import { format } from 'date-fns'
 import type { 
@@ -47,6 +49,7 @@ import type {
   SearchPapersResponse
 } from '@/types/simplified'
 import FileUpload from '@/components/FileUpload'
+import React from 'react'
 
 interface LibraryManagerProps {
   className?: string
@@ -63,10 +66,22 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Paper[]>([])
   const [isSearching, setIsSearching] = useState(false)
+  const [processingPapers, setProcessingPapers] = useState<Set<string>>(new Set())
   const [filters, setFilters] = useState<LibraryFilters>({
     sortBy: 'added_at',
     sortOrder: 'desc'
   })
+  
+  // Advanced search options
+  const [searchOptions, setSearchOptions] = useState({
+    sources: ['openalex', 'crossref', 'semantic_scholar'] as Array<'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'>,
+    maxResults: 25,
+    includePreprints: true,
+    fromYear: undefined as number | undefined,
+    toYear: undefined as number | undefined,
+    openAccessOnly: false
+  })
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false)
 
   // UI state
   const [selectedPapers, setSelectedPapers] = useState<Set<string>>(new Set())
@@ -74,6 +89,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
   const [showCollectionDialog, setShowCollectionDialog] = useState(false)
   const [editingNotes, setEditingNotes] = useState<string | null>(null)
   const [notesText, setNotesText] = useState('')
+  const [removingPapers, setRemovingPapers] = useState<Set<string>>(new Set())
 
   // Collection creation
   const [newCollectionName, setNewCollectionName] = useState('')
@@ -121,16 +137,64 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
     try {
       setIsSearching(true)
-      const response = await fetch(`/api/search-papers?q=${encodeURIComponent(query)}&online=true&limit=20`, {
-        credentials: 'include'
+      
+      // Use lightweight library search for fast UX
+      const response = await fetch('/api/library-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          query: query,
+          options: {
+            maxResults: searchOptions.maxResults,
+            sources: searchOptions.sources,
+            includePreprints: searchOptions.includePreprints,
+            fromYear: searchOptions.fromYear,
+            toYear: searchOptions.toYear,
+            openAccessOnly: searchOptions.openAccessOnly
+          }
+        })
       })
       
       if (response.ok) {
-        const data: SearchPapersResponse = await response.json()
-        setSearchResults(data.papers)
+        const data = await response.json()
+        if (data.success) {
+          // Transform the results to match Paper interface
+          const transformedPapers: Paper[] = data.papers.map((paper: any) => ({
+            id: paper.canonical_id,
+            title: paper.title,
+            abstract: paper.abstract,
+            publication_date: paper.year ? `${paper.year}-01-01` : null,
+            venue: paper.venue,
+            doi: paper.doi,
+            url: paper.url,
+            pdf_url: null,
+            metadata: {
+              citationCount: paper.citationCount,
+              relevanceScore: paper.relevanceScore,
+              source: paper.source
+            },
+            source: paper.source,
+            citation_count: paper.citationCount || 0,
+            impact_score: Math.max(paper.relevanceScore || 0, 0),
+            created_at: new Date().toISOString(),
+            authors: [],
+            author_names: []
+          }))
+          
+          setSearchResults(transformedPapers)
+          console.log(`📚 Library search found ${transformedPapers.length} papers from sources: ${searchOptions.sources.join(', ')}`)
+        } else {
+          console.error('Library search failed:', data.error)
+          setSearchResults([])
+        }
+      } else {
+        console.error('Library search request failed:', response.status)
+        setSearchResults([])
       }
     } catch (err) {
-      console.error('Search error:', err)
+      console.error('Library search error:', err)
+      setSearchResults([])
     } finally {
       setIsSearching(false)
     }
@@ -138,6 +202,48 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
   const addPaperToLibrary = async (paperId: string, notes?: string) => {
     try {
+      // Show processing status
+      setProcessingPapers(prev => new Set(prev).add(paperId))
+      
+      // First, check if the paper exists in database, if not, ingest it lightly
+      const searchResult = searchResults.find(p => p.id === paperId)
+      if (searchResult) {
+        // Convert search result to PaperDTO for lightweight ingestion
+        const paperDTO = {
+          title: searchResult.title,
+          abstract: searchResult.abstract || undefined,
+          publication_date: searchResult.publication_date || undefined,
+          venue: searchResult.venue || undefined,
+          doi: searchResult.doi || undefined,
+          url: searchResult.url || undefined,
+          pdf_url: searchResult.pdf_url || undefined,
+          metadata: {
+            ...searchResult.metadata,
+            added_via: 'library_search'
+          },
+          source: searchResult.source || 'library_search',
+          citation_count: searchResult.citation_count || 0,
+          impact_score: searchResult.impact_score || 0,
+          authors: searchResult.authors?.map(a => a.name || a) || []
+        }
+
+        // Ingest paper without chunks using the library ingestion API
+        const ingestResponse = await fetch('/api/papers/ingest-lightweight', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ paper: paperDTO })
+        })
+
+        if (!ingestResponse.ok) {
+          console.warn('Failed to ingest paper, but continuing with library addition')
+        } else {
+          const { paperId: actualPaperId } = await ingestResponse.json()
+          console.log(`📚 Paper ingested without chunks: ${actualPaperId}`)
+        }
+      }
+
+      // Add to user's library
       const response = await fetch('/api/library', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -148,24 +254,85 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
       if (response.ok) {
         await loadLibraryData()
         setSearchResults(prev => prev.filter(p => p.id !== paperId))
+        console.log(`📚 Paper added to library: ${paperId}`)
+      } else {
+        const errorData = await response.json()
+        
+        // Handle duplicate entries gracefully
+        if (response.status === 409 && errorData.code === 'DUPLICATE_ENTRY') {
+          // Remove from search results without showing error
+          setSearchResults(prev => prev.filter(p => p.id !== paperId))
+          console.log(`📚 Paper already in library: ${paperId}`)
+          return // Don't throw error for duplicates
+        }
+        
+        console.error('Failed to add paper to library:', errorData.error)
+        throw new Error(errorData.error || 'Failed to add to library')
       }
     } catch (err) {
-      console.error('Error adding paper:', err)
+      console.error('Error adding paper to library:', err)
+      // Show error feedback to user
+      alert(`Failed to add paper to library: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      // Clear processing status
+      setProcessingPapers(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(paperId)
+        return newSet
+      })
     }
   }
 
   const removePaperFromLibrary = async (paperId: string) => {
     try {
+      console.log(`🗑️ Attempting to remove paper: ${paperId}`)
+      
+      // Add to removing state
+      setRemovingPapers(prev => new Set(prev).add(paperId))
+      
       const response = await fetch(`/api/library?paperId=${paperId}`, {
         method: 'DELETE',
         credentials: 'include'
       })
 
+      console.log(`📡 DELETE response status: ${response.status}`)
+
       if (response.ok) {
+        console.log(`✅ Successfully removed paper: ${paperId}`)
         setLibraryPapers(prev => prev.filter(p => p.paper.id !== paperId))
+        
+        // Optional: Show success toast
+        // toast.success('Paper removed from library')
+      } else {
+        // Handle specific error cases
+        const errorData = await response.text()
+        console.error(`❌ Failed to remove paper: ${response.status} - ${errorData}`)
+        
+        if (response.status === 401) {
+          console.error('Authentication required - user may need to log in again')
+          // Optional: Show auth error toast
+          // toast.error('Please log in again to remove papers')
+        } else if (response.status === 404) {
+          console.error('Paper not found in library')
+          // Paper might already be removed, so update UI anyway
+          setLibraryPapers(prev => prev.filter(p => p.paper.id !== paperId))
+        } else {
+          console.error('Unknown error removing paper')
+          // Optional: Show generic error toast  
+          // toast.error('Failed to remove paper from library')
+        }
       }
     } catch (err) {
-      console.error('Error removing paper:', err)
+      console.error('Network error removing paper:', err)
+      // Optional: Show network error toast
+      // toast.error('Network error - please try again')
+    } finally {
+      // Remove from removing state
+      setRemovingPapers(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(paperId)
+        return newSet
+      })
     }
   }
 
@@ -257,6 +424,8 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
     const actualPaper = 'paper' in paper ? paper.paper : paper
     const libraryPaper = 'paper' in paper ? paper : null
     const isInLibrary = !isSearchResult
+    const isProcessing = isSearchResult && processingPapers.has(actualPaper.id)
+    const isRemoving = removingPapers.has(actualPaper.id)
 
     return (
       <Card className="hover:shadow-md transition-shadow">
@@ -268,21 +437,28 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                   {actualPaper.title}
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  {actualPaper.authors?.map(a => a.name).join(', ')}
+                  {actualPaper.authors?.map(a => typeof a === 'string' ? a : a.name).join(', ') || 'Unknown authors'}
                 </p>
               </div>
               
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm">
-                    <MoreVertical className="h-4 w-4" />
+                  <Button variant="ghost" size="sm" disabled={isProcessing}>
+                    {isProcessing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MoreVertical className="h-4 w-4" />
+                    )}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {isSearchResult ? (
-                    <DropdownMenuItem onClick={() => addPaperToLibrary(actualPaper.id)}>
+                    <DropdownMenuItem 
+                      onClick={() => addPaperToLibrary(actualPaper.id)}
+                      disabled={isProcessing}
+                    >
                       <Plus className="h-4 w-4 mr-2" />
-                      Add to Library
+                      {isProcessing ? 'Adding...' : 'Add to Library'}
                     </DropdownMenuItem>
                   ) : (
                     <>
@@ -292,10 +468,15 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                       </DropdownMenuItem>
                       <DropdownMenuItem 
                         onClick={() => removePaperFromLibrary(actualPaper.id)}
+                        disabled={isRemoving}
                         className="text-red-600"
                       >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Remove
+                        {isRemoving ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4 mr-2" />
+                        )}
+                        {isRemoving ? 'Removing...' : 'Remove'}
                       </DropdownMenuItem>
                     </>
                   )}
@@ -308,6 +489,15 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+
+            {isProcessing && (
+              <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-lg">
+                <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
+                <span className="text-xs text-blue-700 font-medium">
+                  Adding to library...
+                </span>
+              </div>
+            )}
 
             {actualPaper.abstract && (
               <p className="text-xs text-muted-foreground line-clamp-2">
@@ -331,6 +521,23 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                   <Quote className="h-3 w-3" />
                   {actualPaper.citation_count}
                 </span>
+              )}
+              
+              {/* Show additional metadata for search results */}
+              {isSearchResult && actualPaper.metadata && (
+                <React.Fragment>
+                  {(actualPaper.metadata as any).source && (
+                    <Badge variant="outline" className="text-xs">
+                      {(actualPaper.metadata as any).source}
+                    </Badge>
+                  )}
+                  {(actualPaper.metadata as any).relevanceScore && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Star className="h-3 w-3" />
+                      {((actualPaper.metadata as any).relevanceScore as number).toFixed(2)}
+                    </span>
+                  )}
+                </React.Fragment>
               )}
             </div>
 
@@ -458,6 +665,13 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                     />
                   </div>
                   <Button 
+                    variant="outline"
+                    onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                    className="px-3"
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Button>
+                  <Button 
                     onClick={() => searchOnlinePapers(searchQuery)}
                     disabled={isSearching || !searchQuery.trim()}
                   >
@@ -468,6 +682,154 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                     )}
                   </Button>
                 </div>
+
+                {/* Advanced Search Options */}
+                {showAdvancedOptions && (
+                  <Card className="p-4 bg-muted/50">
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Settings className="h-4 w-4" />
+                        <span className="font-medium">Advanced Search Options</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Sources Selection */}
+                        <div className="space-y-2">
+                          <Label className="text-sm font-medium">Search Sources</Label>
+                          <div className="space-y-2">
+                            {[
+                              { id: 'openalex', label: 'OpenAlex', desc: 'Comprehensive research database' },
+                              { id: 'crossref', label: 'Crossref', desc: 'DOI registry & metadata' },
+                              { id: 'semantic_scholar', label: 'Semantic Scholar', desc: 'AI-powered search' },
+                              { id: 'arxiv', label: 'ArXiv', desc: 'Preprint repository' },
+                              { id: 'core', label: 'CORE', desc: 'Open access repository' }
+                            ].map(source => (
+                              <div key={source.id} className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  id={source.id}
+                                  checked={searchOptions.sources.includes(source.id as any)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSearchOptions(prev => ({
+                                        ...prev,
+                                        sources: [...prev.sources, source.id as any]
+                                      }))
+                                    } else {
+                                      setSearchOptions(prev => ({
+                                        ...prev,
+                                        sources: prev.sources.filter(s => s !== source.id)
+                                      }))
+                                    }
+                                  }}
+                                  className="rounded border-gray-300"
+                                />
+                                <Label htmlFor={source.id} className="text-sm">
+                                  <span className="font-medium">{source.label}</span>
+                                  <span className="text-muted-foreground ml-1">({source.desc})</span>
+                                </Label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Filters */}
+                        <div className="space-y-3">
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium">Max Results</Label>
+                            <Select 
+                              value={searchOptions.maxResults.toString()} 
+                              onValueChange={(value) => setSearchOptions(prev => ({ ...prev, maxResults: parseInt(value) }))}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="10">10 papers</SelectItem>
+                                <SelectItem value="25">25 papers</SelectItem>
+                                <SelectItem value="50">50 papers</SelectItem>
+                                <SelectItem value="100">100 papers</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-sm font-medium">Publication Year Range</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                type="number"
+                                placeholder="From year"
+                                value={searchOptions.fromYear || ''}
+                                onChange={(e) => setSearchOptions(prev => ({ 
+                                  ...prev, 
+                                  fromYear: e.target.value ? parseInt(e.target.value) : undefined 
+                                }))}
+                                className="w-20"
+                              />
+                              <span className="self-center text-muted-foreground">to</span>
+                              <Input
+                                type="number"
+                                placeholder="To year"
+                                value={searchOptions.toYear || ''}
+                                onChange={(e) => setSearchOptions(prev => ({ 
+                                  ...prev, 
+                                  toYear: e.target.value ? parseInt(e.target.value) : undefined 
+                                }))}
+                                className="w-20"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              id="preprints"
+                              checked={searchOptions.includePreprints}
+                              onChange={(e) => setSearchOptions(prev => ({ ...prev, includePreprints: e.target.checked }))}
+                              className="rounded border-gray-300"
+                            />
+                            <Label htmlFor="preprints" className="text-sm">Include preprints</Label>
+                          </div>
+
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              id="openaccess"
+                              checked={searchOptions.openAccessOnly}
+                              onChange={(e) => setSearchOptions(prev => ({ ...prev, openAccessOnly: e.target.checked }))}
+                              className="rounded border-gray-300"
+                            />
+                            <Label htmlFor="openaccess" className="text-sm">Open access only</Label>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                )}
+
+                {/* Search Results Summary */}
+                {searchResults.length > 0 && !isSearching && (
+                  <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <Search className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">
+                        Found {searchResults.length} papers
+                      </span>
+                      {searchQuery && (
+                        <span className="text-sm text-muted-foreground">
+                          for "{searchQuery}"
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-1">
+                      {searchOptions.sources.map(source => (
+                        <Badge key={source} variant="outline" className="text-xs">
+                          {source}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
                   {searchResults.length === 0 && !isSearching && searchQuery && (

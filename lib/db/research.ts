@@ -5,7 +5,8 @@ import type {
   ResearchProjectVersion, 
   ProjectCitation, 
   PaperStatus,
-  ResearchProjectWithLatestVersion
+  ResearchProjectWithLatestVersion,
+  PaperWithAuthors
 } from '@/types/simplified'
 
 // Browser-side client (for client components)
@@ -244,6 +245,7 @@ export async function getProjectCitations(
       *,
       paper:papers(
         *,
+        csl_json,
         authors:paper_authors(
           ordinal,
           author:authors(*)
@@ -262,6 +264,53 @@ export async function getProjectCitations(
 
   if (error) throw error
   return data || []
+}
+
+export async function getProjectPapersWithCSL(
+  projectId: string,
+  version?: number
+): Promise<PaperWithAuthors[]> {
+  const supabase = await createClient()
+  
+  // Get unique paper IDs from citations
+  let citationQuery = supabase
+    .from('project_citations')
+    .select('paper_id')
+    .eq('project_id', projectId)
+    
+  if (version) {
+    citationQuery = citationQuery.eq('version', version)
+  }
+  
+  const { data: citationData, error: citationError } = await citationQuery
+  
+  if (citationError) throw citationError
+  if (!citationData || citationData.length === 0) return []
+  
+  const paperIds = [...new Set(citationData.map(c => c.paper_id))]
+  
+  // Get papers with CSL data
+  const { data: papers, error: papersError } = await supabase
+    .from('papers')
+    .select(`
+      *,
+      csl_json,
+      authors:paper_authors(
+        ordinal,
+        author:authors(*)
+      )
+    `)
+    .in('id', paperIds)
+    
+  if (papersError) throw papersError
+  
+  // Transform to PaperWithAuthors format
+  return (papers || []).map(paper => ({
+    ...paper,
+    author_names: paper.authors
+      ?.sort((a: any, b: any) => (a.ordinal || 0) - (b.ordinal || 0))
+      ?.map((pa: any) => pa.author.name) || []
+  }))
 }
 
 export async function getProjectCitationCount(projectId: string): Promise<number> {

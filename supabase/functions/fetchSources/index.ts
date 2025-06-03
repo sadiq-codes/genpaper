@@ -341,8 +341,30 @@ async function ingestPaper(paper: RankedPaper, searchQuery: string): Promise<str
       ? generatePaperUUID(paper.doi)
       : generatePaperUUID(`${paper.title}${paper.year || ''}`)
     
-    // Fix: Ensure impact_score is non-negative
-    const impactScore = Math.max(0, paper.combinedScore || 0)
+    // Fix: Ensure impact_score is normalized to 0-1 range (same as other services)
+    const rawScore = paper.combinedScore || 0
+    const normalizedImpactScore = rawScore > 0 ? 1 - 1 / (rawScore + 1) : 0
+    
+    // Check for PDF URL via Unpaywall if we have a DOI
+    let pdfUrl = paper.pdf_url
+    if (paper.doi && !pdfUrl) {
+      try {
+        console.log(`📄 Checking Unpaywall for DOI: ${paper.doi}`)
+        const unpaywallUrl = `https://api.unpaywall.org/v2/${paper.doi}?email=${CONTACT_EMAIL}`
+        const unpaywallResponse = await fetch(unpaywallUrl)
+        
+        if (unpaywallResponse.ok) {
+          const unpaywallData = await unpaywallResponse.json()
+          if (unpaywallData.is_oa && unpaywallData.best_oa_location?.url_for_pdf) {
+            pdfUrl = unpaywallData.best_oa_location.url_for_pdf
+            console.log(`✅ Found PDF URL via Unpaywall: ${pdfUrl}`)
+          }
+        }
+      } catch (error) {
+        console.log(`⚠️ Unpaywall lookup failed for ${paper.doi}:`, error)
+        // Continue without PDF - this is not a critical failure
+      }
+    }
     
     const { error } = await supabase
       .from('papers')
@@ -354,18 +376,19 @@ async function ingestPaper(paper: RankedPaper, searchQuery: string): Promise<str
         venue: paper.venue,
         doi: paper.doi,
         url: paper.url,
-        pdf_url: paper.pdf_url,
+        pdf_url: pdfUrl, // Use the potentially updated PDF URL
         metadata: {
           search_query: searchQuery,
           found_at: new Date().toISOString(),
           relevance_score: paper.relevanceScore,
           combined_score: paper.combinedScore,
           canonical_id: paper.canonical_id,
-          api_source: paper.source
+          api_source: paper.source,
+          pdf_source: pdfUrl ? (pdfUrl === paper.pdf_url ? 'original' : 'unpaywall') : null
         },
         source: `academic_search_${paper.source}`,
         citation_count: paper.citationCount,
-        impact_score: impactScore // Fix: Ensure non-negative impact score
+        impact_score: normalizedImpactScore
       })
     
     if (error) throw error

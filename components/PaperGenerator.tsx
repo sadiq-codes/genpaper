@@ -9,22 +9,17 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
-import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Checkbox } from '@/components/ui/checkbox'
 import { 
   Sparkles, 
   FileText, 
   CheckCircle, 
   AlertCircle,
   Loader2,
-  BookOpen,
   Zap
 } from 'lucide-react'
 import type { 
-  GenerateRequest, 
-  LibraryPaper
+  GenerateRequest
 } from '@/types/simplified'
 import { useStreamGeneration, useStartGeneration } from '@/lib/hooks/useStreamGeneration'
 import SourceReview from '@/components/SourceReview'
@@ -295,15 +290,6 @@ export default function PaperGenerator({ onGenerationComplete, className }: Pape
               </Button>
             ) : (
               <div className="space-y-4">
-                <Button 
-                  onClick={handleStopGeneration}
-                  variant="destructive"
-                  className="w-full"
-                  size="lg"
-                >
-                  Stop Generation
-                </Button>
-                
                 {progress && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
@@ -318,6 +304,15 @@ export default function PaperGenerator({ onGenerationComplete, className }: Pape
                     </p>
                   </div>
                 )}
+                
+                <Button 
+                  onClick={handleStopGeneration}
+                  variant="destructive"
+                  className="w-full"
+                  size="lg"
+                >
+                  Stop Generation
+                </Button>
               </div>
             )}
 

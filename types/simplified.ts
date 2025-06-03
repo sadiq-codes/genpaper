@@ -20,11 +20,20 @@ export interface PaperMetadata {
 }
 
 export interface GenerationConfig {
-  model?: string
+  temperature?: number
+  max_tokens?: number
+  stream?: boolean
   search_parameters?: {
     sources?: string[]
     limit?: number
+    maxResults?: number
+    fromYear?: number
+    toYear?: number
+    includePreprints?: boolean
     useSemanticSearch?: boolean
+    fallbackToKeyword?: boolean
+    fallbackToAcademic?: boolean
+    forceIngest?: boolean
   }
   paper_settings?: {
     length?: 'short' | 'medium' | 'long'
@@ -51,6 +60,7 @@ export interface Paper {
   citation_count?: number
   impact_score?: number
   created_at: string
+  csl_json?: any // CSL-JSON formatted citation data
   authors?: Author[] // Joined from paper_authors table
 }
 

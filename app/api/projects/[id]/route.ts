@@ -4,7 +4,8 @@ import {
   getResearchProject, 
   getLatestProjectVersion, 
   getProjectVersions,
-  getProjectCitations
+  getProjectCitations,
+  getProjectPapersWithCSL
 } from '@/lib/db/research'
 
 export async function GET(
@@ -29,6 +30,7 @@ export async function GET(
     const url = new URL(request.url)
     const includeVersions = url.searchParams.get('includeVersions') === 'true'
     const includeCitations = url.searchParams.get('includeCitations') === 'true'
+    const includePapers = url.searchParams.get('includePapers') === 'true'
     const versionLimit = url.searchParams.get('versionLimit')
 
     // Get project details
@@ -42,6 +44,7 @@ export async function GET(
 
     let versions = undefined
     let citations = undefined
+    let papers = undefined
 
     // Get versions if requested
     if (includeVersions) {
@@ -54,11 +57,17 @@ export async function GET(
       citations = await getProjectCitations(projectId, latestVersion?.version)
     }
 
+    // Get papers with CSL data if requested
+    if (includePapers) {
+      papers = await getProjectPapersWithCSL(projectId, latestVersion?.version)
+    }
+
     return NextResponse.json({
       ...project,
       latest_version: latestVersion,
       versions,
-      citations
+      citations,
+      papers
     })
 
   } catch (error) {

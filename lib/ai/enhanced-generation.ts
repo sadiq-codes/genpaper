@@ -1,4 +1,5 @@
-import { openai } from '@/lib/ai/sdk'
+import { streamText } from 'ai'
+import { ai } from '@/lib/ai/vercel-client'
 import { hybridSearchPapers, searchPaperChunks } from '@/lib/db/papers'
 import { getPapersByIds } from '@/lib/db/library'
 import { 
@@ -11,8 +12,10 @@ import type {
   GenerationConfig,
   GenerationProgress 
 } from '@/types/simplified'
+import { createClient } from '@/lib/supabase/server'
+import { ingestPaperWithChunks } from '@/lib/db/papers'
 
-// Task 4: Enhanced RAG-powered generation flow
+// Enhanced RAG-powered generation flow
 export interface EnhancedGenerationOptions {
   projectId: string
   userId: string
@@ -40,205 +43,235 @@ export interface GenerationResult {
   }
 }
 
-export interface GenerationContext {
-  papers: PaperWithAuthors[]
-  pinnedPapers: PaperWithAuthors[]
-  discoveredPapers: PaperWithAuthors[]
-  relevantChunks: Array<{
-    paper_id: string
-    content: string
-    score: number
-  }>
-}
-
 export async function generateDraftWithRAG(
   options: EnhancedGenerationOptions
 ): Promise<GenerationResult> {
-  const { projectId, userId, topic, libraryPaperIds, useLibraryOnly, config, onProgress } = options
+  const { projectId, topic, libraryPaperIds = [], useLibraryOnly, config, onProgress } = options
   
-  // Step 1: Generate embedding for the topic
-  onProgress?.({
-    stage: 'searching',
-    progress: 5,
-    message: 'Analyzing research topic...'
+  const log = (stage: GenerationProgress['stage'], progress: number, message: string) => {
+    onProgress?.({ stage, progress, message })
+    console.log(`🔄 [${stage.toUpperCase()}] ${progress}% - ${message}`)
+  }
+
+  // Step 1: Collect papers efficiently
+  log('searching', 10, 'Gathering papers from library and search...')
+  console.log(`📋 Generation Request:`)
+  console.log(`   📌 Project ID: ${projectId}`)
+  console.log(`   🎯 Topic: "${topic}"`)
+  console.log(`   📚 Pinned Library Papers: ${libraryPaperIds.length}`)
+  console.log(`   🔒 Library Only Mode: ${useLibraryOnly}`)
+  console.log(`   ⚙️ Target Limit: ${config?.search_parameters?.limit || 10}`)
+  
+  const pinnedPapers = libraryPaperIds.length > 0 
+    ? await getPapersByIds(libraryPaperIds)
+    : []
+  
+  console.log(`📚 Pinned Papers Retrieved: ${pinnedPapers.length}`)
+  pinnedPapers.forEach((lp, idx) => {
+    const paper = lp.paper as PaperWithAuthors
+    console.log(`   ${idx + 1}. "${paper.title}" (${paper.id})`)
+    console.log(`      Authors: ${paper.author_names?.join(', ') || 'Unknown'}`)
+    console.log(`      Year: ${paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'Unknown'}`)
   })
   
-  // Generate embedding for potential future use
-  await openai.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: topic
-  })
+  const pinnedIds = pinnedPapers.map(lp => lp.paper.id)
+  const targetTotal = config?.search_parameters?.limit || 10
+  const remainingSlots = Math.max(0, targetTotal - pinnedPapers.length)
   
-  // Step 2: Gather papers using semantic search
-  let papers: PaperWithAuthors[] = []
-  const pinnedPaperIds: string[] = []
-  
-  // Get papers from library if specified (these are "pinned" papers)
-  if (libraryPaperIds && libraryPaperIds.length > 0) {
-    onProgress?.({
-      stage: 'searching',
-      progress: 10,
-      message: 'Retrieving pinned papers from your library...'
+  console.log(`🔍 Search Parameters:`)
+  console.log(`   📊 Target Total Papers: ${targetTotal}`)
+  console.log(`   📌 Pinned Papers: ${pinnedPapers.length}`)
+  console.log(`   🆕 Remaining Slots for Discovery: ${remainingSlots}`)
+  console.log(`   🚫 Excluded Paper IDs: [${pinnedIds.join(', ')}]`)
+
+  const discoveredPapers = useLibraryOnly || remainingSlots === 0 ? [] :
+    await hybridSearchPapers(topic, {
+      limit: remainingSlots,
+      excludePaperIds: pinnedIds,
+      minYear: 2015 // Lower minimum year to get more papers
     })
-    
-    const libraryPapers = await getPapersByIds(libraryPaperIds)
-    const selectedLibraryPapers = libraryPapers
-      .map(lp => lp.paper as PaperWithAuthors)
-    
-    papers = selectedLibraryPapers
-    pinnedPaperIds.push(...selectedLibraryPapers.map(p => p.id))
-    
-    onProgress?.({
-      stage: 'searching',
-      progress: 15,
-      message: `Added ${selectedLibraryPapers.length} pinned papers from your library.`
-    })
-  }
   
-  // Search for additional papers using semantic search if not library-only
-  // Task 6: Exclude pinned papers from similarity ranking to avoid duplicates
-  if (!useLibraryOnly) {
-    onProgress?.({
-      stage: 'searching',
-      progress: 20,
-      message: 'Performing semantic search for relevant papers (excluding pinned papers)...'
-    })
-    
-    try {
-      // Use hybrid search for best results (combines semantic + keyword)
-      const searchResults = await hybridSearchPapers(topic, {
-        limit: config?.search_parameters?.limit || 10,
-        minYear: 2018,
-        sources: config?.search_parameters?.sources,
-        semanticWeight: 0.7, // Prefer semantic matches
-        excludePaperIds: pinnedPaperIds // Task 6: Exclude pinned papers to avoid duplicates
-      })
-      
-      onProgress?.({
-        stage: 'analyzing',
-        progress: 30,
-        message: `Found ${searchResults.length} additional papers via semantic search. Filtering for quality...`
-      })
-      
-      // Filter and rank by relevance and quality
-      const qualityFiltered = searchResults.filter(paper => {
-        const relevanceScore = (paper as any).relevance_score
-        return !pinnedPaperIds.includes(paper.id) && // Double-check exclusion
-          relevanceScore && relevanceScore > 0.6 && // High semantic relevance
-          (paper.citation_count || 0) > 5 // Minimum citation threshold
-      })
-      
-      papers = [...papers, ...qualityFiltered.slice(0, 10)]
-      
-      // If no semantic results found, throw error instead of using mock data
-      if (searchResults.length === 0) {
-        throw new Error(`No papers found in database for topic "${topic}". Please add relevant papers to your library first.`)
-      }
-    } catch (error) {
-      console.error('Semantic search failed:', error)
-      
-      // Re-throw the error instead of falling back to mock data
-      throw error
-    }
-  }
+  console.log(`🔍 Discovery Search Results: ${discoveredPapers.length} papers found`)
   
-  if (papers.length === 0) {
-    // Enhanced debugging - check database state
-    console.log('DEBUG: No papers found. Checking database state...')
+  // Fallback: If we got very few results, try broader searches
+  const additionalPapers: PaperWithAuthors[] = []
+  if (discoveredPapers.length < 5 && remainingSlots > discoveredPapers.length) {
+    console.log(`🔄 Too few results (${discoveredPapers.length}), trying broader searches...`)
     
-    // Check if there are any papers at all in the database
-    const { searchPapers } = await import('@/lib/db/papers')
-    const allPapers = await searchPapers({ query: '', limit: 5 })
+    // Extract key terms for broader search
+    const keyTerms = topic.toLowerCase().split(/\s+/).filter(term => 
+      term.length > 3 && !['and', 'the', 'for', 'with', 'from'].includes(term)
+    )
     
-    console.log('DEBUG: Total papers in database:', allPapers.length)
-    if (allPapers.length > 0) {
-      console.log('DEBUG: Sample papers:', allPapers.map(p => ({
-        id: p.id,
-        title: p.title?.substring(0, 50),
-        hasEmbedding: !!(p as any).embedding
-      })))
-    }
+    console.log(`🔍 Extracted key terms: [${keyTerms.join(', ')}]`)
     
-    // Give a more helpful error message with specific guidance
-    let errorMessage = `No papers found for topic "${topic}".`
-    
-    if (allPapers.length === 0) {
-      errorMessage += `\n\n🔍 Database is empty - please upload some papers first:
-      1. Go to your Library
-      2. Upload PDF papers related to your research topic
-      3. Wait for processing to complete
-      4. Try generating your paper again`
-    } else {
-      const papersWithEmbeddings = allPapers.filter(p => !!(p as any).embedding)
-      if (papersWithEmbeddings.length === 0) {
-        errorMessage += `\n\n⚡ Found ${allPapers.length} papers but none have embeddings yet:
-        1. This might be due to recent database updates
-        2. Try re-uploading a paper to trigger embedding generation
-        3. Check the console for any vector dimension errors`
-      } else {
-        errorMessage += `\n\n🎯 Found ${allPapers.length} papers (${papersWithEmbeddings.length} with embeddings) but topic too specific:
-        1. Try using broader research terms
-        2. Check if your topic matches existing paper content
-        3. Add more papers related to "${topic}" to your library`
+    // Try searching with individual key terms
+    for (const term of keyTerms.slice(0, 3)) { // Limit to top 3 terms
+      try {
+        const termResults = await hybridSearchPapers(term, {
+          limit: Math.min(10, remainingSlots - discoveredPapers.length - additionalPapers.length),
+          excludePaperIds: [...pinnedIds, ...discoveredPapers.map(p => p.id), ...additionalPapers.map(p => p.id)],
+          minYear: 2010, // Even broader year range
+          semanticWeight: 0.5 // Lower semantic weight for broader matching
+        })
+        
+        console.log(`   🔍 "${term}" found ${termResults.length} additional papers`)
+        additionalPapers.push(...termResults)
+        
+        if (discoveredPapers.length + additionalPapers.length >= remainingSlots) break
+      } catch (error) {
+        console.warn(`⚠️ Broad search for "${term}" failed:`, error)
       }
     }
     
-    throw new Error(errorMessage)
+    console.log(`🔄 Broader search found ${additionalPapers.length} additional papers`)
   }
   
-  // Step 3: Build enhanced prompt with semantic context
-  onProgress?.({
-    stage: 'writing',
-    progress: 35,
-    message: `Processing ${papers.length} papers (${pinnedPaperIds.length} pinned, ${papers.length - pinnedPaperIds.length} discovered) for content generation...`
+  // Combine all discovered papers
+  const allDiscoveredPapers = [...discoveredPapers, ...additionalPapers]
+  
+  console.log(`🔍 Total Discovery Results: ${allDiscoveredPapers.length} papers found`)
+  allDiscoveredPapers.forEach((paper, idx) => {
+    console.log(`   ${idx + 1}. "${paper.title}" (${paper.id})`)
+    console.log(`      Authors: ${paper.author_names?.join(', ') || 'Unknown'}`)
+    console.log(`      Year: ${paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'Unknown'}`)
+    console.log(`      Venue: ${paper.venue || 'Unknown'}`)
+    console.log(`      Source: ${paper.source || 'database'}`)
   })
   
+  const allPapers = [
+    ...pinnedPapers.map(lp => lp.paper as PaperWithAuthors),
+    ...allDiscoveredPapers
+  ]
+
+  console.log(`📋 Final Paper Collection: ${allPapers.length} papers total`)
+  console.log(`   📌 From Library: ${pinnedPapers.length}`)
+  console.log(`   📄 From Discovery: ${allDiscoveredPapers.length}`)
+
+  if (allPapers.length === 0) {
+    console.error(`❌ No papers found for topic: "${topic}"`)
+    console.error(`❌ Search parameters:`, { 
+      limit: remainingSlots, 
+      excludeIds: pinnedIds.length,
+      useLibraryOnly 
+    })
+    throw new Error(`No papers found for topic "${topic}". Please add relevant papers to your library.`)
+  }
+
+  log('analyzing', 30, `Found ${allPapers.length} papers. Retrieving content chunks...`)
+
+  // Step 2: Get relevant content chunks for RAG
+  console.log(`📄 Searching for relevant content chunks...`)
+  console.log(`   🎯 Query: "${topic}"`)
+  console.log(`   📋 Paper IDs: [${allPapers.map(p => p.id).join(', ')}]`)
+  console.log(`   📊 Chunk Limit: 20`)
+  console.log(`   🎯 Min Score: 0.3`)
+  
+  // Check if papers have chunks, create them if missing (for papers added via Library Manager)
+  const papersNeedingChunks = []
+  const supabase = await createClient()
+  
+  for (const paper of allPapers) {
+    const { data: existingChunks, error } = await supabase
+      .from('paper_chunks')
+      .select('id')
+      .eq('paper_id', paper.id)
+      .limit(1)
+    
+    if (error || !existingChunks || existingChunks.length === 0) {
+      papersNeedingChunks.push(paper)
+    }
+  }
+  
+  if (papersNeedingChunks.length > 0) {
+    console.log(`📄 Creating chunks for ${papersNeedingChunks.length} papers missing chunks...`)
+    
+    for (const paper of papersNeedingChunks) {
+      try {
+        // Create content chunks for RAG
+        const contentChunks = []
+        if (paper.abstract) {
+          const abstractChunks = paper.abstract.match(/.{1,500}(?:\s|$)/g) || []
+          contentChunks.push(...abstractChunks.map(chunk => chunk.trim()).filter(Boolean))
+        }
+        contentChunks.unshift(paper.title) // Title as first chunk
+        
+        // Add chunks to existing paper
+        const paperDTO = {
+          title: paper.title,
+          abstract: paper.abstract,
+          publication_date: paper.publication_date,
+          venue: paper.venue,
+          doi: paper.doi,
+          url: paper.url,
+          pdf_url: paper.pdf_url,
+          metadata: paper.metadata || {},
+          source: paper.source,
+          citation_count: paper.citation_count,
+          impact_score: paper.impact_score,
+          authors: paper.authors?.map(a => a.name) || []
+        }
+        
+        await ingestPaperWithChunks(paperDTO, contentChunks)
+        console.log(`📄 Created ${contentChunks.length} chunks for: ${paper.title}`)
+      } catch (error) {
+        console.warn(`📄 Failed to create chunks for ${paper.title}:`, error)
+      }
+    }
+  }
+  
+  const chunks = allPapers.length > 0 
+    ? await searchPaperChunks(topic, {
+        paperIds: allPapers.map(p => p.id),
+        limit: 20,
+        minScore: 0.3
+      }).catch((error) => {
+        console.warn(`⚠️ Content chunks search failed:`, error)
+        return []
+      })
+    : []
+
+  console.log(`📄 Content Chunks Retrieved: ${chunks.length}`)
+  chunks.forEach((chunk, idx) => {
+    console.log(`   ${idx + 1}. Paper: ${chunk.paper_id}`)
+    console.log(`      Content: "${chunk.content.substring(0, 100)}..."`)
+    console.log(`      Score: ${chunk.score || 'N/A'}`)
+  })
+
+  log('writing', 40, 'Generating research paper with AI...')
+
+  // Step 3: Build prompts and stream generation
   const systemMessage = buildSystemPrompt(config)
-  const userMessage = buildUserPromptWithSources(topic, papers)
+  const userMessage = buildUserPromptWithSources(topic, allPapers, chunks)
   
-  // Step 4: Stream generation with chunking
-  onProgress?.({
-    stage: 'writing',
-    progress: 45,
-    message: 'Starting AI-powered paper generation...'
-  })
+  console.log(`🤖 AI Generation Setup:`)
+  console.log(`   📝 System Prompt Length: ${systemMessage.length} chars`)
+  console.log(`   📝 User Prompt Length: ${userMessage.length} chars`)
+  console.log(`   📊 Papers in Context: ${allPapers.length}`)
+  console.log(`   📄 Chunks in Context: ${chunks.length}`)
+  console.log(`   🎯 Model: ${config?.model || 'gpt-4o'}`)
+  console.log(`   🌡️ Temperature: ${config?.temperature || 0.3}`)
   
-  const result = await generatePaperWithSources(
-    systemMessage,
-    userMessage,
-    papers,
+  const result = await streamPaperGeneration(
+    systemMessage, 
+    userMessage, 
+    allPapers, 
     config,
-    (progress: number, stage: string, content: string) => {
-      onProgress?.({
-        stage: stage as any,
-        progress: 45 + (progress * 0.45), // Map to 45-90%
-        message: `Writing ${stage} section...`,
-        content
-      })
-    }
+    (progress) => log('writing', 40 + progress * 0.4, `Writing paper... ${Math.round(progress)}%`)
   )
-  
-  // Step 5: Save to database with chunking
-  onProgress?.({
-    stage: 'citations',
-    progress: 90,
-    message: 'Saving paper and processing citations...'
-  })
-  
-  // Save final version and citations
+
+  log('citations', 85, 'Saving to database...')
+
+  // Step 4: Persist to database
   const version = await addProjectVersion(projectId, result.content, 1)
   
-  const citations = result.citations.map(citation => ({
-    paperId: citation.paperId,
-    citationText: citation.citationText,
-    positionStart: citation.positionStart,
-    positionEnd: citation.positionEnd,
-    pageRange: citation.pageRange
-  }))
-  
-  // Save citations to database
+  // Ensure all citations use valid UUIDs
+  const validCitations = result.citations.filter(c => 
+    allPapers.some(p => p.id === c.paperId)
+  )
+
   await Promise.all(
-    citations.map(citation =>
+    validCitations.map(citation =>
       addProjectCitation(
         projectId,
         version.version,
@@ -250,22 +283,20 @@ export async function generateDraftWithRAG(
       )
     )
   )
-  
-  // Update project status
+
   await updateResearchProjectStatus(projectId, 'complete')
   
-  onProgress?.({
-    stage: 'complete',
-    progress: 100,
-    message: 'Paper generation completed successfully!'
-  })
-  
+  log('complete', 100, 'Paper generation completed!')
+
   return {
     content: result.content,
-    citations,
-    wordCount: result.wordCount,
-    sources: papers,
-    structure: result.structure
+    citations: validCitations,
+    wordCount: result.content.split(/\s+/).length,
+    sources: allPapers,
+    structure: {
+      sections: extractSections(result.content),
+      abstract: extractAbstract(result.content)
+    }
   }
 }
 
@@ -274,420 +305,128 @@ function buildSystemPrompt(config: GenerationConfig): string {
   const citationStyle = config?.paper_settings?.citationStyle || 'apa'
   const length = config?.paper_settings?.length || 'medium'
   
-  // Provide specific length guidance
   const lengthGuidance = {
-    short: 'Write a focused 1,500-2,500 word paper with 3-4 main sections',
-    medium: 'Write a comprehensive 3,000-5,000 word paper with 5-6 detailed sections',
-    long: 'Write an extensive 6,000-10,000 word paper with 7-8 comprehensive sections'
+    short: '1,500-2,500 words with 3-4 sections',
+    medium: '3,000-5,000 words with 5-6 sections',
+    long: '6,000-10,000 words with 7-8 sections'
   }
   
-  return `You are an expert academic writing assistant specialized in creating high-quality research papers.
+  return `You are an expert academic writing assistant. Write a comprehensive ${style} research paper.
 
-WRITING GUIDELINES:
-- Style: ${style} writing with appropriate tone and structure
-- Citation format: ${citationStyle} style citations
+REQUIREMENTS:
 - Length: ${lengthGuidance[length as keyof typeof lengthGuidance]}
-- Use only the provided sources for citations
-- Maintain academic rigor and objectivity
-- Write comprehensive sections with detailed analysis
+- Citation style: ${citationStyle}
+- Use ONLY the provided sources
+- Include inline citations in the text using [CITE: paper_id] format
+- Include: Abstract, Introduction, Literature Review, ${config?.paper_settings?.includeMethodology ? 'Methodology, ' : ''}Results, Discussion, Conclusion
+- Maintain academic rigor and clear structure
 
-CITATION REQUIREMENTS:
-- Cite sources as (Author, Year) in text
-- Use [CITE: paper_id] placeholders for reference tracking
-- Include a comprehensive References section
-- Ensure all claims are properly supported
+CITATION FORMAT:
+- Use [CITE: paper_id] markers directly in the text where citations are needed
+- Example: "Recent studies have shown significant improvements [CITE: 123e4567-e89b-12d3-a456-426614174000] in this area."
+- Place citations at the end of sentences or after specific claims
 
-STRUCTURE REQUIREMENTS:
-${config?.paper_settings?.includeMethodology ? '- Include a detailed Methodology section' : ''}
-- Provide clear section headers
-- Maintain logical flow between sections
-- Include an abstract summarizing key findings
-- Develop each section thoroughly with proper depth
-
-Generate a comprehensive research paper based on the provided topic and sources. Use the full content of the provided sources to create a thorough, well-researched paper.`
+Generate a thorough, well-researched paper based on the provided sources with proper inline citations.`
 }
 
-function buildUserPromptWithSources(topic: string, papers: PaperWithAuthors[]): string {
-  const sources = papers.map((paper) => ({
+function buildUserPromptWithSources(
+  topic: string, 
+  papers: PaperWithAuthors[], 
+  chunks: Array<{paper_id: string, content: string, score: number}> = []
+): string {
+  const sources = papers.map(paper => ({
     id: paper.id,
     title: paper.title,
-    abstract: paper.abstract,
-    authors: paper.author_names?.join(', '),
+    authors: paper.author_names?.join(', ') || 'Unknown',
     year: paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'Unknown',
-    venue: paper.venue,
-    doi: paper.doi,
-    relevance_score: (paper as any).relevance_score || 'N/A'
+    abstract: paper.abstract?.substring(0, 300) + '...'
   }))
-  
+
+  const contextChunks = chunks.slice(0, 10).map(chunk => 
+    `[${chunk.paper_id}]: ${chunk.content.substring(0, 200)}...`
+  ).join('\n\n')
+
   return JSON.stringify({
     topic,
-    task: 'Generate a comprehensive research paper on the given topic using the provided sources',
+    task: 'Generate a comprehensive research paper',
     sources,
-    requirements: [
-      'Use semantic understanding to connect concepts across sources',
-      'Synthesize information to create novel insights from the full source content',
-      'Cite sources appropriately using [CITE: paper_id] format',
+    context: contextChunks,
+    instructions: [
+      'Synthesize information across all sources',
+      'Use [CITE: paper_id] format for citations',
       'Create logical flow between sections',
-      'Include proper academic structure with abstract, introduction, main sections, and conclusion',
-      'Write a comprehensive paper that thoroughly explores the topic using all available source material',
-      'Ensure the paper length is appropriate for the selected length setting'
+      'Write comprehensive content based on provided sources'
     ]
   }, null, 2)
 }
 
-// Helper function to calculate appropriate max_tokens based on model and input
-function calculateMaxTokens(model: string, inputTokens: number): number {
-  // Model token limits (approximation)
-  const modelLimits: Record<string, number> = {
-    'gpt-4o': 128000,
-    'gpt-4o-mini': 128000,
-    'gpt-4': 8192,
-    'gpt-4-turbo': 128000,
-    'gpt-3.5-turbo': 16385,
-    'gpt-3.5-turbo-16k': 16385
-  }
-  
-  const contextLimit = modelLimits[model] || 8192 // Default to conservative limit
-  
-  // Reserve 20% for safety margin and leave room for input tokens
-  const safetyMargin = Math.floor(contextLimit * 0.2)
-  const availableTokens = contextLimit - inputTokens - safetyMargin
-  
-  // Set reasonable bounds
-  const minTokens = 1000
-  const maxTokens = Math.min(8000, availableTokens) // Cap at 8000 for reasonable response time
-  
-  return Math.max(minTokens, maxTokens)
-}
-
-// Helper function to estimate token count (rough approximation)
-function estimateTokenCount(text: string): number {
-  // Rough approximation: 1 token ≈ 4 characters for English text
-  return Math.ceil(text.length / 4)
-}
-
-async function generatePaperWithSources(
+async function streamPaperGeneration(
   systemMessage: string,
   userMessage: string,
   papers: PaperWithAuthors[],
   config: GenerationConfig,
-  onProgress: (progress: number, stage: string, content: string) => void
-): Promise<GenerationResult> {
+  onProgress: (progress: number) => void
+): Promise<{ content: string; citations: GenerationResult['citations'] }> {
   
-  // Calculate input token count and appropriate max_tokens
-  const inputTokens = estimateTokenCount(systemMessage + userMessage) + 78 // +78 for function definition
-  const modelName = config?.model || 'gpt-4o'
-  const maxTokens = calculateMaxTokens(modelName, inputTokens)
-  
-  console.log(`Model: ${modelName}, Input tokens: ~${inputTokens}, Max tokens: ${maxTokens}`)
-  
-  const stream = await openai.chat.completions.create({
-    model: modelName,
-    stream: true,
+  const stream = await streamText({
+    model: ai(config?.model as string || 'gpt-4o'),
     messages: [
       { role: 'system', content: systemMessage },
       { role: 'user', content: userMessage }
     ],
-    tools: [
-      {
-        type: 'function',
-        function: {
-          name: 'cite_source',
-          description: 'Mark a citation in the text',
-          parameters: {
-            type: 'object',
-            properties: {
-              paper_id: {
-                type: 'string',
-                description: 'ID of the paper being cited'
-              },
-              citation_text: {
-                type: 'string',
-                description: 'The citation text (e.g., "(Smith, 2023)")'
-              },
-              context: {
-                type: 'string',
-                description: 'Brief context of what is being cited'
-              }
-            },
-            required: ['paper_id', 'citation_text']
-          }
-        }
-      }
-    ],
-    temperature: 0.3, // Lower temperature for more consistent academic writing
-    max_tokens: maxTokens // Dynamic token limit based on model and input
+    temperature: 0.3
   })
   
   let content = ''
-  let citations: Array<{
-    paperId: string
-    citationText: string
-    positionStart?: number
-    positionEnd?: number
-    pageRange?: string
-  }> = []
+  const targetLength = getTargetLength(config?.paper_settings?.length)
+  let chunkCount = 0
   
-  let currentStage = 'introduction'
-  let progressCounter = 0
-  
-  for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta
+  // Process text stream directly for much simpler and more reliable generation
+  for await (const chunk of stream.textStream) {
+    content += chunk
+    chunkCount++
     
-    if (delta?.content) {
-      content += delta.content
-      progressCounter++
-      
-      // Update stage based on content patterns
-      if (content.includes('## Methodology') || content.includes('# Methodology')) {
-        currentStage = 'methodology'
-      } else if (content.includes('## Results') || content.includes('# Results')) {
-        currentStage = 'results'
-      } else if (content.includes('## Discussion') || content.includes('# Discussion')) {
-        currentStage = 'discussion'
-      } else if (content.includes('## Conclusion') || content.includes('# Conclusion')) {
-        currentStage = 'conclusion'
-      }
-      
-      // Report progress every 10 chunks
-      if (progressCounter % 10 === 0) {
-        const progress = Math.min((content.length / 16000) * 100, 95) // Estimate progress
-        onProgress(progress, currentStage, content)
-      }
-    }
-    
-    if (delta?.tool_calls) {
-      // Process citation tool calls
-      for (const toolCall of delta.tool_calls) {
-        if (toolCall.function?.name === 'cite_source') {
-          try {
-            const args = JSON.parse(toolCall.function.arguments || '{}')
-            citations.push({
-              paperId: args.paper_id,
-              citationText: args.citation_text,
-              positionStart: content.length,
-              positionEnd: content.length + args.citation_text.length
-            })
-          } catch (error) {
-            console.error('Error parsing citation tool call:', error)
-          }
-        }
-      }
+    // Report progress every 20 chunks based on content length
+    if (chunkCount % 20 === 0) {
+      const progress = Math.min((content.length / targetLength) * 100, 95)
+      onProgress(progress)
     }
   }
   
-  // Extract structure information
-  const sections = extractSections(content)
-  const abstract = extractAbstract(content)
-  const wordCount = content.split(/\s+/).length
+  // Extract citations from the generated content using regex
+  const citations: GenerationResult['citations'] = []
+  const citationRegex = /\[CITE:\s*([a-f0-9-]{36})\]/gi
+  const paperIdMap = new Set(papers.map(p => p.id))
   
-  return {
-    content,
-    citations,
-    wordCount,
-    sources: papers,
-    structure: {
-      sections,
-      abstract
+  let match
+  while ((match = citationRegex.exec(content)) !== null) {
+    const paperId = match[1]
+    
+    // Only accept valid paper IDs to prevent constraint violations
+    if (paperIdMap.has(paperId)) {
+      citations.push({
+        paperId: paperId,
+        citationText: match[0], // The full [CITE: paper_id] text
+        positionStart: match.index,
+        positionEnd: match.index + match[0].length
+      })
     }
   }
+  
+  return { content, citations }
+}
+
+function getTargetLength(length?: string): number {
+  const targets = { short: 2000 * 6, medium: 4000 * 6, long: 8000 * 6 }
+  return targets[length as keyof typeof targets] || targets.medium
 }
 
 function extractSections(content: string): string[] {
-  const sectionHeaders = content.match(/#{1,3}\s+(.+)/g) || []
-  return sectionHeaders.map(header => header.replace(/#{1,3}\s+/, '').trim())
+  const headers = content.match(/#{1,3}\s+(.+)/g) || []
+  return headers.map(h => h.replace(/#{1,3}\s+/, '').trim())
 }
 
 function extractAbstract(content: string): string {
-  const abstractMatch = content.match(/## Abstract\s*\n\n(.*?)\n\n##/)
-  return abstractMatch ? abstractMatch[1].trim() : ''
-}
-
-// Enhanced paper ingestion for search results
-export async function ingestSearchResults(
-  searchResults: any[],
-  query: string
-): Promise<string[]> {
-  const paperIds: string[] = []
-  
-  for (const result of searchResults) {
-    try {
-      const paperId = await ingestPaper({
-        title: result.title,
-        abstract: result.abstract,
-        publication_date: result.publication_date,
-        venue: result.venue,
-        doi: result.doi,
-        url: result.url,
-        pdf_url: result.pdf_url,
-        metadata: {
-          search_query: query,
-          found_at: new Date().toISOString(),
-          relevance_score: result.relevance_score
-        },
-        source: result.source || 'search',
-        citation_count: result.citation_count,
-        impact_score: result.relevance_score,
-        authors: result.authors
-      })
-      
-      paperIds.push(paperId)
-    } catch (error) {
-      console.error('Error ingesting search result:', error)
-    }
-  }
-  
-  return paperIds
-}
-
-export async function enhancedRAGGeneration({
-  topic,
-  pinnedPaperIds = [],
-  useLibraryOnly = false,
-  maxPapers = 10,
-  onProgress
-}: EnhancedGenerationOptions): Promise<GenerationContext> {
-  
-  // Stage 1: Get pinned papers from library
-  onProgress?.({
-    stage: 'discovering_papers',
-    progress: 10,
-    message: 'Loading pinned papers from your library...',
-    pinnedPapers: pinnedPaperIds.length
-  })
-  
-  let pinnedPapers: PaperWithAuthors[] = []
-  if (pinnedPaperIds.length > 0) {
-    pinnedPapers = await getPapersByIds(pinnedPaperIds)
-  }
-  
-  // Stage 2: Discover additional papers (if not library-only)
-  let discoveredPapers: PaperWithAuthors[] = []
-  if (!useLibraryOnly) {
-    onProgress?.({
-      stage: 'discovering_papers', 
-      progress: 30,
-      message: 'Discovering relevant papers through semantic search...',
-      pinnedPapers: pinnedPapers.length
-    })
-    
-    const remainingSlots = Math.max(0, maxPapers - pinnedPapers.length)
-    if (remainingSlots > 0) {
-      // Use hybrid search but exclude pinned papers to avoid duplicates
-      discoveredPapers = await hybridSearchPapers(topic, {
-        limit: remainingSlots,
-        excludePaperIds: pinnedPaperIds
-      })
-    }
-  }
-  
-  onProgress?.({
-    stage: 'discovering_papers',
-    progress: 50,
-    message: `Found ${pinnedPapers.length} pinned + ${discoveredPapers.length} discovered papers`,
-    pinnedPapers: pinnedPapers.length,
-    discoveredPapers: discoveredPapers.length
-  })
-  
-  // Stage 3: Retrieve relevant content chunks for RAG
-  onProgress?.({
-    stage: 'retrieving_chunks',
-    progress: 60,
-    message: 'Retrieving relevant content chunks for detailed context...'
-  })
-  
-  const allPapers = [...pinnedPapers, ...discoveredPapers]
-  const allPaperIds = allPapers.map(p => p.id)
-  
-  // Search for relevant chunks from the papers we have
-  let relevantChunks: Array<{
-    paper_id: string
-    content: string
-    score: number
-  }> = []
-  
-  if (allPaperIds.length > 0) {
-    try {
-      // Get chunks that are semantically relevant to the topic from our selected papers
-      const chunks = await searchPaperChunks(topic, {
-        limit: 20, // Get top 20 most relevant chunks
-        paperIds: allPaperIds,
-        minScore: 0.7 // High threshold for relevance
-      })
-      
-      relevantChunks = chunks.map(chunk => ({
-        paper_id: chunk.paper_id,
-        content: chunk.content,
-        score: chunk.score
-      }))
-    } catch (error) {
-      console.warn('Chunk retrieval failed, falling back to paper abstracts:', error)
-      // Fallback: use paper abstracts as "chunks"
-      relevantChunks = allPapers
-        .filter(p => p.abstract)
-        .map(p => ({
-          paper_id: p.id,
-          content: p.abstract!,
-          score: 0.8 // Default score for abstracts
-        }))
-    }
-  }
-  
-  onProgress?.({
-    stage: 'retrieving_chunks',
-    progress: 80,
-    message: `Retrieved ${relevantChunks.length} relevant content chunks`
-  })
-  
-  onProgress?.({
-    stage: 'finalizing',
-    progress: 90,
-    message: 'Preparing context for generation...'
-  })
-  
-  return {
-    papers: allPapers,
-    pinnedPapers,
-    discoveredPapers,
-    relevantChunks
-  }
-}
-
-// Helper function to format the context for the generation prompt
-export function formatGenerationContext(context: GenerationContext): {
-  paperSources: string
-  detailedContent: string
-  sourceMap: Record<string, PaperWithAuthors>
-} {
-  const { papers, relevantChunks } = context
-  
-  // Create a map for easy paper lookup
-  const sourceMap: Record<string, PaperWithAuthors> = {}
-  papers.forEach(paper => {
-    sourceMap[paper.id] = paper
-  })
-  
-  // Format paper sources (bibliography style)
-  const paperSources = papers.map((paper, index) => {
-    const year = paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'n.d.'
-    const authors = paper.authors?.map(a => a.name).join(', ') || 'Unknown Authors'
-    const venue = paper.venue ? ` ${paper.venue}.` : ''
-    
-    return `[${index + 1}] ${authors} (${year}). "${paper.title}".${venue}`
-  }).join('\n')
-  
-  // Format detailed content from chunks
-  const detailedContent = relevantChunks.map(chunk => {
-    const paper = sourceMap[chunk.paper_id]
-    if (!paper) return ''
-    
-    const paperIndex = papers.findIndex(p => p.id === chunk.paper_id) + 1
-    return `[Source ${paperIndex}]: ${chunk.content}`
-  }).join('\n\n')
-  
-  return {
-    paperSources,
-    detailedContent,
-    sourceMap
-  }
+  const match = content.match(/## Abstract\s*\n\n(.*?)\n\n##/)
+  return match ? match[1].trim() : ''
 } 

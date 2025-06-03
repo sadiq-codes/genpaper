@@ -80,15 +80,30 @@ const fetchSSE = async (url: string): Promise<EventSource | null> => {
   // Return null if no URL provided (SWR will handle this as no data)
   if (!url) return null
   
+  console.log('📡 Creating EventSource for:', url)
+  
   return new Promise((resolve, reject) => {
-    const eventSource = new EventSource(url, { withCredentials: true })
+    const eventSource = new EventSource(url, { 
+      withCredentials: true 
+    })
+    
+    // Add timeout to prevent hanging
+    const timeout = setTimeout(() => {
+      console.error('⏰ EventSource connection timeout')
+      eventSource.close()
+      reject(new Error('EventSource connection timeout'))
+    }, 10000) // 10 second timeout
     
     eventSource.onopen = () => {
+      clearTimeout(timeout)
+      console.log('✅ EventSource connected successfully')
       resolve(eventSource)
     }
     
     eventSource.onerror = (error) => {
-      reject(error)
+      clearTimeout(timeout)
+      console.error('❌ EventSource connection error:', error)
+      reject(new Error('Failed to connect to event stream'))
     }
   })
 }

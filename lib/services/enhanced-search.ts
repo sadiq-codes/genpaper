@@ -1,5 +1,6 @@
 import { searchAndIngestPapers, type AggregatedSearchOptions, type RankedPaper } from './paper-aggregation'
 import { semanticSearchPapers, hybridSearchPapers } from '@/lib/db/papers'
+import { generatePaperUUID } from '@/lib/db/papers'
 import { createClient } from '@/lib/supabase/server'
 import type { PaperWithAuthors } from '@/types/simplified'
 
@@ -8,6 +9,7 @@ export interface EnhancedSearchOptions extends AggregatedSearchOptions {
   useSemanticSearch?: boolean
   fallbackToKeyword?: boolean
   fallbackToAcademic?: boolean
+  forceIngest?: boolean // Skip vector/keyword and go straight to academic APIs
   minResults?: number
   combineResults?: boolean
   vectorWeight?: number
@@ -31,6 +33,29 @@ export interface EnhancedSearchResult {
   }
 }
 
+// Defensive sanitizer for tsquery meta characters
+const TSQUERY_META = /[()|&!:*]/g // reserved tokens
+
+export function safePlainQuery(str: string): string {
+  return str
+    .replace(TSQUERY_META, ' ') // strip meta-chars
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Helper function to deduplicate papers by ID or DOI
+function deduplicatePapers<T extends { id?: string; doi?: string; canonical_id?: string }>(papers: T[]): T[] {
+  const seen = new Set<string>()
+  return papers.filter(paper => {
+    const key = paper.id || paper.doi || paper.canonical_id || JSON.stringify(paper)
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
 // Vector/semantic search with proper error handling (no mock fallback)
 async function performVectorSearch(
   query: string, 
@@ -42,7 +67,7 @@ async function performVectorSearch(
   try {
     const papers = await hybridSearchPapers(query, {
       limit: options.maxResults || 10,
-      minYear: options.fromYear || 2018,
+      minYear: options.fromYear || 1900,
       sources: options.sources,
       semanticWeight: options.vectorWeight || 0.7,
       excludePaperIds: []
@@ -63,7 +88,7 @@ async function performVectorSearch(
       // Try the simpler semantic search function
       const papers = await semanticSearchPapers(query, {
         limit: options.maxResults || 10,
-        minYear: options.fromYear || 2018,
+        minYear: options.fromYear || 1900,
         sources: options.sources
       })
       
@@ -93,22 +118,40 @@ async function performKeywordSearch(
         author:authors(*)
       )
     `)
-    .textSearch('search_vector', query)
+    .textSearch('search_vector', query, { type: 'websearch' })
     .order('citation_count', { ascending: false })
     .limit(options.maxResults || 10)
   
   if (error) throw error
   
   // Transform the data to include authors in the correct format
-  const transformedPapers: PaperWithAuthors[] = (papers || []).map((paper: any) => {
+  const transformedPapers: PaperWithAuthors[] = (papers || []).map((paper: {
+    id: string
+    title: string
+    abstract?: string
+    publication_date?: string
+    venue?: string
+    doi?: string
+    url?: string
+    pdf_url?: string
+    metadata?: unknown
+    source?: string
+    citation_count?: number
+    impact_score?: number
+    created_at: string
+    authors?: Array<{
+      ordinal: number
+      author: { id: string; name: string }
+    }>
+  }) => {
     const authors = paper.authors
-      ?.sort((a: any, b: any) => a.ordinal - b.ordinal)
-      ?.map((pa: any) => pa.author) || []
+      ?.sort((a, b) => a.ordinal - b.ordinal)
+      ?.map((pa) => pa.author) || []
     
     return {
       ...paper,
       authors,
-      author_names: authors.map((a: any) => a.name)
+      author_names: authors.map((a) => a.name)
     } as PaperWithAuthors
   })
   
@@ -179,8 +222,10 @@ function combineSearchResults(
   
   // Add academic results, combining if already exists
   academicResults.forEach((paper) => {
-    // Use paper.canonical_id as the key for academic papers since they might not have our DB ID yet
-    const key = paper.doi || paper.canonical_id
+    // Fix: Generate proper UUID for paper ID instead of using raw DOI
+    const key = paper.doi 
+      ? generatePaperUUID(paper.doi)
+      : generatePaperUUID(paper.canonical_id)
     const score = paper.combinedScore * academicWeight
     
     const existing = paperMap.get(key)
@@ -191,7 +236,7 @@ function combineSearchResults(
     } else {
       // Convert academic paper to our format
       paperMap.set(key, {
-        id: key,
+        id: key, // Now a valid UUID
         title: paper.title,
         abstract: paper.abstract,
         publication_date: paper.year ? `${paper.year}-01-01` : undefined,
@@ -205,7 +250,7 @@ function combineSearchResults(
         },
         source: `academic_search_${paper.source}`,
         citation_count: paper.citationCount,
-        impact_score: paper.combinedScore,
+        impact_score: paper.combinedScore > 0 ? 1 - 1 / (paper.combinedScore + 1) : 0, // Fix: Normalize to 0-1 range
         created_at: new Date().toISOString(),
         authors: [],
         author_names: paper.authors || [],
@@ -235,35 +280,64 @@ export async function enhancedSearch(
     useSemanticSearch = true,
     fallbackToKeyword = true,
     fallbackToAcademic = true,
+    forceIngest = false,
     minResults = 10,
     combineResults = true
   } = options
   
   console.log(`Starting enhanced search for: "${query}"`)
-  console.log(`Options:`, { useSemanticSearch, fallbackToKeyword, fallbackToAcademic, minResults })
+  console.log(`Options:`, { useSemanticSearch, fallbackToKeyword, fallbackToAcademic, forceIngest, minResults })
   
   let vectorResults: PaperWithAuthors[] = []
   let keywordResults: PaperWithAuthors[] = []
   let academicResults: RankedPaper[] = []
   const searchStrategies: string[] = []
-  
-  // 1. Try vector/semantic search first
-  if (useSemanticSearch) {
-    vectorResults = await performVectorSearch(query, options)
-    searchStrategies.push('vector')
-  }
-  
-  // 2. Fallback to keyword search if needed
-  if (fallbackToKeyword && vectorResults.length < minResults) {
-    keywordResults = await performKeywordSearch(query, options)
-    searchStrategies.push('keyword')
-  }
-  
-  // 3. Fallback to academic API search if still not enough results
-  const totalExistingResults = vectorResults.length + keywordResults.length
-  if (fallbackToAcademic && totalExistingResults < minResults) {
+
+  // Force ingest: Skip vector/keyword search and go straight to academic APIs
+  if (forceIngest) {
+    console.log('Force ingest mode: skipping vector/keyword search')
     academicResults = await performAcademicSearch(query, options)
+    academicResults = deduplicatePapers(academicResults)
     searchStrategies.push('academic')
+  } else {
+    // 1. Try vector/semantic search first
+    if (useSemanticSearch) {
+      vectorResults = await performVectorSearch(query, options)
+      vectorResults = deduplicatePapers(vectorResults)
+      searchStrategies.push('vector')
+    }
+    
+    // 2. Fallback to keyword search if needed
+    if (fallbackToKeyword && vectorResults.length < minResults) {
+      keywordResults = await performKeywordSearch(query, options)
+      // Deduplicate keyword results against vector results
+      const vectorIds = new Set(vectorResults.map(p => p.id))
+      keywordResults = keywordResults.filter(p => !vectorIds.has(p.id))
+      keywordResults = deduplicatePapers(keywordResults)
+      searchStrategies.push('keyword')
+    }
+    
+    // 3. Fallback to academic API search if still not enough results
+    const totalExistingResults = vectorResults.length + keywordResults.length
+    if (fallbackToAcademic && totalExistingResults < minResults) {
+      academicResults = await performAcademicSearch(query, options)
+      // Deduplicate academic results against existing papers
+      const existingIds = new Set([
+        ...vectorResults.map(p => p.id),
+        ...keywordResults.map(p => p.id)
+      ])
+      const existingDois = new Set([
+        ...vectorResults.map(p => p.doi).filter(Boolean),
+        ...keywordResults.map(p => p.doi).filter(Boolean)
+      ])
+      academicResults = academicResults.filter(p => 
+        !existingIds.has(p.canonical_id) && 
+        !existingIds.has(p.doi || '') &&
+        !existingDois.has(p.doi || '')
+      )
+      academicResults = deduplicatePapers(academicResults)
+      searchStrategies.push('academic')
+    }
   }
   
   // 4. Combine results if requested
@@ -282,7 +356,7 @@ export async function enhancedSearch(
       ...keywordResults.map(p => ({ ...p, searchType: 'keyword' as const })),
       ...academicResults.map(p => ({ 
         ...p,
-        id: p.doi || p.canonical_id,
+        id: p.doi ? generatePaperUUID(p.doi) : generatePaperUUID(p.canonical_id),
         publication_date: p.year ? `${p.year}-01-01` : undefined,
         created_at: new Date().toISOString(),
         authors: [],

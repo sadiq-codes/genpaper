@@ -9,8 +9,8 @@ import {
   expandKeywords,
   getOpenAccessPdf
 } from './academic-apis'
-import { ingestPaper } from '@/lib/db/papers'
-import { PaperDTO } from '@/lib/schemas/paper'
+import { ingestPaperWithChunks } from '@/lib/db/papers'
+import type { PaperDTO } from '@/lib/schemas/paper'
 
 // Enhanced paper type with ranking metadata
 export interface RankedPaper extends AcademicPaper {
@@ -195,7 +195,7 @@ function rankPapers(
   }).sort((a, b) => b.combinedScore - a.combinedScore)
 }
 
-// Parallel search across all APIs
+// Parallel search across all APIs with smart source prioritization
 export async function parallelSearch(
   query: string, 
   options: AggregatedSearchOptions = {}
@@ -204,91 +204,125 @@ export async function parallelSearch(
     limit = 50,
     maxResults = 25,
     includePreprints = true,
-    sources = ['openalex', 'crossref', 'semantic_scholar', 'arxiv']
+    sources = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'], // All sources by default
+    fastMode = false
   } = options
+  
+  // Fix: Filter to only supported sources to prevent pubmed config mismatch
+  const SUPPORTED_SOURCES = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'] as const
+  type SupportedSource = typeof SUPPORTED_SOURCES[number]
+  const requestedSources = sources.filter((s): s is SupportedSource => SUPPORTED_SOURCES.includes(s as SupportedSource))
+  
+  // Fix: Ensure we have at least one source to search
+  if (requestedSources.length === 0) {
+    console.warn('No supported sources provided, defaulting to openalex')
+    requestedSources.push('openalex')
+  }
+  
+  // **SMART PRIORITIZATION**: Order sources by speed/reliability (fastest first)
+  const sourcesByPriority: SupportedSource[] = []
+  const priorityOrder: SupportedSource[] = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core']
+  
+  // Add requested sources in priority order
+  for (const source of priorityOrder) {
+    if (requestedSources.includes(source)) {
+      sourcesByPriority.push(source)
+    }
+  }
   
   // Expand search terms
   const expandedQueries = expandKeywords(query)
   const primaryQuery = expandedQueries[0]
   
-  console.log(`Starting parallel search for: "${primaryQuery}"`)
-  console.log(`Searching sources: ${sources.join(', ')}`)
+  console.log(`Starting smart sequential search for: "${primaryQuery}"`)
+  console.log(`Source priority order: ${sourcesByPriority.join(' → ')}`)
+  console.log(`Fast mode: ${fastMode ? 'ON' : 'OFF'}`)
   
-  const searchPromises: Promise<AcademicPaper[]>[] = []
+  const allPapers: AcademicPaper[] = []
+  const TARGET_PAPERS = Math.min(maxResults * 2, 40) // Search for 2x target to ensure good results after dedup
   
-  // Create search promises based on enabled sources
-  if (sources.includes('openalex')) {
-    searchPromises.push(
-      searchOpenAlex(primaryQuery, { ...options, limit })
-        .catch(error => {
-          console.error('OpenAlex search failed:', error)
-          return []
-        })
-    )
+  // **SEQUENTIAL SEARCH**: Search sources one by one with early termination
+  for (const source of sourcesByPriority) {
+    if (allPapers.length >= TARGET_PAPERS) {
+      console.log(`✅ Early termination: ${allPapers.length} papers found, target: ${TARGET_PAPERS}`)
+      break
+    }
+    
+    try {
+      console.log(`🔍 Searching ${source} (papers so far: ${allPapers.length})...`)
+      
+      let sourceResults: AcademicPaper[] = []
+      const searchOptions = { ...options, limit: Math.min(limit, 25), fastMode }
+      
+      // Add per-source timeout for fast mode
+      const sourceTimeout = fastMode ? 6000 : 15000 // 6s vs 15s timeout
+      
+      const searchPromise = (async () => {
+        switch (source) {
+          case 'openalex':
+            return await searchOpenAlex(primaryQuery, searchOptions)
+          case 'crossref':
+            return await searchCrossref(primaryQuery, searchOptions)
+          case 'semantic_scholar':
+            return await searchSemanticScholar(primaryQuery, searchOptions)
+          case 'arxiv':
+            return includePreprints ? await searchArxiv(primaryQuery, searchOptions) : []
+          case 'core':
+            return await searchCore(primaryQuery, searchOptions)
+          default:
+            return []
+        }
+      })()
+      
+      // Race against timeout
+      sourceResults = await Promise.race([
+        searchPromise,
+        new Promise<AcademicPaper[]>((_, reject) => 
+          setTimeout(() => reject(new Error(`${source} timeout after ${sourceTimeout}ms`)), sourceTimeout)
+        )
+      ])
+      
+      if (sourceResults.length > 0) {
+        allPapers.push(...sourceResults)
+        console.log(`✅ ${source}: ${sourceResults.length} papers (total: ${allPapers.length})`)
+      } else {
+        console.log(`⚠️  ${source}: 0 papers`)
+      }
+      
+      // Small delay between sources in fast mode to avoid overwhelming APIs
+      if (fastMode && sourcesByPriority.indexOf(source) < sourcesByPriority.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+      
+    } catch (error) {
+      console.log(`❌ ${source} failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      // Continue to next source on failure
+    }
   }
   
-  if (sources.includes('crossref')) {
-    searchPromises.push(
-      searchCrossref(primaryQuery, { ...options, limit })
-        .catch(error => {
-          console.error('Crossref search failed:', error)
-          return []
-        })
-    )
-  }
+  console.log(`📊 Raw results: ${allPapers.length} papers from ${sourcesByPriority.length} sources`)
   
-  if (sources.includes('semantic_scholar')) {
-    searchPromises.push(
-      searchSemanticScholar(primaryQuery, { ...options, limit })
-        .catch(error => {
-          console.error('Semantic Scholar search failed:', error)
-          return []
-        })
-    )
-  }
-  
-  if (sources.includes('arxiv') && includePreprints) {
-    searchPromises.push(
-      searchArxiv(primaryQuery, { ...options, limit })
-        .catch(error => {
-          console.error('arXiv search failed:', error)
-          return []
-        })
-    )
-  }
-  
-  if (sources.includes('core')) {
-    searchPromises.push(
-      searchCore(primaryQuery, { ...options, limit })
-        .catch(error => {
-          console.error('CORE search failed:', error)
-          return []
-        })
-    )
-  }
-  
-  // Execute all searches in parallel
-  const results = await Promise.all(searchPromises)
-  
-  // Flatten and deduplicate results
-  const allPapers = results.flat()
-  console.log(`Found ${allPapers.length} raw results`)
-  
+  // Deduplicate and rank as before
   const deduplicated = deduplicatePapers(allPapers)
-  console.log(`After deduplication: ${deduplicated.length} papers`)
+  console.log(`🔄 After deduplication: ${deduplicated.length} papers`)
   
   // Rank papers
   const ranked = rankPapers(deduplicated, primaryQuery, options)
   
   // Return top results
   const topResults = ranked.slice(0, maxResults)
-  console.log(`Returning top ${topResults.length} results`)
+  console.log(`🎯 Final results: ${topResults.length} papers`)
   
   return topResults
 }
 
 // Convert AcademicPaper to PaperDTO for ingestion
 function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
+  // Normalize impact score to 0-1 range to satisfy database constraint
+  // Formula: 1 - 1/(raw + 1) maps 0→0, 1→0.5, 5→0.83, 8→0.89
+  const rawScore = paper.combinedScore || 0
+  const normalizedImpactScore = rawScore > 0 ? 1 - 1 / (rawScore + 1) : 0
+
   return {
     title: paper.title,
     abstract: paper.abstract || undefined,
@@ -312,7 +346,7 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
     },
     source: `academic_search_${paper.source}`,
     citation_count: paper.citationCount,
-    impact_score: paper.combinedScore,
+    impact_score: normalizedImpactScore, // Fix: Use normalized score (0-1 range)
     authors: paper.authors || []
   }
 }
@@ -349,21 +383,34 @@ export async function searchAndIngestPapers(
     })
   )
   
-  // Convert to PaperDTO format and ingest
+  // Convert to PaperDTO format and ingest with chunks
   const ingestedIds: string[] = []
   
   for (const paper of enhancedPapers) {
     try {
       const paperDTO = convertToPaperDTO(paper, query)
-      const paperId = await ingestPaper(paperDTO)
+      
+      // Create content chunks from title and abstract for RAG
+      const contentChunks = []
+      if (paperDTO.abstract) {
+        // Split abstract into meaningful chunks for better RAG retrieval
+        const abstractChunks = paperDTO.abstract.match(/.{1,500}(?:\s|$)/g) || []
+        contentChunks.push(...abstractChunks.map((chunk: string) => chunk.trim()).filter(Boolean))
+      }
+      
+      // Always include title as a chunk for title-based matching
+      contentChunks.unshift(paperDTO.title)
+      
+      // Use ingestPaperWithChunks to create content chunks for RAG
+      const paperId = await ingestPaperWithChunks(paperDTO, contentChunks)
       ingestedIds.push(paperId)
-      console.log(`Ingested paper: ${paper.title} (ID: ${paperId})`)
+      console.log(`Ingested paper with ${contentChunks.length} chunks: ${paper.title} (ID: ${paperId})`)
     } catch (error) {
       console.error(`Failed to ingest paper "${paper.title}":`, error)
     }
   }
   
-  console.log(`Successfully ingested ${ingestedIds.length} of ${enhancedPapers.length} papers`)
+  console.log(`Successfully ingested ${ingestedIds.length} of ${enhancedPapers.length} papers with content chunks`)
   
   return {
     papers: enhancedPapers,
@@ -394,4 +441,14 @@ export async function batchSearchAndIngest(
   }
   
   return results
+}
+
+export interface SearchConfig {
+  sources?: Array<'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'>
+  maxResults?: number
+  includePreprints?: boolean
+  fromYear?: number
+  toYear?: number
+  openAccessOnly?: boolean
+  fastMode?: boolean // Add fast mode option
 } 

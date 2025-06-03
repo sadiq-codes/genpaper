@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import crypto from 'crypto'
+import { generateCacheKey } from '@/lib/utils/hash'
 
 // Cache entry interface
 interface CacheEntry {
@@ -19,12 +19,6 @@ interface RateLimit {
 
 // In-memory rate limiting store (in production, use Redis)
 const rateLimitStore = new Map<string, RateLimit>()
-
-// Generate cache key from request parameters
-function generateCacheKey(endpoint: string, params: Record<string, unknown>): string {
-  const normalized = JSON.stringify({ endpoint, params }, Object.keys({ endpoint, params }).sort())
-  return crypto.createHash('md5').update(normalized).digest('hex')
-}
 
 // Check if cache entry is still valid
 function isCacheValid(entry: CacheEntry): boolean {
@@ -106,6 +100,18 @@ export async function setCachedResponse(
   ttlHours: number = 48
 ): Promise<void> {
   try {
+    // Fix: Don't cache empty results - check if response contains empty papers array
+    if (response && typeof response === 'object') {
+      if ('papers' in response && Array.isArray(response.papers) && response.papers.length === 0) {
+        console.log(`Skipping cache for ${endpoint} - empty papers array`)
+        return
+      }
+      if (Array.isArray(response) && response.length === 0) {
+        console.log(`Skipping cache for ${endpoint} - empty response array`)
+        return
+      }
+    }
+    
     const supabase = await createClient()
     const cacheKey = generateCacheKey(endpoint, params)
     const now = new Date()
@@ -366,18 +372,3 @@ export async function setCachedResponses(
     console.error('Batch cache storage error:', error)
   }
 }
-
-// Helper to create the cache table (would normally be in migrations)
-export const createCacheTableSQL = `
-CREATE TABLE IF NOT EXISTS papers_api_cache (
-  id TEXT PRIMARY KEY,
-  response JSONB NOT NULL,
-  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at TIMESTAMPTZ NOT NULL,
-  request_hash TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_papers_api_cache_expires_at ON papers_api_cache(expires_at);
-CREATE INDEX IF NOT EXISTS idx_papers_api_cache_request_hash ON papers_api_cache(request_hash);
-CREATE INDEX IF NOT EXISTS idx_papers_api_cache_fetched_at_desc ON papers_api_cache(fetched_at DESC);
-` 
