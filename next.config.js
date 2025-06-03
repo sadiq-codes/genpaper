@@ -12,6 +12,29 @@ const nextConfig = {
 
   // Bundle optimization
   webpack: (config, { dev, isServer }) => {
+    // Fix: Add tiktoken WASM support
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      layers: true
+    }
+    
+    // Fix: Handle tiktoken WASM files
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        crypto: false,
+      }
+    }
+    
+    // Fix: Add rule for WASM files
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: 'asset/resource',
+    })
+    
     // Optimize for production builds
     if (!dev && !isServer) {
       config.optimization = {
@@ -60,6 +83,13 @@ const nextConfig = {
               name: 'ui-vendor',
               chunks: 'all',
               priority: 15,
+            },
+            // Fix: Tiktoken vendor chunk
+            tiktoken: {
+              test: /[\\/]node_modules[\\/]@dqbd[\\/]tiktoken[\\/]/,
+              name: 'tiktoken-vendor',
+              chunks: 'all',
+              priority: 25,
             },
           },
         },

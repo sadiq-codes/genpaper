@@ -130,58 +130,15 @@ export async function generateDraftWithRAG(
       
       papers = [...papers, ...qualityFiltered.slice(0, 10)]
       
-      // If no semantic results found, fallback to mock search for demo purposes
+      // If no semantic results found, throw error instead of using mock data
       if (searchResults.length === 0) {
-        onProgress?.({
-          stage: 'searching',
-          progress: 25,
-          message: 'No papers in database yet. Using demo papers for testing...'
-        })
-        
-        // Import and use the existing search function as fallback
-        const { searchOnlinePapers } = await import('@/lib/ai/search-papers')
-        const mockResults = await searchOnlinePapers(
-          topic,
-          config?.search_parameters?.sources,
-          config?.search_parameters?.limit
-        )
-        
-        // Filter out any mock papers that match pinned papers by title similarity
-        const filteredMockResults = mockResults.filter(mockPaper => 
-          !papers.some(pinnedPaper => 
-            pinnedPaper.title.toLowerCase().includes(mockPaper.title.toLowerCase().substring(0, 20)) ||
-            mockPaper.title.toLowerCase().includes(pinnedPaper.title.toLowerCase().substring(0, 20))
-          )
-        )
-        
-        papers = [...papers, ...filteredMockResults.slice(0, 5)]
+        throw new Error(`No papers found in database for topic "${topic}". Please add relevant papers to your library first.`)
       }
     } catch (error) {
-      console.error('Semantic search failed, falling back to mock search:', error)
+      console.error('Semantic search failed:', error)
       
-      onProgress?.({
-        stage: 'searching',
-        progress: 25,
-        message: 'Semantic search unavailable. Using demo papers (excluding duplicates)...'
-      })
-      
-      // Fallback to mock search
-      const { searchOnlinePapers } = await import('@/lib/ai/search-papers')
-      const mockResults = await searchOnlinePapers(
-        topic,
-        config?.search_parameters?.sources,
-        config?.search_parameters?.limit
-      )
-      
-      // Filter out duplicates based on title similarity
-      const filteredMockResults = mockResults.filter(mockPaper => 
-        !papers.some(pinnedPaper => 
-          pinnedPaper.title.toLowerCase().includes(mockPaper.title.toLowerCase().substring(0, 20)) ||
-          mockPaper.title.toLowerCase().includes(pinnedPaper.title.toLowerCase().substring(0, 20))
-        )
-      )
-      
-      papers = [...papers, ...filteredMockResults.slice(0, 5)]
+      // Re-throw the error instead of falling back to mock data
+      throw error
     }
   }
   
@@ -378,6 +335,37 @@ function buildUserPromptWithSources(topic: string, papers: PaperWithAuthors[]): 
   }, null, 2)
 }
 
+// Helper function to calculate appropriate max_tokens based on model and input
+function calculateMaxTokens(model: string, inputTokens: number): number {
+  // Model token limits (approximation)
+  const modelLimits: Record<string, number> = {
+    'gpt-4o': 128000,
+    'gpt-4o-mini': 128000,
+    'gpt-4': 8192,
+    'gpt-4-turbo': 128000,
+    'gpt-3.5-turbo': 16385,
+    'gpt-3.5-turbo-16k': 16385
+  }
+  
+  const contextLimit = modelLimits[model] || 8192 // Default to conservative limit
+  
+  // Reserve 20% for safety margin and leave room for input tokens
+  const safetyMargin = Math.floor(contextLimit * 0.2)
+  const availableTokens = contextLimit - inputTokens - safetyMargin
+  
+  // Set reasonable bounds
+  const minTokens = 1000
+  const maxTokens = Math.min(8000, availableTokens) // Cap at 8000 for reasonable response time
+  
+  return Math.max(minTokens, maxTokens)
+}
+
+// Helper function to estimate token count (rough approximation)
+function estimateTokenCount(text: string): number {
+  // Rough approximation: 1 token ≈ 4 characters for English text
+  return Math.ceil(text.length / 4)
+}
+
 async function generatePaperWithSources(
   systemMessage: string,
   userMessage: string,
@@ -386,8 +374,15 @@ async function generatePaperWithSources(
   onProgress: (progress: number, stage: string, content: string) => void
 ): Promise<GenerationResult> {
   
+  // Calculate input token count and appropriate max_tokens
+  const inputTokens = estimateTokenCount(systemMessage + userMessage) + 78 // +78 for function definition
+  const modelName = config?.model || 'gpt-4o'
+  const maxTokens = calculateMaxTokens(modelName, inputTokens)
+  
+  console.log(`Model: ${modelName}, Input tokens: ~${inputTokens}, Max tokens: ${maxTokens}`)
+  
   const stream = await openai.chat.completions.create({
-    model: config?.model || 'gpt-4o',
+    model: modelName,
     stream: true,
     messages: [
       { role: 'system', content: systemMessage },
@@ -421,7 +416,7 @@ async function generatePaperWithSources(
       }
     ],
     temperature: 0.3, // Lower temperature for more consistent academic writing
-    max_tokens: 16000 // Increased significantly to allow longer papers
+    max_tokens: maxTokens // Dynamic token limit based on model and input
   })
   
   let content = ''

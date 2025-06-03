@@ -12,6 +12,7 @@
     "@ai-sdk/openai": "^1.3.22",
     "@citation-js/core": "^0.7.18",
     "@citation-js/plugin-csl": "^0.7.18",
+    "@dqbd/tiktoken": "^1.0.21",
     "@hookform/resolvers": "^5.0.1",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-checkbox": "^1.3.2",

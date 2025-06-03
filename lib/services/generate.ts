@@ -4,7 +4,7 @@ import {
   updateResearchProjectStatus
 } from '@/lib/db/research'
 import { getUserLibraryPapers } from '@/lib/db/library'
-import { searchOnlinePapers, selectRelevantPapers } from '@/lib/ai/search-papers'
+import { enhancedSearch } from '@/lib/services/enhanced-search'
 import { generateResearchPaper } from '@/lib/ai/generate-paper'
 import type { 
   PaperWithAuthors,
@@ -36,19 +36,21 @@ export async function generatePaperPipeline(params: PaperGenerationParams) {
 
     // Search for additional papers if not library-only
     if (!useLibraryOnly) {
-      const searchResults = await searchOnlinePapers(
-        topic,
-        generationConfig?.search_parameters?.sources,
-        generationConfig?.search_parameters?.limit
-      )
+      const searchResult = await enhancedSearch(topic, {
+        sources: generationConfig?.search_parameters?.sources as ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core")[] | undefined,
+        maxResults: generationConfig?.search_parameters?.limit || 10,
+        useSemanticSearch: true,
+        fallbackToKeyword: true,
+        fallbackToAcademic: true,
+        minResults: 5,
+        combineResults: true
+      })
       
-      // Select most relevant papers
-      const selectedPapers = await selectRelevantPapers(searchResults, topic, 10)
-      papers = [...papers, ...selectedPapers]
+      papers = [...papers, ...searchResult.papers]
     }
 
     if (papers.length === 0) {
-      throw new Error('No papers found for the given topic')
+      throw new Error(`No papers found for the topic "${topic}". Please add relevant papers to your library or check your database connection.`)
     }
 
     // Generate the research paper
