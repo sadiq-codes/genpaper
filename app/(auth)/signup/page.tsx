@@ -1,13 +1,13 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Mail, Eye, EyeOff } from "lucide-react"
+import { Mail, Eye, EyeOff, Sparkles } from "lucide-react"
 
 export default function SignUpPage() {
   const [email, setEmail] = useState("")
@@ -30,7 +30,7 @@ export default function SignUpPage() {
         console.error("Sign up error:", error.message)
       } else {
         console.log("Sign up successful:", data)
-        router.push("/projects")
+        router.push("/generate")
       }
     } catch (error) {
       console.error("Unexpected error:", error)
@@ -40,155 +40,105 @@ export default function SignUpPage() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Left Hero Panel */}
-      <div className="flex-1 bg-gradient-to-br from-blue-100 via-blue-400 to-purple-300 relative overflow-hidden">
-        <div className="absolute inset-0 bg-black/10"></div>
+    <div className="min-h-screen bg-background">
 
-        {/* Abstract AI Graphic */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="relative">
-            {/* Neural network nodes */}
-            <div className="grid grid-cols-4 gap-8 opacity-20">
-              {Array.from({ length: 16 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="w-3 h-3 bg-white rounded-full animate-pulse"
-                  style={{ animationDelay: `${i * 0.1}s` }}
-                ></div>
-              ))}
-            </div>
+      <div className="flex h-screen bg-background">
+  
+        <div className="w-full bg-card flex flex-col justify-center px-12">
+          <div className="max-w-sm mx-auto w-full">
 
-            {/* Connecting lines */}
-            <svg className="absolute inset-0 w-full h-full opacity-10" viewBox="0 0 200 200">
-              <path
-                d="M20,20 L180,60 M60,40 L140,120 M40,80 L160,40 M80,160 L120,80"
-                stroke="white"
-                strokeWidth="1"
-                fill="none"
-              />
-            </svg>
-          </div>
-        </div>
-
-        <div className="relative z-10 flex flex-col justify-center h-full px-16">
-          <div className="max-w-lg">
-            <h1 className="text-5xl font-bold text-white mb-6 leading-tight">Start Your Research Journey</h1>
-            <p className="text-xl text-blue-100 mb-8 leading-relaxed">
-              Join thousands of researchers who trust GenPaper to accelerate their academic writing and discovery process.
-            </p>
-            <div className="flex items-center gap-4 text-blue-100">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                <span className="text-sm">Free to Start</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                <span className="text-sm">No Credit Card Required</span>
+            <div className="flex items-center justify-center mb-8">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="h-8 w-8 text-primary" />
+                <span className="text-2xl font-bold">GenPaper</span>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Right Sign-Up Panel */}
-      <div className="w-2/3 bg-white flex flex-col justify-center px-12">
-        <div className="max-w-sm mx-auto w-full">
-          {/* Logo */}
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 bg-black rounded-xl flex items-center justify-center">
-              <div className="w-5 h-5 bg-white rounded"></div>
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">GenPaper</h2>
-              <p className="text-sm text-gray-500">AI-Powered Research Assistant</p>
-            </div>
-          </div>
-
-          <div className="mb-8">
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">Create your account</h3>
-            <p className="text-gray-600">Start your free trial today</p>
-          </div>
-
-          {/* OAuth Buttons */}
-          <div className="space-y-3 mb-6">
-            <Button variant="outline" className="w-full h-11 text-gray-700 border-gray-300">
-              <Mail className="w-4 h-4 mr-3" />
-              Continue with Google
-            </Button>
-          </div>
-
-          <div className="relative mb-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-300"></div>
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-4 bg-white text-gray-500">or continue with email</span>
-            </div>
-          </div>
-
-          {/* Email & Password Form */}
-          <form onSubmit={handleSubmit} className="space-y-4 mb-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email address</label>
-              <Input
-                type="email"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="h-11"
-                required
-              />
+            <div className="text-center mb-8">
+              <h3 className="text-2xl font-semibold text-foreground mb-2">Create your account</h3>
+              <p className="text-muted-foreground">Start your free trial today</p>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <div className="relative">
+
+            <div className="space-y-3 mb-6">
+              <Button variant="outline" className="w-full h-11">
+                <Mail className="w-4 h-4 mr-3" />
+                Continue with Google
+              </Button>
+            </div>
+
+            <div className="relative mb-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border"></div>
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-4 bg-card text-muted-foreground">or continue with email</span>
+              </div>
+            </div>
+
+
+            <form onSubmit={handleSubmit} className="space-y-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Email address</label>
                 <Input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Create a password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="h-11 pr-10"
+                  type="email"
+                  placeholder="Enter your email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="h-11"
                   required
                 />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </Button>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Password</label>
+                <div className="relative">
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Create a password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="h-11 pr-10"
+                    required
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              <Button 
+                type="submit"
+                disabled={loading}
+                className="w-full h-11 bg-gray-900 hover:bg-gray-800 text-white"
+              >
+                {loading ? "Creating account..." : "Start Free Trial"}
+              </Button>
+            </form>
+
+            <div className="text-center pt-6 border-t border-border mb-6">
+              <p className="text-sm text-muted-foreground">
+                Already have an account?{" "}
+                <Link href="/login" className="text-gray-600 hover:text-gray-800 font-medium">
+                  Sign in
+                </Link>
+              </p>
             </div>
 
-            <Button 
-              type="submit"
-              disabled={loading}
-              className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              {loading ? "Creating account..." : "Start Free Trial"}
-            </Button>
-          </form>
-
-          <div className="mt-8 pt-6 border-t border-gray-200 text-center">
-            <p className="text-sm text-gray-600">
-              Already have an account?{" "}
-              <a href="/login" className="text-blue-600 hover:text-blue-700 font-medium">
-                Sign in
-              </a>
-            </p>
-          </div>
-
-          <div className="mt-6 text-center">
-            <p className="text-xs text-gray-500">
-              By creating an account, you agree to our{" "}
-              <a href="#" className="text-blue-600 hover:text-blue-700">Terms of Service</a>{" "}
-              and{" "}
-              <a href="#" className="text-blue-600 hover:text-blue-700">Privacy Policy</a>
-            </p>
+            <div className="text-center">
+              <p className="text-xs text-muted-foreground">
+                By creating an account, you agree to our{" "}
+                <a href="#" className="text-gray-600 hover:text-gray-800">Terms of Service</a>{" "}
+                and{" "}
+                <a href="#" className="text-gray-600 hover:text-gray-800">Privacy Policy</a>
+              </p>
+            </div>
           </div>
         </div>
       </div>

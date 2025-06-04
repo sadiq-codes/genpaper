@@ -44,7 +44,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
   if (authError || !user) {
-    redirect('/auth/login')
+    redirect('/login')
   }
 
   // Verify project exists and belongs to user

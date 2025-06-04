@@ -1,132 +1,129 @@
-### 🔍 Side-by-side comparison – “legacy tool” vs. your new RAG-renderer layer
-
-| Dimension                    | **Legacy `addCitation` tool**                                                                                                   | **Current client-side CSL + `citation-js` layer**                           | 🤔 Which wins / how to merge                                                                                                             |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Where it runs**            | Server-side (inside the Vercel/Edge function that streams content).                                                             | Pure client-side React component.                                           | Keep **both**: server for *authoritative* storage, client for *rendering / style-switching*.                                             |
-| **When it’s invoked**        | Each time the LLM calls the `addCitation` **function-call** during generation.                                                  | After the paper is saved; it parses `[CITE:id]` placeholders.               | Tool-calls are more reliable (you know *exactly* what the model meant), but you can still allow manual `[CITE:id]` markup as a fallback. |
-| **Schema validation**        | Zod schema; strict checks on title, authors, positions, etc.                                                                    | Zod schema (similar) + extra CSL fixers for rendering.                      | Combine: keep the Zod validation but extend it with CSL pre-validation so bad items never reach DB *or* renderer.                        |
-| **Uniqueness / keying**      | `generateCitationKey()` produces an MD5 hash of normalised title + year (or DOI).                                               | Uses the paper’s UUID (or arbitrary IDs) directly.                          | Use **UUID when you have it**, else keep the hash. Store *both* in DB: `id` (UUID) and `key` (hash/DOI) so renderer can map either.      |
-| **Storage model**            | `citations` (+ `citation_links`) tables. CSL JSON is persisted once per paper; link table stores section + character positions. | No storage; derives everything from `papers` array that came from Supabase. | Keep the *server* storage so you can later: deduplicate, surface a bibliography manager, fix metadata, etc.                              |
-| **Inline-position tracking** | Yes – `start_pos`, `end_pos`, `section`. Allows highlighting on hover later.                                                    | None (just replaces markup).                                                | Keep the legacy positional data; client can consume it for “hover to show source” UX.                                                    |
-| **Bibliography formatting**  | Not handled.                                                                                                                    | `citation-js` formats to APA/MLA/Chicago on the fly.                        | Keep client-side `citation-js`; server just stores CSL JSON once.                                                                        |
-| **Extensibility**            | Easy to add more fields in Zod; RPC abstracts DB details.                                                                       | Easy to add more CSL fields; citation-js supports >50 styles.               | No conflict – they serve different layers.                                                                                               |
-| **Failure modes**            | If Supabase RPC fails, function throws → generation might abort.                                                                | If `citation-js` fails, UI falls back to simple `(Author, Year)` string.    | Add retry logic & batch-insert to the server tool; keep graceful fallback in UI.                                                         |
+Below is a **debug-checklist + concrete code tweaks** that will usually eliminate the three symptoms you’re seeing.
 
 ---
 
-### 📌 Recommendation – hybrid “best of both”
+## 1  Library Only toggle is ignored
 
-1. **Keep the server-side `addCitation` tool**
+### Bug
 
-   * Pros: ground-truth DB, positional data, deduplication, easy audit.
-   * Add **CSL validation** right before the RPC call:
+```ts
+const remainingSlots = Math.max(0, maxPapers - pinnedPapers.length)
+const discoveredPapers = useLibraryOnly || remainingSlots === 0 ? [] :
+  await hybridSearchPapers(...)
+```
 
-     ```ts
-     const { Cite } = await import('citation-js/build/citation-browser.mjs')
-     new Cite([cslData])        // throws if malformed
-     ```
+If the query returns **exactly** `maxPapers` library items `remainingSlots` becomes `0`, so the
+short-circuit fails and `hybridSearchPapers` still runs the next time you call the pipeline (because `remainingSlots === 0` is true only **after** you fetched last run’s cache).
 
-2. **Store two IDs**
+### Fix
 
-   | Column               | Example                            | Purpose                                      |
-   | -------------------- | ---------------------------------- | -------------------------------------------- |
-   | `citation_id` (UUID) | `217a…`                            | Foreign-key inside your DB.                  |
-   | `key` (hash/DOI)     | `10.1038/nature…` or `4d5e3c1a2b…` | What the LLM inserts in text (`[CITE:key]`). |
+Stop even *looking* at `remainingSlots` when the user clicked *Library-only*.
 
-3. **Client-side renderer**
+```ts
+let discoveredPapers: PaperWithAuthors[] = []
 
-   * Keep the current `CitationCore` with `citation-js`, but **fetch citations** from `/citations?projectId=…` (or re-use the `citationsRepository`).
-   * Build a `Map<key, CSLItem>` so the renderer can replace **either** UUID or hash/DOI tokens.
+if (!useLibraryOnly) {
+  const remainingSlots = Math.max(0, maxPapers - pinnedPapers.length)
+  if (remainingSlots > 0) {
+    discoveredPapers = await hybridSearchPapers(topic, {
+      limit: remainingSlots,
+      excludePaperIds: pinnedIds
+    })
+  }
+}
+```
 
-4. **“Missing citation” fallback**
-
-   Right now unknown tokens become `(missing source: id)`.
-   Instead, show a red pill in the UI that lets the user “Attach source” → calls `addCitation` manually.
-
-5. **Switching style**
-
-   Keep the dropdown that re-calls
-
-   ```ts
-   cite.format('bibliography', { template: style })
-   ```
-
-   – now it will always succeed because data were pre-validated.
+*Tip:* put this behind a unit test – given `useLibraryOnly=true` the SQL log must show **zero** calls to
+`search_papers`, `hybridSearchPapers`, `openalex_*`, etc.
 
 ---
 
-### ✂️ What to delete from the legacy file
+## 2  Cache returns unrelated papers
 
-* `toCslJson()` logic duplicates what you already have in `paperToCSL/fixCSL`. Export one canonical helper and import it in both places.
-* `crypto` hash: keep it, but move to a shared util (so server & client agree).
+You cache by **topic string alone**, so any new pipeline run that re-uses
+*exactly* the same topic but different filters (library-only, year cut-off, …) hits the old result.
 
----
+```ts
+const cacheKey = `search:${topic}` // ← too coarse
+```
 
-### 🚦 Decision matrix
+### Two-line fix
 
-| Goal                                   | Use only legacy | Use only new | **Hybrid (recommended)** |
-| -------------------------------------- | --------------- | ------------ | ------------------------ |
-| Live APA↔MLA switch                    | ❌               | ✅            | ✅                        |
-| Single source of truth in DB           | ✅               | ❌            | ✅                        |
-| Positional highlights                  | ✅               | ❌            | ✅                        |
-| Minimal code duplication               | ❌               | ❌            | **✅ (after refactor)**   |
-| Future style support (IEEE, Vancouver) | ⚠️ custom       | ✅            | ✅                        |
+```ts
+const cacheKey = `search:${topic}|${useLibraryOnly?'lib':'mix'}|${fromYear}`
+```
 
-**→ Keep the server tool for persistence + positional metadata; keep the client renderer for rich formatting; share the CSL utility functions so both layers agree on data.**
-
-This gives you the strongest, future-proof citation workflow with minimal duplication.
-
-
-I get the attraction of “one-system-to-rule-them-all.” If the **new, purely client-side CSL + citation-js layer** is already rendering citations and bibliographies, why keep the heavier server-side tool? Here’s the trade-off matrix boiled down to the essentials:
-
-| Question                                                                                                                 | Pure New (UI-only)                                                                                                                                                           | Mixed (Server tool + UI)                          |
-| ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| **Works when user is offline / exports the MD file**                                                                     | ✔️  - citation-js runs in browser/offline                                                                                                                                    | ✔️                                                |
-| **Citations survive when project is reopened on a different device**                                                     | ❌ *Only* the raw `[CITE:id]` tokens are stored; you still need the original `papers` array in Supabase. If anything in that relation disappears or IDs change, tokens break. | ✔️ Server DB keeps canonical CSL, positions, etc. |
-| **Quick to iterate / less code**                                                                                         | ✔️                                                                                                                                                                           | ❌ More pieces                                     |
-| **Accurate inline-position mapping (for “click-to-highlight source” or future PDF/Word export)**                         | ❌ No char offsets stored                                                                                                                                                     | ✔️ Stored in `citation_links`                     |
-| **Deduplication across multiple sections / drafts**                                                                      | ❌ Relies on author manually avoiding duplicates                                                                                                                              | ✔️ MD5/DOI key ensures single record              |
-| **Future automation (auto-generate reference list, sync to Zotero, export BibTeX, track citation counts, analytics, …)** | ⚠️ Requires rebuilding server logic later                                                                                                                                    | ✔️ Already have CSL JSON in DB – ready to reuse   |
-| **Security / data integrity (LLM can’t accidentally overwrite someone else’s citation)**                                 | ⚠️ All logic in browser; needs extra guards                                                                                                                                  | ✔️ Checked server-side with Zod + RPC             |
-
-### When *“New only”* is good enough
-
-1. **Personal, throw-away drafts** – you don’t care about positional data or re-using citations later.
-2. **Static export** – you’ll immediately convert the rendered HTML/Markdown to PDF and never touch it again.
-3. **Ultra-lean prototype** – you’re validating UX first, not long-term persistence.
-
-### When you’ll miss the server tool
-
-1. **Collaboration / version history** – teammates editing the same project need authoritative citations.
-2. **Any future “reference manager” features** – e.g. show how many times a source was cited, replace a citation everywhere with one click, generate alt styles in bulk, export to Zotero/BibTeX.
-3. **Precision requirements** – e.g. peer-review workflow where reviewers insist every inline reference highlights the exact sentence it supports.
-
-### One-file “middle way” (if you still want fewer moving parts)
-
-If you’d like to slim down **but** keep server-side persistence:
-
-* **Merge the two helper layers** – keep one `cslUtils.ts` used by both client and server.
-* **Simplify the RPC** – instead of storing `start_pos` & `end_pos`, just store `paper_id → section`. That’s 90 % of the benefit with 10 % of the complexity.
-* **Let the UI lazily fetch full CSL**:
-
-  ```ts
-  const { data: citations } = supabase
-    .from('citations')
-    .select('key, csl_json')
-    .eq('project_id', projectId)
-  ```
-
-  Then build the `Cite` instance from that; no need to ship the whole `papers` table every time.
+*OR* hold the cache at the **front-end** only while the UI session is alive
+(`React.useRef<Map>`); almost all confusion disappears immediately.
 
 ---
 
-## TL;DR
+## 3  Only 2-6 citations & shallow content
 
-*Using only the new client-side renderer **is** simpler and works for quick drafts,* but you lose:
+### Why
 
-* canonical CSL storage,
-* inline-position data,
-* deduplication,
-* and a clean upgrade path for future citation-heavy features.
+1. **Prompt truncation** – you build a very long JSON string → OpenAI clips
+   after `~16 k` tokens (gpt-4o) and the tail of the source list is gone.
+2. **No hard requirement** – the model is *told* “use the provided sources”,
+   but nothing penalises it for ignoring most.
 
-If any of those matter to you (and they usually start mattering once users keep projects for months), keep a thin server-side citation endpoint and let the new React renderer focus on formatting.
+### Tweaks
+
+| Part                    | Change                                                                                 | Snippet                                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **Source list**         | Pass **IDs only** inside the JSON and stream the full CSL data via the vector-tool     | `json { "topic": "...", "sources": ["id1","id2",...]} `                                                   |
+| **Prompt**              | Add a *budget* instruction                                                             | `"... incorporate **at least 12 distinct sources** and cite each with [CITE:id]"`                         |
+| **Citation extraction** | At the end of `streamPaperGeneration` assert the ratio                                 | `ts if (citations.length < Math.min(12, papers.length/2)) throw new Error('Too few citations – retry'); ` |
+| **Chunk feeding**       | Instead of a single 10-chunk blob, pass **one chunk per paper** to encourage coverage. |                                                                                                           |
+
+
+
+Make the generated content meaningfully longer
+What you have now	What to tweak	Why it helps
+**`targetTotal = config.search_parameters.limit		10`** → at most 10 papers feed the LLM
+chunks = searchPaperChunks(...limit: 20) → only 20 chunks (≈ 10–15 k tokens)	Scale limit with lengthts<br>const chunkLimit = {short:20, medium:40, long:80}[config.paper_settings.length];<br>	Gives the model enough raw material to write multi-paragraph sections
+Section prompt hard-codes “200–300” / “400–600” / “800–1000” words	Drive length from the same table and emphasise depth:ts<br>words = {short:400, medium:900, long:1600}[len];<br>`Write ~${words} words … with sub-headings & bullet lists where helpful.`	The LLM usually obeys explicit numeric targets
+max_tokens is capped at 8 000	Compute per-section:sectionMax = words*1.4/0.75 (rough 0.75 token/word)	Prevents truncation while keeping quota in check
+Everything generated in one shot	Iterative section writing (you already stream). For each section: 1. feed outline + previous sections2. request the next section only	Allows GPT-4o to keep longer context without hitting 128 k window
+Minimal code patch (section length)
+const WORD_TARGET = { short: 400, medium: 900, long: 1600 };
+const wordTarget = WORD_TARGET[config.paper_settings.length];
+
+SECTION_PROMPTS.introduction = `
+Write ≈${wordTarget} words for the introduction.
+Break the text into 3-4 paragraphs. Provide data, cite at least 4 sources.`;
+Do the same for every section and bump max_tokens accordingly (≈ wordTarget*1.4).
+### Optional – “forced citing” shim
+
+Insert a *pre-pass* after generation:
+
+```ts
+for (const p of papers) {
+  if (!content.includes(p.id) && content.length < targetLength*1.2) {
+    content += `\n\nAdditional insight from ${p.title} [CITE:${p.id}]`;
+  }
+}
+```
+
+This guarantees every paper is referenced at least once, gives the model extra
+tokens to extend, and you can regenerate only those snippets instead of the
+whole draft.
+
+---
+
+## Sanity-check table
+
+| Symptom                               | After the fixes you should see                                                |
+| ------------------------------------- | ----------------------------------------------------------------------------- |
+| “Library-only still mixes web papers” | `console.log(allPapers.filter(p => p.source!=='library'))` length **0**       |
+| “Cache pollution”                     | Cache key contains `useLibraryOnly`, `fromYear` → unrelated results disappear |
+| “Only 6 citations”                    | Generation fails and immediately retries until `citations.length ≥ 12`        |
+
+---
+
+### Final thought
+
+Keep the **`addCitation` RPC / tool** as the *single source of truth* for what
+counts as “used”.  Whether the paragraph is LLM-generated or manually pasted,
+call the same endpoint – that way the renderer and the bibliography logic stay
+identical and you avoid a second, parallel citation implementation.

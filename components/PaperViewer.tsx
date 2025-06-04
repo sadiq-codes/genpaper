@@ -19,7 +19,7 @@ import {
   Check
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { CitationRenderer } from '@/components/CitationRenderer'
+import CitationRenderer from '@/components/CitationRenderer'
 import type { 
   ResearchProject, 
   ResearchProjectVersion,
@@ -285,6 +285,7 @@ export default function PaperViewer({ projectId, className }: PaperViewerProps) 
             <CitationRenderer 
               content={latestVersion.content || ''}
               papers={papers}
+              projectId={projectId}
               initialStyle="apa"
             />
           </div>

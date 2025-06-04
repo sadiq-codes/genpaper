@@ -41,7 +41,7 @@ export default function DashboardNav() {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
-    router.push('/auth/login')
+    router.push('/login')
   }
 
   const navigation = [

@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { tool } from 'ai'
 import { createClient } from '@/lib/supabase/server'
-import crypto from 'crypto'
 
 // Zod schema for citation data
 const citationSchema = z.object({
@@ -22,8 +21,8 @@ const citationSchema = z.object({
   context: z.string().optional()
 })
 
-// Hash function for generating citation keys
-function generateCitationKey(title: string, year?: number, doi?: string): string {
+// Hash function for generating citation keys using Web Crypto API
+async function generateCitationKey(title: string, year?: number, doi?: string): Promise<string> {
   if (doi) {
     return doi.toLowerCase()
   }
@@ -32,7 +31,14 @@ function generateCitationKey(title: string, year?: number, doi?: string): string
   const yearStr = year ? year.toString() : 'unknown'
   const hashInput = `${normalizedTitle}_${yearStr}`
   
-  return crypto.createHash('md5').update(hashInput).digest('hex').substring(0, 12)
+  // Use Web Crypto API instead of Node.js crypto
+  const encoder = new TextEncoder()
+  const data = encoder.encode(hashInput)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+  
+  return hashHex.substring(0, 12)
 }
 
 // Convert input to CSL JSON format
@@ -74,6 +80,15 @@ interface CitationContext {
   userId: string
 }
 
+interface CitationRecord {
+  id: string
+  project_id: string
+  key: string
+  csl_json: unknown
+  created_at: string
+  updated_at: string
+}
+
 let citationContext: CitationContext | null = null
 
 export function setCitationContext(context: CitationContext) {
@@ -85,7 +100,6 @@ export function clearCitationContext() {
 }
 
 export const addCitation = tool({
-  name: 'addCitation',
   description: 'Add a citation to the research paper with positional information. Call this whenever you reference a source, study, or external work that needs to be cited.',
   parameters: citationSchema,
   execute: async (payload) => {
@@ -93,12 +107,12 @@ export const addCitation = tool({
       throw new Error('Citation context not set. This tool can only be used within a generation context.')
     }
 
-    const { projectId, userId } = citationContext
+    const { projectId } = citationContext
     const supabase = await createClient()
 
     try {
       // Generate a unique key for this citation
-      const citationKey = generateCitationKey(payload.title, payload.year, payload.doi)
+      const citationKey = await generateCitationKey(payload.title, payload.year, payload.doi)
       
       // Convert to CSL JSON format
       const cslData = toCslJson(payload)
@@ -117,12 +131,14 @@ export const addCitation = tool({
         throw new Error(`Failed to save citation: ${citationError.message}`)
       }
 
+      const record = citationRecord as CitationRecord
+
       // Create the citation link
       const { error: linkError } = await supabase
         .from('citation_links')
         .insert({
           project_id: projectId,
-          citation_id: citationRecord.id,
+          citation_id: record.id,
           section: payload.section,
           start_pos: payload.start_pos,
           end_pos: payload.end_pos,
@@ -138,7 +154,7 @@ export const addCitation = tool({
       // Return success message
       return {
         success: true,
-        citationId: citationRecord.id,
+        citationId: record.id,
         citationKey,
         message: `Citation added: "${payload.title}" (${payload.authors.join(', ')}, ${payload.year || 'n.d.'})`
       }

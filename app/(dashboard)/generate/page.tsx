@@ -15,7 +15,7 @@ export default async function GeneratePage() {
   const { data: { user }, error } = await supabase.auth.getUser()
 
   if (error || !user) {
-    redirect('/auth/login')
+    redirect('/login')
   }
 
   return (
