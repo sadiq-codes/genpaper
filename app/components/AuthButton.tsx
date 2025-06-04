@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 export default function AuthButton() {
   const [user, setUser] = useState<User | null>(null)
@@ -46,7 +47,7 @@ export default function AuthButton() {
   }
 
   if (loading) {
-    return <div className="text-sm">Loading...</div>
+    return <LoadingSpinner />
   }
 
   if (user) {

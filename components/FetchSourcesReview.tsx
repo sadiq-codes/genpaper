@@ -20,7 +20,6 @@ import {
   ExternalLink,
   Users,
   Calendar,
-  Loader2,
   AlertCircle,
   CheckCircle,
   RefreshCw,
@@ -32,6 +31,7 @@ import {
   Globe
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 interface RankedPaper {
   canonical_id: string
@@ -450,10 +450,7 @@ export default function FetchSourcesReview({
                     className="min-w-[100px]"
                   >
                     {loading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        Searching...
-                      </>
+                      <LoadingSpinner size="sm" text="Searching..." />
                     ) : (
                       <>
                         <Search className="h-4 w-4 mr-2" />
@@ -605,10 +602,7 @@ export default function FetchSourcesReview({
                         disabled={batchDownloading}
                       >
                         {batchDownloading ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Downloading...
-                          </>
+                          <LoadingSpinner size="sm" text="Downloading..." />
                         ) : (
                           <>
                             <Download className="h-4 w-4 mr-2" />
@@ -756,7 +750,7 @@ export default function FetchSourcesReview({
                                         className="h-8 w-8 p-0"
                                       >
                                         {pdfInfo.downloading ? (
-                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                          <LoadingSpinner size="sm" className="h-3 w-3" />
                                         ) : (
                                           <Download className="h-3 w-3" />
                                         )}

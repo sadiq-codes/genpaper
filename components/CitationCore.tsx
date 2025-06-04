@@ -9,6 +9,15 @@ import MarkdownIt from 'markdown-it'
 import { paperToCSL, fixCSL, validateCSL, hashCSLData, type CSLItem } from '@/lib/utils/csl'
 import { createClient } from '@/lib/supabase/client'
 import type { PaperWithAuthors } from '@/types/simplified'
+import { sanitizeHtml, sanitizeBibliography } from '@/lib/utils/sanitize'
+import CitationDrawer from './CitationDrawer'
+
+// Global window type extension
+declare global {
+  interface Window {
+    handleCitationClick?: (citationId: string) => void
+  }
+}
 
 interface CitationCoreProps {
   content: string
@@ -31,7 +40,8 @@ const CITATION_STYLES = {
 
 type CitationStyle = keyof typeof CITATION_STYLES
 
-const CITATION_REGEX = /\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_]+)\]/g
+// Improved citation regex that avoids code fences and URLs
+const CITATION_REGEX = /(?<!```[^`]*)\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_]+)\](?![^`]*```)/g
 
 interface DatabaseCitation {
   id: string
@@ -68,6 +78,10 @@ export default function CitationCore({
   const [debugUniqueItemIds, setDebugUniqueItemIds] = useState<string[]>([])
   const [citationErrors, setCitationErrors] = useState<CitationError[]>([])
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
+  
+  // Citation drawer state
+  const [selectedPaper, setSelectedPaper] = useState<PaperWithAuthors | CSLItem | DatabaseCitation | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   
   const citeCache = useRef<{ hash: string; cite: InstanceType<typeof import('citation-js').Cite> | null }>({ hash: '', cite: null })
   
@@ -191,6 +205,27 @@ export default function CitationCore({
     fetchDatabaseCitations()
   }, [fetchDatabaseCitations])
 
+  // Citation map for quick lookups
+  const citationMap = useMemo(() => {
+    const map = new Map<string, PaperWithAuthors | DatabaseCitation>()
+    papers.forEach(paper => {
+      map.set(paper.id, paper)
+    })
+    dbCitations.forEach(citation => {
+      map.set(citation.key, citation)
+    })
+    return map
+  }, [papers, dbCitations])
+
+  // Citation click handler
+  const handleCitationClick = useCallback((citationId: string) => {
+    const paper = citationMap.get(citationId)
+    if (paper) {
+      setSelectedPaper(paper)
+      setDrawerOpen(true)
+    }
+  }, [citationMap])
+
   // Enhanced CSL data building with validation
   const cslData = useMemo((): CSLItem[] => {
     const errors: CitationError[] = []
@@ -293,17 +328,6 @@ export default function CitationCore({
     }
   }, [Cite, cslData, cslHash, citationErrors, onError])
   
-  const citationMap = useMemo(() => {
-    const map = new Map<string, PaperWithAuthors | DatabaseCitation>()
-    papers.forEach(paper => {
-      map.set(paper.id, paper)
-    })
-    dbCitations.forEach(citation => {
-      map.set(citation.key, citation)
-    })
-    return map
-  }, [papers, dbCitations])
-  
   const md = useMemo(() => {
     return new MarkdownIt({
       html: true,
@@ -312,7 +336,7 @@ export default function CitationCore({
     })
   }, [])
   
-  // Enhanced content processing with error tracking
+  // Enhanced content processing with clickable citations
   const { formattedContent, missingCitations } = useMemo(() => {
     if (!citationLibLoaded) {
       return { 
@@ -342,11 +366,19 @@ export default function CitationCore({
           const csl = item.csl_json as CSLItem
           const authors = csl.author?.[0]?.family || 'Unknown'
           const year = csl.issued?.['date-parts']?.[0]?.[0] || 'n.d.'
-          return `(${authors}, ${year})`
+          return `<button 
+            class="citation-link inline-flex items-center px-1 py-0.5 rounded text-blue-600 hover:text-blue-800 hover:bg-blue-50 transition-colors cursor-pointer border-0 bg-transparent text-sm font-medium"
+            data-citation-id="${citationId}"
+            onclick="window.handleCitationClick && window.handleCitationClick('${citationId}')"
+          >(${authors}, ${year})</button>`
         } else if ('author_names' in item) {
           const authors = (item as PaperWithAuthors).author_names?.[0]?.split(' ').pop() || 'Unknown'
           const year = (item as PaperWithAuthors).publication_date ? new Date((item as PaperWithAuthors).publication_date!).getFullYear() : 'n.d.'
-          return `(${authors}, ${year})`
+          return `<button 
+            class="citation-link inline-flex items-center px-1 py-0.5 rounded text-blue-600 hover:text-blue-800 hover:bg-blue-50 transition-colors cursor-pointer border-0 bg-transparent text-sm font-medium"
+            data-citation-id="${citationId}"
+            onclick="window.handleCitationClick && window.handleCitationClick('${citationId}')"
+          >(${authors}, ${year})</button>`
         }
         
         return `(source format error: ${citationId})`
@@ -386,7 +418,12 @@ export default function CitationCore({
             lang: 'en-US',
             entry: citationId
           })
-          return formatted || `<span style="color: red;">(formatting error: ${citationId})</span>`
+          
+          return `<button 
+            class="citation-link inline-flex items-center px-1 py-0.5 rounded text-blue-600 hover:text-blue-800 hover:bg-blue-50 transition-colors cursor-pointer border-0 bg-transparent text-sm font-medium"
+            data-citation-id="${citationId}"
+            onclick="window.handleCitationClick && window.handleCitationClick('${citationId}')"
+          >${formatted || `(formatting error: ${citationId})`}</button>`
         } catch (error) {
           console.warn(`Failed to format citation for ${citationId}:`, error)
           return `<span style="color: red;">(citation error: ${citationId})</span>`
@@ -471,7 +508,7 @@ export default function CitationCore({
   // Update missing citations errors
   useEffect(() => {
     if (missingCitations.length > 0) {
-      const missingErrors: CitationError[] = missingCitations.map(id => ({
+      const missingErrors: CitationError[] = missingCitations.map((id: string) => ({
         id,
         message: 'Citation not found in database or papers',
         type: 'missing' as const
@@ -479,6 +516,18 @@ export default function CitationCore({
       setCitationErrors(prev => [...prev.filter(e => e.type !== 'missing'), ...missingErrors])
     }
   }, [missingCitations])
+  
+  // Set up global citation click handler
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.handleCitationClick = handleCitationClick
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        delete window.handleCitationClick
+      }
+    }
+  }, [handleCitationClick])
   
   return (
     <div className={className}>
@@ -572,7 +621,7 @@ export default function CitationCore({
       {/* Formatted Content */}
       <div className="prose prose-gray max-w-none dark:prose-invert">
         <div 
-          dangerouslySetInnerHTML={{ __html: formattedContent }}
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(formattedContent) }}
         />
         
         {/* Bibliography */}
@@ -591,16 +640,26 @@ export default function CitationCore({
             </div>
             <div 
               className="text-sm bibliography-content"
-              dangerouslySetInnerHTML={{ __html: bibliography }}
+              dangerouslySetInnerHTML={{ __html: sanitizeBibliography(bibliography) }}
             />
           </div>
         )}
       </div>
       
+      {/* Citation Drawer */}
+      <CitationDrawer
+        paper={selectedPaper}
+        isOpen={drawerOpen}
+        onClose={() => {
+          setDrawerOpen(false)
+          setSelectedPaper(null)
+        }}
+      />
+      
       {/* Development Debug Info */}
       {process.env.NODE_ENV === 'development' && (
         <details className="mt-6 p-4 bg-gray-50 rounded text-xs">
-          <summary className="cursor-pointer font-medium">Debug Info (Phase 3)</summary>
+          <summary className="cursor-pointer font-medium">Debug Info (Architectural Fixes)</summary>
           <div className="mt-2 space-y-2">
             <div><strong>Papers:</strong> {papers.length}</div>
             <div><strong>DB Citations:</strong> {dbCitations.length}</div>
@@ -617,6 +676,7 @@ export default function CitationCore({
             <div><strong>CSL Valid (individually):</strong> {cslData.filter(c => validateCSL(c)).length}/{cslData.length}</div>
             <div><strong>Cache Hash:</strong> {cslHash.slice(0, 20)}...</div>
             {projectId && <div><strong>Project ID:</strong> {projectId}</div>}
+            <div><strong>HTML Sanitization:</strong> Active</div>
           </div>
         </details>
       )}

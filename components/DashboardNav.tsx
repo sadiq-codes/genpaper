@@ -20,7 +20,8 @@ import {
   Settings, 
   LogOut, 
   Menu,
-  X
+  X,
+  Zap
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
@@ -48,7 +49,7 @@ export default function DashboardNav() {
     {
       name: 'Generate',
       href: '/generate',
-      icon: Sparkles,
+      icon: Zap,
       description: 'Create new research papers'
     },
     {

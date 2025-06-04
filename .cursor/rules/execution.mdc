@@ -16,3 +16,5 @@ alwaysApply: true
 5. Don't modify the styling unless it's required by what I asked you to do.
 
 6. Always match the styling of the current application when creating a new page.
+
+7. Most of the time, the features you need are implemented or have parts that are already in the application. Please always check if what you're going to do is not already done or partially completed, so always check the codebase to make sure you don't already have it.

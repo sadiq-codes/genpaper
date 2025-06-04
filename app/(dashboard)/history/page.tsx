@@ -3,7 +3,8 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import HistoryManager from '@/components/HistoryManager'
 import { Suspense } from 'react'
-import { History, Loader2 } from 'lucide-react'
+import { History } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 export const metadata: Metadata = {
   title: 'Project History | Genpaper',
@@ -50,8 +51,7 @@ function HistoryPageSkeleton() {
       </div>
       
       <div className="flex items-center justify-center py-8">
-        <Loader2 className="h-6 w-6 animate-spin mr-2" />
-        <span>Loading project history...</span>
+        <LoadingSpinner text="Loading project history..." />
       </div>
     </div>
   )

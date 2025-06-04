@@ -1,84 +1,65 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Separator } from '@/components/ui/separator'
-import { Progress } from '@/components/ui/progress'
 import { 
-  Sparkles, 
-  FileText, 
-  CheckCircle, 
-  AlertCircle,
-  Loader2,
-  Zap
+  Zap,
+  ChevronDown,
+  Paperclip,
+  FileText,
+  BookOpen,
+  Settings
 } from 'lucide-react'
-import type { 
-  GenerateRequest
-} from '@/types/simplified'
-import { useStreamGeneration, useStartGeneration } from '@/lib/hooks/useStreamGeneration'
 import SourceReview from '@/components/SourceReview'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 interface PaperGeneratorProps {
-  onGenerationComplete?: (projectId: string) => void
   className?: string
 }
 
-export default function PaperGenerator({ onGenerationComplete, className }: PaperGeneratorProps) {
+// Helper maps for display values
+const styleDisplayMap = {
+  academic: "Academic",
+  review: "Review",
+  survey: "Survey"
+};
+
+const lengthDisplayMap = {
+  short: "Short",
+  medium: "Medium",
+  long: "Long"
+};
+
+const citationStyleDisplayMap = {
+  apa: "APA",
+  mla: "MLA",
+  chicago: "Chicago",
+  ieee: "IEEE"
+};
+
+export default function PaperGenerator({ className }: PaperGeneratorProps) {
   const router = useRouter()
   
   // Form state
   const [topic, setTopic] = useState('')
   const [selectedPapers, setSelectedPapers] = useState<string[]>([])
   const [useLibraryOnly, setUseLibraryOnly] = useState(false)
+  const [isStarting, setIsStarting] = useState(false)
   const [config, setConfig] = useState<{
-    length: 'short' | 'medium' | 'long'
-    style: 'academic' | 'review' | 'survey'
-    citationStyle: 'apa' | 'mla' | 'chicago' | 'ieee'
-    includeMethodology: boolean
+    length: keyof typeof lengthDisplayMap | undefined;
+    style: keyof typeof styleDisplayMap | undefined;
+    citationStyle: keyof typeof citationStyleDisplayMap | undefined;
   }>({
-    length: 'medium',
-    style: 'academic',
-    citationStyle: 'apa',
-    includeMethodology: true
+    length: undefined,
+    style: undefined,
+    citationStyle: undefined
   })
-  
-  // Generation state - now using SWR hooks (Task 5)
-  const { startGeneration, stopGeneration, isStarting, streamUrl } = useStartGeneration()
-  
-  // Stabilize callbacks to prevent infinite loops
-  const handleProgress = useCallback(() => {
-    // Progress is handled by the hook state
-  }, [])
-  
-  const handleComplete = useCallback((projectId: string) => {
-    onGenerationComplete?.(projectId)
-  }, [onGenerationComplete])
-  
-  const handleError = useCallback((error: string) => {
-    console.error('Generation error:', error)
-  }, [])
-  
-  const streamState = useStreamGeneration(streamUrl, {
-    onProgress: handleProgress,
-    onComplete: handleComplete,
-    onError: handleError
-  })
-  
-  // Refs for cleanup
-  const intervalRefs = useRef<Set<NodeJS.Timeout>>(new Set())
-
-  useEffect(() => {
-    // Cleanup intervals on unmount
-    return () => {
-      intervalRefs.current.forEach(interval => clearInterval(interval))
-    }
-  }, [])
 
   const handlePaperSelection = useCallback((paperId: string, selected: boolean) => {
     setSelectedPapers(prev => 
@@ -94,37 +75,20 @@ export default function PaperGenerator({ onGenerationComplete, className }: Pape
 
   const handleGenerate = async () => {
     if (!topic.trim()) return
-
-    const request: GenerateRequest = {
+    
+    setIsStarting(true)
+    
+    const params = new URLSearchParams({
       topic: topic.trim(),
-      libraryPaperIds: selectedPapers,
-      useLibraryOnly,
-      config
-    }
-
-    try {
-      // Use the new SWR-based generation (Task 5)
-      await startGeneration(request)
-    } catch (error) {
-      console.error('Generation error:', error)
-      // Error is handled by the stream state
-    }
+      length: config.length || 'medium', // Fallback to default if undefined
+      style: config.style || 'academic', // Fallback to default if undefined
+      citationStyle: config.citationStyle || 'apa', // Fallback to default if undefined
+      useLibraryOnly: useLibraryOnly.toString(),
+      selectedPapers: selectedPapers.join(',')
+    })
+    
+    router.replace(`/generate/processing?${params.toString()}`)
   }
-
-  const handleViewProject = () => {
-    if (streamState.projectId) {
-      router.push(`/projects/${streamState.projectId}`)
-    }
-  }
-
-  const handleStopGeneration = () => {
-    stopGeneration()
-  }
-
-  // Determine current state
-  const isGenerating = streamState.isConnected || isStarting
-  const progress = streamState.progress
-  const error = streamState.error
 
   return (
     <div className={`max-w-4xl mx-auto p-6 space-y-6 ${className}`}>
@@ -135,116 +99,183 @@ export default function PaperGenerator({ onGenerationComplete, className }: Pape
         </p>
       </div>
 
+      {/* Paper Configuration Card */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5" />
-            Paper Generation
+            <Settings className="h-5 w-5" />
+            Paper Configuration
           </CardTitle>
-          <CardDescription>
-            Configure your research paper generation settings
-          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Topic Input */}
-          <div className="space-y-2">
-            <Label htmlFor="topic">Research Topic *</Label>
+        <CardContent>
+          <div className="bg-white rounded-lg border border-gray-200 dark:bg-gray-800 dark:border-gray-700 p-4">
             <Textarea
-              id="topic"
-              placeholder="Enter your research topic or question (e.g., 'The impact of artificial intelligence on healthcare diagnostics')"
+              placeholder="Describe your research topic or question..."
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              rows={3}
-              className="resize-none"
-              disabled={isGenerating}
+              className="w-full h-24 resize-none border-0 outline-none text-sm text-gray-700 dark:text-gray-300 placeholder-gray-400 dark:placeholder-gray-500 bg-transparent"
+              disabled={isStarting}
+              suppressHydrationWarning={true}
             />
-          </div>
 
-          {/* Paper Settings */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label>Paper Length</Label>
-              <Select 
-                value={config.length} 
-                onValueChange={(value: 'short' | 'medium' | 'long') => 
-                  setConfig(prev => ({ ...prev, length: value }))
-                }
-                disabled={isGenerating}
+            <div className="flex items-center justify-between mt-4">
+              <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+                {/* Writing Style Dropdown */}
+                <Select 
+                  value={config.style} 
+                  onValueChange={(value: keyof typeof styleDisplayMap) => 
+                    setConfig(prev => ({ ...prev, style: value }))
+                  }
+                  disabled={isStarting}
+                >
+                  <SelectTrigger 
+                    className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 dark:text-gray-400 border-0 hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded"
+                    suppressHydrationWarning={true}
+                  >
+                    <FileText className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span>{config.style ? styleDisplayMap[config.style] : 'Writing Style'}</span>
+                    <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 opacity-50" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="academic">
+                      <div className="flex flex-col">
+                        <span className="font-medium">Academic Paper</span>
+                        <span className="text-xs text-gray-500">Traditional research paper format</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="review">
+                      <div className="flex flex-col">
+                        <span className="font-medium">Literature Review</span>
+                        <span className="text-xs text-gray-500">Summary of existing research</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="survey">
+                      <div className="flex flex-col">
+                        <span className="font-medium">Survey Paper</span>
+                        <span className="text-xs text-gray-500">Broad overview of a field</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Paper Length Dropdown */}
+                <Select
+                  value={config.length}
+                  onValueChange={(value: keyof typeof lengthDisplayMap) =>
+                    setConfig(prev => ({ ...prev, length: value }))
+                  }
+                  disabled={isStarting}
+                >
+                  <SelectTrigger 
+                    className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 dark:text-gray-400 border-0 hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded focus:ring-0 focus:ring-offset-0"
+                    suppressHydrationWarning={true}
+                  >
+                    <Zap className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span>{config.length ? lengthDisplayMap[config.length] : 'Paper Length'}</span>
+                    <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 opacity-50" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="short">
+                      <div className="flex flex-col">
+                        <span className="font-medium">Short</span>
+                        <span className="text-xs text-gray-500">3-5 pages, quick overview</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="medium">
+                      <div className="flex flex-col">
+                        <span className="font-medium">Medium</span>
+                        <span className="text-xs text-gray-500">8-12 pages, comprehensive analysis</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="long">
+                      <div className="flex flex-col">
+                        <span className="font-medium">Long</span>
+                        <span className="text-xs text-gray-500">15-20 pages, in-depth research</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Citation Style Dropdown */}
+                <Select 
+                  value={config.citationStyle} 
+                  onValueChange={(value: keyof typeof citationStyleDisplayMap) => 
+                    setConfig(prev => ({ ...prev, citationStyle: value }))
+                  }
+                  disabled={isStarting}
+                >
+                  <SelectTrigger 
+                    className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 dark:text-gray-400 border-0 hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded focus:ring-0 focus:ring-offset-0"
+                    suppressHydrationWarning={true}
+                  >
+                    <BookOpen className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <span>{config.citationStyle ? citationStyleDisplayMap[config.citationStyle] : 'Citation Style'}</span>
+                    <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 opacity-50" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="apa">
+                      <div className="flex flex-col">
+                        <span className="font-medium">APA Style</span>
+                        <span className="text-xs text-gray-500">Psychology, Education, Sciences</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="mla">
+                      <div className="flex flex-col">
+                        <span className="font-medium">MLA Style</span>
+                        <span className="text-xs text-gray-500">Literature, Arts, Humanities</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="chicago">
+                      <div className="flex flex-col">
+                        <span className="font-medium">Chicago Style</span>
+                        <span className="text-xs text-gray-500">History, Literature, Arts</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="ieee">
+                      <div className="flex flex-col">
+                        <span className="font-medium">IEEE Style</span>
+                        <span className="text-xs text-gray-500">Engineering, Computer Science</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Paperclip className="w-4 h-4 text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300" />
+              </div>
+
+              <Button 
+                onClick={handleGenerate}
+                disabled={!topic.trim() || isStarting}
+                className="bg-gray-600 hover:bg-gray-700 text-white px-4 sm:px-6 py-2 text-sm sm:text-base dark:bg-gray-600 dark:hover:bg-gray-600 whitespace-nowrap flex items-center gap-2"
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="short">Short (3-5 pages)</SelectItem>
-                  <SelectItem value="medium">Medium (8-12 pages)</SelectItem>
-                  <SelectItem value="long">Long (15-20 pages)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Writing Style</Label>
-              <Select 
-                value={config.style} 
-                onValueChange={(value: 'academic' | 'review' | 'survey') => 
-                  setConfig(prev => ({ ...prev, style: value }))
-                }
-                disabled={isGenerating}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="academic">Academic Paper</SelectItem>
-                  <SelectItem value="review">Literature Review</SelectItem>
-                  <SelectItem value="survey">Survey Paper</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Citation Style</Label>
-              <Select 
-                value={config.citationStyle} 
-                onValueChange={(value: 'apa' | 'mla' | 'chicago' | 'ieee') => 
-                  setConfig(prev => ({ ...prev, citationStyle: value }))
-                }
-                disabled={isGenerating}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="apa">APA</SelectItem>
-                  <SelectItem value="mla">MLA</SelectItem>
-                  <SelectItem value="chicago">Chicago</SelectItem>
-                  <SelectItem value="ieee">IEEE</SelectItem>
-                </SelectContent>
-              </Select>
+                {isStarting ? (
+                  <LoadingSpinner size="sm" />
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" />
+                    Generate
+                  </>
+                )}
+              </Button>
             </div>
           </div>
+        </CardContent>
+      </Card>
 
-          <div className="flex items-center space-x-2">
-            <Switch
-              id="methodology"
-              checked={config.includeMethodology}
-              onCheckedChange={(checked) => 
-                setConfig(prev => ({ ...prev, includeMethodology: checked }))
-              }
-              disabled={isGenerating}
-            />
-            <Label htmlFor="methodology">Include Methodology Section</Label>
-          </div>
-
-          <Separator />
-
-          {/* Source Selection with SourceReview component (Task 6) */}
+      {/* Source Selection Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BookOpen className="h-5 w-5" />
+            Source Selection
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <h3 className="text-lg font-medium">Source Selection</h3>
                 <p className="text-sm text-muted-foreground">
-                  Choose papers from your library to use as sources. Pinned papers will be combined with automatic discovery unless Library Only is enabled.
+                  Choose papers from your library or let AI discover new sources automatically.
                 </p>
               </div>
               <div className="flex items-center space-x-2">
@@ -252,9 +283,15 @@ export default function PaperGenerator({ onGenerationComplete, className }: Pape
                   id="library-only"
                   checked={useLibraryOnly}
                   onCheckedChange={setUseLibraryOnly}
-                  disabled={isGenerating}
+                  disabled={isStarting}
+                  suppressHydrationWarning={true}
                 />
-                <Label htmlFor="library-only">Library Only</Label>
+                <Label htmlFor="library-only" className="text-sm">
+                  Library Only
+                  <span className="block text-xs text-muted-foreground">
+                    Use only your saved papers
+                  </span>
+                </Label>
               </div>
             </div>
             
@@ -263,82 +300,6 @@ export default function PaperGenerator({ onGenerationComplete, className }: Pape
               onPaperSelectionChange={handlePaperSelection}
               onPinnedPapersChange={handlePinnedPapersChange}
             />
-          </div>
-
-          <Separator />
-
-          {/* Generation Button and Status */}
-          <div className="space-y-4">
-            {!isGenerating ? (
-              <Button 
-                onClick={handleGenerate}
-                disabled={!topic.trim() || isStarting}
-                className="w-full"
-                size="lg"
-              >
-                {isStarting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Starting Generation...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="mr-2 h-4 w-4" />
-                    Generate Paper
-                  </>
-                )}
-              </Button>
-            ) : (
-              <div className="space-y-4">
-                {progress && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium capitalize">
-                        {progress.stage.replace('_', ' ')}
-                      </span>
-                      <span>{Math.round(progress.progress)}%</span>
-                    </div>
-                    <Progress value={progress.progress} className="w-full" />
-                    <p className="text-sm text-muted-foreground">
-                      {progress.message}
-                    </p>
-                  </div>
-                )}
-                
-                <Button 
-                  onClick={handleStopGeneration}
-                  variant="destructive"
-                  className="w-full"
-                  size="lg"
-                >
-                  Stop Generation
-                </Button>
-              </div>
-            )}
-
-            {error && (
-              <div className="flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-lg">
-                <AlertCircle className="h-4 w-4" />
-                <span className="text-sm">{error}</span>
-              </div>
-            )}
-
-            {streamState.isComplete && streamState.projectId && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 p-3 bg-green-50 text-green-700 rounded-lg">
-                  <CheckCircle className="h-4 w-4" />
-                  <span className="text-sm">Paper generated successfully!</span>
-                </div>
-                <Button 
-                  onClick={handleViewProject}
-                  className="w-full"
-                  size="lg"
-                >
-                  <FileText className="mr-2 h-4 w-4" />
-                  View Generated Paper
-                </Button>
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>

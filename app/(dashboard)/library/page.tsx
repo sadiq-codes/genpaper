@@ -3,7 +3,8 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import LibraryManager from '@/components/LibraryManager'
 import { Suspense } from 'react'
-import { BookOpen, Loader2 } from 'lucide-react'
+import { BookOpen } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 export const metadata: Metadata = {
   title: 'Research Library | Genpaper',
@@ -43,8 +44,7 @@ function LibraryPageSkeleton() {
       
       <div className="border rounded-lg p-6">
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin mr-2" />
-          <span>Loading library...</span>
+          <LoadingSpinner text="Loading library..." />
         </div>
       </div>
     </div>

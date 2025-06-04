@@ -1,3 +1,6 @@
+'use client'
+
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -16,8 +19,28 @@ import {
   Clock,
   Shield
 } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+import type { User } from '@supabase/supabase-js'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 export default function LandingPage() {
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+  const supabase = createClient()
+
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      setUser(user)
+      setLoading(false)
+    }
+    getUser()
+  }, [supabase.auth])
+
+  if (loading) {
+    return <LoadingSpinner fullScreen />
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
@@ -31,12 +54,23 @@ export default function LandingPage() {
             </div>
             
             <div className="flex items-center space-x-4">
-              <Button variant="ghost" asChild>
-                <Link href="/login">Sign In</Link>
-              </Button>
-              <Button asChild>
-                <Link href="/signup">Start Free Trial</Link>
-              </Button>
+              {user ? (
+                <>
+                  <span className="text-sm text-muted-foreground">Welcome back, {user.email}</span>
+                  <Button asChild>
+                    <Link href="/generate">Continue Writing</Link>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="ghost" asChild>
+                    <Link href="/login">Sign In</Link>
+                  </Button>
+                  <Button asChild>
+                    <Link href="/signup">Start Free Trial</Link>
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -83,15 +117,31 @@ export default function LandingPage() {
               </p>
               
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
-                <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
-                  <Link href="/signup">
-                    Start Free Trial
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
-                <Button size="lg" variant="outline" className="px-8 py-3" asChild>
-                  <Link href="/login">Sign In</Link>
-                </Button>
+                {user ? (
+                  <>
+                    <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
+                      <Link href="/generate">
+                        Continue Your Research
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Link>
+                    </Button>
+                    <Button size="lg" variant="outline" className="px-8 py-3" asChild>
+                      <Link href="/library">View Library</Link>
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
+                      <Link href="/signup">
+                        Start Free Trial
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Link>
+                    </Button>
+                    <Button size="lg" variant="outline" className="px-8 py-3" asChild>
+                      <Link href="/login">Sign In</Link>
+                    </Button>
+                  </>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-gray-600">
@@ -285,26 +335,42 @@ export default function LandingPage() {
       <section className="py-24 bg-background">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-6">
-            Ready to write your best paper yet?
+            {user ? "Ready to continue writing?" : "Ready to write your best paper yet?"}
           </h2>
           <p className="text-xl text-muted-foreground mb-8">
-            No setup, no stress. Just start writing.
+            {user ? "Pick up where you left off or start a new project." : "No setup, no stress. Just start writing."}
           </p>
           
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
-            <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
-              <Link href="/signup">
-                Write Your First Paper with GenPaper
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
-            <Button size="lg" variant="outline" className="px-8 py-3" asChild>
-              <Link href="/login">Sign In to Continue</Link>
-            </Button>
+            {user ? (
+              <>
+                <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
+                  <Link href="/generate">
+                    Start New Paper
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button size="lg" variant="outline" className="px-8 py-3" asChild>
+                  <Link href="/history">View Past Projects</Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
+                  <Link href="/signup">
+                    Write Your First Paper with GenPaper
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Link>
+                </Button>
+                <Button size="lg" variant="outline" className="px-8 py-3" asChild>
+                  <Link href="/login">Sign In to Continue</Link>
+                </Button>
+              </>
+            )}
           </div>
           
           <p className="text-sm text-muted-foreground">
-            It&apos;s free — no credit card, no complicated setup • Free 14-day trial • Cancel anytime
+            {user ? "All your work is automatically saved and organized." : "It's free — no credit card, no complicated setup • Free 14-day trial • Cancel anytime"}
           </p>
         </div>
       </section>

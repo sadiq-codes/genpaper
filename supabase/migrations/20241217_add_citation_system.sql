@@ -37,7 +37,7 @@ CREATE OR REPLACE FUNCTION upsert_citation(
   p_key TEXT,
   p_data JSONB
 )
-RETURNS citations
+RETURNS JSONB
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -51,7 +51,7 @@ BEGIN
     updated_at = now()
   RETURNING * INTO result;
   
-  RETURN result;
+  RETURN to_jsonb(result);
 END;
 $$;
 

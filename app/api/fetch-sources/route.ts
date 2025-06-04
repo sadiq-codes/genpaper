@@ -62,6 +62,7 @@ type CacheableOptions = {
   semanticWeight?: number
   authorityWeight?: number
   recencyWeight?: number
+  useLibraryOnly?: boolean
 }
 
 function generateCacheKey(topic: string, options: CacheableOptions): string {
@@ -74,7 +75,8 @@ function generateCacheKey(topic: string, options: CacheableOptions): string {
     openAccessOnly: options.openAccessOnly,
     semanticWeight: options.semanticWeight,
     authorityWeight: options.authorityWeight,
-    recencyWeight: options.recencyWeight
+    recencyWeight: options.recencyWeight,
+    useLibraryOnly: options.useLibraryOnly
   }
   
   const keyData = JSON.stringify({ t: topic, o: normalizedOptions })

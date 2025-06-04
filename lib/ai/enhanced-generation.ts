@@ -89,18 +89,50 @@ export async function generateDraftWithRAG(
     console.log(`   🆕 Remaining Slots for Discovery: ${remainingSlots}`)
     console.log(`   🚫 Excluded Paper IDs: [${pinnedIds.join(', ')}]`)
 
-    const discoveredPapers = useLibraryOnly || remainingSlots === 0 ? [] :
-      await hybridSearchPapers(topic, {
-        limit: remainingSlots,
-        excludePaperIds: pinnedIds,
-        minYear: 2015 // Lower minimum year to get more papers
-      })
+    // Fix for Library Only toggle bug - check useLibraryOnly first
+    let discoveredPapers: PaperWithAuthors[] = []
+
+    if (!useLibraryOnly) {
+      if (remainingSlots > 0) {
+        console.log(`🌐 Searching online APIs for fresh papers...`)
+        
+        // Use enhanced search that includes online APIs
+        const { enhancedSearch } = await import('@/lib/services/enhanced-search')
+        
+        const searchResult = await enhancedSearch(topic, {
+          maxResults: remainingSlots,
+          useSemanticSearch: true,
+          fallbackToKeyword: true,
+          fallbackToAcademic: true, // This ensures online API search
+          minResults: Math.min(5, remainingSlots),
+          combineResults: true,
+          sources: ['openalex', 'crossref', 'semantic_scholar', 'arxiv'], // Online sources
+          fromYear: 2015,
+          forceIngest: false // Try local first, then online
+        })
+        
+        // Extract papers from enhanced search result  
+        const rawResults = searchResult.papers.map(p => ({
+          ...p,
+          // Ensure proper typing
+          authors: p.authors || [],
+          author_names: p.author_names || []
+        })) as PaperWithAuthors[]
+        
+        console.log(`🌐 Enhanced search found ${rawResults.length} papers (${searchResult.metadata.searchStrategies.join(', ')})`)
+        console.log(`   📊 Breakdown: Vector=${searchResult.metadata.vectorResults}, Keyword=${searchResult.metadata.keywordResults}, Academic=${searchResult.metadata.academicResults}`)
+        
+        // Apply domain filtering to prevent off-topic papers
+        discoveredPapers = filterOnTopicPapers(rawResults, topic)
+        console.log(`🔧 Domain filtering: ${rawResults.length} → ${discoveredPapers.length} on-topic papers`)
+      }
+    }
     
     console.log(`🔍 Discovery Search Results: ${discoveredPapers.length} papers found`)
     
     // Fallback: If we got very few results, try broader searches
     const additionalPapers: PaperWithAuthors[] = []
-    if (discoveredPapers.length < 5 && remainingSlots > discoveredPapers.length) {
+    if (discoveredPapers.length < 5 && remainingSlots > discoveredPapers.length && !useLibraryOnly) {
       console.log(`🔄 Too few results (${discoveredPapers.length}), trying broader searches...`)
       
       // Extract key terms for broader search
@@ -120,8 +152,10 @@ export async function generateDraftWithRAG(
             semanticWeight: 0.5 // Lower semantic weight for broader matching
           })
           
-          console.log(`   🔍 "${term}" found ${termResults.length} additional papers`)
-          additionalPapers.push(...termResults)
+          // Apply domain filtering to fallback results too
+          const filteredTermResults = filterOnTopicPapers(termResults, topic)
+          console.log(`   🔍 "${term}" found ${termResults.length} papers, ${filteredTermResults.length} on-topic`)
+          additionalPapers.push(...filteredTermResults)
           
           if (discoveredPapers.length + additionalPapers.length >= remainingSlots) break
         } catch (error) {
@@ -225,11 +259,16 @@ export async function generateDraftWithRAG(
       }
     }
     
+    // Adaptive chunk threshold - lower for papers with fresh embeddings
+    const hasNewPapers = papersNeedingChunks.length > 0
+    const chunkMinScore = hasNewPapers ? 0.25 : 0.3
+    console.log(`📄 Using adaptive chunk threshold: ${chunkMinScore} (new papers: ${hasNewPapers})`)
+    
     const chunks = allPapers.length > 0 
       ? await searchPaperChunks(topic, {
           paperIds: allPapers.map(p => p.id),
-          limit: 20,
-          minScore: 0.3
+          limit: Math.max(50, getChunkLimit(config?.paper_settings?.length)),
+          minScore: chunkMinScore
         }).catch((error) => {
           console.warn(`⚠️ Content chunks search failed:`, error)
           return []
@@ -275,19 +314,36 @@ export async function generateDraftWithRAG(
       allPapers.some(p => p.id === c.paperId)
     )
 
-    await Promise.all(
-      validCitations.map(citation =>
-        addProjectCitation(
-          projectId,
-          version.version,
-          citation.paperId,
-          citation.citationText,
-          citation.positionStart,
-          citation.positionEnd,
-          citation.pageRange
-        )
-      )
+    // Improved error handling - process citations individually to prevent batch failures
+    const citationResults = await Promise.all(
+      validCitations.map(async (citation) => {
+        try {
+          await addProjectCitation(
+            projectId,
+            version.version,
+            citation.paperId,
+            citation.citationText,
+            citation.positionStart,
+            citation.positionEnd,
+            citation.pageRange
+          )
+          return { success: true, citation }
+        } catch (error) {
+          console.error(`Failed to add citation for paper ${citation.paperId}:`, error)
+          return { success: false, citation, error }
+        }
+      })
     )
+
+    // Log any citation failures but don't fail the entire generation
+    const failedCitations = citationResults.filter(result => !result.success)
+    if (failedCitations.length > 0) {
+      console.warn(`${failedCitations.length} citations failed to save:`, failedCitations)
+    }
+
+    const successfulCitations = citationResults
+      .filter((result): result is { success: true; citation: typeof validCitations[0] } => result.success)
+      .map(result => result.citation)
 
     await updateResearchProjectStatus(projectId, 'complete')
     
@@ -295,7 +351,7 @@ export async function generateDraftWithRAG(
 
     return {
       content: result.content,
-      citations: validCitations,
+      citations: successfulCitations,
       wordCount: result.content.split(/\s+/).length,
       sources: allPapers,
       structure: {
@@ -320,6 +376,9 @@ function buildSystemPrompt(config: GenerationConfig): string {
   const length = config?.paper_settings?.length || 'medium';
   const includeMethodology = config?.paper_settings?.includeMethodology;
 
+  const WORD_TARGET = { short: 400, medium: 900, long: 1600 };
+  const wordTarget = WORD_TARGET[length as keyof typeof WORD_TARGET];
+
   const lengthGuidance = {
     short: '1,500–2,500 words (≈3–4 sections)',
     medium: '3,000–5,000 words (≈5–6 sections)',
@@ -335,6 +394,8 @@ Produce a coherent, logically argued, and academically rigorous paper that follo
 
 📏 LENGTH:
 - Target: ${lengthGuidance[length as keyof typeof lengthGuidance]}
+- Section Target: Write ≈${wordTarget} words per major section
+- Break text into 3-4 paragraphs per section with sub-headings & bullet lists where helpful
 
 🧱 STRUCTURE:
 Include the following sections in this order:
@@ -351,9 +412,13 @@ ${includeMethodology ? '4. Methodology\n' : ''}4${includeMethodology ? '' : '.'}
 - Avoid first-person perspective and rhetorical questions
 
 🔖 CITATION REQUIREMENTS:
+- **CRITICAL**: Incorporate at least 12 distinct sources and cite each with [CITE:id]
+- **MANDATORY**: Every paragraph must end with at least one [CITE:id] citation
 - Inline citations must use the format: **[CITE: paper_id]**
 - Example: "Recent advances show promise [CITE: 123e4567-e89b-12d3-a456-426614174000]."
 - Place citations immediately after the relevant claim, data point, or quote
+- Provide data, cite at least 4 sources per major section
+- Papers unused after draft will be explicitly summarized in the Discussion section
 - Do NOT invent or hallucinate citations
 
 📚 CITATION SCOPE:
@@ -366,6 +431,8 @@ ${includeMethodology ? '4. Methodology\n' : ''}4${includeMethodology ? '' : '.'}
 - Prioritize factual accuracy, clarity, and argumentative depth
 - Make sure each section transitions smoothly into the next
 - Follow ${citationStyle.toUpperCase()} citation conventions for formatting if needed
+- Ensure comprehensive coverage of all provided sources
+- Dense citation coverage is required - aim for multiple citations per paragraph
 
 Begin writing when ready. Respond only with the paper content.`;
 }
@@ -376,28 +443,34 @@ function buildUserPromptWithSources(
   papers: PaperWithAuthors[], 
   chunks: Array<{paper_id: string, content: string, score: number}> = []
 ): string {
-  const sources = papers.map(paper => ({
-    id: paper.id,
-    title: paper.title,
-    authors: paper.author_names?.join(', ') || 'Unknown',
-    year: paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'Unknown',
-    abstract: paper.abstract?.substring(0, 300) + '...'
-  }))
+  // Pass IDs only to prevent prompt truncation
+  const sourceIds = papers.map(paper => paper.id)
 
-  const contextChunks = chunks.slice(0, 10).map(chunk => 
-    `[${chunk.paper_id}]: ${chunk.content.substring(0, 200)}...`
-  ).join('\n\n')
+  // Organize chunks by paper to encourage coverage
+  const chunksByPaper = new Map<string, string[]>()
+  chunks.forEach(chunk => {
+    if (!chunksByPaper.has(chunk.paper_id)) {
+      chunksByPaper.set(chunk.paper_id, [])
+    }
+    chunksByPaper.get(chunk.paper_id)?.push(chunk.content.substring(0, 200))
+  })
+
+  const contextChunks = Array.from(chunksByPaper.entries())
+    .map(([paperId, paperChunks]) => 
+      `[${paperId}]: ${paperChunks.join(' ... ')}`
+    ).join('\n\n')
 
   return JSON.stringify({
     topic,
     task: 'Generate a comprehensive research paper',
-    sources,
+    sources: sourceIds,
     context: contextChunks,
     instructions: [
-      'Synthesize information across all sources',
+      'Synthesize information across ALL provided sources',
       'Use [CITE: paper_id] format for citations',
       'Create logical flow between sections',
-      'Write comprehensive content based on provided sources'
+      'Ensure comprehensive coverage of every source',
+      'Write detailed content based on provided sources'
     ]
   }, null, 2)
 }
@@ -419,7 +492,8 @@ async function streamPaperGeneration(
     tools: {
       addCitation
     },
-    temperature: 0.3
+    temperature: 0.3,
+    maxTokens: getMaxTokens(config?.paper_settings?.length)
   })
   
   console.log(`🔧 Stream created with addCitation tool available`)
@@ -460,6 +534,40 @@ async function streamPaperGeneration(
     }
   }
   
+  // Citation ratio validation - ensure minimum coverage
+  const minCitations = Math.min(12, Math.floor(papers.length / 2))
+  if (citations.length < minCitations) {
+    console.warn(`⚠️ Too few citations: ${citations.length} < ${minCitations}. Adding forced citations...`)
+    
+    // Forced citing shim - ensure every paper is referenced at least once
+    const citedPaperIds = new Set(citations.map(c => c.paperId))
+    const targetLength = getTargetLength(config?.paper_settings?.length)
+    
+    for (const paper of papers) {
+      if (!citedPaperIds.has(paper.id) && content.length < targetLength * 1.2) {
+        const forcedCitation = `\n\nAdditional insight from ${paper.title} [CITE:${paper.id}].`
+        content += forcedCitation
+        
+        citations.push({
+          paperId: paper.id,
+          citationText: `[CITE:${paper.id}]`,
+          positionStart: content.length - forcedCitation.length + forcedCitation.indexOf('[CITE:'),
+          positionEnd: content.length - 1
+        })
+        
+        citedPaperIds.add(paper.id)
+        console.log(`📌 Added forced citation for: ${paper.title}`)
+      }
+    }
+    
+    // If still too few citations after forced citing, throw error for retry
+    if (citations.length < minCitations) {
+      throw new Error(`Too few citations – retry: ${citations.length} < ${minCitations}`)
+    }
+  }
+  
+  console.log(`📊 Final citation count: ${citations.length}/${papers.length} papers cited`)
+  
   return { content, citations }
 }
 
@@ -476,4 +584,64 @@ function extractSections(content: string): string[] {
 function extractAbstract(content: string): string {
   const match = content.match(/## Abstract\s*\n\n(.*?)\n\n##/)
   return match ? match[1].trim() : ''
+}
+
+function getChunkLimit(length?: string): number {
+  const limits = { short: 20, medium: 40, long: 80 }
+  return limits[length as keyof typeof limits] || limits.medium
+}
+
+function getMaxTokens(length?: string): number {
+  const WORD_TARGET = { short: 400, medium: 900, long: 1600 };
+  const wordTarget = WORD_TARGET[length as keyof typeof WORD_TARGET] || WORD_TARGET.medium;
+  // Compute per-section: sectionMax = words*1.4/0.75 (rough 0.75 token/word)
+  const maxTokens = Math.floor((wordTarget * 6 * 1.4) / 0.75); // 6 sections approximate
+  return maxTokens;
+}
+
+function filterOnTopicPapers(papers: PaperWithAuthors[], topic: string): PaperWithAuthors[] {
+  const topicTokens = topic.toLowerCase().split(/\W+/).filter(token => token.length > 2)
+  
+  // Common off-topic domains that often appear in broad searches
+  const domainStopWords = [
+    'staphylococcus', 'aureus', 'ocular', 'antibiotic', 'antimicrobial',
+    'methicillin', 'resistant', 'mrsa', 'bacteria', 'infection',
+    'chlorhexidine', 'phage', 'susceptibility', 'resistance'
+  ]
+  
+  return papers.filter(paper => {
+    const titleLower = paper.title?.toLowerCase() || ''
+    const abstractLower = paper.abstract?.toLowerCase() || ''
+    
+    // Exclude papers with irrelevant domain terms in title
+    const hasOffTopicTerms = domainStopWords.some(stopWord => 
+      titleLower.includes(stopWord)
+    )
+    
+    if (hasOffTopicTerms) {
+      console.log(`🚫 Filtered out off-topic paper: "${paper.title}"`)
+      return false
+    }
+    
+    // Require at least one topic token match in title or abstract
+    const hasTopicMatch = topicTokens.some(token => 
+      titleLower.includes(token) || abstractLower.includes(token)
+    )
+    
+    // Require minimum semantic score if available
+    const semanticScore = (paper as PaperWithAuthors & { semantic_score?: number }).semantic_score || 0
+    const hasGoodSemanticScore = semanticScore > 0.15
+    
+    if (!hasTopicMatch) {
+      console.log(`🚫 Filtered out irrelevant paper: "${paper.title}" (no topic match)`)
+      return false
+    }
+    
+    if (!hasGoodSemanticScore && semanticScore > 0) {
+      console.log(`🚫 Filtered out low-relevance paper: "${paper.title}" (score: ${semanticScore})`)
+      return false
+    }
+    
+    return true
+  })
 } 

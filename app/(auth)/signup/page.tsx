@@ -1,23 +1,45 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Mail, Eye, EyeOff, Sparkles } from "lucide-react"
+import { Mail, Eye, EyeOff, Zap } from "lucide-react"
+import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
-export default function SignUpPage() {
+export default function SignupPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [checking, setChecking] = useState(true)
   const router = useRouter()
+
+  useEffect(() => {
+    const checkUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        router.push('/generate')
+        return
+      }
+      setChecking(false)
+    }
+    checkUser()
+  }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (password !== confirmPassword) {
+      alert("Passwords don't match")
+      return
+    }
+
     setLoading(true)
 
     try {
@@ -27,9 +49,9 @@ export default function SignUpPage() {
       })
 
       if (error) {
-        console.error("Sign up error:", error.message)
+        console.error("Signup error:", error.message)
       } else {
-        console.log("Sign up successful:", data)
+        console.log("Signup successful:", data)
         router.push("/generate")
       }
     } catch (error) {
@@ -37,6 +59,10 @@ export default function SignUpPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (checking) {
+    return <LoadingSpinner fullScreen />
   }
 
   return (
@@ -49,7 +75,7 @@ export default function SignUpPage() {
 
             <div className="flex items-center justify-center mb-8">
               <div className="flex items-center space-x-2">
-                <Sparkles className="h-8 w-8 text-primary" />
+                <Zap className="h-8 w-8 text-primary" />
                 <span className="text-2xl font-bold">GenPaper</span>
               </div>
             </div>
@@ -109,6 +135,29 @@ export default function SignUpPage() {
                     onClick={() => setShowPassword(!showPassword)}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Confirm Password</label>
+                <div className="relative">
+                  <Input
+                    type={showConfirmPassword ? "text" : "password"}
+                    placeholder="Confirm your password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="h-11 pr-10"
+                    required
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </Button>
                 </div>
               </div>

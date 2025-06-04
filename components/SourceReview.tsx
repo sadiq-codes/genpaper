@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { 
@@ -15,14 +14,12 @@ import {
   BookOpen, 
   Pin, 
   PinOff,
-  Filter,
-  ArrowUpDown,
   Users,
   Calendar,
   ExternalLink,
-  Loader2,
   AlertCircle
 } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import type { LibraryPaper, LibraryFilters, Author } from '@/types/simplified'
 
 interface SourceReviewProps {
@@ -187,8 +184,7 @@ export default function SourceReview({
     return (
       <Card className={className}>
         <CardContent className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin mr-2" />
-          <span>Loading your library...</span>
+          <LoadingSpinner text="Loading your library..." />
         </CardContent>
       </Card>
     )
@@ -342,7 +338,7 @@ export default function SourceReview({
                           <div className="flex items-center gap-4 text-xs text-muted-foreground mb-2">
                             <div className="flex items-center gap-1">
                               <Users className="h-3 w-3" />
-                              {formatAuthors(libraryPaper.paper.authors)}
+                              {formatAuthors(libraryPaper.paper.authors || [])}
                             </div>
                             {libraryPaper.paper.publication_date && (
                               <div className="flex items-center gap-1">

@@ -25,10 +25,10 @@ import {
   Filter,
   SortAsc,
   SortDesc,
-  Loader2,
   Plus,
   BookOpen
 } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { format } from 'date-fns'
 import type { ResearchProjectWithLatestVersion } from '@/types/simplified'
 
@@ -238,11 +238,13 @@ export default function HistoryManager({ className }: HistoryManagerProps) {
                     disabled={deletingProject === project.id}
                   >
                     {deletingProject === project.id ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <LoadingSpinner size="sm" text="Delete" />
                     ) : (
-                      <Trash2 className="h-4 w-4 mr-2" />
+                      <>
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete
+                      </>
                     )}
-                    Delete
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -257,8 +259,7 @@ export default function HistoryManager({ className }: HistoryManagerProps) {
 
           {project.status === 'generating' && (
             <div className="flex items-center gap-2 text-sm text-blue-600">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Paper generation in progress...
+              <LoadingSpinner size="sm" text="Paper generation in progress..." />
             </div>
           )}
 
@@ -276,8 +277,7 @@ export default function HistoryManager({ className }: HistoryManagerProps) {
     return (
       <div className={`max-w-6xl mx-auto p-6 space-y-6 ${className}`}>
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin mr-2" />
-          <span>Loading project history...</span>
+          <LoadingSpinner text="Loading project history..." />
         </div>
       </div>
     )

@@ -21,7 +21,7 @@ const citationSchema = z.object({
   context: z.string().optional()
 })
 
-// Hash function for generating citation keys using Web Crypto API
+// Hash function for generating citation keys with cross-platform crypto support
 async function generateCitationKey(title: string, year?: number, doi?: string): Promise<string> {
   if (doi) {
     return doi.toLowerCase()
@@ -31,14 +31,28 @@ async function generateCitationKey(title: string, year?: number, doi?: string): 
   const yearStr = year ? year.toString() : 'unknown'
   const hashInput = `${normalizedTitle}_${yearStr}`
   
-  // Use Web Crypto API instead of Node.js crypto
+  let hashBuffer: ArrayBuffer
+  
+  // Check if we're in Node.js environment or browser without crypto.subtle
+  if (typeof globalThis.crypto?.subtle === 'undefined') {
+    // Node.js environment - use node:crypto
+    const { createHash } = await import('node:crypto')
+    const hash = createHash('sha256')
+    hash.update(hashInput)
+    const hashHex = hash.digest('hex')
+    // Return 16 chars instead of 12 for lower collision rate
+    return hashHex.substring(0, 16)
+  }
+  
+  // Browser environment - use Web Crypto API
   const encoder = new TextEncoder()
   const data = encoder.encode(hashInput)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  hashBuffer = await crypto.subtle.digest('SHA-256', data)
   const hashArray = Array.from(new Uint8Array(hashBuffer))
   const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
   
-  return hashHex.substring(0, 12)
+  // Return 16 chars instead of 12 for lower collision rate
+  return hashHex.substring(0, 16)
 }
 
 // Convert input to CSL JSON format

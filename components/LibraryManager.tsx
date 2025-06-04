@@ -17,20 +17,15 @@ import {
   BookOpen, 
   Search, 
   Plus, 
-  Filter,
   SortAsc,
   SortDesc,
   MoreVertical,
   ExternalLink,
   Trash2,
   Edit3,
-  Calendar,
   Quote,
   FolderPlus,
   Folder,
-  Heart,
-  BookMarked,
-  Download,
   Share2,
   Eye,
   X,
@@ -38,7 +33,8 @@ import {
   Loader2,
   Upload,
   Settings,
-  Star
+  Star,
+  AlertCircle
 } from 'lucide-react'
 import { format } from 'date-fns'
 import type { 
@@ -50,6 +46,7 @@ import type {
 } from '@/types/simplified'
 import FileUpload from '@/components/FileUpload'
 import React from 'react'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 interface LibraryManagerProps {
   className?: string
@@ -110,10 +107,19 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
       if (filters.source) params.set('source', filters.source)
       if (filters.sortBy) params.set('sortBy', filters.sortBy)
       if (filters.sortOrder) params.set('sortOrder', filters.sortOrder)
+      
+      // Add timestamp for cache busting
+      params.set('_t', Date.now().toString())
 
       const [libraryResponse, collectionsResponse] = await Promise.all([
-        fetch(`/api/library?${params.toString()}`, { credentials: 'include' }),
-        fetch('/api/collections', { credentials: 'include' })
+        fetch(`/api/library?${params.toString()}`, { 
+          credentials: 'include',
+          cache: 'no-store' // Prevent browser caching
+        }),
+        fetch(`/api/collections?_t=${Date.now()}`, { 
+          credentials: 'include',
+          cache: 'no-store' // Prevent browser caching
+        })
       ])
 
       if (libraryResponse.ok) {
@@ -299,7 +305,12 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
       if (response.ok) {
         console.log(`✅ Successfully removed paper: ${paperId}`)
+        
+        // Optimistically update UI first
         setLibraryPapers(prev => prev.filter(p => p.paper.id !== paperId))
+        
+        // Then reload data to ensure consistency with server
+        await loadLibraryData()
         
         // Optional: Show success toast
         // toast.success('Paper removed from library')
@@ -314,16 +325,21 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
           // toast.error('Please log in again to remove papers')
         } else if (response.status === 404) {
           console.error('Paper not found in library')
-          // Paper might already be removed, so update UI anyway
+          // Paper might already be removed, so update UI and reload data
           setLibraryPapers(prev => prev.filter(p => p.paper.id !== paperId))
+          await loadLibraryData()
         } else {
           console.error('Unknown error removing paper')
+          // Reload data to ensure UI reflects server state
+          await loadLibraryData()
           // Optional: Show generic error toast  
           // toast.error('Failed to remove paper from library')
         }
       }
     } catch (err) {
       console.error('Network error removing paper:', err)
+      // Reload data on network error to ensure consistency
+      await loadLibraryData()
       // Optional: Show network error toast
       // toast.error('Network error - please try again')
     } finally {
@@ -445,7 +461,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" disabled={isProcessing}>
                     {isProcessing ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <LoadingSpinner size="sm" className="h-4 w-4" />
                     ) : (
                       <MoreVertical className="h-4 w-4" />
                     )}
@@ -472,11 +488,13 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                         className="text-red-600"
                       >
                         {isRemoving ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          <LoadingSpinner size="sm" text="Remove" />
                         ) : (
-                          <Trash2 className="h-4 w-4 mr-2" />
+                          <>
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Remove
+                          </>
                         )}
-                        {isRemoving ? 'Removing...' : 'Remove'}
                       </DropdownMenuItem>
                     </>
                   )}
@@ -492,10 +510,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
             {isProcessing && (
               <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-lg">
-                <Loader2 className="h-3 w-3 animate-spin text-blue-600" />
-                <span className="text-xs text-blue-700 font-medium">
-                  Adding to library...
-                </span>
+                <LoadingSpinner size="sm" text="Adding to library..." className="text-blue-600" />
               </div>
             )}
 
@@ -582,24 +597,27 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
   }
 
   return (
-    <div className={`max-w-7xl mx-auto p-6 space-y-6 ${className}`}>
-      <div className="flex items-center justify-between">
+    <div className={`max-w-7xl mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6 ${className}`}>
+      {/* Header Section - Responsive */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Library</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Library</h1>
+          <p className="text-muted-foreground text-sm sm:text-base">
             Manage your research papers and collections
           </p>
         </div>
         
-        <div className="flex gap-2">
+        {/* Action Buttons - Mobile Responsive */}
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
           <Dialog open={showCollectionDialog} onOpenChange={setShowCollectionDialog}>
             <DialogTrigger asChild>
-              <Button variant="outline">
+              <Button variant="outline" className="w-full sm:w-auto">
                 <FolderPlus className="h-4 w-4 mr-2" />
-                New Collection
+                <span className="hidden sm:inline">New Collection</span>
+                <span className="sm:hidden">New Collection</span>
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="mx-4 sm:mx-0 w-[calc(100vw-2rem)] sm:w-full max-w-md">
               <DialogHeader>
                 <DialogTitle>Create Collection</DialogTitle>
                 <DialogDescription>
@@ -625,11 +643,11 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                     onChange={(e) => setNewCollectionDescription(e.target.value)}
                   />
                 </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setShowCollectionDialog(false)}>
+                <div className="flex flex-col sm:flex-row justify-end gap-2">
+                  <Button variant="outline" onClick={() => setShowCollectionDialog(false)} className="w-full sm:w-auto">
                     Cancel
                   </Button>
-                  <Button onClick={createCollection} disabled={!newCollectionName.trim()}>
+                  <Button onClick={createCollection} disabled={!newCollectionName.trim()} className="w-full sm:w-auto">
                     Create Collection
                   </Button>
                 </div>
@@ -639,12 +657,12 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
           <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
             <DialogTrigger asChild>
-              <Button>
+              <Button className="w-full sm:w-auto">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Papers
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-4xl max-h-[80vh]">
+            <DialogContent className="mx-4 sm:mx-0 w-[calc(100vw-2rem)] sm:w-full max-w-4xl max-h-[90vh] sm:max-h-[80vh]">
               <DialogHeader>
                 <DialogTitle>Search and Add Papers</DialogTitle>
                 <DialogDescription>
@@ -653,7 +671,8 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
               </DialogHeader>
               
               <div className="space-y-4">
-                <div className="flex gap-2">
+                {/* Search Controls - Mobile Responsive */}
+                <div className="flex flex-col sm:flex-row gap-2">
                   <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -664,35 +683,40 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                       className="pl-10"
                     />
                   </div>
-                  <Button 
-                    variant="outline"
-                    onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-                    className="px-3"
-                  >
-                    <Settings className="h-4 w-4" />
-                  </Button>
-                  <Button 
-                    onClick={() => searchOnlinePapers(searchQuery)}
-                    disabled={isSearching || !searchQuery.trim()}
-                  >
-                    {isSearching ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Search className="h-4 w-4" />
-                    )}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline"
+                      onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                      className="px-3 w-full sm:w-auto"
+                    >
+                      <Settings className="h-4 w-4 sm:mr-0" />
+                      <span className="sm:hidden ml-2">Advanced</span>
+                    </Button>
+                    <Button 
+                      onClick={() => searchOnlinePapers(searchQuery)}
+                      disabled={isSearching || !searchQuery.trim()}
+                      className="w-full sm:w-auto"
+                    >
+                      {isSearching ? (
+                        <LoadingSpinner size="sm" className="h-4 w-4 sm:mr-0" />
+                      ) : (
+                        <Search className="h-4 w-4 sm:mr-0" />
+                      )}
+                      <span className="sm:hidden ml-2">{isSearching ? 'Searching...' : 'Search'}</span>
+                    </Button>
+                  </div>
                 </div>
 
-                {/* Advanced Search Options */}
+                {/* Advanced Search Options - Mobile Responsive */}
                 {showAdvancedOptions && (
-                  <Card className="p-4 bg-muted/50">
+                  <Card className="p-3 sm:p-4 bg-muted/50">
                     <div className="space-y-4">
                       <div className="flex items-center gap-2 mb-3">
                         <Settings className="h-4 w-4" />
-                        <span className="font-medium">Advanced Search Options</span>
+                        <span className="font-medium text-sm sm:text-base">Advanced Search Options</span>
                       </div>
                       
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         {/* Sources Selection */}
                         <div className="space-y-2">
                           <Label className="text-sm font-medium">Search Sources</Label>
@@ -726,7 +750,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                                 />
                                 <Label htmlFor={source.id} className="text-sm">
                                   <span className="font-medium">{source.label}</span>
-                                  <span className="text-muted-foreground ml-1">({source.desc})</span>
+                                  <span className="text-muted-foreground ml-1 hidden sm:inline">({source.desc})</span>
                                 </Label>
                               </div>
                             ))}
@@ -764,9 +788,9 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                                   ...prev, 
                                   fromYear: e.target.value ? parseInt(e.target.value) : undefined 
                                 }))}
-                                className="w-20"
+                                className="flex-1"
                               />
-                              <span className="self-center text-muted-foreground">to</span>
+                              <span className="self-center text-muted-foreground text-sm">to</span>
                               <Input
                                 type="number"
                                 placeholder="To year"
@@ -775,7 +799,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                                   ...prev, 
                                   toYear: e.target.value ? parseInt(e.target.value) : undefined 
                                 }))}
-                                className="w-20"
+                                className="flex-1"
                               />
                             </div>
                           </div>
@@ -807,21 +831,21 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                   </Card>
                 )}
 
-                {/* Search Results Summary */}
+                {/* Search Results Summary - Mobile Responsive */}
                 {searchResults.length > 0 && !isSearching && (
-                  <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 bg-muted/50 rounded-lg">
                     <div className="flex items-center gap-2">
                       <Search className="h-4 w-4 text-muted-foreground" />
                       <span className="text-sm font-medium">
                         Found {searchResults.length} papers
                       </span>
                       {searchQuery && (
-                        <span className="text-sm text-muted-foreground">
+                        <span className="text-sm text-muted-foreground hidden sm:inline">
                           for "{searchQuery}"
                         </span>
                       )}
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 flex-wrap">
                       {searchOptions.sources.map(source => (
                         <Badge key={source} variant="outline" className="text-xs">
                           {source}
@@ -831,7 +855,8 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
+                {/* Search Results Grid - Mobile Responsive */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
                   {searchResults.length === 0 && !isSearching && searchQuery && (
                     <div className="col-span-full text-center py-8 text-muted-foreground">
                       <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -851,7 +876,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div>
               <CardTitle className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5" />
@@ -862,69 +887,78 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
               </CardDescription>
             </div>
             
-            <div className="flex items-center gap-2">
-              <div className="relative">
+            {/* Search and Filter Controls - Mobile Responsive */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
+              <div className="relative flex-1 lg:flex-initial">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search library..."
                   value={filters.search || ''}
                   onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                  className="pl-10 w-64"
+                  className="pl-10 w-full lg:w-64"
                 />
               </div>
               
-              <Select 
-                value={filters.sortBy} 
-                onValueChange={(value: 'added_at' | 'title' | 'publication_date' | 'citation_count') => 
-                  setFilters(prev => ({ ...prev, sortBy: value }))
-                }
-              >
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="added_at">Date Added</SelectItem>
-                  <SelectItem value="title">Title</SelectItem>
-                  <SelectItem value="publication_date">Publication Date</SelectItem>
-                  <SelectItem value="citation_count">Citations</SelectItem>
-                </SelectContent>
-              </Select>
-              
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => setFilters(prev => ({ 
-                  ...prev, 
-                  sortOrder: prev.sortOrder === 'asc' ? 'desc' : 'asc' 
-                }))}
-              >
-                {filters.sortOrder === 'asc' ? (
-                  <SortAsc className="h-4 w-4" />
-                ) : (
-                  <SortDesc className="h-4 w-4" />
-                )}
-              </Button>
+              <div className="flex gap-2">
+                <Select 
+                  value={filters.sortBy} 
+                  onValueChange={(value: 'added_at' | 'title' | 'publication_date' | 'citation_count') => 
+                    setFilters(prev => ({ ...prev, sortBy: value }))
+                  }
+                >
+                  <SelectTrigger className="w-full sm:w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="added_at">Date Added</SelectItem>
+                    <SelectItem value="title">Title</SelectItem>
+                    <SelectItem value="publication_date">Publication Date</SelectItem>
+                    <SelectItem value="citation_count">Citations</SelectItem>
+                  </SelectContent>
+                </Select>
+                
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setFilters(prev => ({ 
+                    ...prev, 
+                    sortOrder: prev.sortOrder === 'asc' ? 'desc' : 'asc' 
+                  }))}
+                  className="px-3"
+                >
+                  {filters.sortOrder === 'asc' ? (
+                    <SortAsc className="h-4 w-4" />
+                  ) : (
+                    <SortDesc className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
         </CardHeader>
         
         <CardContent>
           <Tabs defaultValue="all" className="w-full">
-            <TabsList>
-              <TabsTrigger value="all">
-                All Papers ({libraryPapers.length})
-              </TabsTrigger>
-              <TabsTrigger value="upload">
-                <Upload className="h-4 w-4 mr-1" />
-                Upload
-              </TabsTrigger>
-              {collections.map(collection => (
-                <TabsTrigger key={collection.id} value={collection.id}>
-                  <Folder className="h-4 w-4 mr-1" />
-                  {collection.name} ({collection.paper_count || 0})
+            {/* Tabs List - Mobile Responsive */}
+            <div className="overflow-x-auto">
+              <TabsList className="w-full sm:w-auto">
+                <TabsTrigger value="all" className="text-xs sm:text-sm">
+                  <span className="hidden sm:inline">All Papers ({libraryPapers.length})</span>
+                  <span className="sm:hidden">All ({libraryPapers.length})</span>
                 </TabsTrigger>
-              ))}
-            </TabsList>
+                <TabsTrigger value="upload" className="text-xs sm:text-sm">
+                  <Upload className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">Upload</span>
+                </TabsTrigger>
+                {collections.map(collection => (
+                  <TabsTrigger key={collection.id} value={collection.id} className="text-xs sm:text-sm">
+                    <Folder className="h-4 w-4 mr-1" />
+                    <span className="hidden sm:inline">{collection.name} ({collection.paper_count || 0})</span>
+                    <span className="sm:hidden">{collection.name.substring(0, 8)}...</span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </div>
 
             <TabsContent value="upload" className="mt-6">
               <FileUpload onUploadComplete={handleUploadComplete} />
@@ -933,23 +967,22 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
             <TabsContent value="all" className="mt-6">
               {loading ? (
                 <div className="flex items-center justify-center py-12">
-                  <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                  <span>Loading library...</span>
+                  <LoadingSpinner text="Loading library..." />
                 </div>
               ) : filteredLibraryPapers.length === 0 ? (
                 <div className="text-center py-12">
                   <BookOpen className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
                   <h3 className="text-lg font-medium mb-2">No papers in your library</h3>
-                  <p className="text-muted-foreground mb-4">
+                  <p className="text-muted-foreground mb-4 text-sm sm:text-base">
                     Start building your research library by adding papers
                   </p>
-                  <Button onClick={() => setShowAddDialog(true)}>
+                  <Button onClick={() => setShowAddDialog(true)} className="w-full sm:w-auto">
                     <Plus className="h-4 w-4 mr-2" />
                     Add Your First Paper
                   </Button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
                   {filteredLibraryPapers.map(paper => (
                     <PaperCard key={paper.id} paper={paper} />
                   ))}
@@ -960,7 +993,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
             {collections.map(collection => (
               <TabsContent key={collection.id} value={collection.id} className="mt-6">
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div>
                       <h3 className="font-medium">{collection.name}</h3>
                       {collection.description && (
@@ -974,7 +1007,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                   
                   <div className="text-center py-8 text-muted-foreground">
                     <Folder className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                    <p>Collection management coming soon</p>
+                    <p className="text-sm sm:text-base">Collection management coming soon</p>
                   </div>
                 </div>
               </TabsContent>

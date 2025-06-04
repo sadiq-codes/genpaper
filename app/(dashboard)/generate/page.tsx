@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import GeneratePageClient from '@/components/GeneratePageClient'
 import { Suspense } from 'react'
-import { Loader2 } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 export const metadata: Metadata = {
   title: 'Generate Research Paper | Genpaper',
@@ -37,8 +37,7 @@ function GeneratePageSkeleton() {
       
       <div className="border rounded-lg p-6 space-y-6">
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin mr-2" />
-          <span>Loading paper generator...</span>
+          <LoadingSpinner text="Loading paper generator..." />
         </div>
       </div>
     </div>

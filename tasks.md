@@ -1,129 +1,145 @@
-Below is a **debug-checklist + concrete code tweaks** that will usually eliminate the three symptoms you’re seeing.
+Below is a focused **code-quality & architecture review** of the files you shared.
+I’ve organised feedback by layer so you can jump straight to what matters.
 
 ---
 
-## 1  Library Only toggle is ignored
+## 1. Data-model & DB layer (Supabase / PostgreSQL)
 
-### Bug
-
-```ts
-const remainingSlots = Math.max(0, maxPapers - pinnedPapers.length)
-const discoveredPapers = useLibraryOnly || remainingSlots === 0 ? [] :
-  await hybridSearchPapers(...)
-```
-
-If the query returns **exactly** `maxPapers` library items `remainingSlots` becomes `0`, so the
-short-circuit fails and `hybridSearchPapers` still runs the next time you call the pipeline (because `remainingSlots === 0` is true only **after** you fetched last run’s cache).
-
-### Fix
-
-Stop even *looking* at `remainingSlots` when the user clicked *Library-only*.
-
-```ts
-let discoveredPapers: PaperWithAuthors[] = []
-
-if (!useLibraryOnly) {
-  const remainingSlots = Math.max(0, maxPapers - pinnedPapers.length)
-  if (remainingSlots > 0) {
-    discoveredPapers = await hybridSearchPapers(topic, {
-      limit: remainingSlots,
-      excludePaperIds: pinnedIds
-    })
-  }
-}
-```
-
-*Tip:* put this behind a unit test – given `useLibraryOnly=true` the SQL log must show **zero** calls to
-`search_papers`, `hybridSearchPapers`, `openalex_*`, etc.
+| Area                       | What’s good                                                                                                                                                                                                | What to improve                                                                                                                                                                                                                                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hybrid citation schema** | • Clear split between `project_citations` (paper-UUID based) and `citations` + `citation_links` (tool-added).<br>• Positional info (`start_pos`, `end_pos`, `section`) is great for future inline-editing. | • **Missing FK on `citation_links.citation_id` → `citations.id`** – add to prevent orphan links.<br>• `citations.key` is **unique** in the fn `upsert_citation`, but you don’t enforce it at DB level. Create a **UNIQUE index** on `(project_id, key)` and make the RPC a trivial `INSERT … ON CONFLICT`. |
+| **Denormalisation**        | • Storing CSL-JSON directly keeps flexibility.                                                                                                                                                             | • You re-store `authors` in three places (paper row, CSL-JSON, `paper_authors`). Pick one canonical source and derive the rest in views.                                                                                                                                                                   |
 
 ---
 
-## 2  Cache returns unrelated papers
+## 2. Supabase helpers (`lib/db/research.ts`, `lib/db/papers.ts`, …)
 
-You cache by **topic string alone**, so any new pipeline run that re-uses
-*exactly* the same topic but different filters (library-only, year cut-off, …) hits the old result.
+### ✅ Strengths
 
-```ts
-const cacheKey = `search:${topic}` // ← too coarse
-```
+* Consistent naming (`addProjectVersion`, `getProjectVersions`).
+* Good use of *edge-caching*: `limit(...)` and `range(...)` to bound result sets.
+* Error information is preserved (`error.code`, `.details`).
 
-### Two-line fix
+### ⚠️ Issues & suggestions
 
-```ts
-const cacheKey = `search:${topic}|${useLibraryOnly?'lib':'mix'}|${fromYear}`
-```
+1. **Duplicate files**
+   You posted *two copies* of `lib/db/research.ts` (one older, one newer). Keep one source of truth or you’ll import the wrong one.
 
-*OR* hold the cache at the **front-end** only while the UI session is alive
-(`React.useRef<Map>`); almost all confusion disappears immediately.
+2. **Client creation cost**
+   You call `await createClient()` inside *every* db helper. That spins up a new Supabase client on each call inside the same request (≈ two extra network handshakes).
+   **Fix**: build a tiny singleton wrapper:
 
----
+   ```ts
+   let _sb: SupabaseClient | null = null;
+   export const getSB = () => (_sb ??= createClient());
+   ```
 
-## 3  Only 2-6 citations & shallow content
+3. **Parallel inserts vs. for-loop**
+   In `generateDraftWithRAG` you use `Promise.all` for `addProjectCitation`.
 
-### Why
+   > *Is it better than the for-loop with try/catch?*
+   > Yes – the loop serialises I/O for no benefit. Keep `Promise.all`, but protect it:
 
-1. **Prompt truncation** – you build a very long JSON string → OpenAI clips
-   after `~16 k` tokens (gpt-4o) and the tail of the source list is gone.
-2. **No hard requirement** – the model is *told* “use the provided sources”,
-   but nothing penalises it for ignoring most.
+   ```ts
+   await Promise.all(
+     validCitations.map(c => addProjectCitation(...).catch(e => ({err:e, c})))
+   )
+   ```
 
-### Tweaks
+   so one bad row doesn’t abort the whole batch.
 
-| Part                    | Change                                                                                 | Snippet                                                                                                   |
-| ----------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **Source list**         | Pass **IDs only** inside the JSON and stream the full CSL data via the vector-tool     | `json { "topic": "...", "sources": ["id1","id2",...]} `                                                   |
-| **Prompt**              | Add a *budget* instruction                                                             | `"... incorporate **at least 12 distinct sources** and cite each with [CITE:id]"`                         |
-| **Citation extraction** | At the end of `streamPaperGeneration` assert the ratio                                 | `ts if (citations.length < Math.min(12, papers.length/2)) throw new Error('Too few citations – retry'); ` |
-| **Chunk feeding**       | Instead of a single 10-chunk blob, pass **one chunk per paper** to encourage coverage. |                                                                                                           |
-
-
-
-Make the generated content meaningfully longer
-What you have now	What to tweak	Why it helps
-**`targetTotal = config.search_parameters.limit		10`** → at most 10 papers feed the LLM
-chunks = searchPaperChunks(...limit: 20) → only 20 chunks (≈ 10–15 k tokens)	Scale limit with lengthts<br>const chunkLimit = {short:20, medium:40, long:80}[config.paper_settings.length];<br>	Gives the model enough raw material to write multi-paragraph sections
-Section prompt hard-codes “200–300” / “400–600” / “800–1000” words	Drive length from the same table and emphasise depth:ts<br>words = {short:400, medium:900, long:1600}[len];<br>`Write ~${words} words … with sub-headings & bullet lists where helpful.`	The LLM usually obeys explicit numeric targets
-max_tokens is capped at 8 000	Compute per-section:sectionMax = words*1.4/0.75 (rough 0.75 token/word)	Prevents truncation while keeping quota in check
-Everything generated in one shot	Iterative section writing (you already stream). For each section: 1. feed outline + previous sections2. request the next section only	Allows GPT-4o to keep longer context without hitting 128 k window
-Minimal code patch (section length)
-const WORD_TARGET = { short: 400, medium: 900, long: 1600 };
-const wordTarget = WORD_TARGET[config.paper_settings.length];
-
-SECTION_PROMPTS.introduction = `
-Write ≈${wordTarget} words for the introduction.
-Break the text into 3-4 paragraphs. Provide data, cite at least 4 sources.`;
-Do the same for every section and bump max_tokens accordingly (≈ wordTarget*1.4).
-### Optional – “forced citing” shim
-
-Insert a *pre-pass* after generation:
-
-```ts
-for (const p of papers) {
-  if (!content.includes(p.id) && content.length < targetLength*1.2) {
-    content += `\n\nAdditional insight from ${p.title} [CITE:${p.id}]`;
-  }
-}
-```
-
-This guarantees every paper is referenced at least once, gives the model extra
-tokens to extend, and you can regenerate only those snippets instead of the
-whole draft.
+4. **N+1 queries**
+   `getUserResearchProjects` fetches each project’s latest version with a loop. Use a **`DISTINCT ON`** query or a materialised view – you’re adding 20 extra round-trips per page.
 
 ---
 
-## Sanity-check table
+## 3. Citation tool (`addCitation.ts`)
 
-| Symptom                               | After the fixes you should see                                                |
-| ------------------------------------- | ----------------------------------------------------------------------------- |
-| “Library-only still mixes web papers” | `console.log(allPapers.filter(p => p.source!=='library'))` length **0**       |
-| “Cache pollution”                     | Cache key contains `useLibraryOnly`, `fromYear` → unrelated results disappear |
-| “Only 6 citations”                    | Generation fails and immediately retries until `citations.length ≥ 12`        |
+| 👍 Good                                                                      | ⚠️ Risks / fixes                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| • Zod validation catches bad input early. <br>• Generates CSL automatically. | • **`crypto.subtle.digest`** is browser-only. In Node (Edge runtime) this call fails silently in older versions. Import `node:crypto` when `globalThis.crypto.subtle` is undefined. <br>• Citation keys are truncated to 12 chars. Collisions grow quickly – consider 16-char or **`base64url(sha1)`** (11 chars for 5 bytes) for similar length but lower collision rate. <br>• RPC `upsert_citation` returns `any`; define `returns jsonb` in SQL so TypeScript infers correctly. |
 
 ---
 
-### Final thought
+## 4. Generation pipeline (`generateDraftWithRAG`)
 
-Keep the **`addCitation` RPC / tool** as the *single source of truth* for what
-counts as “used”.  Whether the paragraph is LLM-generated or manually pasted,
-call the same endpoint – that way the renderer and the bibliography logic stay
-identical and you avoid a second, parallel citation implementation.
+### positives
+
+* Clear progress callbacks (`onProgress`) – good UX for SSE.
+* **Domain stop-word filtering** – avoids off-topic retrieval.
+* Automatic chunk ingestion when missing – reduces cold-start friction.
+
+### bottlenecks & bugs
+
+1. **Search path ignores `useLibraryOnly` in the *first* call**
+   You compute `remainingSlots` before checking `useLibraryOnly`. When users tick “library only”, `hybridSearchPapers` is still hit if there are *zero* pinned papers. Guard at the top:
+
+   ```ts
+   if (useLibraryOnly) discoveredPapers = [];
+   else { … }
+   ```
+
+2. **Chunk explosion**
+   `match_paper_chunks` limit is `Math.max(50, getChunkLimit())`. For `long` papers that’s 80 chunks → GPT-4 will truncate context. Scale by *token budget* instead: `Math.min(20, Math.floor(8192 / avgTokPerChunk))`.
+
+3. **Citation ratio check**
+   You force a retry if `citations.length < minCitations`, but you **don’t loop / retry** – the error bubbles up. Either wrap with an exponential back-off loop or downgrade to a warning.
+
+4. **Tool call registration**
+   You expose `addCitation` in `tools` but **never read its returns**. When the model emits a tool-call you aren’t persisting that citation. Capture `stream.fullStream` events of type `tool-call`, validate via Zod, and write to DB.
+
+---
+
+## 5. Rendering layer (`CitationCore`, `CitationRenderer`)
+
+#### Good
+
+* Lazy-loading `citation-js` keeps bundle smaller.
+* Fallback citation formatting (author-year) when the lib fails.
+
+#### Problems / security
+
+* `dangerouslySetInnerHTML` prints Markdown HTML w/o sanitising. Users could inject `<script>`. Add **DOMPurify** or `sanitize-html` before injection.
+* **Citation regex** matches `[CITE: xyz]` inside code fences & URLs. Pre-scan tokens in `markdown-it` instead.
+* Global mutable `citeCache` leaks memo between React roots (fast-refresh). Use a `Map<string, Cite>` keyed by hash.
+
+---
+
+## 6. Front-end UX (PaperViewer)
+
+* Nice inline copy/share actions.
+* Count of *unique* cited papers uses a regex on raw Markdown. That over-counts when citations repeat. Use the `citations` table instead – you already fetch it.
+
+---
+
+## 7. Testing & CI
+
+You asked earlier about test infra – current code has **zero automated tests**. Minimum set:
+
+| Layer                     | Tool                                | What to test                                             |
+| ------------------------- | ----------------------------------- | -------------------------------------------------------- |
+| **DB RPCs & constraints** | `pg-tap` in Supabase                | `upsert_citation` dedupe, FK integrity                   |
+| **Server utils**          | `vitest` + `@testing-library/react` | `paperToCSL`, `filterOnTopicPapers`, citation extraction |
+| **End-to-end**            | `Playwright`                        | Generate paper → verify citations render & change style  |
+
+A small **GitHub Actions** matrix (`vitest`, `supabase start`) prevents regressions.
+
+---
+
+## 8. Miscellaneous
+
+* Remove deprecated `punycode` import (comes from `citation-js` v0.5). Upgrade to ≥ v0.6 or alias with `npm alias` to silence the warning.
+* Consider **Edge runtime** limits: `crypto.subtle` + 90 seconds CPU. Heavy vector filtering might exceed.
+
+---
+
+# TL;DR — Priority Fix List 🚀
+
+1. **Enforce DB constraints & indexes** on citation keys and FK links.
+2. **Sanitise HTML** before injecting paper content.
+3. Capture & persist **`addCitation` tool-calls** in the stream loop.
+4. Respect `useLibraryOnly` in the very first retrieval pass.
+5. Replace per-function `createClient()` with a cached client.
+6. Add automated tests (start with CSL utils & citation extraction).
+
+Tackle those and your hybrid citation workflow will be robust, secure, and future-proof. Happy hacking!

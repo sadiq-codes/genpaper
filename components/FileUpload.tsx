@@ -15,9 +15,9 @@ import {
   X, 
   CheckCircle, 
   AlertCircle,
-  Loader2,
   FilePlus
 } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 interface UploadedFile {
   file: File
@@ -187,7 +187,7 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
         return <FileText className="h-4 w-4 text-muted-foreground" />
       case 'uploading':
       case 'processing':
-        return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+        return <LoadingSpinner size="sm" className="h-4 w-4 text-blue-500" />
       case 'success':
         return <CheckCircle className="h-4 w-4 text-green-500" />
       case 'error':
@@ -271,10 +271,7 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
                     size="sm"
                   >
                     {processingFiles.length > 0 ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Processing...
-                      </>
+                      <LoadingSpinner size="sm" text="Processing..." />
                     ) : (
                       <>
                         <Upload className="h-4 w-4 mr-2" />

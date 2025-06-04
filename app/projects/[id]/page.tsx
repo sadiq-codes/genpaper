@@ -3,7 +3,8 @@ import { redirect, notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import PaperViewer from '@/components/PaperViewer'
 import { Suspense } from 'react'
-import { FileText, Loader2 } from 'lucide-react'
+import { FileText } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 interface ProjectPageProps {
   params: Promise<{
@@ -105,8 +106,7 @@ function ProjectViewerSkeleton() {
         </div>
         
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin mr-2" />
-          <span>Loading research paper...</span>
+          <LoadingSpinner text="Loading research paper..." />
         </div>
       </div>
     </div>

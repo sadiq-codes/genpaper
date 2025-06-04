@@ -100,7 +100,12 @@ export async function GET(request: NextRequest) {
       }
     }))
 
-    return NextResponse.json({ papers: transformedPapers })
+    return NextResponse.json({ papers: transformedPapers }, {
+      headers: {
+        'Cache-Control': 'no-store, max-age=0, must-revalidate',
+        'Pragma': 'no-cache'
+      }
+    })
 
   } catch (error) {
     console.error('Library fetch error:', error)
@@ -228,9 +233,32 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Paper ID is required' }, { status: 400 })
     }
 
+    // First check if paper exists in user's library
+    const { data: existingPaper, error: checkError } = await supabase
+      .from('library_papers')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('paper_id', paperId)
+      .single()
+
+    if (checkError && checkError.code !== 'PGRST116') { // PGRST116 is "not found"
+      console.error('Error checking paper existence:', checkError)
+      return NextResponse.json({ error: 'Database error' }, { status: 500 })
+    }
+
+    if (!existingPaper) {
+      return NextResponse.json({ error: 'Paper not found in library' }, { status: 404 })
+    }
+
     await removePaperFromLibrary(user.id, paperId)
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
+    })
 
   } catch (error) {
     console.error('Error in library DELETE API:', error)

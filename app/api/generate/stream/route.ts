@@ -244,13 +244,18 @@ export async function POST(request: NextRequest) {
   if (isDev) console.log('🚀 Starting POST /api/generate/stream')
   
   const body = await request.json()
-  const { topic, useLibraryOnly, forceIngest } = body
+  const { topic, useLibraryOnly, forceIngest, length, style, citationStyle, includeMethodology } = body
   
   // Create a new request with query parameters for the GET handler
   const url = new URL(request.url)
   if (topic) url.searchParams.set('topic', topic)
-  if (useLibraryOnly) url.searchParams.set('useLibraryOnly', String(useLibraryOnly))
-  if (forceIngest) url.searchParams.set('forceIngest', String(forceIngest))
+  // Properly preserve boolean parameters even when false
+  if (typeof useLibraryOnly === 'boolean') url.searchParams.set('useLibraryOnly', String(useLibraryOnly))
+  if (typeof forceIngest === 'boolean') url.searchParams.set('forceIngest', String(forceIngest))
+  if (length) url.searchParams.set('length', length)
+  if (style) url.searchParams.set('style', style)
+  if (citationStyle) url.searchParams.set('citationStyle', citationStyle)
+  if (typeof includeMethodology === 'boolean') url.searchParams.set('includeMethodology', String(includeMethodology))
   
   // Create a new request object with the updated URL
   const newRequest = new NextRequest(url, {
