@@ -230,7 +230,7 @@ export async function simulateAITask(projectId: string, taskType: string = 'cont
         projectId,
         user.id,
         'ai_task_started',
-        `Started AI ${taskType.replace('_', ' ')}`
+        `Started AI ${taskType.replace(/_/g, ' ')}`
       )
     }
     
