@@ -1,4 +1,4 @@
-import { streamText } from 'ai'
+import { streamText, generateText, tool } from 'ai'
 import { ai } from '@/lib/ai/vercel-client'
 import { hybridSearchPapers, searchPaperChunks } from '@/lib/db/papers'
 import { getPapersByIds } from '@/lib/db/library'
@@ -12,9 +12,34 @@ import type {
   GenerationConfig,
   GenerationProgress 
 } from '@/types/simplified'
-import { createClient } from '@/lib/supabase/server'
+import { getSB } from '@/lib/supabase/server'
 import { ingestPaperWithChunks } from '@/lib/db/papers'
-import { addCitation, setCitationContext, clearCitationContext } from '@/lib/ai/tools/addCitation'
+import { addCitation, setCitationContext, clearCitationContext, type CitationPayload } from '@/lib/ai/tools/addCitation'
+import { z } from 'zod'
+
+// Types for tool call events
+interface ToolCallEvent {
+  type: 'tool-call'
+  toolCallId: string
+  toolName: string
+  args: any
+}
+
+interface ToolResultEvent {
+  type: 'tool-result'
+  toolCallId: string
+  result: any
+}
+
+interface CapturedToolCall {
+  toolCallId: string
+  toolName: string
+  args: any
+  result: any
+  timestamp: string
+  validated: boolean
+  error?: string
+}
 
 export interface EnhancedGenerationOptions {
   projectId: string
@@ -40,6 +65,17 @@ export interface GenerationResult {
   structure: {
     sections: string[]
     abstract: string
+  }
+  toolCallAnalytics: {
+    totalToolCalls: number
+    validatedToolCalls: number
+    successfulToolCalls: number
+    failedToolCalls: number
+    invalidToolCalls: number
+    addCitationCalls: number
+    successfulCitations: number
+    toolCallTimestamps: string[]
+    errors: { type: string; toolCallId: string; error?: string }[]
   }
 }
 
@@ -133,37 +169,54 @@ export async function generateDraftWithRAG(
     // Fallback: If we got very few results, try broader searches
     const additionalPapers: PaperWithAuthors[] = []
     if (discoveredPapers.length < 5 && remainingSlots > discoveredPapers.length && !useLibraryOnly) {
-      console.log(`🔄 Too few results (${discoveredPapers.length}), trying broader searches...`)
+      console.log(`🔄 Too few results (${discoveredPapers.length}), trying targeted broader searches...`)
       
-      // Extract key terms for broader search
+      // Extract key terms and create targeted combinations
       const keyTerms = topic.toLowerCase().split(/\s+/).filter(term => 
-        term.length > 3 && !['and', 'the', 'for', 'with', 'from'].includes(term)
+        term.length > 3 && !['and', 'the', 'for', 'with', 'from', 'using', 'based'].includes(term)
       )
       
       console.log(`🔍 Extracted key terms: [${keyTerms.join(', ')}]`)
       
-      // Try searching with individual key terms
-      for (const term of keyTerms.slice(0, 3)) { // Limit to top 3 terms
+      // Create more targeted search combinations instead of individual terms
+      const searchCombinations = []
+      
+      // Combine pairs of key terms for more targeted searches
+      for (let i = 0; i < keyTerms.length && searchCombinations.length < 3; i++) {
+        for (let j = i + 1; j < keyTerms.length && searchCombinations.length < 3; j++) {
+          searchCombinations.push(`${keyTerms[i]} ${keyTerms[j]}`)
+        }
+      }
+      
+      // If no pairs possible, use top individual terms
+      if (searchCombinations.length === 0) {
+        searchCombinations.push(...keyTerms.slice(0, 2))
+      }
+      
+      console.log(`🔍 Targeted search combinations: [${searchCombinations.join(', ')}]`)
+      
+      // Try searching with targeted combinations
+      for (const searchTerm of searchCombinations) {
         try {
-          const termResults = await hybridSearchPapers(term, {
-            limit: Math.min(10, remainingSlots - discoveredPapers.length - additionalPapers.length),
+          const termResults = await hybridSearchPapers(searchTerm, {
+            limit: Math.min(8, remainingSlots - discoveredPapers.length - additionalPapers.length),
             excludePaperIds: [...pinnedIds, ...discoveredPapers.map(p => p.id), ...additionalPapers.map(p => p.id)],
-            minYear: 2010, // Even broader year range
-            semanticWeight: 0.5 // Lower semantic weight for broader matching
+            minYear: 2010, // Broader year range for fallback
+            semanticWeight: 0.6 // Slightly higher semantic weight for targeted combinations
           })
           
-          // Apply domain filtering to fallback results too
-          const filteredTermResults = filterOnTopicPapers(termResults, topic)
-          console.log(`   🔍 "${term}" found ${termResults.length} papers, ${filteredTermResults.length} on-topic`)
+          // Apply more permissive domain filtering to fallback results
+          const filteredTermResults = filterOnTopicPapers(termResults, topic, { permissive: true })
+          console.log(`   🔍 "${searchTerm}" found ${termResults.length} papers, ${filteredTermResults.length} relevant`)
           additionalPapers.push(...filteredTermResults)
           
           if (discoveredPapers.length + additionalPapers.length >= remainingSlots) break
         } catch (error) {
-          console.warn(`⚠️ Broad search for "${term}" failed:`, error)
+          console.warn(`⚠️ Targeted search for "${searchTerm}" failed:`, error)
         }
       }
       
-      console.log(`🔄 Broader search found ${additionalPapers.length} additional papers`)
+      console.log(`🔄 Targeted broader search found ${additionalPapers.length} additional papers`)
     }
     
     // Combine all discovered papers
@@ -208,7 +261,7 @@ export async function generateDraftWithRAG(
     
     // Check if papers have chunks, create them if missing (for papers added via Library Manager)
     const papersNeedingChunks = []
-    const supabase = await createClient()
+    const supabase = await getSB()
     
     for (const paper of allPapers) {
       const { data: existingChunks, error } = await supabase
@@ -285,7 +338,7 @@ export async function generateDraftWithRAG(
     log('writing', 40, 'Generating research paper with AI...')
 
     // Step 3: Build prompts and stream generation
-    const systemMessage = buildSystemPrompt(config)
+    const systemMessage = buildSystemPrompt(config, allPapers.length)
     const userMessage = buildUserPromptWithSources(topic, allPapers, chunks)
     
     console.log(`🤖 AI Generation Setup:`)
@@ -357,7 +410,8 @@ export async function generateDraftWithRAG(
       structure: {
         sections: extractSections(result.content),
         abstract: extractAbstract(result.content)
-      }
+      },
+      toolCallAnalytics: result.toolCallAnalytics
     }
   } catch (error) {
     console.error(`❌ Error generating paper:`, error)
@@ -370,7 +424,7 @@ export async function generateDraftWithRAG(
 }
 
 
-function buildSystemPrompt(config: GenerationConfig): string {
+function buildSystemPrompt(config: GenerationConfig, numProvidedPapers: number): string {
   const style = config?.paper_settings?.style || 'academic';
   const citationStyle = config?.paper_settings?.citationStyle || 'apa';
   const length = config?.paper_settings?.length || 'medium';
@@ -388,6 +442,7 @@ function buildSystemPrompt(config: GenerationConfig): string {
   return `You are a domain-expert academic writing model.
 
 Your task is to generate a structured, citation-rich ${style} research paper based strictly on the provided materials.
+You have been provided with ${numProvidedPapers} initial research papers.
 
 🧠 OBJECTIVE:
 Produce a coherent, logically argued, and academically rigorous paper that follows best practices in scholarly writing.
@@ -412,27 +467,43 @@ ${includeMethodology ? '4. Methodology\n' : ''}4${includeMethodology ? '' : '.'}
 - Avoid first-person perspective and rhetorical questions
 
 🔖 CITATION REQUIREMENTS:
-- **CRITICAL**: Incorporate at least 12 distinct sources and cite each with [CITE:id]
+- **CRITICAL**: Incorporate at least 12 distinct sources and cite each with [CITE:id]. Aim for 4+ sources per major section.
 - **MANDATORY**: Every paragraph must end with at least one [CITE:id] citation
-- Inline citations must use the format: **[CITE: paper_id]**
-- Example: "Recent advances show promise [CITE: 123e4567-e89b-12d3-a456-426614174000]."
-- Place citations immediately after the relevant claim, data point, or quote
-- Provide data, cite at least 4 sources per major section
-- Papers unused after draft will be explicitly summarized in the Discussion section
-- Do NOT invent or hallucinate citations
+- Inline citations must use the format: **[CITE: paper_id]** (for the ${numProvidedPapers} provided papers) or **[CITE: citation_key]** (for new sources added via tool).
+- Example for provided paper: "Recent advances show promise [CITE: 123e4567-e89b-12d3-a456-426614174000]."
+- Example for new source added via tool: "This aligns with foundational work [CITE: chambers1997]."
+- Place citations immediately after the relevant claim, data point, or quote.
+- Papers unused after draft will be explicitly summarized in the Discussion section.
+- **DO NOT INVENT OR HALLUCINATE CITATIONS** - Use only provided sources or the addCitation tool.
 
-📚 CITATION SCOPE:
-- Use ONLY the provided sources unless instructed otherwise
-- You may invoke the **addCitation tool** to cite external material
-- Only use addCitation for new references not found in the provided paper list
-- Each addCitation call should include full bibliographic metadata and positional context
+📚 CITATION TOOLS - CRITICAL INSTRUCTIONS:
+- **PRIMARY RULE**: For the ${numProvidedPapers} papers provided to you initially, cite them directly using their existing paper IDs (e.g., [CITE: 123e4567-e89b-12d3-a456-426614174000]).
+- **SECONDARY RULE AND ABSOLUTELY CRITICAL**: Whenever you refer to a new source that is NOT among the ${numProvidedPapers} initially provided papers, you MUST use the **addCitation({ title, authors, year, ... })** tool with full metadata.
+- **FORBIDDEN**: Do NOT simply invent [CITE: ...] tokens for sources not provided. This will break the system. You MUST call the addCitation tool.
+- **When to use addCitation**:
+  * Landmark/seminal studies NOT in the ${numProvidedPapers} provided papers.
+  * Foundational methodological references NOT in the ${numProvidedPapers} provided papers.
+  * Widely-cited statistical techniques or frameworks NOT in the ${numProvidedPapers} provided papers.
+  * Essential background studies that establish the field but are NOT in the ${numProvidedPapers} provided papers.
+- **How to use addCitation**:
+  * Call addCitation with complete metadata: title, authors, year, journal, DOI (if known).
+  * Explain in the "reason" field why this citation is necessary (e.g., "Citing original work for X method").
+  * Specify the exact section and approximate start/end character positions in your draft where the citation concept is discussed.
+  * After a successful addCitation tool call, the system will provide a new 'citation_key'. You MUST then use this key in your text: [CITE:citation_key].
+- **Example workflow for a NEW source**:
+  1. You identify the need: "I need to cite the original MRSA resistance study by Chambers (1997), which was not in the initial set of papers."
+  2. You call the tool: addCitation({ title: "Methicillin-resistant Staphylococcus aureus: molecular characterization, clinical significance, and new treatment options", authors: ["Chambers HF"], year: 1997, journal: "Emerg Infect Dis", reason: "Citing seminal paper on MRSA characterization", section: "Introduction", start_pos: 150, end_pos: 180, context: "The emergence of MRSA posed a significant challenge..." })
+  3. The tool returns a key, e.g., 'chambers1997'.
+  4. You use this key in your text: "...posed a significant challenge [CITE:chambers1997]."
+- **Remember**: Every citation must either reference one of the ${numProvidedPapers} provided paper IDs OR be a result from a successful addCitation tool call using its new citation_key.
 
 🧠 REMEMBER:
-- Prioritize factual accuracy, clarity, and argumentative depth
-- Make sure each section transitions smoothly into the next
-- Follow ${citationStyle.toUpperCase()} citation conventions for formatting if needed
-- Ensure comprehensive coverage of all provided sources
-- Dense citation coverage is required - aim for multiple citations per paragraph
+- Prioritize factual accuracy, clarity, and argumentative depth.
+- Make sure each section transitions smoothly into the next.
+- Follow ${citationStyle.toUpperCase()} citation conventions for formatting if needed.
+- Ensure comprehensive coverage of all provided sources.
+- Dense citation coverage is required - aim for multiple citations per paragraph and at least 4 distinct sources per major section.
+- **CITATION INTEGRITY**: Never fabricate citations - use tools or provided sources only.
 
 Begin writing when ready. Respond only with the paper content.`;
 }
@@ -481,7 +552,21 @@ async function streamPaperGeneration(
   papers: PaperWithAuthors[],
   config: GenerationConfig,
   onProgress: (progress: number) => void
-): Promise<{ content: string; citations: GenerationResult['citations'] }> {
+): Promise<{ 
+  content: string; 
+  citations: GenerationResult['citations'];
+  toolCallAnalytics: {
+    totalToolCalls: number;
+    validatedToolCalls: number;
+    successfulToolCalls: number;
+    failedToolCalls: number;
+    invalidToolCalls: number;
+    addCitationCalls: number;
+    successfulCitations: number;
+    toolCallTimestamps: string[];
+    errors: { type: string; toolCallId: string; error?: string }[];
+  }
+}> {
   
   const stream = await streamText({
     model: ai(config?.model as string || 'gpt-4o'),
@@ -492,29 +577,193 @@ async function streamPaperGeneration(
     tools: {
       addCitation
     },
-    temperature: 0.3,
+    toolChoice: 'auto', // Explicitly allow tool usage
+    temperature: config?.temperature ?? 0.3, // Use configured temperature
     maxTokens: getMaxTokens(config?.paper_settings?.length)
   })
   
   console.log(`🔧 Stream created with addCitation tool available`)
+  console.log(`🔧 Tool choice: auto, Temperature: ${config?.temperature ?? 0.3}, Max tokens: ${getMaxTokens(config?.paper_settings?.length)}`)
+  console.log(`🔧 Papers available for citation: ${papers.length}`)
   
   let content = ''
   const targetLength = getTargetLength(config?.paper_settings?.length)
   let chunkCount = 0
+  let toolCallCount = 0
   
-  // Process text stream directly for much simpler and more reliable generation
-  for await (const chunk of stream.textStream) {
-    content += chunk
-    chunkCount++
-    
-    // Report progress every 20 chunks based on content length
-    if (chunkCount % 20 === 0) {
-      const progress = Math.min((content.length / targetLength) * 100, 95)
-      onProgress(progress)
+  // Store captured tool calls and their results
+  const capturedToolCalls: CapturedToolCall[] = []
+  
+  // Validation function for citation tool calls
+  const validateCitationArgs = (args: any): { valid: boolean; error?: string } => {
+    try {
+      // Validate against the citation schema from addCitation tool
+      const citationSchema = z.object({
+        doi: z.string().optional(),
+        title: z.string().min(1, 'Title is required'),
+        authors: z.array(z.string()).min(1, 'At least one author is required'),
+        year: z.number().int().min(1800).max(2030).optional(),
+        journal: z.string().optional(),
+        pages: z.string().optional(),
+        volume: z.string().optional(),
+        issue: z.string().optional(),
+        url: z.string().url().optional(),
+        abstract: z.string().optional(),
+        reason: z.string().min(1, 'Reason for citation is required'),
+        section: z.string().min(1, 'Section name is required'),
+        start_pos: z.number().int().min(0),
+        end_pos: z.number().int().min(0),
+        context: z.string().optional()
+      })
+      
+      citationSchema.parse(args)
+      return { valid: true }
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return { 
+          valid: false, 
+          error: `Validation failed: ${error.errors.map(e => e.message).join(', ')}` 
+        }
+      }
+      return { valid: false, error: 'Unknown validation error' }
     }
   }
   
-  // Extract citations from the generated content using regex
+  // Process full stream to capture both text and tool calls
+  for await (const delta of stream.fullStream) {
+    switch (delta.type) {
+      case 'text-delta':
+        content += delta.textDelta
+        chunkCount++
+        
+        // Report progress every 20 chunks based on content length
+        if (chunkCount % 20 === 0) {
+          const progress = Math.min((content.length / targetLength) * 100, 95)
+          onProgress(progress)
+        }
+        break
+        
+      case 'tool-call':
+        toolCallCount++
+        console.log(`🔧 Tool call detected (#${toolCallCount}): ${delta.toolName}`, {
+          toolCallId: delta.toolCallId,
+          args: delta.args
+        })
+        
+        // Additional debugging for addCitation specifically
+        if (delta.toolName === 'addCitation') {
+          console.log(`📋 addCitation called with:`, {
+            title: delta.args?.title,
+            authors: delta.args?.authors,
+            reason: delta.args?.reason,
+            section: delta.args?.section
+          })
+        }
+        
+        // Validate tool call arguments
+        let validated = false
+        let validationError: string | undefined
+        
+        if (delta.toolName === 'addCitation') {
+          const validation = validateCitationArgs(delta.args)
+          validated = validation.valid
+          validationError = validation.error
+          
+          if (!validated) {
+            console.warn(`⚠️ Invalid citation tool call:`, {
+              toolCallId: delta.toolCallId,
+              error: validationError
+            })
+          } else {
+            console.log(`✅ Citation tool call validated successfully:`, {
+              toolCallId: delta.toolCallId,
+              title: delta.args.title,
+              authors: delta.args.authors
+            })
+          }
+        } else {
+          // For other tools, just mark as validated (can add more validation later)
+          validated = true
+        }
+        
+        // Store the tool call for persistence
+        capturedToolCalls.push({
+          toolCallId: delta.toolCallId,
+          toolName: delta.toolName,
+          args: delta.args,
+          result: null, // Will be filled when result comes
+          timestamp: new Date().toISOString(),
+          validated,
+          error: validationError
+        })
+        break
+        
+      case 'tool-result':
+        console.log(`🔧 Tool result received: ${delta.toolCallId}`, {
+          result: delta.result
+        })
+        
+        // Find the corresponding tool call and update with result
+        const toolCall = capturedToolCalls.find(tc => tc.toolCallId === delta.toolCallId)
+        if (toolCall) {
+          toolCall.result = delta.result
+          
+          // Log successful tool call persistence
+          if (toolCall.toolName === 'addCitation' && toolCall.result?.success && toolCall.validated) {
+            console.log(`✅ Citation tool call persisted successfully:`, {
+              citationId: toolCall.result.citationId,
+              citationKey: toolCall.result.citationKey,
+              message: toolCall.result.message
+            })
+          } else if (toolCall.toolName === 'addCitation' && !toolCall.result?.success) {
+            console.error(`❌ Citation tool call failed:`, {
+              toolCallId: toolCall.toolCallId,
+              error: toolCall.result?.error || 'Unknown error',
+              validationError: toolCall.error
+            })
+          }
+        } else {
+          console.warn(`⚠️ Received tool result for unknown tool call: ${delta.toolCallId}`)
+        }
+        break
+        
+      case 'error':
+        console.error(`❌ Stream error:`, delta.error)
+        throw new Error(`Stream generation failed: ${delta.error}`)
+        
+      default:
+        // Handle other delta types if needed
+        break
+    }
+  }
+  
+  // Log comprehensive summary of tool calls
+  const validatedCalls = capturedToolCalls.filter(tc => tc.validated)
+  const successfulCalls = capturedToolCalls.filter(tc => tc.validated && tc.result?.success)
+  const failedCalls = capturedToolCalls.filter(tc => tc.validated && tc.result && !tc.result.success)
+  const invalidCalls = capturedToolCalls.filter(tc => !tc.validated)
+  
+  console.log(`🔧 Tool call comprehensive summary:`, {
+    totalCalls: capturedToolCalls.length,
+    validatedCalls: validatedCalls.length,
+    successfulCalls: successfulCalls.length,
+    failedCalls: failedCalls.length,
+    invalidCalls: invalidCalls.length,
+    addCitationCalls: capturedToolCalls.filter(tc => tc.toolName === 'addCitation').length
+  })
+  
+  // Additional debugging if no tool calls were made
+  if (capturedToolCalls.length === 0) {
+    console.warn(`⚠️ No tool calls detected during generation!`)
+    console.warn(`   📝 Content length: ${content.length} chars`)
+    console.warn(`   📊 Target length: ${targetLength} chars`)
+    console.warn(`   🧠 Model: ${config?.model || 'gpt-4o'}`)
+    console.warn(`   🌡️ Temperature: 0.3`)
+    console.warn(`   🔧 Tools available: addCitation`)
+    console.warn(`   💡 Consider: Model may need stronger prompting to use tools`)
+  }
+  
+  // Extract citations from the generated content using regex (fallback method)
   const citations: GenerationResult['citations'] = []
   const citationRegex = /\[CITE:\s*([a-f0-9-]{36})\]/gi
   const paperIdMap = new Set(papers.map(p => p.id))
@@ -534,13 +783,41 @@ async function streamPaperGeneration(
     }
   }
   
+  // Also extract citations from successful addCitation tool calls
+  const toolCitations = capturedToolCalls
+    .filter(tc => tc.toolName === 'addCitation' && tc.validated && tc.result?.success)
+    .map(tc => {
+      // Find where the citation appears in the content
+      const citationKey = tc.result.citationKey
+      const citationPattern = new RegExp(`\\[CITE:\\s*${citationKey}\\]`, 'gi')
+      const citationMatch = citationPattern.exec(content)
+      
+      return {
+        paperId: citationKey, // Use the citation key as the paper ID
+        citationText: citationMatch ? citationMatch[0] : `[CITE:${citationKey}]`,
+        positionStart: citationMatch ? citationMatch.index : undefined,
+        positionEnd: citationMatch ? citationMatch.index + citationMatch[0].length : undefined,
+        toolCallId: tc.toolCallId,
+        persistedInDb: true,
+        validated: true
+      }
+    })
+  
+  // Merge tool-based citations with regex-based citations (avoid duplicates)
+  const allCitations = [...citations]
+  for (const toolCitation of toolCitations) {
+    if (!citations.some(c => c.citationText === toolCitation.citationText)) {
+      allCitations.push(toolCitation)
+    }
+  }
+  
   // Citation ratio validation - ensure minimum coverage
-  const minCitations = Math.min(12, Math.floor(papers.length / 2))
-  if (citations.length < minCitations) {
-    console.warn(`⚠️ Too few citations: ${citations.length} < ${minCitations}. Adding forced citations...`)
+  const minCitations = Math.max(12, Math.floor(papers.length * 0.7)); // Target 70% coverage or 12, whichever is higher
+  if (allCitations.length < minCitations) {
+    console.warn(`⚠️ Too few citations: ${allCitations.length} < ${minCitations}. Adding forced citations...`)
     
     // Forced citing shim - ensure every paper is referenced at least once
-    const citedPaperIds = new Set(citations.map(c => c.paperId))
+    const citedPaperIds = new Set(allCitations.map(c => c.paperId))
     const targetLength = getTargetLength(config?.paper_settings?.length)
     
     for (const paper of papers) {
@@ -548,7 +825,7 @@ async function streamPaperGeneration(
         const forcedCitation = `\n\nAdditional insight from ${paper.title} [CITE:${paper.id}].`
         content += forcedCitation
         
-        citations.push({
+        allCitations.push({
           paperId: paper.id,
           citationText: `[CITE:${paper.id}]`,
           positionStart: content.length - forcedCitation.length + forcedCitation.indexOf('[CITE:'),
@@ -561,14 +838,34 @@ async function streamPaperGeneration(
     }
     
     // If still too few citations after forced citing, throw error for retry
-    if (citations.length < minCitations) {
-      throw new Error(`Too few citations – retry: ${citations.length} < ${minCitations}`)
+    if (allCitations.length < minCitations) {
+      throw new Error(`Too few citations – retry: ${allCitations.length} < ${minCitations}`)
     }
   }
   
-  console.log(`📊 Final citation count: ${citations.length}/${papers.length} papers cited`)
+  console.log(`📊 Final citation count: ${allCitations.length}/${papers.length} papers cited`)
+  console.log(`📊 Tool-based citations: ${toolCitations.length}`)
+  console.log(`📊 Regex-based citations: ${citations.length}`)
   
-  return { content, citations }
+  // Create tool call analytics for potential future use
+  const toolCallAnalytics = {
+    totalToolCalls: capturedToolCalls.length,
+    validatedToolCalls: validatedCalls.length,
+    successfulToolCalls: successfulCalls.length,
+    failedToolCalls: failedCalls.length,
+    invalidToolCalls: invalidCalls.length,
+    addCitationCalls: capturedToolCalls.filter(tc => tc.toolName === 'addCitation').length,
+    successfulCitations: toolCitations.length,
+    toolCallTimestamps: capturedToolCalls.map(tc => tc.timestamp),
+    errors: [
+      ...failedCalls.map(tc => ({ type: 'failed', toolCallId: tc.toolCallId, error: tc.result?.error })),
+      ...invalidCalls.map(tc => ({ type: 'invalid', toolCallId: tc.toolCallId, error: tc.error }))
+    ]
+  }
+  
+  console.log(`📊 Tool call analytics:`, toolCallAnalytics)
+  
+  return { content, citations: allCitations, toolCallAnalytics }
 }
 
 function getTargetLength(length?: string): number {
@@ -592,56 +889,148 @@ function getChunkLimit(length?: string): number {
 }
 
 function getMaxTokens(length?: string): number {
-  const WORD_TARGET = { short: 400, medium: 900, long: 1600 };
+  const WORD_TARGET = { short: 400, medium: 900, long: 1600 }; // Words per section
   const wordTarget = WORD_TARGET[length as keyof typeof WORD_TARGET] || WORD_TARGET.medium;
-  // Compute per-section: sectionMax = words*1.4/0.75 (rough 0.75 token/word)
-  const maxTokens = Math.floor((wordTarget * 6 * 1.4) / 0.75); // 6 sections approximate
-  return maxTokens;
+  
+  const fudgeFactor = 2.2; // Adjusted from 2.8 to stay within model limits
+  const tokensPerWordRatio = 0.75; // Assumes ~0.75 tokens per word (or 1.33 words per token)
+  const estimatedSections = 6;
+  
+  let calculatedMaxTokens = Math.floor((wordTarget * estimatedSections * fudgeFactor) / tokensPerWordRatio);
+  
+  // Cap at a safe value below the model's absolute maximum completion tokens (e.g., 16384 for gpt-4o variants)
+  const MODEL_COMPLETION_TOKEN_LIMIT = 16000; // Leave a small buffer from 16384
+  
+  if (calculatedMaxTokens > MODEL_COMPLETION_TOKEN_LIMIT) {
+    console.warn(`Calculated maxTokens (${calculatedMaxTokens}) exceeds model limit. Capping at ${MODEL_COMPLETION_TOKEN_LIMIT}.`);
+    calculatedMaxTokens = MODEL_COMPLETION_TOKEN_LIMIT;
+  }
+  
+  return calculatedMaxTokens;
 }
 
-function filterOnTopicPapers(papers: PaperWithAuthors[], topic: string): PaperWithAuthors[] {
-  const topicTokens = topic.toLowerCase().split(/\W+/).filter(token => token.length > 2)
+interface PaperWithScores extends PaperWithAuthors {
+  semantic_score?: number;
+  keyword_score?: number;
+}
+
+const MIN_SEMANTIC_SCORE = 0.1;
+const MIN_KEYWORD_SCORE = 0.01;
+
+// Helper function to check if scores are acceptable
+function isScoreAcceptable(
+  semanticScore?: number,
+  keywordScore?: number,
+  permissive = false
+): boolean {
+  const semanticThreshold = permissive ? 0.05 : MIN_SEMANTIC_SCORE;
+  const keywordThreshold = permissive ? 0 : MIN_KEYWORD_SCORE;
   
-  // Common off-topic domains that often appear in broad searches
-  const domainStopWords = [
-    'staphylococcus', 'aureus', 'ocular', 'antibiotic', 'antimicrobial',
-    'methicillin', 'resistant', 'mrsa', 'bacteria', 'infection',
-    'chlorhexidine', 'phage', 'susceptibility', 'resistance'
-  ]
+  // If we have a semantic score, check if it meets threshold
+  if (typeof semanticScore === 'number') {
+    return semanticScore >= semanticThreshold;
+  }
   
-  return papers.filter(paper => {
-    const titleLower = paper.title?.toLowerCase() || ''
-    const abstractLower = paper.abstract?.toLowerCase() || ''
-    
-    // Exclude papers with irrelevant domain terms in title
-    const hasOffTopicTerms = domainStopWords.some(stopWord => 
-      titleLower.includes(stopWord)
-    )
-    
-    if (hasOffTopicTerms) {
-      console.log(`🚫 Filtered out off-topic paper: "${paper.title}"`)
-      return false
+  // If no semantic score but we have keyword score, check that
+  if (typeof keywordScore === 'number') {
+    return keywordScore >= keywordThreshold;
+  }
+  
+  // If no scores at all, only acceptable in permissive mode or if we're being lenient
+  return permissive;
+}
+
+// Helper function to check if scores indicate the paper should be dropped
+function hasUnacceptableScores(
+  semanticScore?: number,
+  keywordScore?: number,
+  permissive = false
+): boolean {
+  const semanticThreshold = permissive ? 0.05 : MIN_SEMANTIC_SCORE;
+  const keywordThreshold = permissive ? 0 : MIN_KEYWORD_SCORE;
+  
+  // If we have both scores and both are below threshold, definitely drop
+  if (typeof semanticScore === 'number' && typeof keywordScore === 'number') {
+    return semanticScore < semanticThreshold && keywordScore <= keywordThreshold;
+  }
+  
+  // If we have only semantic score and it's below threshold, drop
+  if (typeof semanticScore === 'number' && typeof keywordScore !== 'number') {
+    return semanticScore < semanticThreshold;
+  }
+  
+  // If we have only keyword score and it's below threshold, drop  
+  if (typeof keywordScore === 'number' && typeof semanticScore !== 'number') {
+    return keywordScore <= keywordThreshold;
+  }
+  
+  // If no scores at all, drop unless we're in permissive mode
+  return !permissive;
+}
+
+function filterOnTopicPapers(
+  papers: PaperWithAuthors[],
+  topic: string,
+  options?: { permissive?: boolean }
+): PaperWithAuthors[] {
+  const permissive = !!options?.permissive;
+  
+  // 1. Build topic tokens, dropping too-short tokens
+  const topicTokens = topic
+    .toLowerCase()
+    .split(/\W+/)
+    .filter(tok => tok.length > 2);
+
+  // If topic is too short, skip token filtering entirely
+  if (topicTokens.length === 0) {
+    return papers;
+  }
+
+  // 2. Precompute regexes for whole-word matching
+  const tokenRegexes = topicTokens.map(
+    tok => new RegExp(`\\b${tok}\\b`, 'i')
+  );
+
+  return (papers as PaperWithScores[]).filter(paper => {
+    const titleLower = paper.title?.toLowerCase() || '';
+    const abstractLower = paper.abstract?.toLowerCase() || '';
+    const combinedText = titleLower + ' ' + abstractLower;
+
+    // 3. Check for at least one token match (whole-word)
+    const hasTopicTokenMatch = tokenRegexes.some(rx => rx.test(combinedText));
+
+    // 4. Check semantic/keyword scores using helper functions
+    const { semantic_score: semanticScore, keyword_score: keywordScore } = paper;
+    const scoresAreAcceptable = isScoreAcceptable(semanticScore, keywordScore, permissive);
+    const scoresAreUnacceptable = hasUnacceptableScores(semanticScore, keywordScore, permissive);
+
+    // 5. Decision logic: Include if EITHER token match OR acceptable scores
+    // Drop only if NO token match AND scores are unacceptable
+    if (!hasTopicTokenMatch && scoresAreUnacceptable) {
+      // Only log if explicitly debugging
+      if (process.env.NODE_ENV === 'development') {
+        const scoreInfo = typeof semanticScore === 'number' || typeof keywordScore === 'number'
+          ? `semantic: ${semanticScore ?? 'N/A'}, keyword: ${keywordScore ?? 'N/A'}`
+          : 'no scores available';
+
+        console.debug(
+          `🚫 Filtered out: "${paper.title}" ` +
+            `(tokenMatch: ${hasTopicTokenMatch}, ${scoreInfo}, mode: ${permissive ? 'permissive' : 'standard'})`
+        );
+      }
+      return false;
     }
-    
-    // Require at least one topic token match in title or abstract
-    const hasTopicMatch = topicTokens.some(token => 
-      titleLower.includes(token) || abstractLower.includes(token)
-    )
-    
-    // Require minimum semantic score if available
-    const semanticScore = (paper as PaperWithAuthors & { semantic_score?: number }).semantic_score || 0
-    const hasGoodSemanticScore = semanticScore > 0.15
-    
-    if (!hasTopicMatch) {
-      console.log(`🚫 Filtered out irrelevant paper: "${paper.title}" (no topic match)`)
-      return false
+
+    // Log inclusion reasoning in debug mode
+    if (process.env.NODE_ENV === 'development') {
+      const reason = hasTopicTokenMatch
+        ? 'token match'
+        : scoresAreAcceptable
+          ? 'acceptable scores'
+          : 'default inclusion';
+      console.debug(`✅ Including: "${paper.title}" (${reason}, mode: ${permissive ? 'permissive' : 'standard'})`);
     }
-    
-    if (!hasGoodSemanticScore && semanticScore > 0) {
-      console.log(`🚫 Filtered out low-relevance paper: "${paper.title}" (score: ${semanticScore})`)
-      return false
-    }
-    
-    return true
-  })
-} 
+
+    return true;
+  });
+}

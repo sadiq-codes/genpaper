@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getSB } from '@/lib/supabase/server'
 import { createBrowserClient } from '@supabase/ssr'
 import type { Paper, Author, PaperWithAuthors, SearchPapersRequest } from '@/types/simplified'
 import { ai } from '@/lib/ai/vercel-client'
@@ -120,7 +120,7 @@ async function processChunkBatch(
   chunks: Array<{ content: string; index: number }>,
   retryAttempt: number = 0
 ): Promise<ChunkProcessingResult[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const results: ChunkProcessingResult[] = []
   
   try {
@@ -230,7 +230,7 @@ export const createBrowserSupabaseClient = () => {
 }
 
 export async function createOrGetAuthor(name: string): Promise<Author> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   // First try to get existing author
   const { data: existingAuthor } = await supabase
     .from('authors')
@@ -255,7 +255,7 @@ export async function createPaper(
   paperData: Omit<Paper, 'id' | 'created_at'>,
   authorNames: string[]
 ): Promise<PaperWithAuthors> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   // Create the paper first
   const { data: paper, error: paperError } = await supabase
     .from('papers')
@@ -314,7 +314,7 @@ function transformDatabasePaper(dbPaper: DatabasePaper): PaperWithAuthors {
 }
 
 export async function getPaper(paperId: string): Promise<PaperWithAuthors | null> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('papers')
     .select(`
@@ -333,18 +333,13 @@ export async function getPaper(paperId: string): Promise<PaperWithAuthors | null
   return transformDatabasePaper(data as DatabasePaper)
 }
 
-export async function searchPapers({
-  query,
+export async function searchPapers(
+  query: string,
+  filters: { sources?: string[] } = {},
   limit = 20,
-  sources,
-  useSemanticSearch = false
-}: SearchPapersRequest): Promise<Paper[]> {
-  // Use semantic search if requested and query is provided
-  if (useSemanticSearch && query) {
-    return await semanticSearchPapers(query, { limit, sources })
-  }
-  
-  const supabase = await createClient()
+  offset = 0
+): Promise<PaperWithAuthors[]> {
+  const supabase = await getSB()
   let supabaseQuery = supabase
     .from('papers')
     .select(`
@@ -360,14 +355,15 @@ export async function searchPapers({
     supabaseQuery = supabaseQuery.textSearch('search_vector', query)
   }
 
-  if (sources && sources.length > 0) {
-    supabaseQuery = supabaseQuery.in('source', sources)
+  if (filters.sources && filters.sources.length > 0) {
+    supabaseQuery = supabaseQuery.in('source', filters.sources)
   }
 
   const { data, error } = await supabaseQuery
     .order('citation_count', { ascending: false, nullsFirst: false })
     .order('publication_date', { ascending: false, nullsFirst: false })
     .limit(limit)
+    .range(offset, offset + limit - 1)
 
   if (error) throw error
 
@@ -376,7 +372,7 @@ export async function searchPapers({
 }
 
 export async function getPaperByDOI(doi: string): Promise<Paper | null> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('papers')
     .select(`
@@ -399,7 +395,7 @@ export async function updatePaperMetadata(
   paperId: string,
   metadata: Partial<Paper>
 ): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('papers')
     .update(metadata)
@@ -409,7 +405,7 @@ export async function updatePaperMetadata(
 }
 
 export async function getPopularPapers(limit = 10): Promise<Paper[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('papers')
     .select(`
@@ -427,8 +423,10 @@ export async function getPopularPapers(limit = 10): Promise<Paper[]> {
   return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
 }
 
-export async function getRecentPapers(limit = 10): Promise<Paper[]> {
-  const supabase = await createClient()
+export async function getRecentPapers(
+  limit = 10
+): Promise<PaperWithAuthors[]> {
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('papers')
     .select(`
@@ -519,7 +517,7 @@ export class BrowserPapersClient {
 // Fix: Add vector index optimization with better error handling
 async function optimizeVectorIndex(): Promise<void> {
   try {
-    const supabase = await createClient()
+    const supabase = await getSB()
     // Call the optimize function if available
     await supabase.rpc('optimize_vector_index')
   } catch (error) {
@@ -529,7 +527,7 @@ async function optimizeVectorIndex(): Promise<void> {
 }
 
 export async function ingestPaper(paperMeta: PaperDTO): Promise<string> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // Create text for embedding (title + abstract)
   const text = `${paperMeta.title}\n${paperMeta.abstract || ''}`
@@ -621,7 +619,7 @@ export async function batchIngestPapers(papers: PaperDTO[]): Promise<string[]> {
 
 // Helper function to ingest paper with pre-generated embedding
 async function ingestPaperWithEmbedding(paperMeta: PaperDTO, embedding: number[]): Promise<string> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   const text = `${paperMeta.title}\n${paperMeta.abstract || ''}`
   const paperId = paperMeta.doi 
@@ -684,7 +682,7 @@ export async function semanticSearchPapers(
     sources?: string[]
   } = {}
 ): Promise<PaperWithAuthors[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // Generate embedding for the query using centralized configuration
   const [queryEmbedding] = await generateEmbeddings([query])
@@ -743,26 +741,28 @@ export async function hybridSearchPapers(
   query: string,
   options: {
     limit?: number
+    excludePaperIds?: string[]
     minYear?: number
+    maxYear?: number
     sources?: string[]
     semanticWeight?: number
-    excludePaperIds?: string[]
-    minCombinedScore?: number
   } = {}
 ): Promise<PaperWithAuthors[]> {
+  const supabase = await getSB()
   const { 
     limit = 10, 
     minYear = 2018, 
     sources, 
     semanticWeight = 0.7,
     excludePaperIds = [],
-    minCombinedScore = 0.0001
+    maxYear = 2024
   } = options
 
   console.log(`🔍 Hybrid Search Starting:`)
   console.log(`   🎯 Query: "${query}"`)
   console.log(`   📊 Limit: ${limit}`)
   console.log(`   📅 Min Year: ${minYear}`)
+  console.log(`   📅 Max Year: ${maxYear}`)
   console.log(`   🏷️ Sources Filter: ${sources ? `[${sources.join(', ')}]` : 'None'}`)
   console.log(`   ⚖️ Semantic Weight: ${semanticWeight}`)
   console.log(`   🚫 Excluded IDs: ${excludePaperIds.length > 0 ? `[${excludePaperIds.join(', ')}]` : 'None'}`)
@@ -773,7 +773,6 @@ export async function hybridSearchPapers(
   console.log(`✅ Embedding generated: ${queryEmbedding.length} dimensions`)
 
   // 2. Call the hybrid search RPC function
-  const supabase = await createClient()
   console.log(`🗄️ Calling hybrid_search_papers RPC...`)
   const { data: searchResults, error } = await supabase
     .rpc('hybrid_search_papers', {
@@ -806,7 +805,7 @@ export async function hybridSearchPapers(
   const filteredResults = (searchResults || []).filter(
     (result: HybridSearchResult) => 
       !excludePaperIds.includes(result.paper_id) &&
-      result.combined_score >= minCombinedScore // Apply minimum score threshold
+      result.combined_score >= 0.0001 // Apply minimum score threshold
   )
 
   console.log(`🔧 After filtering excluded papers: ${filteredResults.length} results`)
@@ -889,7 +888,7 @@ export async function findSimilarPapers(
   paperId: string,
   limit = 5
 ): Promise<PaperWithAuthors[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // Get the embedding for the reference paper
   const { data: referencePaper, error: refError } = await supabase
@@ -950,24 +949,18 @@ export async function findSimilarPapers(
 export async function searchPaperChunks(
   query: string,
   options: {
-    limit?: number
     paperIds?: string[]
+    limit?: number
     minScore?: number
   } = {}
-): Promise<Array<{
-  paper_id: string
-  chunk_index: number
-  content: string
-  score: number
-}>> {
+): Promise<Array<{paper_id: string, content: string, score: number}>> {
+  const supabase = await getSB()
   console.log(`📄 Searching paper chunks:`)
   console.log(`   🎯 Query: "${query}"`)
   console.log(`   📊 Limit: ${options.limit || 10}`)
   console.log(`   📋 Paper IDs: ${options.paperIds ? `[${options.paperIds.join(', ')}]` : 'All papers'}`)
   console.log(`   🎯 Min Score: ${options.minScore || 0.5}`)
 
-  const supabase = await createClient()
-  
   // Generate embedding for the query using centralized configuration
   console.log(`🧠 Generating embedding for chunk search...`)
   const [queryEmbedding] = await generateEmbeddings([query])
@@ -1014,7 +1007,7 @@ export async function ingestPaperWithChunks(
   paperMeta: PaperDTO, 
   contentChunks?: string[]
 ): Promise<string> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // Create main embedding from title + abstract (existing behavior)
   const mainText = `${paperMeta.title}\n${paperMeta.abstract || ''}`
@@ -1140,7 +1133,7 @@ export async function retryFailedChunks(maxRetries: number = 100): Promise<{
   successful: number
   failed: number
 }> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // Get failed chunks ready for retry
   const { data: failedChunks, error } = await supabase
@@ -1210,7 +1203,7 @@ export async function retryFailedChunks(maxRetries: number = 100): Promise<{
 export async function batchCreateOrGetAuthors(authorNames: string[]): Promise<Author[]> {
   if (authorNames.length === 0) return []
   
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // 1. Fetch all existing authors in one query
   const { data: existingAuthors, error: fetchError } = await supabase
@@ -1263,7 +1256,7 @@ export async function batchCreateOrGetAuthors(authorNames: string[]): Promise<Au
 export async function upsertPaperAuthors(paperId: string, authorNames: string[]): Promise<void> {
   if (authorNames.length === 0) return
   
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // 1. Get all authors efficiently (using batch function)
   const authors = await batchCreateOrGetAuthors(authorNames)
@@ -1306,7 +1299,7 @@ export async function upsertPaperAuthors(paperId: string, authorNames: string[])
 
 // Check if paper exists by DOI to prevent duplicates
 export async function checkPaperExists(doi?: string, title?: string): Promise<{ exists: boolean, paperId?: string }> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // First check by DOI if available
   if (doi) {
@@ -1359,7 +1352,7 @@ export async function checkPaperExists(doi?: string, title?: string): Promise<{ 
 
 // Lightweight ingestion for Library Manager - no chunks, faster UX
 export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<string> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // Check for duplicates first
   const { exists, paperId: existingId } = await checkPaperExists(paperMeta.doi, paperMeta.title)
@@ -1408,4 +1401,4 @@ export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<strin
   console.log(`📚 Lightweight ingestion completed: ${paperMeta.title} (ID: ${paperId})`)
   
   return paperId
-} 
+}

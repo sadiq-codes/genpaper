@@ -10,7 +10,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Switch } from '@/components/ui/switch'
 import { 
   Zap,
-  ChevronDown,
   Paperclip,
   FileText,
   BookOpen,
@@ -134,7 +133,7 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
                   >
                     <FileText className="w-3 h-3 sm:w-4 sm:h-4" />
                     <span>{config.style ? styleDisplayMap[config.style] : 'Writing Style'}</span>
-                    <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 opacity-50" />
+
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="academic">
@@ -172,7 +171,6 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
                   >
                     <Zap className="w-3 h-3 sm:w-4 sm:h-4" />
                     <span>{config.length ? lengthDisplayMap[config.length] : 'Paper Length'}</span>
-                    <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 opacity-50" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="short">
@@ -210,7 +208,6 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
                   >
                     <BookOpen className="w-3 h-3 sm:w-4 sm:h-4" />
                     <span>{config.citationStyle ? citationStyleDisplayMap[config.citationStyle] : 'Citation Style'}</span>
-                    <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 opacity-50" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="apa">
@@ -240,10 +237,10 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
                   </SelectContent>
                 </Select>
 
-                <Paperclip className="w-4 h-4 text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300" />
               </div>
-
-              <Button 
+            <div className="flex items-center gap-2">
+                <Paperclip className="w-4 h-4 text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300" />
+                  <Button 
                 onClick={handleGenerate}
                 disabled={!topic.trim() || isStarting}
                 className="bg-gray-600 hover:bg-gray-700 text-white px-4 sm:px-6 py-2 text-sm sm:text-base dark:bg-gray-600 dark:hover:bg-gray-600 whitespace-nowrap flex items-center gap-2"
@@ -257,6 +254,7 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
                   </>
                 )}
               </Button>
+            </div>
             </div>
           </div>
         </CardContent>

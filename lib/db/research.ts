@@ -1,5 +1,5 @@
 import { createBrowserClient } from '@supabase/ssr'
-import { createClient } from '@/lib/supabase/server'
+import { getSB } from '@/lib/supabase/server'
 import type { 
   ResearchProject, 
   ResearchProjectVersion, 
@@ -22,7 +22,7 @@ export async function createResearchProject(
   topic: string,
   generationConfig?: Record<string, unknown>
 ): Promise<ResearchProject> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   console.log('📝 Creating research project for user:', userId)
   console.log('📝 Topic:', topic)
@@ -50,9 +50,12 @@ export async function createResearchProject(
     // Create a proper Error object that will serialize correctly
     const dbError = new Error(`Database error: ${error.message}`)
     dbError.name = 'DatabaseError'
-    ;(dbError as any).code = error.code
-    ;(dbError as any).details = error.details
-    ;(dbError as any).hint = error.hint
+    // Extend error object with additional properties
+    Object.assign(dbError, {
+      code: error.code,
+      details: error.details,
+      hint: error.hint
+    })
     
     throw dbError
   }
@@ -66,7 +69,7 @@ export async function updateResearchProjectStatus(
   status: PaperStatus,
   completedAt?: string
 ): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const updateData: { status: PaperStatus; completed_at?: string } = { status }
   if (completedAt) updateData.completed_at = completedAt
 
@@ -82,7 +85,7 @@ export async function getResearchProject(
   projectId: string,
   userId?: string
 ): Promise<ResearchProject | null> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   let query = supabase
     .from('research_projects')
     .select('*')
@@ -103,7 +106,7 @@ export async function getUserResearchProjects(
   limit = 20,
   offset = 0
 ): Promise<ResearchProjectWithLatestVersion[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('research_projects')
     .select(`
@@ -144,7 +147,7 @@ export async function addProjectVersion(
   content: string,
   version?: number
 ): Promise<ResearchProjectVersion> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   // If no version specified, get the next version number
   if (!version) {
     const { data: latestVersion } = await supabase
@@ -176,7 +179,7 @@ export async function getProjectVersions(
   projectId: string,
   limit = 10
 ): Promise<ResearchProjectVersion[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('research_project_versions')
     .select('*')
@@ -191,7 +194,7 @@ export async function getProjectVersions(
 export async function getLatestProjectVersion(
   projectId: string
 ): Promise<ResearchProjectVersion | null> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('research_project_versions')
     .select('*')
@@ -214,7 +217,7 @@ export async function addProjectCitation(
   pageRange?: string,
   blockId?: string
 ): Promise<ProjectCitation> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('project_citations')
     .insert({
@@ -238,7 +241,7 @@ export async function getProjectCitations(
   projectId: string,
   version?: number
 ): Promise<ProjectCitation[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   let query = supabase
     .from('project_citations')
     .select(`
@@ -270,7 +273,7 @@ export async function getProjectPapersWithCSL(
   projectId: string,
   version?: number
 ): Promise<PaperWithAuthors[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // Get unique paper IDs from citations
   let citationQuery = supabase
@@ -308,13 +311,13 @@ export async function getProjectPapersWithCSL(
   return (papers || []).map(paper => ({
     ...paper,
     author_names: paper.authors
-      ?.sort((a: any, b: any) => (a.ordinal || 0) - (b.ordinal || 0))
-      ?.map((pa: any) => pa.author.name) || []
+      ?.sort((a: { ordinal?: number }, b: { ordinal?: number }) => (a.ordinal || 0) - (b.ordinal || 0))
+      ?.map((pa: { author: { name: string } }) => pa.author.name) || []
   }))
 }
 
 export async function getProjectCitationCount(projectId: string): Promise<number> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { count, error } = await supabase
     .from('project_citations')
     .select('id', { count: 'exact' })
@@ -325,7 +328,7 @@ export async function getProjectCitationCount(projectId: string): Promise<number
 }
 
 export async function deleteResearchProject(projectId: string): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('research_projects')
     .delete()

@@ -1,5 +1,5 @@
 import { createBrowserClient } from '@supabase/ssr'
-import { createClient } from '@/lib/supabase/server'
+import { getSB } from '@/lib/supabase/server'
 import type { 
   LibraryPaper, 
   LibraryCollection, 
@@ -21,7 +21,7 @@ export async function addPaperToLibrary(
   paperId: string,
   notes?: string
 ): Promise<LibraryPaper> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_papers')
     .insert({
@@ -62,7 +62,7 @@ export async function removePaperFromLibrary(
   userId: string,
   paperId: string
 ): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('library_papers')
     .delete()
@@ -76,7 +76,7 @@ export async function updateLibraryPaperNotes(
   libraryPaperId: string,
   notes: string
 ): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('library_papers')
     .update({ notes })
@@ -91,7 +91,7 @@ export async function getUserLibraryPapers(
   limit = 20,
   offset = 0
 ): Promise<LibraryPaper[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   let query = supabase
     .from('library_papers')
     .select(`
@@ -126,9 +126,9 @@ export async function getUserLibraryPapers(
   } else if (sortBy === 'title') {
     query = query.order('paper.title', { ascending: sortOrder === 'asc' })
   } else if (sortBy === 'publication_date') {
-    query = query.order('paper.publication_date', { ascending: sortOrder === 'asc', nullsLast: true })
+    query = query.order('paper.publication_date', { ascending: sortOrder === 'asc', nullsFirst: false })
   } else if (sortBy === 'citation_count') {
-    query = query.order('paper.citation_count', { ascending: sortOrder === 'asc', nullsLast: true })
+    query = query.order('paper.citation_count', { ascending: sortOrder === 'asc', nullsFirst: false })
   }
 
   const { data, error } = await query
@@ -157,7 +157,7 @@ export async function getLibraryPaper(
   userId: string,
   paperId: string
 ): Promise<LibraryPaper | null> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_papers')
     .select(`
@@ -195,7 +195,7 @@ export async function isInLibrary(
   userId: string,
   paperId: string
 ): Promise<boolean> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_papers')
     .select('id')
@@ -213,7 +213,7 @@ export async function createCollection(
   name: string,
   description?: string
 ): Promise<LibraryCollection> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_collections')
     .insert({
@@ -229,7 +229,7 @@ export async function createCollection(
 }
 
 export async function getUserCollections(userId: string): Promise<LibraryCollection[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_collections')
     .select(`
@@ -252,7 +252,7 @@ export async function addPaperToCollection(
   collectionId: string,
   paperId: string
 ): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('collection_papers')
     .insert({
@@ -267,7 +267,7 @@ export async function removePaperFromCollection(
   collectionId: string,
   paperId: string
 ): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('collection_papers')
     .delete()
@@ -282,7 +282,7 @@ export async function getCollectionPapers(
   limit = 20,
   offset = 0
 ): Promise<Paper[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('collection_papers')
     .select(`
@@ -313,7 +313,7 @@ export async function getCollectionPapers(
 }
 
 export async function deleteCollection(collectionId: string): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('library_collections')
     .delete()
@@ -324,8 +324,8 @@ export async function deleteCollection(collectionId: string): Promise<void> {
 
 // Tag management
 export async function createOrGetTag(userId: string, name: string): Promise<Tag> {
+  const supabase = await getSB()
   // First try to get existing tag
-  const supabase = await createClient()
   const { data: existingTag } = await supabase
     .from('tags')
     .select('*')
@@ -350,7 +350,7 @@ export async function createOrGetTag(userId: string, name: string): Promise<Tag>
 }
 
 export async function getUserTags(userId: string): Promise<Tag[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { data, error } = await supabase
     .from('tags')
     .select('*')
@@ -365,7 +365,7 @@ export async function addTagToLibraryPaper(
   libraryPaperId: string,
   tagId: string
 ): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('library_paper_tags')
     .insert({
@@ -380,7 +380,7 @@ export async function removeTagFromLibraryPaper(
   libraryPaperId: string,
   tagId: string
 ): Promise<void> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   const { error } = await supabase
     .from('library_paper_tags')
     .delete()
@@ -428,9 +428,9 @@ export const clientLibraryOperations = {
     } else if (sortBy === 'title') {
       query = query.order('paper.title', { ascending: sortOrder === 'asc' })
     } else if (sortBy === 'publication_date') {
-      query = query.order('paper.publication_date', { ascending: sortOrder === 'asc', nullsLast: true })
+      query = query.order('paper.publication_date', { ascending: sortOrder === 'asc', nullsFirst: false })
     } else if (sortBy === 'citation_count') {
-      query = query.order('paper.citation_count', { ascending: sortOrder === 'asc', nullsLast: true })
+      query = query.order('paper.citation_count', { ascending: sortOrder === 'asc', nullsFirst: false })
     }
 
     const { data, error } = await query.range(offset, offset + limit - 1)
@@ -510,7 +510,7 @@ export const clientLibraryOperations = {
 export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]> {
   if (paperIds.length === 0) return []
   
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   // First try to get from library_papers table (in case these are library paper IDs)
   const { data: libraryData, error: libraryError } = await supabase
@@ -571,7 +571,7 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
       user_id: 'system',
       paper_id: paper.id,
       added_at: new Date().toISOString(),
-      notes: null,
+      notes: undefined,
       paper: {
         ...paper,
         authors,

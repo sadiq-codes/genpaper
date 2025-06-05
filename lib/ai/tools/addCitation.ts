@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { tool } from 'ai'
-import { createClient } from '@/lib/supabase/server'
+import { getSB } from '@/lib/supabase/server'
 
 // Zod schema for citation data
 const citationSchema = z.object({
@@ -31,28 +31,31 @@ async function generateCitationKey(title: string, year?: number, doi?: string): 
   const yearStr = year ? year.toString() : 'unknown'
   const hashInput = `${normalizedTitle}_${yearStr}`
   
-  let hashBuffer: ArrayBuffer
-  
-  // Check if we're in Node.js environment or browser without crypto.subtle
-  if (typeof globalThis.crypto?.subtle === 'undefined') {
-    // Node.js environment - use node:crypto
-    const { createHash } = await import('node:crypto')
-    const hash = createHash('sha256')
-    hash.update(hashInput)
-    const hashHex = hash.digest('hex')
-    // Return 16 chars instead of 12 for lower collision rate
-    return hashHex.substring(0, 16)
+  // Try Web Crypto API first (available in both browser and edge runtime)
+  try {
+    if (typeof globalThis.crypto?.subtle !== 'undefined') {
+      const encoder = new TextEncoder()
+      const data = encoder.encode(hashInput)
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+      const hashArray = Array.from(new Uint8Array(hashBuffer))
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+      
+      // Return 16 chars instead of 12 for lower collision rate
+      return hashHex.substring(0, 16)
+    }
+  } catch (error) {
+    console.warn('Web Crypto API failed:', error)
   }
   
-  // Browser environment - use Web Crypto API
-  const encoder = new TextEncoder()
-  const data = encoder.encode(hashInput)
-  hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-  
-  // Return 16 chars instead of 12 for lower collision rate
-  return hashHex.substring(0, 16)
+  // Fallback to a deterministic simple hash
+  console.warn('Using fallback hash algorithm')
+  let hash = 0
+  for (let i = 0; i < hashInput.length; i++) {
+    const char = hashInput.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash // Convert to 32-bit integer
+  }
+  return Math.abs(hash).toString(16).substring(0, 16).padStart(16, '0')
 }
 
 // Convert input to CSL JSON format
@@ -122,7 +125,7 @@ export const addCitation = tool({
     }
 
     const { projectId } = citationContext
-    const supabase = await createClient()
+    const supabase = await getSB()
 
     try {
       // Generate a unique key for this citation

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getSB } from '@/lib/supabase/server'
 import { searchOpenAlex, searchSemanticScholar } from './academic-apis'
 
 interface CitationUpdate {
@@ -16,7 +16,7 @@ export async function updateCitationCounts(
   batchSize = 50,
   daysOld = 30
 ): Promise<CitationUpdate[]> {
-  const supabase = await createClient()
+  const supabase = await getSB()
   
   console.log(`🔄 Starting citation count update for papers older than ${daysOld} days`)
   
@@ -154,7 +154,7 @@ export async function getCitationStats(): Promise<{
   averageCitations: number
   topCitedPapers: Array<{ title: string; citation_count: number }>
 }> {
-  const supabase = await createClient()
+  const supabase = await getSB()
 
   // Get basic stats
   const [totalPapers, papersWithCitations, topCited] = await Promise.all([

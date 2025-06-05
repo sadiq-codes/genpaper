@@ -34,9 +34,15 @@ export default function ProcessingPage() {
     router.push('/generate?error=' + encodeURIComponent(error))
   }, [router])
   
-  useStreamGeneration(streamUrl, {
+  const handleProgress = useCallback((progress: any) => {
+    console.log('Generation progress:', progress)
+  }, [])
+  
+  // Use stream generation hook to get real-time data
+  const streamState = useStreamGeneration(streamUrl, {
     onComplete: handleComplete,
-    onError: handleError
+    onError: handleError,
+    onProgress: handleProgress
   })
 
   // Start generation when component mounts
@@ -78,5 +84,12 @@ export default function ProcessingPage() {
     return null
   }
 
-  return <ProcessingScreen topic={topic} />
+  return (
+    <ProcessingScreen 
+      topic={topic}
+      progress={streamState.progress}
+      isConnected={streamState.isConnected}
+      error={streamState.error}
+    />
+  )
 } 

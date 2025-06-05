@@ -4,10 +4,15 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Cached client to avoid recreation on every call
 let _cachedClient: SupabaseClient | null = null
+let _cacheTimestamp: number = 0
+
+// Cache duration in milliseconds (5 minutes)
+const CACHE_DURATION = 5 * 60 * 1000
 
 export async function createClient() {
-  // Return cached client if available and still valid
-  if (_cachedClient) {
+  // Check if cached client exists and is still valid
+  const now = Date.now()
+  if (_cachedClient && (now - _cacheTimestamp) < CACHE_DURATION) {
     return _cachedClient
   }
 
@@ -36,8 +41,20 @@ export async function createClient() {
     }
   )
 
+  _cacheTimestamp = now
   return _cachedClient
 }
 
-// Helper to get cached client directly (for performance)
-export const getSB = () => _cachedClient ?? createClient() 
+// Optimized helper to get cached client - handles async properly
+export async function getSB(): Promise<SupabaseClient> {
+  if (_cachedClient && (Date.now() - _cacheTimestamp) < CACHE_DURATION) {
+    return _cachedClient
+  }
+  return await createClient()
+}
+
+// Force refresh client (useful for testing or when auth state changes)
+export function clearClientCache(): void {
+  _cachedClient = null
+  _cacheTimestamp = 0
+} 
