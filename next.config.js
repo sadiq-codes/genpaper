@@ -11,6 +11,7 @@ const nextConfig = {
       '@supabase/supabase-js',
       '@citation-js/core'
     ],
+
   },
 
   // Bundle optimization
@@ -115,12 +116,20 @@ const nextConfig = {
       }
     }
 
-    // Optimize imports
+    // Optimize imports and ensure proper module resolution
     config.resolve.alias = {
       ...config.resolve.alias,
       // Reduce lodash bundle size
       'lodash': 'lodash-es',
+      // Explicitly resolve the path aliases
+      '@': process.cwd(),
     }
+
+    // Ensure better module resolution for TypeScript paths
+    config.resolve.modules = [
+      'node_modules',
+      process.cwd(),
+    ]
 
     return config
   },
