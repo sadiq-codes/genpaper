@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Add serverExternalPackages to opt-out specific dependencies from bundling
+  serverExternalPackages: ['websocket'],
+
   // Performance optimizations
   experimental: {
     optimizePackageImports: [
@@ -12,6 +15,13 @@ const nextConfig = {
 
   // Bundle optimization
   webpack: (config, { dev, isServer }) => {
+    // Fix: Suppress Supabase Realtime critical dependency warning
+    config.module = {
+      ...config.module,
+      exprContextCritical: false,
+      unknownContextCritical: false,
+    }
+
     // Fix: Add tiktoken WASM support
     config.experiments = {
       ...config.experiments,
@@ -34,6 +44,15 @@ const nextConfig = {
       test: /\.wasm$/,
       type: 'asset/resource',
     })
+
+    // Fix: Suppress warnings for Supabase Realtime client
+    config.ignoreWarnings = [
+      ...(config.ignoreWarnings || []),
+      {
+        module: /node_modules\/@supabase\/realtime-js/,
+        message: /Critical dependency: the request of a dependency is an expression/,
+      },
+    ]
     
     // Optimize for production builds
     if (!dev && !isServer) {

@@ -9,7 +9,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { 
   RefreshCw, 
   Database, 
-  AlertCircle,
   Wifi,
   WifiOff
 } from 'lucide-react'
@@ -64,7 +63,7 @@ export function QueryErrorBoundary({
             Data Loading Error
           </CardTitle>
           <p className="text-gray-600 text-sm mt-2">
-            We're having trouble loading your data. This might be a temporary network issue.
+            We&apos;re having trouble loading your data. This might be a temporary network issue.
           </p>
         </CardHeader>
         

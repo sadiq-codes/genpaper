@@ -11,6 +11,7 @@ import {
 } from './academic-apis'
 import { ingestPaperWithChunks } from '@/lib/db/papers'
 import type { PaperDTO } from '@/lib/schemas/paper'
+import { PaperSources } from '@/types/simplified'
 
 // Enhanced paper type with ranking metadata
 export interface RankedPaper extends AcademicPaper {
@@ -30,7 +31,7 @@ export interface AggregatedSearchOptions extends SearchOptions {
   semanticWeight?: number
   authorityWeight?: number
   recencyWeight?: number
-  sources?: Array<'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'>
+  sources?: PaperSources
 }
 
 // Fix: Improved BM25 scoring with accurate IDF calculation
@@ -444,7 +445,7 @@ export async function batchSearchAndIngest(
 }
 
 export interface SearchConfig {
-  sources?: Array<'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'>
+  sources?: PaperSources
   maxResults?: number
   includePreprints?: boolean
   fromYear?: number

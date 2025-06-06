@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { Sparkles, Search, FileText, CheckCircle, Brain, Quote } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 import type { GenerationProgress } from "@/types/simplified"
@@ -30,7 +30,7 @@ export function ProcessingScreen({
   const [displayMessage, setDisplayMessage] = useState("Initializing...")
 
   // Map backend stages to UI steps, including a UI-specific initial step
-  const steps: Step[] = [
+  const steps: Step[] = useMemo(() => [
     { 
       stage: 'ui_analyzing', // Pseudo-stage for the initial UI analyzing phase
       message: "Analyzing your research topic...", // Main message for this phase
@@ -67,7 +67,7 @@ export function ProcessingScreen({
       icon: Sparkles, // Icon for completion
       fallbackMessage: "Finalizing document structure and formatting..." // Text for the step list item
     },
-  ]
+  ], [])
 
   // Update step and progress based on backend progress or connection state
   useEffect(() => {
@@ -118,7 +118,7 @@ export function ProcessingScreen({
       const firstStep = steps[0];
       setDisplayMessage(firstStep ? firstStep.message : "Analyzing your research topic..."); 
     }
-  }, [progress, isConnected, error]); 
+  }, [steps, progress, isConnected, error]); 
 
   // Fallback simulation for progress bar and step advancement if backend is silent
   useEffect(() => {
@@ -127,10 +127,10 @@ export function ProcessingScreen({
       // `currentStep` should be 0 initially (set by the other useEffect).
       const interval = setInterval(() => {
         setDisplayProgress((prevDisplayProgress) => {
-          if (prevDisplayProgress >= 95 && (!progress || (progress && progress.stage !== 'complete'))) {
+          if (prevDisplayProgress >= 95 && (!progress || (progress && (progress as GenerationProgress).stage !== 'complete'))) {
             return prevDisplayProgress; 
           }
-          if (prevDisplayProgress >= 100 && progress && progress.stage === 'complete') {
+          if (prevDisplayProgress >= 100 && progress && (progress as GenerationProgress).stage === 'complete') {
             return 100;
           }
           
@@ -216,7 +216,7 @@ export function ProcessingScreen({
               const StepIcon = stepItem.icon
               const isActive = index === currentStep
               const isComplete = index < currentStep || 
-                               (progress && progress.stage === 'complete' && 
+                               (progress && (progress as GenerationProgress).stage === 'complete' && 
                                 displayProgress === 100 && 
                                 stepItem.stage === 'complete')
 

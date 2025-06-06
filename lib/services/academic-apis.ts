@@ -10,7 +10,7 @@ export interface AcademicPaper {
   pdf_url?: string
   citationCount: number
   authors?: string[]
-  source: 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'
+  source: PaperSource
 }
 
 export interface SearchOptions {
@@ -23,6 +23,7 @@ export interface SearchOptions {
 
 // Import shared hash utility
 import { collisionResistantHash } from '@/lib/utils/hash'
+import { PaperSource } from '@/types/simplified'
 
 // API Response interfaces for better typing
 interface OpenAlexWork {

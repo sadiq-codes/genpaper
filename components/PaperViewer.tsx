@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -50,20 +50,7 @@ export default function PaperViewer({ projectId, className }: PaperViewerProps) 
     return new Set(citations?.map(cite => cite.match(/\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_]+)\]/)?.[1]).filter(Boolean)).size
   }, [latestVersion?.content])
 
-  useEffect(() => {
-    loadProject()
-  }, [projectId])
-  
-  // Cleanup timer on unmount
-  useEffect(() => {
-    return () => {
-      if (copyTimer.current) {
-        clearTimeout(copyTimer.current)
-      }
-    }
-  }, [])
-
-  const loadProject = async () => {
+  const loadProject = useCallback(async () => {
     try {
       setLoading(true)
       const response = await fetch(
@@ -92,7 +79,20 @@ export default function PaperViewer({ projectId, className }: PaperViewerProps) 
     } finally {
       setLoading(false)
     }
-  }
+  }, [projectId])
+
+  useEffect(() => {
+    loadProject()
+  }, [projectId, loadProject])
+  
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current) {
+        clearTimeout(copyTimer.current)
+      }
+    }
+  }, [])
 
   const copyToClipboard = async (text: string) => {
     try {

@@ -1,4 +1,4 @@
-import { streamText, generateText, tool } from 'ai'
+import { streamText } from 'ai'
 import { ai } from '@/lib/ai/vercel-client'
 import { hybridSearchPapers, searchPaperChunks } from '@/lib/db/papers'
 import { getPapersByIds } from '@/lib/db/library'
@@ -14,28 +14,16 @@ import type {
 } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
 import { ingestPaperWithChunks } from '@/lib/db/papers'
-import { addCitation, setCitationContext, clearCitationContext, type CitationPayload } from '@/lib/ai/tools/addCitation'
+import { addCitation, setCitationContext, clearCitationContext } from '@/lib/ai/tools/addCitation'
 import { z } from 'zod'
 
 // Types for tool call events
-interface ToolCallEvent {
-  type: 'tool-call'
-  toolCallId: string
-  toolName: string
-  args: any
-}
-
-interface ToolResultEvent {
-  type: 'tool-result'
-  toolCallId: string
-  result: any
-}
 
 interface CapturedToolCall {
   toolCallId: string
   toolName: string
-  args: any
-  result: any
+  args: Record<string, unknown>
+  result: Record<string, unknown> | null
   timestamp: string
   validated: boolean
   error?: string
@@ -595,7 +583,7 @@ async function streamPaperGeneration(
   const capturedToolCalls: CapturedToolCall[] = []
   
   // Validation function for citation tool calls
-  const validateCitationArgs = (args: any): { valid: boolean; error?: string } => {
+  const validateCitationArgs = (args: Record<string, unknown>): { valid: boolean; error?: string } => {
     try {
       // Validate against the citation schema from addCitation tool
       const citationSchema = z.object({
@@ -709,7 +697,7 @@ async function streamPaperGeneration(
           toolCall.result = delta.result
           
           // Log successful tool call persistence
-          if (toolCall.toolName === 'addCitation' && toolCall.result?.success && toolCall.validated) {
+          if (toolCall.toolName === 'addCitation' && toolCall.result && toolCall.result.success && toolCall.validated) {
             console.log(`✅ Citation tool call persisted successfully:`, {
               citationId: toolCall.result.citationId,
               citationKey: toolCall.result.citationKey,
@@ -739,7 +727,7 @@ async function streamPaperGeneration(
   
   // Log comprehensive summary of tool calls
   const validatedCalls = capturedToolCalls.filter(tc => tc.validated)
-  const successfulCalls = capturedToolCalls.filter(tc => tc.validated && tc.result?.success)
+  const successfulCalls = capturedToolCalls.filter(tc => tc.validated && tc.result && tc.result.success)
   const failedCalls = capturedToolCalls.filter(tc => tc.validated && tc.result && !tc.result.success)
   const invalidCalls = capturedToolCalls.filter(tc => !tc.validated)
   
@@ -788,12 +776,12 @@ async function streamPaperGeneration(
     .filter(tc => tc.toolName === 'addCitation' && tc.validated && tc.result?.success)
     .map(tc => {
       // Find where the citation appears in the content
-      const citationKey = tc.result.citationKey
+      const citationKey = tc.result!.citationKey
       const citationPattern = new RegExp(`\\[CITE:\\s*${citationKey}\\]`, 'gi')
       const citationMatch = citationPattern.exec(content)
       
       return {
-        paperId: citationKey, // Use the citation key as the paper ID
+        paperId: citationKey as string, // Use the citation key as the paper ID
         citationText: citationMatch ? citationMatch[0] : `[CITE:${citationKey}]`,
         positionStart: citationMatch ? citationMatch.index : undefined,
         positionEnd: citationMatch ? citationMatch.index + citationMatch[0].length : undefined,
@@ -858,7 +846,7 @@ async function streamPaperGeneration(
     successfulCitations: toolCitations.length,
     toolCallTimestamps: capturedToolCalls.map(tc => tc.timestamp),
     errors: [
-      ...failedCalls.map(tc => ({ type: 'failed', toolCallId: tc.toolCallId, error: tc.result?.error })),
+      ...failedCalls.map(tc => ({ type: 'failed', toolCallId: tc.toolCallId, error: tc.result?.error as string })),
       ...invalidCalls.map(tc => ({ type: 'invalid', toolCallId: tc.toolCallId, error: tc.error }))
     ]
   }

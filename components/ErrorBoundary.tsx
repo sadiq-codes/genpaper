@@ -164,7 +164,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 Oops! Something went wrong
               </CardTitle>
               <p className="text-gray-600 mt-2">
-                We encountered an unexpected error. Don't worry, we've been notified and are working on a fix.
+                We encountered an unexpected error. Don&apos;t worry, we&apos;ve been notified and are working on a fix.
               </p>
             </CardHeader>
             

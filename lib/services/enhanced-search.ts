@@ -2,7 +2,7 @@ import { searchAndIngestPapers, type AggregatedSearchOptions, type RankedPaper }
 import { semanticSearchPapers, hybridSearchPapers } from '@/lib/db/papers'
 import { generatePaperUUID } from '@/lib/db/papers'
 import { createClient } from '@/lib/supabase/server'
-import type { PaperWithAuthors } from '@/types/simplified'
+import type { PaperWithAuthors, PaperSources } from '@/types/simplified'
 
 // Enhanced search options that combine vector and academic search
 export interface EnhancedSearchOptions extends AggregatedSearchOptions {
@@ -394,7 +394,7 @@ export async function quickAcademicSearch(query: string, maxResults: number = 10
     fallbackToAcademic: true,
     minResults: Math.min(5, maxResults),
     combineResults: true,
-    sources: ['openalex', 'crossref', 'semantic_scholar']
+    sources: ['openalex', 'crossref', 'semantic_scholar'] as PaperSources
   })
   
   return result.papers
@@ -409,7 +409,7 @@ export async function refreshAcademicContent(
   
   const result = await searchAndIngestPapers(query, {
     ...options,
-    sources: ['openalex', 'crossref', 'semantic_scholar'],
+    sources: ['openalex', 'crossref', 'semantic_scholar'] as PaperSources,
     maxResults: 50 // Get more for refresh
   })
   

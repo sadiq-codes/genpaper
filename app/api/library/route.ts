@@ -1,14 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { 
-  addPaperToLibrary, 
   removePaperFromLibrary, 
-  getUserLibraryPapers,
   updateLibraryPaperNotes,
-  isInLibrary
 } from '@/lib/db/library'
-import { getPaper, checkPaperExists } from '@/lib/db/papers'
-import type { AddToLibraryRequest, AddToLibraryResponse, LibraryFilters } from '@/types/simplified'
+
+interface PaperAuthorRelation {
+  ordinal: number
+  authors: {
+    id: string
+    name: string
+  }
+}
+
+interface PaperData {
+  id: string
+  title: string
+  abstract: string | null
+  publication_date: string | null
+  venue: string | null
+  doi: string | null
+  url: string | null
+  pdf_url: string | null
+  metadata: Record<string, unknown> | null
+  source: string | null
+  citation_count: number | null
+  impact_score: number | null
+  created_at: string
+  paper_authors?: PaperAuthorRelation[]
+}
 
 // GET - Retrieve user's library papers
 export async function GET(request: NextRequest) {
@@ -83,7 +103,8 @@ export async function GET(request: NextRequest) {
     } else if (sortBy === 'citation_count') {
       query = query.order('citation_count', { foreignTable: 'papers', ascending: sortOrder === 'asc' })
     } else {
-      query = query.order(sortBy as any, { ascending: sortOrder === 'asc' })
+      // Default to added_at
+      query = query.order('added_at', { ascending: sortOrder === 'asc' })
     }
 
     const { data: papers, error } = await query
@@ -91,14 +112,17 @@ export async function GET(request: NextRequest) {
     if (error) throw error
 
     // Transform the data to include author names
-    const transformedPapers = (papers || []).map((item: any) => ({
-      ...item,
-      paper: {
-        ...item.papers,
-        authors: item.papers.paper_authors?.sort((a: any, b: any) => a.ordinal - b.ordinal).map((pa: any) => pa.authors) || [],
-        author_names: item.papers.paper_authors?.sort((a: any, b: any) => a.ordinal - b.ordinal).map((pa: any) => pa.authors.name) || []
+    const transformedPapers = (papers || []).map((item) => {
+      const paperData = item.papers as unknown as PaperData
+      return {
+        ...item,
+        paper: {
+          ...paperData,
+          authors: paperData.paper_authors?.sort((a: PaperAuthorRelation, b: PaperAuthorRelation) => a.ordinal - b.ordinal).map((pa: PaperAuthorRelation) => pa.authors) || [],
+          author_names: paperData.paper_authors?.sort((a: PaperAuthorRelation, b: PaperAuthorRelation) => a.ordinal - b.ordinal).map((pa: PaperAuthorRelation) => pa.authors.name) || []
+        }
       }
-    }))
+    })
 
     return NextResponse.json({ papers: transformedPapers }, {
       headers: {

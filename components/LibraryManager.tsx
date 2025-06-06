@@ -9,10 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
+
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+
 import { 
   BookOpen, 
   Search, 
@@ -26,15 +26,12 @@ import {
   Quote,
   FolderPlus,
   Folder,
-  Share2,
-  Eye,
+
   X,
   Check,
-  Loader2,
   Upload,
   Settings,
-  Star,
-  AlertCircle
+  Star
 } from 'lucide-react'
 import { format } from 'date-fns'
 import type { 
@@ -42,7 +39,9 @@ import type {
   LibraryCollection, 
   Paper,
   LibraryFilters,
-  SearchPapersResponse
+  PaperWithAuthors,
+  PaperSources,
+  PaperSource
 } from '@/types/simplified'
 import FileUpload from '@/components/FileUpload'
 import React from 'react'
@@ -57,7 +56,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
   const [libraryPapers, setLibraryPapers] = useState<LibraryPaper[]>([])
   const [collections, setCollections] = useState<LibraryCollection[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error,setError] = useState<string | null>(null)
 
   // Search and filters
   const [searchQuery, setSearchQuery] = useState('')
@@ -71,7 +70,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
   
   // Advanced search options
   const [searchOptions, setSearchOptions] = useState({
-    sources: ['openalex', 'crossref', 'semantic_scholar'] as Array<'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'>,
+    sources: ['openalex', 'crossref', 'semantic_scholar'] as PaperSources,
     maxResults: 25,
     includePreprints: true,
     fromYear: undefined as number | undefined,
@@ -79,9 +78,8 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
     openAccessOnly: false
   })
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false)
-
   // UI state
-  const [selectedPapers, setSelectedPapers] = useState<Set<string>>(new Set())
+  //  const [selectedPapers, setSelectedPapers] = useState<Set<string>>(new Set())
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [showCollectionDialog, setShowCollectionDialog] = useState(false)
   const [editingNotes, setEditingNotes] = useState<string | null>(null)
@@ -94,6 +92,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
   useEffect(() => {
     loadLibraryData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters])
 
   const loadLibraryData = async () => {
@@ -137,7 +136,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
       setLoading(false)
     }
   }
-
+  console.log(error)
   const searchOnlinePapers = async (query: string) => {
     if (!query.trim()) return
 
@@ -166,23 +165,23 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
         const data = await response.json()
         if (data.success) {
           // Transform the results to match Paper interface
-          const transformedPapers: Paper[] = data.papers.map((paper: any) => ({
-            id: paper.canonical_id,
+          const transformedPapers: PaperWithAuthors[] = data.papers.map((paper: PaperWithAuthors) => ({
+            id: paper.id,
             title: paper.title,
             abstract: paper.abstract,
-            publication_date: paper.year ? `${paper.year}-01-01` : null,
+            publication_date: paper.publication_date ? `${paper.publication_date}-01-01` : null,
             venue: paper.venue,
             doi: paper.doi,
             url: paper.url,
             pdf_url: null,
             metadata: {
-              citationCount: paper.citationCount,
-              relevanceScore: paper.relevanceScore,
+              citation_count: paper.citation_count,
+              impact_score: paper.impact_score,
               source: paper.source
             },
             source: paper.source,
-            citation_count: paper.citationCount || 0,
-            impact_score: Math.max(paper.relevanceScore || 0, 0),
+            citation_count: paper.citation_count || 0,
+            impact_score: Math.max(paper.impact_score || 0, 0),
             created_at: new Date().toISOString(),
             authors: [],
             author_names: []
@@ -398,8 +397,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
       console.error('Error creating collection:', err)
     }
   }
-
-  const handleUploadComplete = async (uploadedPapers: any[]) => {
+  const handleUploadComplete = async () => {
     // Refresh library data to show newly uploaded papers
     await loadLibraryData()
   }
@@ -439,7 +437,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
   const PaperCard = ({ paper, isSearchResult = false }: { paper: Paper | LibraryPaper, isSearchResult?: boolean }) => {
     const actualPaper = 'paper' in paper ? paper.paper : paper
     const libraryPaper = 'paper' in paper ? paper : null
-    const isInLibrary = !isSearchResult
+    // const isInLibrary = !isSearchResult
     const isProcessing = isSearchResult && processingPapers.has(actualPaper.id)
     const isRemoving = removingPapers.has(actualPaper.id)
 
@@ -541,15 +539,15 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
               {/* Show additional metadata for search results */}
               {isSearchResult && actualPaper.metadata && (
                 <React.Fragment>
-                  {(actualPaper.metadata as any).source && (
+                  {(actualPaper.metadata as { source?: string }).source && (
                     <Badge variant="outline" className="text-xs">
-                      {(actualPaper.metadata as any).source}
+                      {(actualPaper.metadata as { source: string }).source}
                     </Badge>
                   )}
-                  {(actualPaper.metadata as any).relevanceScore && (
+                  {(actualPaper.metadata as { relevanceScore?: number }).relevanceScore && (
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
                       <Star className="h-3 w-3" />
-                      {((actualPaper.metadata as any).relevanceScore as number).toFixed(2)}
+                      {(actualPaper.metadata as { relevanceScore: number }).relevanceScore.toFixed(2)}
                     </span>
                   )}
                 </React.Fragment>
@@ -732,17 +730,17 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                                 <input
                                   type="checkbox"
                                   id={source.id}
-                                  checked={searchOptions.sources.includes(source.id as any)}
+                                  checked={searchOptions.sources.includes(source.id as PaperSource)}
                                   onChange={(e) => {
                                     if (e.target.checked) {
                                       setSearchOptions(prev => ({
                                         ...prev,
-                                        sources: [...prev.sources, source.id as any]
+                                        sources: [...prev.sources, source.id as PaperSource]
                                       }))
                                     } else {
                                       setSearchOptions(prev => ({
                                         ...prev,
-                                        sources: prev.sources.filter(s => s !== source.id)
+                                        sources: prev.sources.filter(s => s !== source.id as PaperSource)
                                       }))
                                     }
                                   }}
@@ -841,7 +839,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                       </span>
                       {searchQuery && (
                         <span className="text-sm text-muted-foreground hidden sm:inline">
-                          for "{searchQuery}"
+                          for &quot;{searchQuery}&quot;
                         </span>
                       )}
                     </div>
@@ -860,7 +858,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                   {searchResults.length === 0 && !isSearching && searchQuery && (
                     <div className="col-span-full text-center py-8 text-muted-foreground">
                       <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p>No papers found for "{searchQuery}"</p>
+                      <p>No papers found for &quot;{searchQuery}&quot;</p>
                     </div>
                   )}
                   

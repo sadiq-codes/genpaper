@@ -4,12 +4,11 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { 
   History, 
   Search, 
@@ -17,16 +16,13 @@ import {
   Trash2, 
   MoreVertical,
   Calendar,
-  Clock,
   FileText,
   Quote,
   Download,
   Share2,
-  Filter,
   SortAsc,
   SortDesc,
   Plus,
-  BookOpen
 } from 'lucide-react'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { format } from 'date-fns'
@@ -124,7 +120,7 @@ export default function HistoryManager({ className }: HistoryManagerProps) {
     if (navigator.share) {
       try {
         await navigator.share(shareData)
-      } catch (err) {
+      } catch {
         // Fall back to copying URL
         navigator.clipboard.writeText(shareData.url)
       }

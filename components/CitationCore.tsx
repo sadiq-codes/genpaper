@@ -233,10 +233,10 @@ export default function CitationCore({
     const paperCslData: CSLItem[] = papers.map(paper => {
       try {
         if (paper.csl_json && validateCSL(paper.csl_json as CSLItem)) {
-          return fixCSL(paper.csl_json as Record<string, unknown>)
+          return fixCSL(paper.csl_json as unknown as Record<string, unknown>)
         }
         if (paper.csl_json) {
-          return fixCSL(paper.csl_json as Record<string, unknown>)
+          return fixCSL(paper.csl_json as unknown as Record<string, unknown>)
         }
         return paperToCSL(paper)
       } catch (error) {

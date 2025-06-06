@@ -1,15 +1,12 @@
 "use client"
 
-import { useState } from "react"
 import Link from "next/link"
-import { useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 
 import {
   Menu,
   Sparkles,
 } from "lucide-react"
-import { supabase } from "@/lib/supabase/client"
 
 interface NavbarProps {
   user?: {
@@ -24,32 +21,7 @@ interface NavbarProps {
   sidebarOpen: boolean
 }
 
-export function Navbar({ user, onToggleSidebar, sidebarOpen }: NavbarProps) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const [searchOpen, setSearchOpen] = useState(false)
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    router.push("/login")
-  }
-
-  const getUserInitials = () => {
-    if (user?.user_metadata?.full_name) {
-      return user.user_metadata.full_name
-        .split(" ")
-        .map((name) => name[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2)
-    }
-    return user?.email?.slice(0, 2).toUpperCase() || "U"
-  }
-
-  const getDisplayName = () => {
-    return user?.user_metadata?.full_name || user?.email || "User"
-  }
-
+export function Navbar({ onToggleSidebar, sidebarOpen }: NavbarProps) {
   return (
     <nav className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-gray-200 z-50 px-4">
       <div className="flex items-center justify-between h-full">

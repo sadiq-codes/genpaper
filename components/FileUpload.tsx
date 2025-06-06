@@ -3,9 +3,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
@@ -35,8 +32,12 @@ interface UploadedFile {
   }
 }
 
+interface UploadedPaperWithData extends UploadedFile {
+  extractedData: NonNullable<UploadedFile['extractedData']>
+}
+
 interface FileUploadProps {
-  onUploadComplete?: (papers: any[]) => void
+  onUploadComplete?: (papers: Array<UploadedPaperWithData['extractedData']>) => void
   className?: string
 }
 
@@ -47,6 +48,17 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
   const [globalProgress, setGlobalProgress] = useState(0)
 
   const generateId = () => Math.random().toString(36).substr(2, 9)
+
+  const addFiles = useCallback((newFiles: File[]) => {
+    const uploadedFiles: UploadedFile[] = newFiles.map(file => ({
+      file,
+      id: generateId(),
+      status: 'pending',
+      progress: 0
+    }))
+    
+    setFiles(prev => [...prev, ...uploadedFiles])
+  }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -70,7 +82,7 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
     if (pdfFiles.length > 0) {
       addFiles(pdfFiles)
     }
-  }, [])
+  }, [addFiles])
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files
@@ -82,18 +94,7 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
         addFiles(pdfFiles)
       }
     }
-  }, [])
-
-  const addFiles = (newFiles: File[]) => {
-    const uploadedFiles: UploadedFile[] = newFiles.map(file => ({
-      file,
-      id: generateId(),
-      status: 'pending',
-      progress: 0
-    }))
-    
-    setFiles(prev => [...prev, ...uploadedFiles])
-  }
+  }, [addFiles])
 
   const removeFile = useCallback((fileId: string) => {
     setFiles(prev => prev.filter(f => f.id !== fileId))
@@ -170,7 +171,7 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
     setGlobalProgress((completedFiles / totalFiles) * 100)
 
     // Notify parent of successful uploads
-    const successfulUploads = files.filter(f => f.status === 'success')
+    const successfulUploads = files.filter((f): f is UploadedPaperWithData => f.status === 'success' && f.extractedData !== undefined)
     if (successfulUploads.length > 0 && onUploadComplete) {
       onUploadComplete(successfulUploads.map(f => f.extractedData))
     }

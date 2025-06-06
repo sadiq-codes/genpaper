@@ -3,7 +3,6 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import LibraryManager from '@/components/LibraryManager'
 import { Suspense } from 'react'
-import { BookOpen } from 'lucide-react'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 export const metadata: Metadata = {

@@ -1,5 +1,13 @@
 import { createClient } from '@/lib/supabase/client'
-import type { Citation, CitationStatus, CitationSourceType, ApiResponse } from '@/app/(dashboard)/projects/[projectId]/types'
+import type { Citation } from '@/types/database'
+
+type CitationStatus = 'pending' | 'accepted' | 'rejected'
+
+interface ApiResponse<T = void> {
+  success: boolean
+  error?: string
+  data?: T
+}
 
 export interface CitationsResponse extends ApiResponse {
   citations?: Citation[]

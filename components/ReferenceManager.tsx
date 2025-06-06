@@ -26,12 +26,13 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { format } from 'date-fns'
 import CitationEditor from './CitationEditor'
+import type { CSLItem } from '@/lib/utils/csl'
 
 interface Citation {
   id: string
   project_id: string
   key: string
-  csl_json: Record<string, any>
+  csl_json: CSLItem
   created_at: string
   updated_at: string
   project_title?: string
@@ -54,7 +55,7 @@ interface ReferenceManagerProps {
 type SortField = 'title' | 'author' | 'year' | 'created_at' | 'usage_count'
 type SortDirection = 'asc' | 'desc'
 
-export default function ReferenceManager({ className, userId }: ReferenceManagerProps) {
+export default function ReferenceManager({ className }: ReferenceManagerProps) {
   const [citations, setCitations] = useState<Citation[]>([])
   const [filteredCitations, setFilteredCitations] = useState<Citation[]>([])
   const [selectedCitations, setSelectedCitations] = useState<Set<string>>(new Set())
@@ -108,16 +109,16 @@ export default function ReferenceManager({ className, userId }: ReferenceManager
       if (citationsError) throw citationsError
 
       // Transform data
-      const transformedCitations = (citationsData || []).map((item: any) => ({
+      const transformedCitations = (citationsData || []).map((item: { project: { topic: string }; usage_count: Array<{ count: number }> }) => ({
         ...item,
         project_title: item.project?.topic,
-        usage_count: item.usage_count[0]?.count || 0
+        usage_count: (item.usage_count as Array<{ count: number }>)?.[0]?.count || 0
       }))
 
-      setCitations(transformedCitations)
+      setCitations(transformedCitations as unknown as Citation[])
       
       // Calculate stats
-      calculateStats(transformedCitations)
+      calculateStats(transformedCitations as unknown as Citation[])
       
     } catch (err) {
       console.error('Error loading citations:', err)
@@ -185,7 +186,7 @@ export default function ReferenceManager({ className, userId }: ReferenceManager
 
       if (error) throw error
 
-      const usage = (data || []).map((item: any) => ({
+      const usage = (data || []).map((item: { project_id: string; project: { topic: string }; section: string; context: string; created_at: string }) => ({
         project_id: item.project_id,
         project_title: item.project?.topic || 'Unknown Project',
         section: item.section,
@@ -210,11 +211,11 @@ export default function ReferenceManager({ className, userId }: ReferenceManager
         const csl = citation.csl_json
         return (
           csl.title?.toLowerCase().includes(query) ||
-          csl.author?.some((author: any) => 
+          csl.author?.some((author: { family: string; given: string }) => 
             author.family?.toLowerCase().includes(query) ||
             author.given?.toLowerCase().includes(query)
           ) ||
-          csl.journal?.toLowerCase().includes(query) ||
+          csl['container-title']?.toLowerCase().includes(query) ||
           csl.DOI?.toLowerCase().includes(query)
         )
       })
@@ -244,7 +245,7 @@ export default function ReferenceManager({ className, userId }: ReferenceManager
 
     // Apply sorting
     filtered.sort((a, b) => {
-      let aValue: any, bValue: any
+      let aValue: Date | string | number, bValue: Date | string | number
 
       switch (sortField) {
         case 'title':
@@ -734,7 +735,7 @@ export default function ReferenceManager({ className, userId }: ReferenceManager
               <div className="p-4 bg-muted rounded-lg">
                 <h4 className="font-medium">{selectedCitation.csl_json.title}</h4>
                 <p className="text-sm text-muted-foreground">
-                  {selectedCitation.csl_json.author?.map((a: any) => a.family).join(', ')}
+                  {selectedCitation.csl_json.author?.map((a: { family: string }) => a.family).join(', ')}
                 </p>
               </div>
             )}
@@ -749,7 +750,7 @@ export default function ReferenceManager({ className, userId }: ReferenceManager
                     </div>
                     {usage.context && (
                       <p className="text-xs text-muted-foreground mb-2">
-                        "{usage.context}"
+                        &ldquo;{usage.context}&rdquo;
                       </p>
                     )}
                     <p className="text-xs text-muted-foreground">
@@ -760,7 +761,7 @@ export default function ReferenceManager({ className, userId }: ReferenceManager
                 
                 {citationUsage.length === 0 && (
                   <p className="text-center text-muted-foreground py-4">
-                    This citation hasn't been used in any projects yet
+                    This citation hasn&apos;t been used in any projects yet
                   </p>
                 )}
               </div>
@@ -780,7 +781,7 @@ export default function ReferenceManager({ className, userId }: ReferenceManager
         onSave={(updatedCitation) => {
           // Update local state
           setCitations(prev => prev.map(c => 
-            c.id === updatedCitation.id ? updatedCitation : c
+            c.id === updatedCitation.id ? updatedCitation as unknown as Citation : c
           ))
           setShowEditDialog(false)
           setSelectedCitation(null)
@@ -839,7 +840,7 @@ function CitationCard({ citation, isSelected, onToggleSelection, onViewUsage, on
             </div>
             
             <div className="text-sm text-muted-foreground">
-              {csl.author?.map((author: any) => 
+              {csl.author?.map((author: { given: string; family: string }) => 
                 `${author.given || ''} ${author.family || ''}`.trim()
               ).join(', ') || 'Unknown authors'}
             </div>
@@ -873,8 +874,8 @@ function CitationCard({ citation, isSelected, onToggleSelection, onViewUsage, on
               )}
             </div>
             
-            {csl.journal && (
-              <p className="text-sm italic">{csl.journal}</p>
+            {(csl as { journal?: string }).journal && (
+              <p className="text-sm italic">{(csl as { journal?: string }).journal}</p>
             )}
             
             {csl.DOI && (

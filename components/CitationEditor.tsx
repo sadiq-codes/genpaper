@@ -2,27 +2,19 @@
 
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { 
-  Save, 
-  X, 
   Plus, 
   Minus, 
   AlertCircle, 
-  CheckCircle2,
-  Calendar,
   User,
-  Building,
-  ExternalLink,
-  FileText,
   Edit
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
@@ -58,19 +50,18 @@ interface CSLItem {
   abstract?: string
   keyword?: string
   note?: string
-  [key: string]: any
 }
 
 interface CitationEditorProps {
   citation: {
     id: string
     key: string
-    csl_json: Record<string, any>
+    csl_json: CSLItem
     project_id: string
   } | null
   isOpen: boolean
   onClose: () => void
-  onSave: (updatedCitation: any) => void
+  onSave: (updatedCitation: { id: string; key: string; csl_json: CSLItem; project_id: string }) => void
 }
 
 const CSL_TYPES = [
@@ -177,8 +168,9 @@ export default function CitationEditor({ citation, isOpen, onClose, onSave }: Ci
 
       // Remove empty fields
       Object.keys(cleanedData).forEach(key => {
-        if (cleanedData[key] === '' || cleanedData[key] === null) {
-          delete cleanedData[key]
+        const K = key as keyof CSLItem;
+        if (cleanedData[K] === '' || cleanedData[K] === null) {
+          delete cleanedData[K]
         }
       })
 
@@ -230,7 +222,7 @@ export default function CitationEditor({ citation, isOpen, onClose, onSave }: Ci
 
   // Handle date changes
   const updateYear = (year: string) => {
-    const yearNum = parseInt(year)
+    const yearNum = parseInt(year, 10)
     if (!isNaN(yearNum)) {
       setFormData({
         ...formData,
@@ -249,86 +241,66 @@ export default function CitationEditor({ citation, isOpen, onClose, onSave }: Ci
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Edit className="h-5 w-5" />
-            {citation ? 'Edit Citation' : 'Add Citation'}
+            {citation ? 'Edit Citation' : 'Create New Citation'}
           </DialogTitle>
           <DialogDescription>
-            Edit the citation metadata. All changes will be reflected in your bibliography.
+            Modify the citation details below. Fields marked with an asterisk are required.
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[60vh] pr-4">
+        <ScrollArea className="max-h-[60vh] p-4">
           <div className="space-y-6">
-            {/* Error Messages */}
-            {error && (
-              <Alert>
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
+            {/* Validation Errors */}
             {validationErrors.length > 0 && (
-              <Alert>
+              <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
-                  <div className="space-y-1">
-                    <p className="font-medium">Please fix the following errors:</p>
-                    <ul className="list-disc list-inside text-sm">
-                      {validationErrors.map((error, index) => (
-                        <li key={index}>{error}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  <ul className="list-disc pl-5">
+                    {validationErrors.map((err, i) => <li key={i}>{err}</li>)}
+                  </ul>
                 </AlertDescription>
               </Alert>
             )}
 
-            {/* Basic Information */}
+            {/* Core Fields */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Basic Information
-                </CardTitle>
+                <CardTitle className="text-lg">Core Information</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="type">Publication Type *</Label>
                   <Select
                     value={formData.type}
                     onValueChange={(value) => setFormData({ ...formData, type: value })}
                   >
-                    <SelectTrigger>
-                      <SelectValue />
+                    <SelectTrigger id="type">
+                      <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent>
                       {CSL_TYPES.map(type => (
                         <SelectItem key={type} value={type}>
-                          {type.charAt(0).toUpperCase() + type.slice(1).replace('-', ' ')}
+                          {type.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="title">Title *</Label>
-                  <Textarea
+                  <Input
                     id="title"
                     value={formData.title || ''}
                     onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    placeholder="Enter the publication title"
-                    rows={2}
                   />
                 </div>
-
-                <div>
-                  <Label htmlFor="abstract">Abstract</Label>
-                  <Textarea
-                    id="abstract"
-                    value={formData.abstract || ''}
-                    onChange={(e) => setFormData({ ...formData, abstract: e.target.value })}
-                    placeholder="Enter the abstract (optional)"
-                    rows={3}
+                <div className="space-y-2">
+                  <Label>Year *</Label>
+                  <Input
+                    type="number"
+                    value={currentYear}
+                    onChange={(e) => updateYear(e.target.value)}
+                    placeholder="YYYY"
                   />
                 </div>
               </CardContent>
@@ -337,55 +309,43 @@ export default function CitationEditor({ citation, isOpen, onClose, onSave }: Ci
             {/* Authors */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <User className="h-4 w-4" />
-                  Authors *
-                </CardTitle>
+                <CardTitle className="text-lg">Authors *</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-4">
                 {formData.author?.map((author, index) => (
-                  <div key={index} className="flex items-center gap-2 p-3 border rounded-lg">
-                    <div className="flex-1 grid grid-cols-2 gap-2">
-                      <div>
-                        <Label className="text-xs">Given Name</Label>
-                        <Input
+                  <div key={index} className="flex items-start gap-2 p-2 border rounded">
+                    <User className="h-5 w-5 mt-2 text-muted-foreground" />
+                    <div className="flex-grow space-y-2">
+                       <div className="flex gap-2">
+                         <Input
+                          placeholder="Given Name"
                           value={author.given || ''}
                           onChange={(e) => updateAuthor(index, 'given', e.target.value)}
-                          placeholder="First name"
-                          size="sm"
                         />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Family Name</Label>
                         <Input
+                          placeholder="Family Name"
                           value={author.family || ''}
                           onChange={(e) => updateAuthor(index, 'family', e.target.value)}
-                          placeholder="Last name"
-                          size="sm"
                         />
-                      </div>
+                       </div>
+                       <Input
+                        placeholder="Or, Literal Name (e.g., 'OpenAI Team')"
+                        value={author.literal || ''}
+                        onChange={(e) => updateAuthor(index, 'literal', e.target.value)}
+                      />
                     </div>
                     <Button
-                      type="button"
                       variant="ghost"
-                      size="sm"
+                      size="icon"
                       onClick={() => removeAuthor(index)}
                       disabled={(formData.author?.length || 0) <= 1}
-                      className="h-8 w-8 p-0"
                     >
                       <Minus className="h-4 w-4" />
                     </Button>
                   </div>
                 ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={addAuthor}
-                  className="w-full"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Author
+                <Button variant="outline" size="sm" onClick={addAuthor}>
+                  <Plus className="h-4 w-4 mr-2" /> Add Author
                 </Button>
               </CardContent>
             </Card>
@@ -393,179 +353,119 @@ export default function CitationEditor({ citation, isOpen, onClose, onSave }: Ci
             {/* Publication Details */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Building className="h-4 w-4" />
-                  Publication Details
-                </CardTitle>
+                <CardTitle className="text-lg">Publication Details</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="year">Publication Year</Label>
-                    <Input
-                      id="year"
-                      type="number"
-                      value={currentYear}
-                      onChange={(e) => updateYear(e.target.value)}
-                      placeholder="2024"
-                      min="1800"
-                      max={new Date().getFullYear() + 10}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="container-title">Journal/Container</Label>
-                    <Input
-                      id="container-title"
-                      value={formData['container-title'] || ''}
-                      onChange={(e) => setFormData({ ...formData, 'container-title': e.target.value })}
-                      placeholder="Journal or conference name"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <Label htmlFor="volume">Volume</Label>
-                    <Input
-                      id="volume"
-                      value={formData.volume || ''}
-                      onChange={(e) => setFormData({ ...formData, volume: e.target.value })}
-                      placeholder="Vol. number"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="issue">Issue</Label>
-                    <Input
-                      id="issue"
-                      value={formData.issue || ''}
-                      onChange={(e) => setFormData({ ...formData, issue: e.target.value })}
-                      placeholder="Issue number"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="page">Page Range</Label>
-                    <Input
-                      id="page"
-                      value={formData.page || ''}
-                      onChange={(e) => setFormData({ ...formData, page: e.target.value })}
-                      placeholder="123-456"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="publisher">Publisher</Label>
-                    <Input
-                      id="publisher"
-                      value={formData.publisher || ''}
-                      onChange={(e) => setFormData({ ...formData, publisher: e.target.value })}
-                      placeholder="Publisher name"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="publisher-place">Publisher Location</Label>
-                    <Input
-                      id="publisher-place"
-                      value={formData['publisher-place'] || ''}
-                      onChange={(e) => setFormData({ ...formData, 'publisher-place': e.target.value })}
-                      placeholder="City, Country"
-                    />
-                  </div>
-                </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="container-title">Journal / Book Title</Label>
+                      <Input
+                        id="container-title"
+                        value={formData['container-title'] || ''}
+                        onChange={(e) => setFormData({ ...formData, 'container-title': e.target.value })}
+                      />
+                    </div>
+                     <div className="space-y-2">
+                      <Label htmlFor="publisher">Publisher</Label>
+                      <Input
+                        id="publisher"
+                        value={formData.publisher || ''}
+                        onChange={(e) => setFormData({ ...formData, publisher: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="volume">Volume</Label>
+                      <Input
+                        id="volume"
+                        value={formData.volume || ''}
+                        onChange={(e) => setFormData({ ...formData, volume: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="issue">Issue</Label>
+                      <Input
+                        id="issue"
+                        value={formData.issue || ''}
+                        onChange={(e) => setFormData({ ...formData, issue: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="page">Pages</Label>
+                      <Input
+                        id="page"
+                        value={formData.page || ''}
+                        onChange={(e) => setFormData({ ...formData, page: e.target.value })}
+                      />
+                    </div>
+                 </div>
               </CardContent>
             </Card>
 
-            {/* Identifiers & Links */}
+            {/* Identifiers */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <ExternalLink className="h-4 w-4" />
-                  Identifiers & Links
-                </CardTitle>
+                <CardTitle className="text-lg">Identifiers</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
-                  <Label htmlFor="doi">DOI</Label>
-                  <Input
-                    id="doi"
-                    value={formData.DOI || ''}
-                    onChange={(e) => setFormData({ ...formData, DOI: e.target.value })}
-                    placeholder="10.1000/xyz123"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="url">URL</Label>
-                  <Input
-                    id="url"
-                    value={formData.URL || ''}
-                    onChange={(e) => setFormData({ ...formData, URL: e.target.value })}
-                    placeholder="https://example.com/article"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="issn">ISSN</Label>
-                    <Input
-                      id="issn"
-                      value={formData.ISSN || ''}
-                      onChange={(e) => setFormData({ ...formData, ISSN: e.target.value })}
-                      placeholder="1234-5678"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="isbn">ISBN</Label>
-                    <Input
-                      id="isbn"
-                      value={formData.ISBN || ''}
-                      onChange={(e) => setFormData({ ...formData, ISBN: e.target.value })}
-                      placeholder="978-0-123456-78-9"
-                    />
-                  </div>
-                </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="DOI">DOI</Label>
+                      <Input
+                        id="DOI"
+                        value={formData.DOI || ''}
+                        onChange={(e) => setFormData({ ...formData, DOI: e.target.value })}
+                        placeholder="e.g., 10.1109/5.771073"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="URL">URL</Label>
+                      <Input
+                        id="URL"
+                        value={formData.URL || ''}
+                        onChange={(e) => setFormData({ ...formData, URL: e.target.value })}
+                        placeholder="https://example.com/paper.pdf"
+                      />
+                    </div>
+                 </div>
               </CardContent>
             </Card>
 
-            {/* Additional Fields */}
+            {/* Abstract & Notes */}
             <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Additional Information</CardTitle>
+               <CardHeader>
+                <CardTitle className="text-lg">Abstract & Notes</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div>
-                  <Label htmlFor="keyword">Keywords</Label>
-                  <Input
-                    id="keyword"
-                    value={formData.keyword || ''}
-                    onChange={(e) => setFormData({ ...formData, keyword: e.target.value })}
-                    placeholder="keyword1, keyword2, keyword3"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="note">Notes</Label>
-                  <Textarea
-                    id="note"
-                    value={formData.note || ''}
-                    onChange={(e) => setFormData({ ...formData, note: e.target.value })}
-                    placeholder="Additional notes about this citation"
-                    rows={2}
-                  />
-                </div>
+                 <div className="space-y-2">
+                    <Label htmlFor="abstract">Abstract</Label>
+                    <Textarea
+                      id="abstract"
+                      value={formData.abstract || ''}
+                      onChange={(e) => setFormData({ ...formData, abstract: e.target.value })}
+                      rows={5}
+                    />
+                  </div>
+                   <div className="space-y-2">
+                    <Label htmlFor="note">Notes</Label>
+                    <Textarea
+                      id="note"
+                      value={formData.note || ''}
+                      onChange={(e) => setFormData({ ...formData, note: e.target.value })}
+                      rows={3}
+                    />
+                  </div>
               </CardContent>
             </Card>
           </div>
         </ScrollArea>
-
-        <DialogFooter>
+        
+        <DialogFooter className="pt-4">
+          {error && <p className="text-sm text-red-500">{error}</p>}
           <Button variant="outline" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
           <Button onClick={handleSave} disabled={loading}>
-            {loading && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />}
-            {citation ? 'Update Citation' : 'Add Citation'}
+            {loading ? 'Saving...' : 'Save Citation'}
           </Button>
         </DialogFooter>
       </DialogContent>

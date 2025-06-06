@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     // Test semantic search
     console.log('Testing semantic search for topic:', topic)
     
-    let searchResults = []
+    let searchResults: unknown[] = []
     let error_message = null
     
     try {

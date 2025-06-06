@@ -21,7 +21,6 @@ export default function CitationRenderer({
   projectId,
   className = '' 
 }: CitationRendererProps) {
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error' | 'fallback'>('loading')
   const [error, setError] = useState<string | null>(null)
 
   const handleError = useCallback((errorMessage: string) => {
@@ -30,7 +29,6 @@ export default function CitationRenderer({
   }, [])
 
   const handleStatusChange = useCallback((newStatus: 'loading' | 'ready' | 'error' | 'fallback') => {
-    setStatus(newStatus)
     if (newStatus !== 'error') {
       setError(null)
     }

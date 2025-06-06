@@ -4,6 +4,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 // Import our services (note: in production you'd bundle these properly)
 import { v5 as uuidv5 } from 'https://esm.sh/uuid@9.0.0'
 
+// Types (in a real deployment, these would be imported from a shared types module)
+type PaperSource = 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'
+type PaperSources = PaperSource[]
+
 // Namespace UUID for generating deterministic paper UUIDs
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 
@@ -18,7 +22,7 @@ interface AcademicPaper {
   pdf_url?: string
   citationCount: number
   authors?: string[]
-  source: 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'
+  source: PaperSource
 }
 
 interface RankedPaper extends AcademicPaper {
@@ -39,7 +43,7 @@ interface SearchOptions {
   semanticWeight?: number
   authorityWeight?: number
   recencyWeight?: number
-  sources?: Array<'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'>
+  sources?: PaperSources
 }
 
 interface Author {

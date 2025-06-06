@@ -7,7 +7,7 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Mail, Eye, EyeOff, Zap } from "lucide-react"
+import { Mail, Eye, EyeOff, Sparkles } from "lucide-react"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
 export default function LoginPage() {

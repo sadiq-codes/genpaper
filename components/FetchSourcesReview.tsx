@@ -9,8 +9,6 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
-import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { 
   Search, 
@@ -21,17 +19,11 @@ import {
   Users,
   Calendar,
   AlertCircle,
-  CheckCircle,
-  RefreshCw,
-  Filter,
-  ArrowUpDown,
-  Eye,
-  Plus,
-  X,
   Globe
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
+import { PaperSource, PaperSources } from '@/types/simplified'
 
 interface RankedPaper {
   canonical_id: string
@@ -44,7 +36,7 @@ interface RankedPaper {
   pdf_url?: string
   citationCount: number
   authors?: string[]
-  source: 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'
+  source: PaperSource
   relevanceScore: number
   combinedScore: number
   bm25Score?: number
@@ -62,7 +54,7 @@ interface SearchOptions {
   semanticWeight?: number
   authorityWeight?: number
   recencyWeight?: number
-  sources?: Array<'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'>
+  sources?: PaperSources
 }
 
 interface FetchSourcesResponse {
@@ -335,7 +327,7 @@ export default function FetchSourcesReview({
         // Update PDF status based on results
         const newPdfStatus = new Map(pdfStatus)
         
-        result.results.forEach(({ paperId, result: downloadResult }: any) => {
+        result.results.forEach(({ paperId, result: downloadResult }: { paperId: string; result: { success: boolean; pdf_url?: string; error?: string } }) => {
           if (downloadResult.success) {
             newPdfStatus.set(paperId, {
               paperId,
@@ -543,12 +535,12 @@ export default function FetchSourcesReview({
                     <div key={source.id} className="flex items-center space-x-2">
                       <Checkbox
                         id={source.id}
-                        checked={searchOptions.sources?.includes(source.id as any) || false}
+                        checked={searchOptions.sources?.includes(source.id as PaperSource) || false}
                         onCheckedChange={(checked) => {
                           setSearchOptions(prev => ({
                             ...prev,
                             sources: checked 
-                              ? [...(prev.sources || []), source.id as any]
+                              ? [...(prev.sources || []), source.id as PaperSource]
                               : (prev.sources || []).filter(s => s !== source.id)
                           }))
                         }}
@@ -620,7 +612,7 @@ export default function FetchSourcesReview({
                       onChange={(e) => setResultsFilter(e.target.value)}
                       className="w-48"
                     />
-                    <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
+                    <Select value={sortBy} onValueChange={(value: 'relevance' | 'citations' | 'year' | 'title') => setSortBy(value)}>
                       <SelectTrigger className="w-32">
                         <SelectValue />
                       </SelectTrigger>

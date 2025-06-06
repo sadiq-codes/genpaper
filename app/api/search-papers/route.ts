@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { enhancedSearch } from '@/lib/services/enhanced-search'
-import type { SearchPapersRequest, SearchPapersResponse } from '@/types/simplified'
+import type { SearchPapersRequest, SearchPapersResponse, PaperSources } from '@/types/simplified'
 
 export async function GET(request: NextRequest) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     
     // Check authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     }
 
     const limit = limitParam ? parseInt(limitParam) : 20
-    const sources = sourcesParam ? sourcesParam.split(',') as ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core")[] : undefined
+    const sources = sourcesParam ? sourcesParam.split(',') as PaperSources : undefined
     const useSemanticSearch = useSemanticParam !== 'false' // Default to true
 
     // Use enhanced search to get results
@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     
     // Check authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
     // Use enhanced search to get results
     const searchResult = await enhancedSearch(query.trim(), {
       maxResults: limit || 20,
-      sources: sources as ("openalex" | "crossref" | "semantic_scholar" | "arxiv" | "core")[] | undefined,
+      sources: sources as PaperSources | undefined,
       useSemanticSearch: useSemanticSearch !== false, // Default to true
       fallbackToKeyword: true,
       fallbackToAcademic: true,

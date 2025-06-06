@@ -3,7 +3,6 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import HistoryManager from '@/components/HistoryManager'
 import { Suspense } from 'react'
-import { History } from 'lucide-react'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 export const metadata: Metadata = {

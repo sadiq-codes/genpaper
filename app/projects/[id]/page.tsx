@@ -3,7 +3,6 @@ import { redirect, notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import PaperViewer from '@/components/PaperViewer'
 import { Suspense } from 'react'
-import { FileText } from 'lucide-react'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 
 interface ProjectPageProps {
@@ -29,7 +28,7 @@ export async function generateMetadata({ params }: ProjectPageProps): Promise<Me
         description: `Research paper: ${project.topic}`,
       }
     }
-  } catch (error) {
+  } catch {
     // Fall back to default metadata
   }
 

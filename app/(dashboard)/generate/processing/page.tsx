@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ProcessingScreen } from '@/components/ProcessingScreen'
-import type { GenerateRequest } from '@/types/simplified'
+import type { GenerateRequest, GenerationProgress } from '@/types/simplified'
 import { useStreamGeneration, useStartGeneration } from '@/lib/hooks/useStreamGeneration'
 
 export default function ProcessingPage() {
@@ -17,7 +17,10 @@ export default function ProcessingPage() {
   const style = searchParams.get('style') as 'academic' | 'review' | 'survey' || 'academic'
   const citationStyle = searchParams.get('citationStyle') as 'apa' | 'mla' | 'chicago' | 'ieee' || 'apa'
   const useLibraryOnly = searchParams.get('useLibraryOnly') === 'true'
-  const selectedPapers = searchParams.get('selectedPapers')?.split(',').filter(Boolean) || []
+  const selectedPapers = useMemo(() => 
+    searchParams.get('selectedPapers')?.split(',').filter(Boolean) || [],
+    [searchParams]
+  )
 
   // Generation state
   const { startGeneration, streamUrl } = useStartGeneration()
@@ -34,7 +37,7 @@ export default function ProcessingPage() {
     router.push('/generate?error=' + encodeURIComponent(error))
   }, [router])
   
-  const handleProgress = useCallback((progress: any) => {
+  const handleProgress = useCallback((progress: GenerationProgress) => {  
     console.log('Generation progress:', progress)
   }, [])
   

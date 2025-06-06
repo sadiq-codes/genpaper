@@ -1,5 +1,7 @@
 // Updated types for the simplified research paper generator
 
+import type { CSLItem } from "@/lib/utils/csl"
+
 export interface User {
   id: string
   email: string
@@ -60,7 +62,7 @@ export interface Paper {
   citation_count?: number
   impact_score?: number
   created_at: string
-  csl_json?: any // CSL-JSON formatted citation data
+  csl_json?: CSLItem // CSL-JSON formatted citation data
   authors?: Author[] // Joined from paper_authors table
 }
 
@@ -207,4 +209,8 @@ export interface ResearchProjectWithLatestVersion extends ResearchProject {
 export interface PaperWithAuthors extends Paper {
   authors: Author[]
   author_names: string[] // Computed field for easy display
-} 
+}
+
+// Paper source types
+export type PaperSource = 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'
+export type PaperSources = PaperSource[]

@@ -219,7 +219,13 @@ export async function updatePaperWithPDF(
   try {
     const supabase = await createClient()
     
-    const updateData: any = {
+    const updateData: {
+      pdf_url: string
+      metadata: {
+        pdf_downloaded_at: string
+        pdf_file_size?: number
+      }
+    } = {
       pdf_url: pdfUrl,
       metadata: {
         pdf_downloaded_at: new Date().toISOString(),

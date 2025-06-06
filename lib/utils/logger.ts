@@ -24,7 +24,7 @@ function shouldLog(level: string): boolean {
   
   // In production, only log warnings and errors by default
   // Can be overridden with DEBUG environment variable
-  const debugEnabled = process.env.DEBUG === '*' || process.env.DEBUG?.includes('pdf')
+  const debugEnabled = process.env.DEBUG === '*' || process.env.DEBUG?.includes('pdf') || false
   
   switch (level) {
     case 'debug':
