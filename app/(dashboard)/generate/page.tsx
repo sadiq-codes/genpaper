@@ -1,6 +1,4 @@
 import { Metadata } from 'next'
-import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
 import GeneratePageClient from '@/components/GeneratePageClient'
 import { Suspense } from 'react'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
@@ -11,13 +9,7 @@ export const metadata: Metadata = {
 }
 
 export default async function GeneratePage() {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-
-  if (error || !user) {
-    redirect('/login')
-  }
-
+  // Authentication is handled by dashboard layout, no need to check again
   return (
     <div className="min-h-screen bg-background">
       <Suspense fallback={<GeneratePageSkeleton />}>

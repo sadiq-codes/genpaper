@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
@@ -16,38 +16,46 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [checking, setChecking] = useState(true)
+  const [error, setError] = useState("")
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   useEffect(() => {
     const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        router.push('/generate')
-        return
-      }
+      // Remove automatic redirect to avoid login/generate loop
+      // Let server-side route protection handle authentication flow
       setChecking(false)
     }
     checkUser()
-  }, [router])
+    
+    // Check for error message from URL params (e.g., email verification failed)
+    const errorParam = searchParams.get('error')
+    if (errorParam) {
+      setError(decodeURIComponent(errorParam))
+    }
+  }, [router, searchParams])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
+    setError("")
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error: loginError } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
 
-      if (error) {
-        console.error("Login error:", error.message)
+      if (loginError) {
+        console.error("Login error:", loginError.message)
+        setError(loginError.message)
       } else {
         console.log("Login successful:", data)
-        router.push("/generate")
+        router.replace("/generate")
       }
     } catch (error) {
       console.error("Unexpected error:", error)
+      setError("An unexpected error occurred")
     } finally {
       setLoading(false)
     }
@@ -91,6 +99,12 @@ export default function LoginPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4 mb-6">
+              {error && (
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-3">
+                  <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+                </div>
+              )}
+              
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">Email address</label>
                 <Input
