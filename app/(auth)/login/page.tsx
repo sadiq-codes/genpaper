@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Mail, Eye, EyeOff, Sparkles } from "lucide-react"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
-export default function LoginPage() {
+function LoginPageContent() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
@@ -167,5 +167,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoadingSpinner fullScreen />}>
+      <LoginPageContent />
+    </Suspense>
   )
 }
