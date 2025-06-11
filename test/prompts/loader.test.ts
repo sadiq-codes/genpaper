@@ -170,7 +170,24 @@ describe('Prompt Loader', () => {
           expect(section.requiredDepthCues).toBeDefined();
           expect(Array.isArray(section.requiredDepthCues)).toBe(true);
           expect(section.requiredDepthCues.length).toBeGreaterThan(0);
+          
+          // Check that depth cues are present in the template text
+          const missing = validateDepthCues(section, section.requiredDepthCues);
+          expect(missing.length).toBeLessThan(section.requiredDepthCues.length);
         });
+      });
+    });
+
+    it('should validate critical depth cues presence across all paper types', () => {
+      const library = loadPrompts();
+      const criticalCues = ['compare', 'critique'];
+      
+      Object.entries(library.paperTypes).forEach(([paperTypeKey, paperType]) => {
+        // At least one section should contain critical comparison cues
+        const sectionsWithCompare = Object.values(paperType.sections).filter(section => 
+          section.requiredDepthCues.some(cue => criticalCues.includes(cue))
+        );
+        expect(sectionsWithCompare.length).toBeGreaterThan(0);
       });
     });
   });

@@ -8,6 +8,16 @@ export {
   clearPromptCache
 } from './loader';
 
+export {
+  generateSectionPrompt,
+  generateLiteratureReviewPrompt,
+  generateMethodologyPrompt,
+  generateDiscussionPrompt,
+  generateOutlineSystemPrompt,
+  generateOutlineUserPrompt,
+  generateOutline
+} from './generators';
+
 export type {
   PromptTemplate,
   PaperType,
@@ -15,5 +25,10 @@ export type {
   PaperTypeKey,
   SectionKey,
   PromptLoadError,
-  PromptValidationError
-} from './types'; 
+  PromptValidationError,
+  GeneratedOutline,
+  OutlineSection,
+  OutlineConfig
+} from './types';
+
+export type { TemplateOptions } from './generators'; 

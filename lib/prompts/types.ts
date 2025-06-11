@@ -2,6 +2,8 @@
  * Types for prompt templates matching the JSON schema
  */
 
+export type CitationStyle = 'apa' | 'mla' | 'chicago';
+
 export interface PromptTemplate {
   systemPrompt: string;
   userPromptTemplate: string;
@@ -49,4 +51,31 @@ export interface PromptLoadError extends Error {
 export interface PromptValidationError extends Error {
   name: 'PromptValidationError';  
   validationErrors: string[];
+}
+
+// TASK 3: Outline Generation Types
+export interface OutlineSection {
+  sectionKey: SectionKey;
+  title: string;
+  candidatePaperIds: string[];
+  keyPoints?: string[];
+  expectedWords?: number;
+}
+
+export interface GeneratedOutline {
+  paperType: PaperTypeKey;
+  topic: string;
+  sections: OutlineSection[];
+  totalEstimatedWords?: number;
+  citationStyle?: string;
+  localRegion?: string;
+}
+
+export interface OutlineConfig {
+  topic?: string;
+  citationStyle?: 'apa' | 'mla' | 'chicago';
+  pageLength?: number;
+  localRegion?: string;
+  temperature?: number;
+  maxTokens?: number;
 }

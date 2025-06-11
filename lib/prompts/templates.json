@@ -6,12 +6,12 @@
       "sections": {
         "outline": {
           "systemPrompt": "You are an academic writing assistant specializing in research article structure. Your task is to create detailed outlines that follow the IMRaD format (Introduction, Methods, Results, Discussion) with clear section organization.",
-          "userPromptTemplate": "Generate a detailed outline for a research article on '{{topic}}' with the following requirements: {{citationStyle}} citation style, approximately {{pageLength}} pages, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers as your core references: {{paperIds}}. Structure as: 1. Abstract; 2. Introduction; 3. Literature Review; 4. Methods; 5. Results; 6. Discussion; 7. Conclusion; 8. References. For each section, list 3-5 specific paper IDs you intend to cite and indicate the key points to cover.",
+          "userPromptTemplate": "Generate a detailed outline for a research article on '{{topic}}' with the following requirements: {{citationStyle}} citation style, approximately {{pageLength}} pages, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers as your core references: {{paperIds}}. Structure as: 1. Abstract; 2. Introduction; 3. Literature Review; 4. Methods (with methodology replication details); 5. Results (with statistical findings); 6. Discussion (with theoretical framework); 7. Conclusion; 8. References. For each section, list 3-5 specific paper IDs you intend to cite and indicate the key points to cover. Ensure research gap identification is clear in Introduction and Literature Review.",
           "requiredDepthCues": ["methodology replication", "statistical findings", "research gap identification", "theoretical framework"]
         },
         "introduction": {
           "systemPrompt": "You are writing the Introduction section of a research article. Focus on establishing context, reviewing key literature, and clearly stating the research problem and objectives.",
-          "userPromptTemplate": "Write the Introduction section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Cite facts with [CITE:{{paperId}}]. Include: 1) background context, 2) literature review summary, 3) research gap identification, 4) study objectives. Write approximately {{expectedWords}} words in formal academic tone.",
+          "userPromptTemplate": "Write the Introduction section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Cite facts with [CITE:{{paperId}}]. Include: 1) background context, 2) literature review summary where you compare existing studies and critique their approaches, 3) research gap identification, 4) study objectives. Include relevant statistics from the literature. Write approximately {{expectedWords}} words in formal academic tone.",
           "requiredDepthCues": ["compare", "critique", "gap", "statistics"],
           "expectedLength": {
             "words": 800,
@@ -20,7 +20,7 @@
         },
         "literatureReview": {
           "systemPrompt": "You are writing a Literature Review section for a research article. Synthesize existing research, identify patterns and gaps, and critically evaluate methodologies.",
-          "userPromptTemplate": "Write the Literature Review section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Organize thematically and cite with [CITE:{{paperId}}]. For each theme: synthesize at least 3 papers, highlight agreements and conflicts, critically evaluate methodologies, and identify gaps. Write approximately {{expectedWords}} words.",
+          "userPromptTemplate": "Write the Literature Review section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Organize thematically and cite with [CITE:{{paperId}}]. For each theme: synthesize at least 3 papers, compare findings across studies, critique methodologies through methodology evaluation, highlight agreements and conflicts, and clearly identify gaps through gap identification. Write approximately {{expectedWords}} words.",
           "requiredDepthCues": ["compare", "critique", "synthesis", "methodology evaluation", "gap identification"],
           "expectedLength": {
             "words": 1200,
@@ -35,6 +35,33 @@
             "words": 1000,
             "paragraphs": 5
           }
+        },
+        "results": {
+          "systemPrompt": "You are writing the Results section of a research article. Present findings objectively with specific data, statistics, and evidence from the literature.",
+          "userPromptTemplate": "Write the Results section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Present key findings with specific statistics, data tables, and quantitative results. Compare findings across studies and cite with [CITE:{{paperId}}]. Include exact percentages, sample sizes, and statistical significance values. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["statistics", "quantitative data", "compare", "statistical significance"],
+          "expectedLength": {
+            "words": 1000,
+            "paragraphs": 4
+          }
+        },
+        "discussion": {
+          "systemPrompt": "You are writing the Discussion section of a research article. Interpret results, compare with existing literature, discuss limitations, and propose theoretical explanations.",
+          "userPromptTemplate": "Write the Discussion section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Interpret the findings, compare with existing research, discuss limitations, and propose theoretical explanations. Critically evaluate contradictory evidence and cite with [CITE:{{paperId}}]. Link findings to established theories and identify areas for future research. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["compare", "critique", "theoretical framework", "limitations", "future directions"],
+          "expectedLength": {
+            "words": 1200,
+            "paragraphs": 6
+          }
+        },
+        "conclusion": {
+          "systemPrompt": "You are writing the Conclusion section of a research article. Synthesize main findings, emphasize key contributions, and suggest practical implications.",
+          "userPromptTemplate": "Write the Conclusion section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Synthesize the main findings, emphasize key contributions to the field, and suggest practical implications. Avoid introducing new information and cite key supporting evidence with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["synthesis", "implications", "contributions"],
+          "expectedLength": {
+            "words": 600,
+            "paragraphs": 3
+          }
         }
       },
       "depthCues": ["compare", "critique", "methodology", "statistics", "gap", "theoretical framework"]
@@ -44,8 +71,8 @@
       "description": "Standalone literature review that synthesizes existing research on a topic with critical analysis",
       "sections": {
         "outline": {
-          "systemPrompt": "You are an academic writing assistant specializing in literature review structure. Your task is to create thematic outlines that organize research by key themes and debates.",
-          "userPromptTemplate": "Generate a detailed thematic outline for a literature review on '{{topic}}' with the following requirements: {{citationStyle}} citation style, approximately {{pageLength}} pages, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers: {{paperIds}}. Organize by 4-6 themes (e.g., Theme 1: Prevalence Studies; Theme 2: Risk Factors; etc.). For each theme, list specific paper IDs and key debates/gaps to address.",
+          "systemPrompt": "You are an academic writing assistant specializing in literature review structure. Your task is to create thematic outlines that organize research by key themes and debates with critical synthesis.",
+          "userPromptTemplate": "Generate a detailed thematic outline for a literature review on '{{topic}}' with the following requirements: {{citationStyle}} citation style, approximately {{pageLength}} pages, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers: {{paperIds}}. Use thematic organization to structure by 4-6 themes (e.g., Theme 1: Prevalence Studies; Theme 2: Risk Factors; etc.). For each theme, list specific paper IDs, plan critical synthesis approaches, ensure gap identification of research limitations, and outline future directions for research.",
           "requiredDepthCues": ["thematic organization", "critical synthesis", "gap identification", "future directions"]
         },
         "introduction": {
@@ -67,8 +94,8 @@
           }
         },
         "conclusion": {
-          "systemPrompt": "You are writing the Conclusion section of a literature review. Summarize key findings, identify major gaps, and propose future research directions.",
-          "userPromptTemplate": "Write the Conclusion section for this literature review on '{{topic}}'. Summarize the main themes and findings, identify the 3 most significant research gaps, and propose specific future research directions. Use these context snippets: {{contextChunks}}. Cite with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
+          "systemPrompt": "You are writing the Conclusion section of a literature review. Synthesize key findings, identify major gaps, and propose future research directions with a clear research agenda.",
+          "userPromptTemplate": "Write the Conclusion section for this literature review on '{{topic}}'. Begin with synthesis of the main themes and findings, systematically identify the 3 most significant research gaps through gap identification, propose specific future directions for research, and conclude with a comprehensive research agenda for the field. Use these context snippets: {{contextChunks}}. Cite with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
           "requiredDepthCues": ["synthesis", "gap identification", "future directions", "research agenda"],
           "expectedLength": {
             "words": 600,
@@ -77,6 +104,105 @@
         }
       },
       "depthCues": ["synthesis", "compare", "critique", "contradiction", "gap", "future directions"]
+    },
+    "capstoneProject": {
+      "name": "Capstone Project",
+      "description": "Final-year undergraduate project proposal with problem statement, literature review, and implementation plan",
+      "sections": {
+        "outline": {
+          "systemPrompt": "You are an academic writing assistant specializing in capstone project structure. Your task is to create detailed outlines for undergraduate project proposals with clear problem identification and solution justification.",
+          "userPromptTemplate": "Generate a detailed outline for a capstone project on '{{topic}}' with the following requirements: {{citationStyle}} citation style, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers: {{paperIds}}. Structure as: 1. Problem Statement (with clear problem identification); 2. Literature Review; 3. Proposed Solution (with solution justification); 4. Implementation Plan (demonstrating implementation feasibility); 5. Expected Outcomes; 6. Timeline. For each section, list specific paper IDs, establish local relevance in {{localRegion}} context, and justify project significance.",
+          "requiredDepthCues": ["problem identification", "solution justification", "local relevance", "implementation feasibility"]
+        },
+        "introduction": {
+          "systemPrompt": "You are writing the Problem Statement section of a capstone project. Clearly define the problem, its significance, and why it needs to be addressed.",
+          "userPromptTemplate": "Write the Problem Statement for this capstone project on '{{topic}}'. Define the problem clearly, explain its significance in {{localRegion}} context, and justify why this project is needed. Use these context snippets: {{contextChunks}}. Cite supporting evidence with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["problem definition", "significance", "local relevance", "justification"],
+          "expectedLength": {
+            "words": 500,
+            "paragraphs": 3
+          }
+        },
+        "literatureReview": {
+          "systemPrompt": "You are writing a concise Literature Review for a capstone project. Focus on key studies relevant to the proposed solution.",
+          "userPromptTemplate": "Write the Literature Review section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Focus on 8-12 key papers that directly relate to your proposed solution. Compare methodologies, highlight gaps your project will address, and cite with [CITE:{{paperId}}]. Keep it concise but comprehensive. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["compare", "gap identification", "solution relevance", "methodology comparison"],
+          "expectedLength": {
+            "words": 800,
+            "paragraphs": 4
+          }
+        }
+      },
+      "depthCues": ["problem identification", "solution justification", "compare", "local relevance", "implementation feasibility"]
+    },
+    "mastersThesis": {
+      "name": "Master's Thesis",
+      "description": "Graduate-level thesis with comprehensive literature review, methodology, and detailed analysis",
+      "sections": {
+        "outline": {
+          "systemPrompt": "You are an academic writing assistant specializing in master's thesis structure. Your task is to create comprehensive chapter outlines with theoretical framework development and methodology justification.",
+          "userPromptTemplate": "Generate a detailed outline for a master's thesis on '{{topic}}' with the following requirements: {{citationStyle}} citation style, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers: {{paperIds}}. Structure as: Chapter 1 (Introduction); Chapter 2 (Literature Review ensuring comprehensive coverage of 20-30 papers with theoretical framework); Chapter 3 (Methodology with methodology justification); Chapter 4 (Results); Chapter 5 (Discussion); Chapter 6 (Conclusions). For each chapter, list specific paper IDs, ensure research gap identification, and outline key themes to address.",
+          "requiredDepthCues": ["comprehensive coverage", "theoretical framework", "research gap identification", "methodology justification"]
+        },
+        "introduction": {
+          "systemPrompt": "You are writing Chapter 1 (Introduction) of a master's thesis. Establish context, research problem, objectives, and thesis structure.",
+          "userPromptTemplate": "Write Chapter 1 (Introduction) for this master's thesis on '{{topic}}'. Establish the research context, clearly state the research problem and objectives, outline the thesis structure, and justify the study's significance in {{localRegion}} context. Use these context snippets: {{contextChunks}}. Cite foundational literature with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["research problem", "objectives", "significance", "theoretical context"],
+          "expectedLength": {
+            "words": 1500,
+            "paragraphs": 8
+          }
+        },
+        "literatureReview": {
+          "systemPrompt": "You are writing Chapter 2 (Literature Review) of a master's thesis. Provide comprehensive coverage of 20-30 papers with critical analysis.",
+          "userPromptTemplate": "Write Chapter 2 (Literature Review) for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Organize by themes, critically analyze 20-30 papers, identify theoretical frameworks, compare methodologies, and clearly identify research gaps. Emphasize {{localRegion}} studies where available. Cite with [CITE:{{paperId}}]. End with gap statement that justifies your research. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["critical analysis", "theoretical framework", "compare", "critique", "gap identification", "comprehensive coverage"],
+          "expectedLength": {
+            "words": 2500,
+            "paragraphs": 12
+          }
+        },
+        "methodology": {
+          "systemPrompt": "You are writing Chapter 3 (Methodology) of a master's thesis. Provide detailed research design, justification, and procedures.",
+          "userPromptTemplate": "Write Chapter 3 (Methodology) for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Include detailed research design, sampling strategy, data collection instruments, procedures, data analysis plan, ethical considerations, and limitations. Justify methodological choices by citing relevant literature with [CITE:{{paperId}}]. Include {{localRegion}} context considerations. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["methodological justification", "replication detail", "ethical considerations", "limitations"],
+          "expectedLength": {
+            "words": 2000,
+            "paragraphs": 10
+          }
+        }
+      },
+      "depthCues": ["critical analysis", "theoretical framework", "comprehensive coverage", "methodological justification", "gap identification"]
+    },
+    "dissertation": {
+      "name": "PhD Dissertation",
+      "description": "Doctoral dissertation with exhaustive literature review, original research contribution, and theoretical advancement",
+      "sections": {
+        "outline": {
+          "systemPrompt": "You are an academic writing assistant specializing in PhD dissertation structure. Your task is to create exhaustive chapter outlines for doctoral-level research.",
+          "userPromptTemplate": "Generate a detailed outline for a PhD dissertation on '{{topic}}' with the following requirements: {{citationStyle}} citation style, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers: {{paperIds}}. Structure as: Chapter 1 (Introduction); Chapter 2 (Literature Review, 50+ papers); Chapter 3 (Theoretical Framework); Chapter 4 (Methodology); Chapter 5 (Results); Chapter 6 (Discussion); Chapter 7 (Conclusions & Contributions). For each chapter, specify theoretical perspectives and original contributions.",
+          "requiredDepthCues": ["theoretical advancement", "original contribution", "exhaustive coverage", "research significance"]
+        },
+        "introduction": {
+          "systemPrompt": "You are writing Chapter 1 (Introduction) of a PhD dissertation. Establish comprehensive context, research problem, and original contribution to knowledge.",
+          "userPromptTemplate": "Write Chapter 1 (Introduction) for this PhD dissertation on '{{topic}}'. Establish comprehensive research context, clearly articulate the research problem, define objectives, outline the study's original contribution to knowledge, and justify significance in {{localRegion}} and global contexts. Use these context snippets: {{contextChunks}}. Cite foundational and recent literature with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["original contribution", "research significance", "theoretical context", "comprehensive scope"],
+          "expectedLength": {
+            "words": 3000,
+            "paragraphs": 15
+          }
+        },
+        "literatureReview": {
+          "systemPrompt": "You are writing Chapter 2 (Literature Review) of a PhD dissertation. Provide exhaustive coverage with critical synthesis and theoretical development.",
+          "userPromptTemplate": "Write Chapter 2 (Literature Review) for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Provide exhaustive coverage of 50+ papers, organize by theoretical themes, critically synthesize competing perspectives, identify multiple theoretical frameworks, and develop original theoretical insights. Compare methodologies across studies and highlight {{localRegion}} contributions. Cite with [CITE:{{paperId}}]. Conclude with theoretical model that guides your research. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["exhaustive coverage", "critical synthesis", "theoretical development", "compare", "critique", "original insights"],
+          "expectedLength": {
+            "words": 5000,
+            "paragraphs": 25
+          }
+        }
+      },
+      "depthCues": ["exhaustive coverage", "theoretical advancement", "original contribution", "critical synthesis", "research significance"]
     }
   }
 } 
