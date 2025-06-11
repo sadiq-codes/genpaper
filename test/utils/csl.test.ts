@@ -11,11 +11,15 @@ describe('CSL Utilities', () => {
     venue: 'Test Journal',
     doi: '10.1000/test',
     url: 'https://example.com/paper',
-    authors: [{ name: 'John Doe' }, { name: 'Jane Smith' }],
+    authors: [
+      { id: 'author1', name: 'John Doe' }, 
+      { id: 'author2', name: 'Jane Smith' }
+    ],
     author_names: ['John Doe', 'Jane Smith'],
     source: 'test',
     citation_count: 10,
-    impact_score: 0.8
+    impact_score: 0.8,
+    created_at: '2023-01-01T00:00:00Z'
   }
 
   describe('paperToCSL', () => {
@@ -40,7 +44,7 @@ describe('CSL Utilities', () => {
     })
 
     it('should handle papers without publication date', () => {
-      const paperWithoutDate = { ...mockPaper, publication_date: null }
+      const paperWithoutDate = { ...mockPaper, publication_date: undefined }
       const csl = paperToCSL(paperWithoutDate)
       
       expect(csl.issued).toBeUndefined()

@@ -25,6 +25,7 @@ export interface GenerationConfig {
   temperature?: number
   max_tokens?: number
   stream?: boolean
+  model?: string
   search_parameters?: {
     sources?: string[]
     limit?: number
@@ -43,6 +44,9 @@ export interface GenerationConfig {
     citationStyle?: 'apa' | 'mla' | 'chicago' | 'ieee'
     includeMethodology?: boolean
     includeFuture?: boolean
+    minCitationCoverage?: number
+    minCitationFloor?: number
+    evidenceSnippetLength?: number
   }
   library_papers_used?: string[]
   [key: string]: unknown

@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS citation_links (
   project_id UUID REFERENCES research_projects(id) ON DELETE CASCADE,
   citation_id UUID REFERENCES citations(id) ON DELETE CASCADE,
   section TEXT NOT NULL,
-  start_pos INT NOT NULL,
-  end_pos INT NOT NULL,
+  start_pos INT,
+  end_pos INT,
   reason TEXT NOT NULL,
   context TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

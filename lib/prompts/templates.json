@@ -1,0 +1,82 @@
+{
+  "paperTypes": {
+    "researchArticle": {
+      "name": "Research Article",
+      "description": "Journal-style research article following IMRaD structure with detailed methodology and results",
+      "sections": {
+        "outline": {
+          "systemPrompt": "You are an academic writing assistant specializing in research article structure. Your task is to create detailed outlines that follow the IMRaD format (Introduction, Methods, Results, Discussion) with clear section organization.",
+          "userPromptTemplate": "Generate a detailed outline for a research article on '{{topic}}' with the following requirements: {{citationStyle}} citation style, approximately {{pageLength}} pages, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers as your core references: {{paperIds}}. Structure as: 1. Abstract; 2. Introduction; 3. Literature Review; 4. Methods; 5. Results; 6. Discussion; 7. Conclusion; 8. References. For each section, list 3-5 specific paper IDs you intend to cite and indicate the key points to cover.",
+          "requiredDepthCues": ["methodology replication", "statistical findings", "research gap identification", "theoretical framework"]
+        },
+        "introduction": {
+          "systemPrompt": "You are writing the Introduction section of a research article. Focus on establishing context, reviewing key literature, and clearly stating the research problem and objectives.",
+          "userPromptTemplate": "Write the Introduction section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Cite facts with [CITE:{{paperId}}]. Include: 1) background context, 2) literature review summary, 3) research gap identification, 4) study objectives. Write approximately {{expectedWords}} words in formal academic tone.",
+          "requiredDepthCues": ["compare", "critique", "gap", "statistics"],
+          "expectedLength": {
+            "words": 800,
+            "paragraphs": 4
+          }
+        },
+        "literatureReview": {
+          "systemPrompt": "You are writing a Literature Review section for a research article. Synthesize existing research, identify patterns and gaps, and critically evaluate methodologies.",
+          "userPromptTemplate": "Write the Literature Review section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Organize thematically and cite with [CITE:{{paperId}}]. For each theme: synthesize at least 3 papers, highlight agreements and conflicts, critically evaluate methodologies, and identify gaps. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["compare", "critique", "synthesis", "methodology evaluation", "gap identification"],
+          "expectedLength": {
+            "words": 1200,
+            "paragraphs": 6
+          }
+        },
+        "methodology": {
+          "systemPrompt": "You are writing the Methodology section of a research article. Provide sufficient detail for replication, including study design, participants, instruments, and analysis procedures.",
+          "userPromptTemplate": "Write the Methodology section for '{{sectionTitle}}' using these context snippets: {{contextChunks}}. Include: 1) Study design, 2) Participants/sample selection, 3) Data collection instruments, 4) Procedures, 5) Data analysis plan, 6) Ethical considerations. Cite relevant protocols with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["replication detail", "statistical procedures", "ethical considerations", "instrument validation"],
+          "expectedLength": {
+            "words": 1000,
+            "paragraphs": 5
+          }
+        }
+      },
+      "depthCues": ["compare", "critique", "methodology", "statistics", "gap", "theoretical framework"]
+    },
+    "literatureReview": {
+      "name": "Literature Review",
+      "description": "Standalone literature review that synthesizes existing research on a topic with critical analysis",
+      "sections": {
+        "outline": {
+          "systemPrompt": "You are an academic writing assistant specializing in literature review structure. Your task is to create thematic outlines that organize research by key themes and debates.",
+          "userPromptTemplate": "Generate a detailed thematic outline for a literature review on '{{topic}}' with the following requirements: {{citationStyle}} citation style, approximately {{pageLength}} pages, focusing on {{localRegion}} context if specified. Use these {{paperCount}} papers: {{paperIds}}. Organize by 4-6 themes (e.g., Theme 1: Prevalence Studies; Theme 2: Risk Factors; etc.). For each theme, list specific paper IDs and key debates/gaps to address.",
+          "requiredDepthCues": ["thematic organization", "critical synthesis", "gap identification", "future directions"]
+        },
+        "introduction": {
+          "systemPrompt": "You are writing the Introduction section of a literature review. Establish the scope, purpose, and significance of the review topic.",
+          "userPromptTemplate": "Write the Introduction section for this literature review on '{{topic}}'. Define the scope and purpose, explain why this review is needed, and preview the thematic organization. Use these context snippets: {{contextChunks}}. Cite with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["scope definition", "significance", "thematic preview"],
+          "expectedLength": {
+            "words": 400,
+            "paragraphs": 2
+          }
+        },
+        "literatureReview": {
+          "systemPrompt": "You are writing thematic sections of a literature review. Focus on synthesis rather than summary, highlighting agreements, contradictions, and methodological issues.",
+          "userPromptTemplate": "Write the section '{{sectionTitle}}' for this literature review. Using these context snippets: {{contextChunks}}, synthesize findings from at least 5 studies. Organize by subthemes, compare methodologies, highlight contradictions, and critically evaluate evidence quality. Cite with [CITE:{{paperId}}]. End with 2-3 unresolved questions. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["synthesis", "compare", "critique", "contradiction", "methodology evaluation", "unresolved questions"],
+          "expectedLength": {
+            "words": 1000,
+            "paragraphs": 5
+          }
+        },
+        "conclusion": {
+          "systemPrompt": "You are writing the Conclusion section of a literature review. Summarize key findings, identify major gaps, and propose future research directions.",
+          "userPromptTemplate": "Write the Conclusion section for this literature review on '{{topic}}'. Summarize the main themes and findings, identify the 3 most significant research gaps, and propose specific future research directions. Use these context snippets: {{contextChunks}}. Cite with [CITE:{{paperId}}]. Write approximately {{expectedWords}} words.",
+          "requiredDepthCues": ["synthesis", "gap identification", "future directions", "research agenda"],
+          "expectedLength": {
+            "words": 600,
+            "paragraphs": 3
+          }
+        }
+      },
+      "depthCues": ["synthesis", "compare", "critique", "contradiction", "gap", "future directions"]
+    }
+  }
+} 

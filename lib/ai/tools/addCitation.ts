@@ -16,8 +16,8 @@ const citationSchema = z.object({
   abstract: z.string().optional(),
   reason: z.string().min(1, 'Reason for citation is required'),
   section: z.string().min(1, 'Section name is required'),
-  start_pos: z.number().int().min(0),
-  end_pos: z.number().int().min(0),
+  start_pos: z.number().int().min(0).optional(),
+  end_pos: z.number().int().min(0).optional(),
   context: z.string().optional()
 })
 
@@ -157,8 +157,9 @@ export const addCitation = tool({
           project_id: projectId,
           citation_id: record.id,
           section: payload.section,
-          start_pos: payload.start_pos,
-          end_pos: payload.end_pos,
+          // Only include positional data if the model provided it
+          ...(typeof payload.start_pos === 'number' ? { start_pos: payload.start_pos } : {}),
+          ...(typeof payload.end_pos === 'number' ? { end_pos: payload.end_pos } : {}),
           reason: payload.reason,
           context: payload.context
         })

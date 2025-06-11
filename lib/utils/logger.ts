@@ -1,72 +1,92 @@
-// Structured logging utility with different levels
+// Centralized logging utility to replace raw console calls
+// Allows easy switching to cloud logging or silencing in production
+
+type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 interface LogContext {
   [key: string]: unknown
 }
 
-interface Logger {
-  info: (message: string, context?: LogContext) => void
-  warn: (message: string, context?: LogContext) => void
-  error: (message: string, context?: LogContext) => void
-  debug: (message: string, context?: LogContext) => void
-}
+class Logger {
+  private logLevel: LogLevel
+  private isDev: boolean
 
-const isDevelopment = process.env.NODE_ENV === 'development'
+  constructor() {
+    this.logLevel = (process.env.LOG_LEVEL as LogLevel) || 'info'
+    this.isDev = process.env.NODE_ENV !== 'production'
+  }
 
-function formatLogMessage(level: string, message: string, context?: LogContext): string {
-  const timestamp = new Date().toISOString()
-  const contextStr = context ? ` ${JSON.stringify(context)}` : ''
-  return `[${timestamp}] ${level.toUpperCase()}: ${message}${contextStr}`
-}
+  private shouldLog(level: LogLevel): boolean {
+    const levels: Record<LogLevel, number> = {
+      debug: 0,
+      info: 1,
+      warn: 2,
+      error: 3
+    }
+    return levels[level] >= levels[this.logLevel]
+  }
 
-function shouldLog(level: string): boolean {
-  if (isDevelopment) return true
-  
-  // In production, only log warnings and errors by default
-  // Can be overridden with DEBUG environment variable
-  const debugEnabled = process.env.DEBUG === '*' || process.env.DEBUG?.includes('pdf') || false
-  
-  switch (level) {
-    case 'debug':
-      return debugEnabled
-    case 'info':
-      return debugEnabled
-    case 'warn':
-    case 'error':
-      return true
-    default:
-      return false
+  private formatMessage(level: LogLevel, message: string, context?: LogContext): string {
+    const timestamp = new Date().toISOString()
+    const prefix = this.isDev ? this.getEmoji(level) : `[${level.toUpperCase()}]`
+    const contextStr = context ? ` ${JSON.stringify(context)}` : ''
+    return `${timestamp} ${prefix} ${message}${contextStr}`
+  }
+
+  private getEmoji(level: LogLevel): string {
+    const emojis = {
+      debug: '🔍',
+      info: '📝',
+      warn: '⚠️',
+      error: '❌'
+    }
+    return emojis[level]
+  }
+
+  debug(message: string, context?: LogContext): void {
+    if (this.shouldLog('debug')) {
+      console.debug(this.formatMessage('debug', message, context))
+    }
+  }
+
+  info(message: string, context?: LogContext): void {
+    if (this.shouldLog('info')) {
+      console.info(this.formatMessage('info', message, context))
+    }
+  }
+
+  warn(message: string, context?: LogContext): void {
+    if (this.shouldLog('warn')) {
+      console.warn(this.formatMessage('warn', message, context))
+    }
+  }
+
+  error(message: string, context?: LogContext): void {
+    if (this.shouldLog('error')) {
+      console.error(this.formatMessage('error', message, context))
+    }
+  }
+
+  // Generation-specific logging methods
+  generation(stage: string, progress: number, message: string, context?: LogContext): void {
+    this.info(`[${stage.toUpperCase()}:${progress}%] ${message}`, context)
+  }
+
+  citation(message: string, context?: LogContext): void {
+    this.info(`📌 ${message}`, context)
+  }
+
+  analytics(message: string, data: LogContext): void {
+    this.info(`📊 ${message}`, data)
+  }
+
+  toolCall(message: string, context?: LogContext): void {
+    this.debug(`🔧 ${message}`, context)
   }
 }
 
-export const logger: Logger = {
-  info: (message: string, context?: LogContext) => {
-    if (shouldLog('info')) {
-      console.log(formatLogMessage('info', message, context))
-    }
-  },
+// Export singleton instance
+export const logger = new Logger()
 
-  warn: (message: string, context?: LogContext) => {
-    if (shouldLog('warn')) {
-      console.warn(formatLogMessage('warn', message, context))
-    }
-  },
-
-  error: (message: string, context?: LogContext) => {
-    if (shouldLog('error')) {
-      // Only include stack trace in development
-      const errorContext = isDevelopment ? context : {
-        ...context,
-        // Remove sensitive data from production logs
-        stack: undefined
-      }
-      console.error(formatLogMessage('error', message, errorContext))
-    }
-  },
-
-  debug: (message: string, context?: LogContext) => {
-    if (shouldLog('debug')) {
-      console.debug(formatLogMessage('debug', message, context))
-    }
-  }
-} 
+// Export type for external usage
+export type { LogLevel, LogContext } 

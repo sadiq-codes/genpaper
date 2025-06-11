@@ -692,7 +692,7 @@ export async function semanticSearchPapers(
     .rpc('match_papers', {
       query_embedding: queryEmbedding,
       match_count: options.limit || 8,
-      min_year: options.minYear || 2018
+      min_year: options.minYear || 2000
     })
   
   if (error) throw error
@@ -751,7 +751,7 @@ export async function hybridSearchPapers(
   const supabase = await getSB()
   const { 
     limit = 10, 
-    minYear = 2018, 
+    minYear = 2000, 
     sources, 
     semanticWeight = 0.7,
     excludePaperIds = [],
@@ -774,6 +774,41 @@ export async function hybridSearchPapers(
 
   // 2. Call the hybrid search RPC function
   console.log(`🗄️ Calling hybrid_search_papers RPC...`)
+  
+  // Add diagnostic check for embeddings
+  const { data: embeddingCount, error: countError } = await supabase
+    .from('papers')
+    .select('id', { count: 'exact' })
+    .not('embedding', 'is', null)
+    .limit(1)
+  
+  if (countError) {
+    console.warn(`⚠️ Error checking embedding count:`, countError)
+  } else {
+    console.log(`📊 Papers with embeddings available for search`)
+  }
+  
+  // Test embedding quality by checking if query embedding looks reasonable
+  console.log(`🧪 Query embedding sample (first 10 dims): [${queryEmbedding.slice(0, 10).map(x => x.toFixed(3)).join(', ')}]`)
+  console.log(`🧪 Embedding magnitude: ${Math.sqrt(queryEmbedding.reduce((sum, x) => sum + x*x, 0)).toFixed(3)}`)
+  
+  // Check if RPC function exists
+  const { data: functionExists, error: funcError } = await supabase
+    .rpc('hybrid_search_papers', {
+      query_text: 'test',
+      query_embedding: new Array(384).fill(0),
+      match_count: 1,
+      min_year: 2020,
+      semantic_weight: 0.7
+    })
+    .limit(0) // Don't return results, just test if function exists
+  
+  if (funcError) {
+    console.error(`❌ RPC function test failed:`, funcError)
+    console.error(`💡 This suggests the hybrid_search_papers function doesn't exist or has wrong signature`)
+    throw new Error(`Vector search function not available: ${funcError.message}`)
+  }
+  
   const { data: searchResults, error } = await supabase
     .rpc('hybrid_search_papers', {
       query_text: query,
@@ -790,36 +825,151 @@ export async function hybridSearchPapers(
 
   console.log(`📋 RPC returned ${searchResults?.length || 0} initial results`)
   if (searchResults && searchResults.length > 0) {
+    console.log(`📊 Score distribution:`)
+    const scores = searchResults.map((r: HybridSearchResult) => ({
+      combined: r.combined_score,
+      semantic: r.semantic_score,
+      keyword: r.keyword_score
+    }))
+    
+    const maxCombined = Math.max(...scores.map((s: { combined: number }) => s.combined))
+    const minCombined = Math.min(...scores.map((s: { combined: number }) => s.combined))
+    const avgCombined = scores.reduce((sum: number, s: { combined: number }) => sum + s.combined, 0) / scores.length
+    
+    console.log(`   🎯 Combined: max=${maxCombined.toFixed(4)}, min=${minCombined.toFixed(4)}, avg=${avgCombined.toFixed(4)}`)
+    
     searchResults.slice(0, 5).forEach((result: HybridSearchResult, idx: number) => {
       console.log(`   ${idx + 1}. Paper ID: ${result.paper_id}`)
-      console.log(`      Combined Score: ${result.combined_score}`)
-      console.log(`      Semantic Score: ${result.semantic_score}`)
-      console.log(`      Keyword Score: ${result.keyword_score}`)
+      console.log(`      Combined Score: ${result.combined_score.toFixed(4)}`)
+      console.log(`      Semantic Score: ${result.semantic_score.toFixed(4)}`)
+      console.log(`      Keyword Score: ${result.keyword_score.toFixed(4)}`)
     })
     if (searchResults.length > 5) {
       console.log(`   ... and ${searchResults.length - 5} more results`)
     }
+    
+    // CRITICAL: Check why semantic scores are all 0.0000
+    const allSemanticZero = searchResults.every((r: HybridSearchResult) => r.semantic_score === 0)
+    if (allSemanticZero) {
+      console.error(`🚨 CRITICAL: All semantic scores are 0.0000!`)
+      console.error(`💡 This suggests:`)
+      console.error(`   1. Papers in database have no embeddings`)
+      console.error(`   2. Vector similarity function is broken`)
+      console.error(`   3. Embedding dimensions don't match`)
+      console.error(`   4. RPC function is using keyword-only search`)
+      
+      // Check if returned papers actually have embeddings
+      const samplePaperIds = searchResults.slice(0, 3).map((r: HybridSearchResult) => r.paper_id)
+      const { data: embeddingCheck, error: embeddingError } = await supabase
+        .from('papers')
+        .select('id, title, embedding')
+        .in('id', samplePaperIds)
+        .limit(3)
+      
+      if (!embeddingError && embeddingCheck) {
+        console.log(`🔍 Sample paper embedding check:`)
+        embeddingCheck.forEach(paper => {
+          const hasEmbedding = paper.embedding && paper.embedding.length > 0
+          console.log(`   📄 "${paper.title?.substring(0, 50)}...": ${hasEmbedding ? `✅ Has embedding (${paper.embedding.length} dims)` : '❌ No embedding'}`)
+        })
+      }
+    }
+  } else {
+    console.warn(`⚠️ RPC returned no results - this indicates a deeper issue with vector search`)
+    console.warn(`   🧠 Query embedding: ${queryEmbedding.length} dimensions`)
+    console.warn(`   📅 Min year filter: ${minYear}`)
+    console.warn(`   ⚖️ Semantic weight: ${semanticWeight}`)
+    console.warn(`   💡 Possible issues: No papers with embeddings, year filter too restrictive, or database connectivity`)
   }
 
   // 3. Filter out excluded papers
   const filteredResults = (searchResults || []).filter(
     (result: HybridSearchResult) => 
       !excludePaperIds.includes(result.paper_id) &&
-      result.combined_score >= 0.0001 // Apply minimum score threshold
+      result.combined_score >= 0.0001 // Reduced from 0.0001 to be more permissive
   )
 
   console.log(`🔧 After filtering excluded papers: ${filteredResults.length} results`)
   if (filteredResults.length !== (searchResults?.length || 0)) {
     const excludedCount = (searchResults?.length || 0) - filteredResults.length
-    console.log(`   🚫 Excluded ${excludedCount} papers from previous searches`)
+    console.log(`   🚫 Excluded ${excludedCount} papers (${excludedCount - excludePaperIds.length} low scores, ${excludePaperIds.length} from exclude list)`)
   }
 
   // 4. Get full paper details for the top results
   if (filteredResults.length === 0) {
-    console.warn(`⚠️ No papers found after filtering`)
-    return []
+    console.warn(`⚠️ No papers found after filtering - trying more permissive approach`)
+    
+    // Try again with even more permissive filtering if we got 0 results
+    const veryPermissiveResults = (searchResults || []).filter(
+      (result: HybridSearchResult) => 
+        !excludePaperIds.includes(result.paper_id) &&
+        (result.combined_score > 0 || result.semantic_score > 0 || result.keyword_score > 0)
+    )
+    
+    console.log(`🔧 Permissive filtering found: ${veryPermissiveResults.length} results`)
+    
+    if (veryPermissiveResults.length === 0) {
+      console.warn(`⚠️ Still no papers found - returning empty result`)
+      return []
+    }
+    
+    // Use the permissive results instead
+    const topPermissiveResults = veryPermissiveResults.slice(0, limit)
+    console.log(`📄 Using permissive results - fetching full details for ${topPermissiveResults.length} papers...`)
+    
+    let papersQuery = supabase
+      .from('papers')
+      .select(`
+        *,
+        authors:paper_authors(
+          ordinal,
+          author:authors(*)
+        )
+      `)
+      .in('id', topPermissiveResults.map((r: HybridSearchResult) => r.paper_id))
+
+    // Apply source filter if provided
+    if (sources && sources.length > 0) {
+      papersQuery = papersQuery.in('source', sources)
+      console.log(`🏷️ Applied source filter: [${sources.join(', ')}]`)
+    }
+
+    const { data: papers, error: papersError } = await papersQuery
+
+    if (papersError) {
+      console.error(`❌ Failed to fetch paper details:`, papersError)
+      throw papersError
+    }
+
+    console.log(`📚 Retrieved ${papers?.length || 0} full paper records (permissive)`)
+
+    // Transform and sort by hybrid score
+    const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
+    
+    const finalResults = topPermissiveResults
+      .map((result: HybridSearchResult) => {
+        const paper = paperMap.get(result.paper_id)
+        if (!paper) {
+          console.warn(`⚠️ Paper ${result.paper_id} not found in detailed results`)
+          return null
+        }
+        
+        const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
+        
+        return {
+          ...transformedPaper,
+          relevance_score: result.combined_score,
+          semantic_score: result.semantic_score,
+          keyword_score: result.keyword_score
+        }
+      })
+      .filter(Boolean) as PaperWithAuthors[]
+
+    console.log(`✅ Permissive hybrid search completed: ${finalResults.length} final papers`)
+    return finalResults
   }
 
+  // 5. Get full paper details for the top results
   const topResults = filteredResults.slice(0, limit)
   console.log(`📄 Fetching full details for top ${topResults.length} papers...`)
   
@@ -836,8 +986,21 @@ export async function hybridSearchPapers(
 
   // Apply source filter if provided
   if (sources && sources.length > 0) {
-    papersQuery = papersQuery.in('source', sources)
-    console.log(`🏷️ Applied source filter: [${sources.join(', ')}]`)
+    console.log(`🏷️ Applying source filter: [${sources.join(', ')}]`)
+    // Check if any papers match the source filter before applying it
+    const sourceFilterTest = await supabase
+      .from('papers')
+      .select('id', { count: 'exact' })
+      .in('id', topResults.map((r: HybridSearchResult) => r.paper_id))
+      .in('source', sources)
+      .limit(1)
+    
+    if (sourceFilterTest.data && sourceFilterTest.data.length > 0) {
+      papersQuery = papersQuery.in('source', sources)
+      console.log(`✅ Source filter will be applied - ${sourceFilterTest.data.length} papers match`)
+    } else {
+      console.warn(`⚠️ Source filter would exclude all papers - skipping source filter`)
+    }
   }
 
   const { data: papers, error: papersError } = await papersQuery
@@ -848,8 +1011,56 @@ export async function hybridSearchPapers(
   }
 
   console.log(`📚 Retrieved ${papers?.length || 0} full paper records`)
+  
+  // If we got 0 papers due to source filtering, try without the filter
+  if ((!papers || papers.length === 0) && sources && sources.length > 0) {
+    console.warn(`⚠️ Source filter returned 0 papers, retrying without source filter...`)
+    
+    const { data: unfilteredPapers, error: unfilteredError } = await supabase
+      .from('papers')
+      .select(`
+        *,
+        authors:paper_authors(
+          ordinal,
+          author:authors(*)
+        )
+      `)
+      .in('id', topResults.map((r: HybridSearchResult) => r.paper_id))
+    
+    if (unfilteredError) {
+      console.error(`❌ Failed to fetch unfiltered paper details:`, unfilteredError)
+      throw unfilteredError
+    }
+    
+    console.log(`📚 Retrieved ${unfilteredPapers?.length || 0} unfiltered paper records`)
+    
+    // Use the unfiltered results
+    const paperMap = new Map(unfilteredPapers?.map(p => [p.id, p]) || [])
+    
+    const finalResults = topResults
+      .map((result: HybridSearchResult) => {
+        const paper = paperMap.get(result.paper_id)
+        if (!paper) {
+          console.warn(`⚠️ Paper ${result.paper_id} not found in detailed results`)
+          return null
+        }
+        
+        const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
+        
+        return {
+          ...transformedPaper,
+          relevance_score: result.combined_score,
+          semantic_score: result.semantic_score,
+          keyword_score: result.keyword_score
+        }
+      })
+      .filter(Boolean) as PaperWithAuthors[]
 
-  // 5. Transform and sort by hybrid score
+    console.log(`✅ Unfiltered hybrid search completed: ${finalResults.length} final papers`)
+    return finalResults
+  }
+
+  // Transform and sort by hybrid score
   const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
   
   const finalResults = topResults

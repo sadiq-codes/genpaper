@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
     
     // Create generation config
     const generationConfig: GenerationConfig = {
-      temperature: 0.7,
+      temperature: 0.2,
       max_tokens: 16000,
       stream: true,
       search_parameters: {

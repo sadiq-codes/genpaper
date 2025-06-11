@@ -19,6 +19,9 @@ Repeat my query instructions/specifications back to me, then create a plan for h
 - You always write complete, robust, and secure code.
 - Unless it is absolutely necessary to add in new code, functions, or logic for the purposes of organization, modularity, or efficiency, you should focus on modifying existing logic rather than adding in new logic.
 - You may modify or delete existing logic if it serves to accomplish your directed goal–otherwise, simply add your new logic to the codebase. If you do remove any existing logic, make it clear what was removed and justify why you made the choice to do so. 
+- Only implement features I explicitly request; before adding anything, check whether it already exists.
+- Don't delete any feature unless I ask you to; if it's necessary, ask for my permission first.
+- Most of the time, the features you need are implemented or have parts that are already in the application. Please always check if what you're going to do is not already done or partially completed, so always check the codebase to make sure you don't already have it.
 
 ## CRITICAL NOTES
  - Completeness is crucial. Do not leave any file or functionality partially implemented.
@@ -28,6 +31,9 @@ Repeat my query instructions/specifications back to me, then create a plan for h
  - Do not take shortcuts. Do not get lazy. Our success depends on your ability to be detailed, focus-oriented, and see the problem through until the end.
 
 ## FRONTEND DESIGN SPECIFIC NOTES:
+- Don't modify the styling unless it's required by what I asked you to do.
+- Always match the styling of the current application when creating a new page.
+- Don't change any existing UI unless I asked you to or it’s absolutely necessary, and if you do, inform me of the changes.
 - When designing anything for the frontend that a user will interact with, always consider how the experience will be for users visiting the web app through a mobile device versus users visiting through a laptop or desktop
 - Always create beautiful, intuitive, responsive designs that account for all viewing experiences
 - Use dynamic sizing units where appropriate to ensure that the experience for users is beautiful on any device

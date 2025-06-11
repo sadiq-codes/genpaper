@@ -271,6 +271,96 @@ function combineSearchResults(
   return combined
 }
 
+// Check if search results are relevant to the query
+async function checkResultRelevance(
+  query: string, 
+  papers: PaperWithAuthors[]
+): Promise<{ isRelevant: boolean; reason: string }> {
+  if (papers.length === 0) {
+    return { isRelevant: false, reason: 'No results returned' }
+  }
+  
+  // Check for obvious topic mismatches by analyzing titles
+  const queryLower = query.toLowerCase()
+  const queryKeywords = queryLower.split(/\s+/).filter(word => word.length > 3)
+  
+  // Extract key technical terms that should appear in relevant papers
+  const technicalTerms = new Set<string>()
+  if (queryLower.includes('virtual reality') || queryLower.includes('vr')) {
+    technicalTerms.add('virtual')
+    technicalTerms.add('reality')
+    technicalTerms.add('vr')
+    technicalTerms.add('immersive')
+    technicalTerms.add('3d')
+  }
+  if (queryLower.includes('augmented reality') || queryLower.includes('ar')) {
+    technicalTerms.add('augmented')
+    technicalTerms.add('reality')
+    technicalTerms.add('ar')
+    technicalTerms.add('mixed')
+  }
+  if (queryLower.includes('drone') || queryLower.includes('uav')) {
+    technicalTerms.add('drone')
+    technicalTerms.add('uav')
+    technicalTerms.add('autonomous')
+    technicalTerms.add('unmanned')
+  }
+  if (queryLower.includes('artificial intelligence') || queryLower.includes('ai') || queryLower.includes('machine learning')) {
+    technicalTerms.add('artificial')
+    technicalTerms.add('intelligence')
+    technicalTerms.add('machine')
+    technicalTerms.add('learning')
+    technicalTerms.add('neural')
+    technicalTerms.add('deep')
+  }
+  
+  // Check if any papers contain relevant terms
+  let relevantPapers = 0
+  for (const paper of papers) {
+    const titleLower = (paper.title || '').toLowerCase()
+    const abstractLower = (paper.abstract || '').toLowerCase()
+    const combinedText = titleLower + ' ' + abstractLower
+    
+    // Check for query keywords
+    const hasQueryKeywords = queryKeywords.some(keyword => 
+      combinedText.includes(keyword)
+    )
+    
+    // Check for technical terms
+    const hasTechnicalTerms = technicalTerms.size > 0 && 
+      Array.from(technicalTerms).some(term => combinedText.includes(term))
+    
+    if (hasQueryKeywords || hasTechnicalTerms) {
+      relevantPapers++
+    }
+  }
+  
+  const relevanceRatio = relevantPapers / papers.length
+  
+  // If less than 30% of papers are relevant, consider results irrelevant
+  if (relevanceRatio < 0.3) {
+    return { 
+      isRelevant: false, 
+      reason: `Only ${relevantPapers}/${papers.length} papers (${(relevanceRatio * 100).toFixed(1)}%) appear relevant to query` 
+    }
+  }
+  
+  // Special check for VR/AR queries returning biology/agriculture papers
+  if ((queryLower.includes('virtual') || queryLower.includes('augmented') || queryLower.includes('reality')) && 
+      papers.some(p => {
+        const text = ((p.title || '') + ' ' + (p.abstract || '')).toLowerCase()
+        return text.includes('plant') || text.includes('tomato') || text.includes('agriculture') || 
+               text.includes('mycorrhiza') || text.includes('rumen') || text.includes('microorganism')
+      })) {
+    return { 
+      isRelevant: false, 
+      reason: 'VR/AR query returned biology/agriculture papers - embedding mismatch' 
+    }
+  }
+  
+  return { isRelevant: true, reason: `${relevantPapers}/${papers.length} papers appear relevant` }
+}
+
 // Main enhanced search function
 export async function enhancedSearch(
   query: string,
@@ -305,6 +395,14 @@ export async function enhancedSearch(
       vectorResults = await performVectorSearch(query, options)
       vectorResults = deduplicatePapers(vectorResults)
       searchStrategies.push('vector')
+      
+      // Check if vector results are relevant - if all semantic scores are 0, results are likely irrelevant
+      const vectorRelevance = await checkResultRelevance(query, vectorResults)
+      if (!vectorRelevance.isRelevant) {
+        console.warn(`⚠️ Vector search returned irrelevant results - ${vectorRelevance.reason}`)
+        console.warn(`🔄 Forcing academic search for better results`)
+        vectorResults = [] // Clear irrelevant results
+      }
     }
     
     // 2. Fallback to keyword search if needed
