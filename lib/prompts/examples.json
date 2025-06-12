@@ -1,0 +1,104 @@
+{
+  "fewShotExamples": [
+    {
+      "id": "dissertation_intro_001",
+      "paperType": "dissertation",
+      "section": "introduction",
+      "country": "Nigeria",
+      "field": "public_health",
+      "institution": "University of Ibadan",
+      "metadata": {
+        "year": 2023,
+        "author": "Adaora N. Okeke",
+        "title": "Antimicrobial Resistance Patterns in Healthcare Settings"
+      },
+      "content": "The emergence of antimicrobial-resistant bacteria represents one of the most pressing global health challenges of the 21st century. While resistance mechanisms have been extensively documented in developed healthcare systems, the epidemiological patterns in sub-Saharan Africa remain poorly characterized. This knowledge gap is particularly concerning given the region's dual burden of infectious diseases and limited laboratory infrastructure.\n\nCurrent surveillance data from the World Health Organization indicates that resistance rates for key pathogens exceed 50% in many African countries, yet these figures are derived from incomplete reporting systems (WHO, 2022). The paucity of comprehensive resistance mapping has profound implications for empirical treatment protocols, antimicrobial stewardship programs, and public health policy formulation.\n\nThis dissertation addresses three critical gaps in our understanding of antimicrobial resistance dynamics..."
+    },
+    {
+      "id": "masters_lit_review_001", 
+      "paperType": "mastersThesis",
+      "section": "literatureReview",
+      "country": "Nigeria",
+      "field": "economics",
+      "institution": "Ahmadu Bello University",
+      "metadata": {
+        "year": 2023,
+        "author": "Fatima A. Mohammed",
+        "title": "Digital Banking Adoption in Nigeria: Socioeconomic and Technological Factors"
+      },
+      "content": "The literature on digital banking adoption reveals a complex interplay of technological, socioeconomic, and cultural factors that influence consumer behavior in emerging economies. Davis's Technology Acceptance Model (TAM) has provided the foundational framework for understanding digital banking adoption, positing that perceived usefulness and perceived ease of use are primary determinants of technology acceptance (Davis, 1989). However, subsequent research has revealed the limitations of applying Western-developed models to African contexts without modification.\n\nVenkatesh et al. (2012) extended TAM through the Unified Theory of Acceptance and Use of Technology (UTAUT2), incorporating constructs such as social influence, facilitating conditions, and hedonic motivation. In the Nigerian context, Aderonke and Charles (2010) found that social influence was particularly significant, with 64% of respondents citing family and peer recommendations as key factors in mobile banking adoption. This finding contrasts with studies from developed economies where individual utility perceptions dominate adoption decisions (Malaquias & Hwang, 2016)."
+    },
+    {
+      "id": "dissertation_intro_002",
+      "paperType": "dissertation", 
+      "section": "introduction",
+      "country": "USA",
+      "field": "computer_science",
+      "institution": "Stanford University",
+      "metadata": {
+        "year": 2023,
+        "author": "Jennifer Chen",
+        "title": "Machine Learning Approaches to Natural Language Understanding"
+      },
+      "content": "Natural language understanding (NLU) represents a fundamental challenge in artificial intelligence, requiring systems to not merely process linguistic tokens but to extract semantic meaning, contextual relationships, and pragmatic implications from human communication. Despite significant advances in transformer-based architectures, current systems exhibit systematic limitations in reasoning, factual consistency, and domain transfer that constrain their real-world applicability.\n\nThe transformer revolution, initiated by Vaswani et al. (2017) and subsequently refined through models like BERT (Devlin et al., 2019) and GPT-3 (Brown et al., 2020), has achieved unprecedented performance on standardized benchmarks. However, these successes mask deeper issues related to spurious correlations, brittleness to distributional shift, and the absence of genuine understanding as opposed to sophisticated pattern matching (Bender & Koller, 2020).\n\nThis dissertation investigates three core limitations of contemporary NLU systems..."
+    },
+    {
+      "id": "masters_lit_review_002",
+      "paperType": "mastersThesis",
+      "section": "literatureReview", 
+      "country": "Brazil",
+      "field": "environmental_science",
+      "institution": "University of São Paulo",
+      "metadata": {
+        "year": 2022,
+        "author": "Carlos Silva",
+        "title": "Amazon Deforestation and Carbon Sequestration"
+      },
+      "content": "The Amazon rainforest's role as a global carbon sink has been extensively documented, yet the relationship between deforestation rates and carbon sequestration capacity remains contested in the literature. Early studies by Malhi et al. (2008) established baseline measurements indicating that undisturbed Amazon forests sequester approximately 1.3 ± 0.5 Pg C year⁻¹. However, recent analyses suggest this capacity has declined significantly due to increased tree mortality and reduced growth rates (Hubau et al., 2020).\n\nDeforestation impacts on carbon dynamics operate through multiple pathways. Direct biomass loss from clear-cutting represents the most immediate carbon release, with estimates ranging from 100-400 Mg C ha⁻¹ depending on forest type and clearing method (Fearnside, 2005; Walker et al., 2013). More subtle but equally significant are the edge effects that alter carbon cycling in forest fragments, with impacts detectable up to 300 meters from clearcut boundaries (Laurance et al., 2011)."
+    },
+    {
+      "id": "dissertation_intro_003",
+      "paperType": "dissertation",
+      "section": "introduction", 
+      "country": "UK",
+      "field": "sociology",
+      "institution": "University of Oxford",
+      "metadata": {
+        "year": 2023,
+        "author": "Priya Sharma",
+        "title": "Social Media and Political Polarization in Democratic Societies"
+      },
+      "content": "The rise of social media platforms has fundamentally altered the information ecosystem within which democratic discourse occurs, creating unprecedented opportunities for citizen engagement while simultaneously enabling the rapid spread of misinformation and the formation of ideologically isolated communities. This transformation has coincided with measurable increases in political polarization across established democracies, raising critical questions about the sustainability of pluralistic governance in the digital age.\n\nEmpirical evidence for increasing polarization is substantial. Pew Research Center data indicates that the ideological gap between partisan identifiers in the United States has more than doubled since 1994, with similar trends observed across Europe (Pew Research Center, 2022). Concurrently, social media adoption has grown from negligible levels to encompassing over 70% of adults in developed democracies, with political information consumption increasingly mediated through algorithmic curation systems (Auxier & Anderson, 2021).\n\nWhile correlation is evident, establishing causal mechanisms requires more nuanced analysis..."
+    },
+    {
+      "id": "masters_lit_review_003",
+      "paperType": "mastersThesis",
+      "section": "literatureReview",
+      "country": "India",
+      "field": "public_policy", 
+      "institution": "Jawaharlal Nehru University",
+      "metadata": {
+        "year": 2023,
+        "author": "Arjun Patel",
+        "title": "Rural Healthcare Access and Digital Health Interventions"
+      },
+      "content": "Digital health interventions have emerged as a promising solution to address healthcare access challenges in rural areas, yet the literature reveals significant disparities in implementation success across different socioeconomic contexts. Telemedicine initiatives, mobile health applications, and electronic health records systems have shown varying degrees of effectiveness depending on technological infrastructure, healthcare provider training, and community acceptance patterns.\n\nThe foundational work by Wootton (2012) established key success factors for telemedicine implementation, emphasizing the importance of reliable connectivity, user-friendly interfaces, and integration with existing healthcare workflows. Subsequent studies in rural Indian contexts have highlighted additional challenges including language barriers, digital literacy limitations, and cultural preferences for in-person consultation (Kvedar et al., 2014; Sharma et al., 2019).\n\nA systematic review by Chen et al. (2021) analyzing 45 rural telemedicine programs across developing countries found that successful interventions shared three characteristics: community health worker involvement, local language support, and offline functionality for areas with intermittent connectivity."
+    }
+  ],
+  "selectionCriteria": {
+    "preferredOrder": [
+      "exact_country_match",
+      "same_region", 
+      "same_field",
+      "same_institution_type",
+      "global_examples"
+    ],
+    "maxExamples": 2,
+    "minQualityScore": 8.5,
+    "diversityFactors": [
+      "country",
+      "field", 
+      "institution_type"
+    ]
+  }
+} 

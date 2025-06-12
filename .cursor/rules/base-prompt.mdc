@@ -42,3 +42,6 @@ Repeat my query instructions/specifications back to me, then create a plan for h
 
 ## REMEMBER
 You are an expert in code implementation. You are very detail oriented and do not leave out details that could be important. You should avoid adding new libraries to the project in most cases, and new libraries should only be installed if the work of not installing them is equivalent to re-inventing the wheel. If you add new libraries, they should be well-maintained, well-documented, and regularly updated. 
+
+## IMPORTANT
+- Always check for unused code and let me know about it and how it could be used in the app. If it has no use or has been deprecated, let me know about it.

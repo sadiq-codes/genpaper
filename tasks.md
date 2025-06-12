@@ -55,14 +55,24 @@ Here’s a consolidated, “best‐of‐all” **GenPaper V3 Roadmap**—12 atom
   * Unit test ensures sample venues like “Univ. Lagos” yield `region='Nigeria'`.
 * **Effort:** S
 
-**TASK 6: Local‐First Sorting in `enhancedSearch()`**
+### TASK-6: Boost Local Papers in enhancedSearch (universal)
 
-* **What:** Accept `options.region`, then after initial results, move region-tagged papers to the top.
-* **Why:** Ensures your generated drafts draw on locally relevant scholarship first.
-* **Done When:**
+**Purpose:**  
+Reorder `enhancedSearch()` results so country-tagged papers matching the user’s `localRegion` appear first.
 
-  * Calling `enhancedSearch(..., region='Nigeria')` in tests returns Nigerian‐tagged results first.
-* **Effort:** M
+**Steps/Subtasks:**  
+1. In your RAG pipeline, after fetching and filtering papers, read each paper’s `metadata.region`.  
+2. Partition the result array into those where `region === localRegion` and the rest.  
+3. Concatenate back together: `[localPapers…, otherPapers…]`.  
+4. Add a unit test: mock three papers with regions `['Brazil','USA','Brazil']`, call with `localRegion='Brazil'`, and assert the two Brazil papers come first in output.
+
+**Acceptance Criteria:**  
+- Calling `enhancedSearch(topic, { localRegion: 'Japan' })` yields all `metadata.region === 'Japan'` entries at the front.  
+- If no papers match that region, original order is unchanged.
+
+**Effort:** S  
+**Dependencies:** TASK-5 (global region detection)
+
 
 ---
 
@@ -77,6 +87,8 @@ Here’s a consolidated, “best‐of‐all” **GenPaper V3 Roadmap**—12 atom
   * Unit test: sample text lacking citations or “compare” triggers a review event.
 * **Effort:** M
 
+* **Status:** ✅ **COMPLETED** - Citation density checker and depth cue scanner implemented with review event emission
+
 **TASK 8: Few-Shot Examples & Final Polish**
 
 * **What:** For high-stakes paper types (e.g. thesis/dissertation), prepend 1–2 gold-standard few-shot examples to the section prompt; then after all sections, run a “stitch & polish” prompt to ensure transitions & overall flow.
@@ -86,6 +98,8 @@ Here’s a consolidated, “best‐of‐all” **GenPaper V3 Roadmap**—12 atom
   * Prompt loader includes examples when `options.fewShot=true`.
   * Final polish pass merges sections into a fluid narrative.
 * **Effort:** M
+
+* **Status:** ✅ **COMPLETED** - Few-shot examples and final polish functionality implemented for high-stakes paper types with comprehensive testing
 
 ---
 

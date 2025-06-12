@@ -14,6 +14,7 @@ export interface EnhancedSearchOptions extends AggregatedSearchOptions {
   combineResults?: boolean
   vectorWeight?: number
   academicWeight?: number
+  localRegion?: string // Region to boost in search results
 }
 
 // Combined search result with metadata
@@ -464,6 +465,32 @@ export async function enhancedSearch(
         combinedScore: p.combinedScore
       }))
     ].slice(0, options.maxResults || 25)
+  }
+  
+  // 5. Apply regional boosting if localRegion is specified
+  if (options.localRegion) {
+    console.log(`Applying regional boost for: ${options.localRegion}`)
+    
+    // Partition papers by region
+    const localPapers: typeof finalPapers = []
+    const otherPapers: typeof finalPapers = []
+    
+    for (const paper of finalPapers) {
+      const paperRegion = paper.metadata && typeof paper.metadata === 'object' && 'region' in paper.metadata 
+        ? (paper.metadata as { region?: string }).region 
+        : undefined
+      
+      if (paperRegion === options.localRegion) {
+        localPapers.push(paper)
+      } else {
+        otherPapers.push(paper)
+      }
+    }
+    
+    // Reorder: local papers first, then others
+    finalPapers = [...localPapers, ...otherPapers]
+    
+    console.log(`Regional boost applied: ${localPapers.length} local papers, ${otherPapers.length} other papers`)
   }
   
   const metadata = {

@@ -5,6 +5,29 @@ import { ai } from '@/lib/ai/vercel-client'
 import { embedMany } from 'ai'
 import { v5 as uuidv5 } from 'uuid'
 import { type PaperDTO } from '@/lib/schemas/paper'
+import { 
+  detectPaperRegion,
+  enrichMetadataWithRegion,
+  type RegionDetectionInputs 
+} from '../utils/global-region-detection'
+
+// Import new modular system components
+import {
+  ingestPaper as ingestPaperModular,
+  batchIngestPapers as batchIngestPapersModular,
+  type PaperIngestionOptions,
+  type IngestionResult,
+  type BatchIngestionResult
+} from '../utils/ingest-paper'
+import {
+  searchPapers as searchPapersModular,
+  getRegionStatistics as getRegionStatisticsModular,
+  getDatabaseStats,
+  type PaperData,
+  type SearchPapersParams,
+  type SearchPapersResult,
+  type RegionStatistics
+} from '../utils/paper-repository'
 
 // Namespace UUID for generating deterministic paper UUIDs
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
@@ -540,7 +563,17 @@ export async function ingestPaper(paperMeta: PaperDTO): Promise<string> {
     ? generatePaperUUID(paperMeta.doi)
     : generatePaperUUID(text)
   
-  // Upsert paper with embedding
+  // Task 5: Detect and enrich metadata with region information
+  const regionInputs: RegionDetectionInputs = {
+    venue: paperMeta.venue,
+    url: paperMeta.url,
+    title: paperMeta.title,
+    affiliations: paperMeta.authors
+  }
+  const regionResult = detectPaperRegion(regionInputs)
+  const enrichedMetadata = enrichMetadataWithRegion(paperMeta.metadata || {}, regionResult)
+  
+  // Upsert paper with embedding and enriched metadata
   const { error } = await supabase
     .from('papers')
     .upsert({
@@ -552,7 +585,7 @@ export async function ingestPaper(paperMeta: PaperDTO): Promise<string> {
       doi: paperMeta.doi,
       url: paperMeta.url,
       pdf_url: paperMeta.pdf_url,
-      metadata: paperMeta.metadata,
+      metadata: enrichedMetadata, // Use enriched metadata with region info
       source: paperMeta.source || 'unknown',
       citation_count: paperMeta.citation_count || 0,
       impact_score: Math.max(paperMeta.impact_score || 0, 0),
@@ -626,7 +659,17 @@ async function ingestPaperWithEmbedding(paperMeta: PaperDTO, embedding: number[]
     ? generatePaperUUID(paperMeta.doi)
     : generatePaperUUID(text)
   
-  // Upsert paper with embedding
+  // Task 5: Detect and enrich metadata with region information
+  const regionInputs: RegionDetectionInputs = {
+    venue: paperMeta.venue,
+    url: paperMeta.url,
+    title: paperMeta.title,
+    affiliations: paperMeta.authors
+  }
+  const regionResult = detectPaperRegion(regionInputs)
+  const enrichedMetadata = enrichMetadataWithRegion(paperMeta.metadata || {}, regionResult)
+  
+  // Upsert paper with embedding and enriched metadata
   const { error } = await supabase
     .from('papers')
     .upsert({
@@ -638,7 +681,7 @@ async function ingestPaperWithEmbedding(paperMeta: PaperDTO, embedding: number[]
       doi: paperMeta.doi,
       url: paperMeta.url,
       pdf_url: paperMeta.pdf_url,
-      metadata: paperMeta.metadata,
+      metadata: enrichedMetadata, // Use enriched metadata with region info
       source: paperMeta.source || 'unknown',
       citation_count: paperMeta.citation_count || 0,
       impact_score: Math.max(paperMeta.impact_score || 0, 0),
@@ -776,7 +819,7 @@ export async function hybridSearchPapers(
   console.log(`🗄️ Calling hybrid_search_papers RPC...`)
   
   // Add diagnostic check for embeddings
-  const { data: embeddingCount, error: countError } = await supabase
+  const { error: countError } = await supabase
     .from('papers')
     .select('id', { count: 'exact' })
     .not('embedding', 'is', null)
@@ -793,7 +836,7 @@ export async function hybridSearchPapers(
   console.log(`🧪 Embedding magnitude: ${Math.sqrt(queryEmbedding.reduce((sum, x) => sum + x*x, 0)).toFixed(3)}`)
   
   // Check if RPC function exists
-  const { data: functionExists, error: funcError } = await supabase
+  const { error: funcError } = await supabase
     .rpc('hybrid_search_papers', {
       query_text: 'test',
       query_embedding: new Array(384).fill(0),
@@ -1231,7 +1274,17 @@ export async function ingestPaperWithChunks(
     ? generatePaperUUID(paperMeta.doi)
     : generatePaperUUID(mainText)
   
-  // Upsert main paper record with main embedding
+  // Task 5: Detect and enrich metadata with region information
+  const regionInputs: RegionDetectionInputs = {
+    venue: paperMeta.venue,
+    url: paperMeta.url,
+    title: paperMeta.title,
+    affiliations: paperMeta.authors
+  }
+  const regionResult = detectPaperRegion(regionInputs)
+  const enrichedMetadata = enrichMetadataWithRegion(paperMeta.metadata || {}, regionResult)
+  
+  // Upsert main paper record with main embedding and enriched metadata
   const { error } = await supabase
     .from('papers')
     .upsert({
@@ -1243,7 +1296,7 @@ export async function ingestPaperWithChunks(
       doi: paperMeta.doi,
       url: paperMeta.url,
       pdf_url: paperMeta.pdf_url,
-      metadata: paperMeta.metadata,
+      metadata: enrichedMetadata, // Use enriched metadata with region info
       source: paperMeta.source || 'unknown',
       citation_count: paperMeta.citation_count || 0,
       impact_score: Math.max(paperMeta.impact_score || 0, 0),
@@ -1583,7 +1636,17 @@ export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<strin
     ? generatePaperUUID(paperMeta.doi)
     : generatePaperUUID(text)
   
-  // Upsert paper with embedding (no chunks)
+  // Task 5: Detect and enrich metadata with region information
+  const regionInputs: RegionDetectionInputs = {
+    venue: paperMeta.venue,
+    url: paperMeta.url,
+    title: paperMeta.title,
+    affiliations: paperMeta.authors
+  }
+  const regionResult = detectPaperRegion(regionInputs)
+  const enrichedMetadata = enrichMetadataWithRegion(paperMeta.metadata || {}, regionResult)
+  
+  // Upsert paper with embedding (no chunks) and enriched metadata
   const { error } = await supabase
     .from('papers')
     .upsert({
@@ -1595,7 +1658,7 @@ export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<strin
       doi: paperMeta.doi,
       url: paperMeta.url,
       pdf_url: paperMeta.pdf_url,
-      metadata: paperMeta.metadata,
+      metadata: enrichedMetadata, // Use enriched metadata with region info
       source: paperMeta.source || 'unknown',
       citation_count: paperMeta.citation_count || 0,
       impact_score: Math.max(paperMeta.impact_score || 0, 0),
@@ -1612,4 +1675,96 @@ export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<strin
   console.log(`📚 Lightweight ingestion completed: ${paperMeta.title} (ID: ${paperId})`)
   
   return paperId
+}
+
+/**
+ * NEW MODULAR SYSTEM FUNCTIONS
+ * 
+ * These functions use the new separated modular architecture
+ * and can be used alongside the existing implementations
+ */
+
+/**
+ * Ingest paper using the new modular system
+ */
+export async function ingestPaperV3(
+  paperMeta: PaperDTO,
+  options: PaperIngestionOptions = {}
+): Promise<IngestionResult> {
+  // Convert PaperDTO to PaperData format
+  const paperData: PaperData = {
+    title: paperMeta.title,
+    authors: paperMeta.authors || [],
+    abstract: paperMeta.abstract,
+    venue: paperMeta.venue || paperMeta.publication,
+    year: paperMeta.year ? parseInt(paperMeta.year.toString()) : undefined,
+    url: paperMeta.url,
+    doi: paperMeta.doi,
+    pdf_url: paperMeta.pdf_url,
+    metadata: {
+      source: paperMeta.source || 'unknown',
+      ...paperMeta.metadata
+    },
+    content: paperMeta.content
+  }
+
+  return ingestPaperModular(paperData, options)
+}
+
+/**
+ * Batch ingest papers using the new modular system
+ */
+export async function batchIngestPapersV3(
+  papers: PaperDTO[],
+  options: PaperIngestionOptions = {},
+  concurrency = 3
+): Promise<BatchIngestionResult> {
+  const paperDataArray: PaperData[] = papers.map(paperMeta => ({
+    title: paperMeta.title,
+    authors: paperMeta.authors || [],
+    abstract: paperMeta.abstract,
+    venue: paperMeta.venue || paperMeta.publication,
+    year: paperMeta.year ? parseInt(paperMeta.year.toString()) : undefined,
+    url: paperMeta.url,
+    doi: paperMeta.doi,
+    pdf_url: paperMeta.pdf_url,
+    metadata: {
+      source: paperMeta.source || 'unknown',
+      ...paperMeta.metadata
+    },
+    content: paperMeta.content
+  }))
+
+  return batchIngestPapersModular(paperDataArray, options, concurrency)
+}
+
+/**
+ * Get database statistics using the new modular system
+ */
+export async function getDatabaseStatsV3() {
+  return getDatabaseStats()
+}
+
+/**
+ * Search papers using the new modular system
+ */
+export async function searchPapersV3(params: SearchPapersParams = {}): Promise<SearchPapersResult> {
+  return searchPapersModular(params)
+}
+
+/**
+ * Get papers by region using the new modular system
+ */
+export async function getPapersByRegionV3(
+  region: string,
+  options: { limit?: number; offset?: number } = {}
+): Promise<SearchPapersResult> {
+  return searchPapersModular({ region, ...options })
+}
+
+/**
+ * Get region statistics using the new modular system
+ */
+export async function getRegionStatisticsV3(): Promise<RegionStatistics[]> {
+  return getRegionStatisticsModular()
 }

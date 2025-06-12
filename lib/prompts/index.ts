@@ -9,26 +9,30 @@ export {
 } from './loader';
 
 export {
-  generateSectionPrompt,
-  generateLiteratureReviewPrompt,
-  generateMethodologyPrompt,
-  generateDiscussionPrompt,
   generateOutlineSystemPrompt,
   generateOutlineUserPrompt,
-  generateOutline
+  generateOutline,
+  generateSectionPrompt,
+  generateSection,
+  generateMultipleSections
 } from './generators';
 
 export type {
-  PromptTemplate,
-  PaperType,
-  PromptLibrary,
   PaperTypeKey,
   SectionKey,
-  PromptLoadError,
-  PromptValidationError,
-  GeneratedOutline,
   OutlineSection,
-  OutlineConfig
+  GeneratedOutline,
+  OutlineConfig,
+  SectionContext,
+  SectionConfig,
+  GeneratedSection,
+  SectionDraftingOptions,
+  PromptTemplate,
+  CitationStyle,
+  PaperType,
+  PromptLibrary,
+  PromptLoadError,
+  PromptValidationError
 } from './types';
 
 export type { TemplateOptions } from './generators'; 
