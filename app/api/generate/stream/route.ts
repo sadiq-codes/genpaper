@@ -1,11 +1,11 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createResearchProject } from '@/lib/db/research'
-import { generateDraftWithRAG } from '@/lib/ai/enhanced-generation'
+import { generateDraftWithRAG } from '@/lib/generation'
 import type { GenerationConfig } from '@/types/simplified'
 
 // Use Node.js runtime for better DNS resolution and OpenAI SDK compatibility
-export const runtime = 'edge'
+export const runtime = 'nodejs'
 
 // Fail fast on missing environment variables
 if (!process.env.OPENAI_API_KEY) {
@@ -66,9 +66,7 @@ export async function GET(request: NextRequest) {
     const useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
     const forceIngest = url.searchParams.get('forceIngest') === 'true'
     const length = url.searchParams.get('length') || 'medium'
-    const style = url.searchParams.get('style') || 'academic'
-    const citationStyle = url.searchParams.get('citationStyle') || 'apa'
-    const includeMethodology = url.searchParams.get('includeMethodology') === 'true'
+    const paperType = url.searchParams.get('paperType') || 'researchArticle'
 
     if (!topic) {
       return new Response(
@@ -93,7 +91,7 @@ export async function GET(request: NextRequest) {
       max_tokens: 16000,
       stream: true,
       search_parameters: {
-        sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+        sources: [],
         limit: 25,
         useSemanticSearch: true,
         forceIngest
@@ -101,9 +99,7 @@ export async function GET(request: NextRequest) {
       library_papers_used: [],
       paper_settings: {
         length: length as 'short' | 'medium' | 'long',
-        style: style as 'academic' | 'review' | 'survey',
-        citationStyle: citationStyle as 'apa' | 'mla' | 'chicago',
-        includeMethodology
+        paperType: paperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation',
       }
     }
 
@@ -198,11 +194,15 @@ export async function GET(request: NextRequest) {
 
           // Send final completion with full content
           if (!isControllerClosed) {
+            // Convert citationsMap to plain object for JSON serialization
+            const citationsMapObject = Object.fromEntries(result.citationsMap)
+            
             const completionData = JSON.stringify({
               type: 'complete',
               projectId: project.id,
               content: result.content,
               citations: result.citations,
+              citationsMap: citationsMapObject,
               wordCount: result.wordCount,
               sources: result.sources,
               timestamp: new Date().toISOString()
@@ -235,7 +235,32 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('❌ AI SDK streaming error:', error)
-    return new Response('Internal server error', { status: 500 })
+    
+    // Return a proper SSE error response
+    const errorStream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder()
+        const errorData = JSON.stringify({
+          type: 'error',
+          error: error instanceof Error ? error.message : 'Internal server error',
+          timestamp: new Date().toISOString()
+        })
+        controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
+        controller.close()
+      }
+    })
+    
+    return new Response(errorStream, {
+      status: 200, // SSE should return 200 even for errors
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET',
+        'Access-Control-Allow-Headers': 'Content-Type'
+      }
+    })
   }
 }
 
@@ -244,7 +269,7 @@ export async function POST(request: NextRequest) {
   if (isDev) console.log('🚀 Starting POST /api/generate/stream')
   
   const body = await request.json()
-  const { topic, useLibraryOnly, forceIngest, length, style, citationStyle, includeMethodology } = body
+  const { topic, useLibraryOnly, forceIngest, length, paperType } = body
   
   // Create a new request with query parameters for the GET handler
   const url = new URL(request.url)
@@ -253,10 +278,7 @@ export async function POST(request: NextRequest) {
   if (typeof useLibraryOnly === 'boolean') url.searchParams.set('useLibraryOnly', String(useLibraryOnly))
   if (typeof forceIngest === 'boolean') url.searchParams.set('forceIngest', String(forceIngest))
   if (length) url.searchParams.set('length', length)
-  if (style) url.searchParams.set('style', style)
-  if (citationStyle) url.searchParams.set('citationStyle', citationStyle)
-  if (typeof includeMethodology === 'boolean') url.searchParams.set('includeMethodology', String(includeMethodology))
-  
+  if (paperType) url.searchParams.set('paperType', paperType)  
   // Create a new request object with the updated URL
   const newRequest = new NextRequest(url, {
     method: 'GET',

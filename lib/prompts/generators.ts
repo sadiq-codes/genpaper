@@ -1,4 +1,6 @@
-import { PromptTemplate, PaperTypeKey, SectionKey, GeneratedOutline, OutlineSection, OutlineConfig, CitationStyle, SectionContext, SectionConfig, GeneratedSection, SectionDraftingOptions, PolishConfig, SectionContent } from './types';
+import { PromptTemplate, PaperTypeKey, SectionKey, GeneratedOutline, OutlineSection, OutlineConfig, CitationStyle, SectionContext, SectionConfig, GeneratedSection, SectionDraftingOptions } from './types';
+// Note: PolishConfig, SectionContent temporarily commented out due to tiktoken issues
+// import { PolishConfig, SectionContent } from './types';
 import {
   getPromptTemplate,
   getAvailablePaperTypes,
@@ -10,9 +12,8 @@ import {
   formatFewShotExamples, 
   hasFewShotExamples 
 } from './few-shot-examples';
-import { 
-  performFinalPolish
-} from './final-polish';
+// Note: final-polish import removed to avoid tiktoken issues in outline generation
+// import { performFinalPolish } from './final-polish';
 import Mustache from 'mustache';
 import { streamText } from 'ai';
 import { ai } from '@/lib/ai/vercel-client';
@@ -20,6 +21,7 @@ import {
   performQualityCheck, 
   createReviewEvent
 } from '@/lib/utils/citation-depth-checker';
+import { addCitation } from '@/lib/ai/tools/addCitation';
 
 /**
  * Template generation options
@@ -58,16 +60,83 @@ export function generateOutlineUserPrompt(
   const template = getPromptTemplate(paperType, 'outline');
   if (!template) return '';
   
-  const templateVars = {
-    topic,
-    paperCount: sourceIds.length,
-    paperIds: sourceIds.join(', '),
-    citationStyle: (config.citationStyle || 'apa').toUpperCase(),
-    localRegion: config.localRegion || 'global',
-    pageLength: config.pageLength ? `${config.pageLength}` : 'not specified'
-  };
-  
-  return Mustache.render(template.userPromptTemplate, templateVars);
+  // Override the template with a JSON-forcing prompt
+  const jsonPrompt = `
+Based on the topic '${topic}' and the provided ${sourceIds.length} papers, generate a structured plan for a '${paperType}'.
+
+Respond with NOTHING BUT a single, valid JSON object. Do not include any explanatory text, markdown formatting, or anything before or after the JSON object.
+
+The JSON object must follow this exact structure:
+{
+  "paperType": "${paperType}",
+  "topic": "${topic}",
+  "sections": [
+    {
+      "sectionKey": "introduction",
+      "title": "Introduction",
+      "expectedWords": 800,
+      "candidatePaperIds": [${sourceIds.map(id => `"${id}"`).join(', ')}],
+      "keyPoints": [
+        "Establish background and significance of ${topic}",
+        "Clearly state the research problem and objectives"
+      ]
+    },
+    {
+      "sectionKey": "literatureReview",
+      "title": "Literature Review",
+      "expectedWords": 1500,
+      "candidatePaperIds": [${sourceIds.map(id => `"${id}"`).join(', ')}],
+      "keyPoints": [
+        "Synthesize existing research on ${topic}",
+        "Identify gaps and contradictions in current knowledge"
+      ]
+    },
+    {
+      "sectionKey": "methodology",
+      "title": "Methodology",
+      "expectedWords": 1000,
+      "candidatePaperIds": [${sourceIds.map(id => `"${id}"`).join(', ')}],
+      "keyPoints": [
+        "Describe research design and approach",
+        "Detail data collection and analysis methods"
+      ]
+    },
+    {
+      "sectionKey": "results",
+      "title": "Results",
+      "expectedWords": 1200,
+      "candidatePaperIds": [${sourceIds.map(id => `"${id}"`).join(', ')}],
+      "keyPoints": [
+        "Present key findings objectively",
+        "Include relevant data and statistical analyses"
+      ]
+    },
+    {
+      "sectionKey": "discussion",
+      "title": "Discussion",
+      "expectedWords": 1500,
+      "candidatePaperIds": [${sourceIds.map(id => `"${id}"`).join(', ')}],
+      "keyPoints": [
+        "Interpret results in context of existing literature",
+        "Discuss limitations and implications"
+      ]
+    },
+    {
+      "sectionKey": "conclusion",
+      "title": "Conclusion",
+      "expectedWords": 500,
+      "candidatePaperIds": [${sourceIds.map(id => `"${id}"`).join(', ')}],
+      "keyPoints": [
+        "Summarize key contributions and findings",
+        "Suggest future research directions"
+      ]
+    }
+  ]
+}
+
+Ensure the 'sectionKey' values match valid keys like 'introduction', 'literatureReview', 'methodology', 'results', 'discussion', 'conclusion'. Distribute the paper IDs appropriately across sections based on their relevance to each section's content needs.`;
+
+  return jsonPrompt;
 }
 
 /**
@@ -98,7 +167,7 @@ export function generateLiteratureReviewPrompt(
   let userPromptTemplate: string;
   let requiredDepthCues: string[];
   
-  if (paperType === 'dissertation') {
+  if (paperType === 'phdDissertation') {
     userPromptTemplate = `${fewShotPrefix}Write Chapter 2 (Literature Review) for '${topic}' ${contextText}providing exhaustive coverage and critical synthesis of findings from 50+ studies. Organize by theoretical themes, critically compare competing perspectives, critique methodological approaches, identify multiple theoretical frameworks, and develop original theoretical insights. Compare methodologies across studies.${localText} Cite with [CITE:{{paperId}}]. Conclude with theoretical model that guides your research. Write approximately ${expectedWords} words.`;
     requiredDepthCues = ["exhaustive coverage", "critical synthesis", "theoretical development", "compare", "critique", "original insights"];
   } else if (paperType === 'mastersThesis') {
@@ -133,7 +202,7 @@ export function generateMethodologyPrompt(
 ): PromptTemplate {
   const { paperType = 'researchArticle', contextChunks = [], expectedWords = 1000, localRegion, studyDesign = 'mixed', fewShot = false } = options;
   
-  let systemPrompt = paperType === 'mastersThesis' || paperType === 'dissertation'
+  let systemPrompt = paperType === 'mastersThesis' || paperType === 'phdDissertation'
     ? `You are writing a comprehensive Methodology chapter for a ${paperType}. Provide detailed research design with theoretical justification and procedures that demonstrate methodological rigor.`
     : "You are writing the Methodology section of a research article. Provide sufficient detail for replication, including study design, participants, instruments, and analysis procedures.";
 
@@ -150,7 +219,7 @@ export function generateMethodologyPrompt(
   
   const userPromptTemplate = `${fewShotPrefix}Write the Methodology section ${contextText}for a ${studyDesign} study with sufficient replication detail. Include: 1) Study design and theoretical justification, 2) Participants/sample selection with power analysis if quantitative, 3) Data collection instruments with validation details and instrument validation procedures, 4) Detailed procedures with replication detail, 5) Data analysis plan with specific statistical procedures, 6) Ethical considerations and IRB approval.${localText} Cite relevant protocols with [CITE:{{paperId}}]. Write approximately ${expectedWords} words.`;
 
-  const requiredDepthCues = paperType === 'dissertation' || paperType === 'mastersThesis'
+  const requiredDepthCues = paperType === 'phdDissertation' || paperType === 'mastersThesis'
     ? ["methodological justification", "replication detail", "ethical considerations", "limitations", "theoretical grounding"]
     : ["replication detail", "statistical procedures", "ethical considerations", "instrument validation"];
 
@@ -258,7 +327,7 @@ function getOutlineDepthCues(paperType: PaperTypeKey): string[] {
       return ["problem identification", "solution justification", "local relevance", "implementation feasibility"];
     case 'mastersThesis':
       return ["comprehensive coverage", "theoretical framework", "research gap identification", "methodology justification"];
-    case 'dissertation':
+    case 'phdDissertation':
       return ["theoretical advancement", "original contribution", "exhaustive coverage", "research significance"];
     default:
       return ["structure", "organization", "clarity"];
@@ -303,16 +372,32 @@ export async function generateOutline(
     pageLength: config.pageLength ? `${config.pageLength}` : 'not specified'
   };
 
-  // Render prompts using Mustache (for future AI SDK integration)
-  Mustache.render(template.systemPrompt, templateVars);
-  Mustache.render(template.userPromptTemplate, templateVars);
+  // Render prompts using Mustache
+  const systemPrompt = Mustache.render(template.systemPrompt, templateVars);
+  const userPrompt = Mustache.render(template.userPromptTemplate, templateVars);
 
-  // TODO: In real implementation, this would call the AI SDK
-  // For now, simulate with mock response
-  const outlineText = generateMockOutlineResponse(paperType);
+  // Use the AI SDK to generate the outline from a real model call
+  const { textStream } = await streamText({
+    model: ai('gpt-4o'),
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ],
+    temperature: config.temperature ?? 0.2,
+    maxTokens: config.maxTokens ?? 2000,
+  });
+
+  // Collect the full response text
+  let outlineText = ''
+  for await (const delta of textStream) {
+    outlineText += delta
+  }
+
+  console.log('🔍 Raw outline response:', outlineText.substring(0, 500) + '...')
 
   // Parse the outline response into structured sections
   const sections = parseOutlineResponse(outlineText, paperType);
+  console.log(`📋 Parsed ${sections.length} sections from outline`)
 
   // Calculate total estimated words
   const totalEstimatedWords = sections.reduce((total, section) => 
@@ -323,17 +408,71 @@ export async function generateOutline(
     paperType,
     topic,
     sections,
-    totalEstimatedWords,
-    citationStyle: (config.citationStyle || 'apa') as CitationStyle,
+    totalEstimatedWords,    
     localRegion: config.localRegion
   };
 }
 
 /**
  * Parse outline text response into structured sections
- * This function extracts section information from the AI-generated outline text
+ * This function now expects JSON response instead of descriptive text
  */
 function parseOutlineResponse(outlineText: string, paperType: PaperTypeKey): OutlineSection[] {
+  try {
+    // Clean the response to extract just the JSON part
+    let jsonText = outlineText.trim();
+    
+    // Remove any markdown code blocks if present
+    jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+    
+    // Try to find JSON object boundaries if there's extra text
+    const jsonStart = jsonText.indexOf('{');
+    const jsonEnd = jsonText.lastIndexOf('}');
+    
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      jsonText = jsonText.substring(jsonStart, jsonEnd + 1);
+    }
+    
+    console.log('🔍 Attempting to parse JSON outline:', jsonText.substring(0, 200) + '...');
+    
+    // Parse the JSON response
+    const parsedOutline = JSON.parse(jsonText);
+    
+    if (!parsedOutline.sections || !Array.isArray(parsedOutline.sections)) {
+      throw new Error('Invalid outline structure: missing sections array');
+    }
+    
+    // Validate and transform the sections
+    const sections: OutlineSection[] = parsedOutline.sections.map((section: any) => {
+      if (!section.sectionKey || !section.title) {
+        throw new Error(`Invalid section: missing sectionKey or title - ${JSON.stringify(section)}`);
+      }
+      
+      return createValidOutlineSection({
+        sectionKey: section.sectionKey,
+        title: section.title,
+        candidatePaperIds: Array.isArray(section.candidatePaperIds) ? section.candidatePaperIds : [],
+        keyPoints: Array.isArray(section.keyPoints) ? section.keyPoints : [],
+        expectedWords: typeof section.expectedWords === 'number' ? section.expectedWords : 500
+      });
+    });
+    
+    console.log(`📋 Successfully parsed ${sections.length} sections from JSON outline`);
+    return sections;
+    
+  } catch (error) {
+    console.error('❌ Failed to parse JSON outline, falling back to text parsing:', error);
+    console.log('🔍 Raw outline text for debugging:', outlineText);
+    
+    // Fallback to original text parsing logic
+    return parseOutlineTextFallback(outlineText, paperType);
+  }
+}
+
+/**
+ * Fallback text parsing function (original logic)
+ */
+function parseOutlineTextFallback(outlineText: string, paperType: PaperTypeKey): OutlineSection[] {
   const sections: OutlineSection[] = [];
   const lines = outlineText.split('\n').filter(line => line.trim());
   const availableSections = getAvailableSections(paperType);
@@ -415,6 +554,47 @@ function extractSectionHeader(line: string): { title: string; expectedWords?: nu
       title: chapterMatch[2].trim(),
       expectedWords: chapterMatch[3] ? parseInt(chapterMatch[3]) : undefined
     };
+  }
+
+  // Try markdown header format (## Title or ### Title)
+  const markdownMatch = line.match(/^#{2,4}\s*([^(]+?)(?:\s*\((\d+)\s*words?\))?$/i);
+  if (markdownMatch) {
+    return {
+      title: markdownMatch[1].trim(),
+      expectedWords: markdownMatch[2] ? parseInt(markdownMatch[2]) : undefined
+    };
+  }
+
+  // Try bold format (**Title**)
+  const boldMatch = line.match(/^\*\*([^*]+)\*\*(?:\s*\((\d+)\s*words?\))?$/i);
+  if (boldMatch) {
+    return {
+      title: boldMatch[1].trim(),
+      expectedWords: boldMatch[2] ? parseInt(boldMatch[2]) : undefined
+    };
+  }
+
+  // Try simple colon format (Title:)
+  const colonMatch = line.match(/^([^:]+):(?:\s*\((\d+)\s*words?\))?$/i);
+  if (colonMatch && colonMatch[1].trim().length > 3) {
+    return {
+      title: colonMatch[1].trim(),
+      expectedWords: colonMatch[2] ? parseInt(colonMatch[2]) : undefined
+    };
+  }
+
+  // Try section keywords at start of line
+  const sectionKeywords = ['abstract', 'introduction', 'literature review', 'methodology', 'methods', 'results', 'discussion', 'conclusion', 'conclusions', 'background', 'analysis'];
+  const lowerLine = line.toLowerCase().trim();
+  
+  for (const keyword of sectionKeywords) {
+    if (lowerLine.startsWith(keyword) && lowerLine.length < 50) { // Avoid matching content lines
+      const wordMatch = line.match(/\((\d+)\s*words?\)/i);
+      return {
+        title: line.replace(/\((\d+)\s*words?\)/i, '').trim(),
+        expectedWords: wordMatch ? parseInt(wordMatch[1]) : undefined
+      };
+    }
   }
   
   return null;
@@ -517,185 +697,6 @@ function createValidOutlineSection(section: Partial<OutlineSection>): OutlineSec
 }
 
 /**
- * Generate mock outline response for testing different paper types
- * In production, this would be replaced with actual AI SDK calls
- */
-function generateMockOutlineResponse(paperType: PaperTypeKey): string {
-  // This would be loaded from separate mock files in testing
-  const responses = {
-    researchArticle: `
-1. Abstract (150 words)
-Paper IDs: paper-1, paper-2
-
-2. Introduction (800 words)
-Paper IDs: paper-1, paper-2, paper-3
-- Research question and objectives
-- Study significance and scope
-
-3. Literature Review (1200 words)
-Paper IDs: paper-1, paper-2, paper-3, paper-4, paper-5
-- Current state of research
-- Research gaps identified
-
-4. Methodology (1000 words)
-Paper IDs: paper-3, paper-4
-- Research design and approach
-- Data collection procedures
-
-5. Results (1500 words)
-Paper IDs: paper-2, paper-3
-- Statistical findings
-- Key outcomes
-
-6. Discussion (1300 words)
-Paper IDs: paper-1, paper-2, paper-3, paper-4, paper-5
-- Interpretation of results
-- Theoretical implications
-
-7. Conclusion (600 words)
-Paper IDs: paper-1, paper-2
-- Summary of findings
-- Future research directions
-    `.trim(),
-
-    literatureReview: `
-1. Introduction (400 words)
-Paper IDs: paper-1, paper-2
-- Scope and purpose of review
-- Significance of topic
-
-2. Theme 1: Prevalence Studies (1000 words)
-Paper IDs: paper-1, paper-2, paper-3
-- Regional variation analysis
-- Methodological comparison
-
-3. Theme 2: Risk Factors (1000 words)
-Paper IDs: paper-2, paper-4, paper-5
-- Environmental factors
-- Behavioral determinants
-
-4. Theme 3: Intervention Strategies (1000 words)
-Paper IDs: paper-3, paper-4, paper-6
-- Prevention approaches
-- Treatment effectiveness
-
-5. Gaps and Future Directions (600 words)
-Paper IDs: paper-1, paper-5, paper-6
-- Research limitations identified
-- Priority areas for investigation
-
-6. Conclusion (400 words)
-Paper IDs: paper-1, paper-2, paper-6
-- Synthesis of key findings
-- Implications for practice
-    `.trim(),
-
-    capstoneProject: `
-1. Problem Statement (500 words)
-Paper IDs: paper-1, paper-2
-- Problem definition and scope
-- Local context and significance
-
-2. Literature Review (800 words)
-Paper IDs: paper-1, paper-2, paper-3, paper-4
-- Existing solutions analysis
-- Gap identification
-
-3. Proposed Solution (600 words)
-Paper IDs: paper-2, paper-3
-- Solution overview
-- Technical approach
-
-4. Implementation Plan (700 words)
-Paper IDs: paper-3, paper-4
-- Development phases
-- Resource requirements
-
-5. Expected Outcomes (400 words)
-Paper IDs: paper-1, paper-4
-- Success metrics
-- Impact assessment
-
-6. Timeline (300 words)
-Paper IDs: paper-4
-- Project milestones
-- Deliverable schedule
-    `.trim(),
-
-    mastersThesis: `
-Chapter 1: Introduction (1500 words)
-Paper IDs: paper-1, paper-2, paper-3
-- Research context and background
-- Problem statement and objectives
-
-Chapter 2: Literature Review (2500 words)
-Paper IDs: paper-1, paper-2, paper-3, paper-4, paper-5, paper-6
-- Theoretical framework development
-- Comprehensive analysis of existing research
-
-Chapter 3: Methodology (2000 words)
-Paper IDs: paper-3, paper-4, paper-5
-- Research design justification
-- Data collection and analysis procedures
-
-Chapter 4: Results (1800 words)
-Paper IDs: paper-2, paper-3, paper-4
-- Findings presentation
-- Statistical analysis results
-
-Chapter 5: Discussion (2000 words)
-Paper IDs: paper-1, paper-2, paper-4, paper-5, paper-6
-- Results interpretation
-- Theoretical implications
-
-Chapter 6: Conclusions (800 words)
-Paper IDs: paper-1, paper-5, paper-6
-- Research contributions
-- Recommendations for future work
-    `.trim(),
-
-    dissertation: `
-Chapter 1: Introduction (3000 words)
-Paper IDs: paper-1, paper-2, paper-3, paper-4
-- Comprehensive research context
-- Original contribution statement
-
-Chapter 2: Literature Review (5000 words)
-Paper IDs: paper-1, paper-2, paper-3, paper-4, paper-5, paper-6, paper-7, paper-8
-- Exhaustive theoretical coverage
-- Multiple framework integration
-
-Chapter 3: Theoretical Framework (2500 words)
-Paper IDs: paper-2, paper-3, paper-5, paper-7
-- Conceptual model development
-- Theoretical propositions
-
-Chapter 4: Methodology (3000 words)
-Paper IDs: paper-4, paper-5, paper-6
-- Detailed research design
-- Methodological innovations
-
-Chapter 5: Results (4000 words)
-Paper IDs: paper-3, paper-4, paper-6, paper-8
-- Comprehensive findings
-- Advanced statistical analysis
-
-Chapter 6: Discussion (4000 words)
-Paper IDs: paper-1, paper-2, paper-3, paper-5, paper-7, paper-8
-- Theoretical advancement
-- Scholarly contribution analysis
-
-Chapter 7: Conclusions and Contributions (2000 words)
-Paper IDs: paper-1, paper-2, paper-7, paper-8
-- Original contributions summary
-- Future research agenda
-    `.trim()
-  };
-
-  return responses[paperType] || responses.researchArticle;
-}
-
-/**
  * TASK 4: Section Drafting Module
  * Generate a single section with focused RAG context and return structured results
  */
@@ -719,56 +720,7 @@ export async function generateSection(
   let userPrompt: string;
   let requiredDepthCues: string[];
   
-  if (config.fewShot && (paperType === 'mastersThesis' || paperType === 'dissertation')) {
-    // Use few-shot enabled prompt generators for high-stakes paper types
-    const templateOptions = {
-      topic,
-      contextChunks: sectionContext.contextChunks.map(chunk => chunk.content),
-      expectedWords: sectionContext.expectedWords || 600,
-      localRegion: config.localRegion,
-      studyDesign: config.studyDesign,
-      fewShot: true
-    };
-    
-    const fewShotTemplate = generateSectionPrompt(paperType, sectionContext.sectionKey, templateOptions);
-    if (fewShotTemplate) {
-      systemPrompt = fewShotTemplate.systemPrompt;
-      userPrompt = fewShotTemplate.userPromptTemplate;
-      requiredDepthCues = fewShotTemplate.requiredDepthCues;
-    } else {
-      // Fallback to regular template
-      const template = getPromptTemplate(paperType, sectionContext.sectionKey);
-      if (!template) {
-        throw new Error(`No template found for ${paperType}.${sectionContext.sectionKey}`);
-      }
-      
-      const templateVars = {
-        topic,
-        sectionTitle: sectionContext.title,
-        paperCount: sectionContext.candidatePaperIds.length,
-        paperIds: sectionContext.candidatePaperIds.join(', '),
-        contextSnippets: sectionContext.contextChunks.map((chunk, idx) => 
-          `(${idx + 1}) ${chunk.content.substring(0, 200)}...`
-        ).join('\n'),
-        expectedWords: sectionContext.expectedWords || 600,
-        keyPoints: sectionContext.keyPoints?.join('\n• ') || '',
-        citationStyle: config.citationStyle || 'apa',
-        localRegion: config.localRegion || 'global',
-        studyDesign: config.studyDesign || 'mixed'
-      };
-      
-      systemPrompt = Mustache.render(template.systemPrompt, templateVars);
-      userPrompt = Mustache.render(template.userPromptTemplate, templateVars);
-      requiredDepthCues = template.requiredDepthCues;
-    }
-  } else {
-    // Use regular template system
-  const template = getPromptTemplate(paperType, sectionContext.sectionKey);
-  if (!template) {
-    throw new Error(`No template found for ${paperType}.${sectionContext.sectionKey}`);
-  }
-  
-  // Prepare template variables
+  // Prepare template variables used in both few-shot and regular paths
   const templateVars = {
     topic,
     sectionTitle: sectionContext.title,
@@ -783,8 +735,43 @@ export async function generateSection(
     localRegion: config.localRegion || 'global',
     studyDesign: config.studyDesign || 'mixed'
   };
+
+  if (config.fewShot && (paperType === 'mastersThesis' || paperType === 'phdDissertation')) {
+    // Use few-shot enabled prompt generators for high-stakes paper types
+    const templateOptions = {
+      topic,
+      contextChunks: sectionContext.contextChunks.map(chunk => chunk.content),
+      expectedWords: sectionContext.expectedWords || 600,
+      localRegion: config.localRegion,
+      studyDesign: config.studyDesign,
+      fewShot: true
+    };
+    
+    const fewShotTemplate = generateSectionPrompt(paperType, sectionContext.sectionKey, templateOptions);
+    if (fewShotTemplate) {
+      systemPrompt = fewShotTemplate.systemPrompt;
+      // BUG FIX: Render the user prompt template with Mustache
+      userPrompt = Mustache.render(fewShotTemplate.userPromptTemplate, templateVars);
+      requiredDepthCues = fewShotTemplate.requiredDepthCues;
+    } else {
+      // Fallback to regular template if few-shot template generation fails
+      const template = getPromptTemplate(paperType, sectionContext.sectionKey);
+      if (!template) {
+        throw new Error(`No template found for ${paperType}.${sectionContext.sectionKey}`);
+      }
+      
+      systemPrompt = Mustache.render(template.systemPrompt, templateVars);
+      userPrompt = Mustache.render(template.userPromptTemplate, templateVars);
+      requiredDepthCues = template.requiredDepthCues;
+    }
+  } else {
+    // Use regular template system
+    const template = getPromptTemplate(paperType, sectionContext.sectionKey);
+    if (!template) {
+      throw new Error(`No template found for ${paperType}.${sectionContext.sectionKey}`);
+    }
   
-  // Render the prompts with Mustache
+    // Render the prompts with Mustache
     systemPrompt = Mustache.render(template.systemPrompt, templateVars);
     userPrompt = Mustache.render(template.userPromptTemplate, templateVars);
     requiredDepthCues = template.requiredDepthCues;
@@ -799,21 +786,7 @@ export async function generateSection(
     
     if (isTestEnvironment) {
       // Generate mock content for testing
-      const mockTemplateVars = {
-        topic,
-        sectionTitle: sectionContext.title,
-        paperCount: sectionContext.candidatePaperIds.length,
-        paperIds: sectionContext.candidatePaperIds.join(', '),
-        contextSnippets: sectionContext.contextChunks.map((chunk, idx) => 
-          `(${idx + 1}) ${chunk.content.substring(0, 200)}...`
-        ).join('\n'),
-        expectedWords: sectionContext.expectedWords || 600,
-        keyPoints: sectionContext.keyPoints?.join('\n• ') || '',
-        citationStyle: config.citationStyle || 'apa',
-        localRegion: config.localRegion || 'global',
-        studyDesign: config.studyDesign || 'mixed'
-      };
-      content = generateMockSectionContent(sectionContext, mockTemplateVars);
+      content = generateMockSectionContent(sectionContext, templateVars);
     } else {
       // Generate the section content using AI SDK
       const response = await streamText({
@@ -822,12 +795,23 @@ export async function generateSection(
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
+        tools: { addCitation },
+        toolChoice: 'auto',
+        maxSteps: 5,
         temperature: config.temperature || 0.3,
-        maxTokens: config.maxTokens || 2000,
+        maxTokens: config.maxTokens || 2000
       });
       
-      // Collect the full response
-      content = await collectFullResponse(response);
+      // Collect text deltas (ignore tool events here – they persist via the tool itself)
+      content = ''
+      for await (const delta of response.fullStream) {
+        if (delta.type === 'text-delta') content += delta.textDelta
+      }
+      content = content.trim()
+    }
+    
+    if (!content) {
+      throw new Error(`LLM returned empty content for section: ${sectionContext.sectionKey}`);
     }
     
     // Extract citations from the generated content
@@ -866,6 +850,15 @@ export async function generateSection(
     // Count words
     const wordCount = content.split(/\s+/).filter(word => word.length > 0).length;
     
+    // Enforce word count from template
+    if (sectionContext.expectedWords) {
+      const lowerBound = sectionContext.expectedWords * 0.75;
+      const upperBound = sectionContext.expectedWords * 1.5;
+      if (wordCount < lowerBound || wordCount > upperBound) {
+        throw new Error(`Generated section has ${wordCount} words, but expected ~${sectionContext.expectedWords}.`);
+      }
+    }
+    
     return {
       sectionKey: sectionContext.sectionKey,
       title: sectionContext.title,
@@ -879,92 +872,6 @@ export async function generateSection(
   } catch (error) {
     throw new Error(`Failed to generate section ${sectionContext.sectionKey}: ${error}`);
   }
-}
-
-/**
- * Helper function to collect full response from streaming
- */
-async function collectFullResponse(response: { textStream: AsyncIterable<string> }): Promise<string> {
-  let fullContent = '';
-  for await (const chunk of response.textStream) {
-    fullContent += chunk;
-  }
-  return fullContent.trim();
-}
-
-/**
- * Extract citations from generated content
- */
-function extractCitationsFromContent(
-  content: string,
-  validPaperIds: string[]
-): Array<{ paperId: string; citationText: string; positionStart?: number; positionEnd?: number }> {
-  const citations: Array<{ paperId: string; citationText: string; positionStart?: number; positionEnd?: number }> = [];
-  const citationRegex = /\[CITE:\s*([a-f0-9-]{36})\]/gi;
-  
-  let match;
-  while ((match = citationRegex.exec(content)) !== null) {
-    const paperId = match[1];
-    
-    // Only include citations for valid paper IDs
-    if (validPaperIds.includes(paperId)) {
-      citations.push({
-        paperId,
-        citationText: match[0],
-        positionStart: match.index,
-        positionEnd: match.index + match[0].length
-      });
-    }
-  }
-  
-  return citations;
-}
-
-/**
- * Calculate quality metrics for the generated section
- */
-function calculateSectionQuality(
-  content: string,
-  requiredDepthCues: string[]
-): {
-  citationDensity: number;
-  depthCuesCovered: string[];
-  missingDepthCues: string[];
-} {
-  // Calculate citation density (citations per paragraph)
-  const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0);
-  const citations = content.match(/\[CITE:\s*[a-f0-9-]{36}\]/gi) || [];
-  const citationDensity = paragraphs.length > 0 ? citations.length / paragraphs.length : 0;
-  
-  // Check which depth cues are covered
-  const contentLower = content.toLowerCase();
-  const depthCuesCovered = requiredDepthCues.filter(cue => 
-    contentLower.includes(cue.toLowerCase())
-  );
-  const missingDepthCues = requiredDepthCues.filter(cue => 
-    !contentLower.includes(cue.toLowerCase())
-  );
-  
-  return {
-    citationDensity,
-    depthCuesCovered,
-    missingDepthCues
-  };
-}
-
-/**
- * Extract which key points were covered in the content
- */
-function extractCoveredKeyPoints(content: string, keyPoints: string[]): string[] {
-  const contentLower = content.toLowerCase();
-  return keyPoints.filter(point => {
-    const pointKeywords = point.toLowerCase().split(/\s+/);
-    // Check if at least 60% of keywords from the key point appear in content
-    const matchedKeywords = pointKeywords.filter(keyword => 
-      contentLower.includes(keyword)
-    );
-    return matchedKeywords.length >= pointKeywords.length * 0.6;
-  });
 }
 
 /**
@@ -1129,67 +1036,111 @@ export async function generateMultipleSections(
       });
       sections.push(section);
     } catch (error) {
-      console.error(`Failed to generate section ${sectionContext.sectionKey}:`, error);
-      // Continue with other sections even if one fails
+      console.warn(`Section ${sectionContext.sectionKey} failed, retrying with higher temperature...`, error);
+      try {
+        const section = await generateSection({
+          paperType,
+          topic,
+          sectionContext,
+          config: { ...config, temperature: 0.6 }
+        });
+        sections.push(section);
+      } catch (retryError) {
+        console.error(`Failed to generate section ${sectionContext.sectionKey} after retry:`, retryError);
+        // Continue with other sections even if one fails
+      }
     }
   }
   
   return sections;
 }
 
+
+
 /**
- * TASK 8: Generate multiple sections with final polish pass
- * Implements the complete "sections → stitch & polish" workflow
+ * Helper function to collect full response from streaming
  */
-export async function generatePaperWithPolish(
-  paperType: PaperTypeKey,
-  topic: string,
-  sectionContexts: SectionContext[],
-  config?: SectionConfig & { enableFinalPolish?: boolean }
-): Promise<{
-  sections: GeneratedSection[];
-  polishedDocument?: {
-    content: string;
-    wordCount: number;
-    sectionsProcessed: number;
-    improvementsApplied: string[];
-  };
-}> {
-  // Generate all sections first
-  const sections = await generateMultipleSections(paperType, topic, sectionContexts, config);
+/* eslint-disable @typescript-eslint/no-unused-vars -- kept for future debug utilities */
+async function collectFullResponse(response: { textStream: AsyncIterable<string> }): Promise<string> {
+  let fullContent = '';
+  for await (const chunk of response.textStream) {
+    fullContent += chunk;
+  }
+  return fullContent.trim();
+}
+/* eslint-enable @typescript-eslint/no-unused-vars */
+
+/**
+ * Extract citations from generated content
+ */
+function extractCitationsFromContent(
+  content: string,
+  validPaperIds: string[]
+): Array<{ paperId: string; citationText: string; positionStart?: number; positionEnd?: number }> {
+  const citations: Array<{ paperId: string; citationText: string; positionStart?: number; positionEnd?: number }> = [];
+  const citationRegex = /\[CITE:\s*([a-zA-Z0-9_-]{3,})\]/gi;
   
-  // Check if final polish is enabled and we have multiple sections
-  if (config?.enableFinalPolish && sections.length > 1) {
-    const sectionContents: SectionContent[] = sections.map(section => ({
-      sectionKey: section.sectionKey,
-      title: section.title,
-      content: section.content,
-      wordCount: section.wordCount
-    }));
+  let match;
+  while ((match = citationRegex.exec(content)) !== null) {
+    const paperId = match[1];
     
-    const polishConfig: PolishConfig = {
-      paperType,
-      topic,
-      citationStyle: config.citationStyle || 'apa',
-      localRegion: config.localRegion,
-      targetWordCount: sections.reduce((total, section) => total + section.wordCount, 0),
-      temperature: config.temperature,
-      maxTokens: Math.min(8000, Math.max(4000, sections.length * 1500))
-    };
-    
-    try {
-      const polishedDocument = await performFinalPolish(sectionContents, polishConfig);
-      
-      return {
-        sections,
-        polishedDocument
-      };
-    } catch (error) {
-      console.error('Final polish failed:', error);
-      // Return sections without polish if polish fails
-      return { sections };
+    // Only include citations for valid paper IDs
+    if (validPaperIds.includes(paperId)) {
+      citations.push({
+        paperId,
+        citationText: match[0],
+        positionStart: match.index,
+        positionEnd: match.index + match[0].length
+      });
     }
   }
   
-  return { sections };
-} 
+  return citations;
+}
+
+/**
+ * Calculate quality metrics for the generated section
+ */
+function calculateSectionQuality(
+  content: string,
+  requiredDepthCues: string[]
+): {
+  citationDensity: number;
+  depthCuesCovered: string[];
+  missingDepthCues: string[];
+} {
+  // Calculate citation density (citations per paragraph)
+  const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+  const citations = content.match(/\[CITE:\s*([a-zA-Z0-9_-]{3,})\]/gi) || [];
+  const citationDensity = paragraphs.length > 0 ? citations.length / paragraphs.length : 0;
+  
+  // Check which depth cues are covered
+  const contentLower = content.toLowerCase();
+  const depthCuesCovered = requiredDepthCues.filter(cue => 
+    contentLower.includes(cue.toLowerCase())
+  );
+  const missingDepthCues = requiredDepthCues.filter(cue => 
+    !contentLower.includes(cue.toLowerCase())
+  );
+  
+  return {
+    citationDensity,
+    depthCuesCovered,
+    missingDepthCues
+  };
+}
+
+/**
+ * Extract which key points were covered in the content
+ */
+function extractCoveredKeyPoints(content: string, keyPoints: string[]): string[] {
+  const contentLower = content.toLowerCase();
+  return keyPoints.filter(point => {
+    const pointKeywords = point.toLowerCase().split(/\s+/);
+    // Check if at least 60% of keywords from the key point appear in content
+    const matchedKeywords = pointKeywords.filter(keyword => 
+      contentLower.includes(keyword)
+    );
+    return matchedKeywords.length >= pointKeywords.length * 0.6;
+  });
+}

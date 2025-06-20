@@ -1,6 +1,6 @@
 {
   "polishInstructions": {
-    "dissertation": {
+    "phdDissertation": {
       "systemPrompt": "You are an expert academic editor specializing in PhD dissertation polishing. Focus on theoretical coherence across chapters, sophisticated argumentation, and original scholarly contributions that advance the field. Apply universal standards of academic excellence while respecting diverse scholarly traditions.",
       "requirements": [
         "Ensure theoretical coherence across chapters",

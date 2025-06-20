@@ -65,8 +65,7 @@ function buildStreamUrl(request: GenerateRequest): string {
   
   if (request.config) {
     if (request.config.length) params.set('length', request.config.length)
-    if (request.config.style) params.set('style', request.config.style)
-    if (request.config.citationStyle) params.set('citationStyle', request.config.citationStyle)
+    if (request.config.paperType) params.set('paperType', request.config.paperType)
     if (request.config.includeMethodology !== undefined) {
       params.set('includeMethodology', request.config.includeMethodology.toString())
     }
@@ -89,7 +88,9 @@ const fetchSSE = async (url: string): Promise<EventSource | null> => {
     
     // Add timeout to prevent hanging
     const timeout = setTimeout(() => {
-      console.error('⏰ EventSource connection timeout')
+      console.error('⏰ EventSource connection timeout after 10s')
+      console.error('⏰ EventSource readyState:', eventSource.readyState)
+      console.error('⏰ EventSource url:', eventSource.url)
       eventSource.close()
       reject(new Error('EventSource connection timeout'))
     }, 10000) // 10 second timeout
@@ -97,13 +98,22 @@ const fetchSSE = async (url: string): Promise<EventSource | null> => {
     eventSource.onopen = () => {
       clearTimeout(timeout)
       console.log('✅ EventSource connected successfully')
+      console.log('✅ EventSource readyState:', eventSource.readyState)
       resolve(eventSource)
     }
     
     eventSource.onerror = (error) => {
       clearTimeout(timeout)
       console.error('❌ EventSource connection error:', error)
-      reject(new Error('Failed to connect to event stream'))
+      console.error('❌ EventSource readyState:', eventSource.readyState)
+      console.error('❌ EventSource url:', eventSource.url)
+      
+      // Check if it's a network error or server error
+      if (eventSource.readyState === EventSource.CLOSED) {
+        reject(new Error('EventSource connection closed by server'))
+      } else {
+        reject(new Error('Failed to connect to event stream'))
+      }
     }
   })
 }

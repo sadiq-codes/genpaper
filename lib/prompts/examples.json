@@ -1,8 +1,8 @@
 {
   "fewShotExamples": [
     {
-      "id": "dissertation_intro_001",
-      "paperType": "dissertation",
+      "id": "phdDissertation_intro_001",
+      "paperType": "phdDissertation",
       "section": "introduction",
       "country": "Nigeria",
       "field": "public_health",
@@ -29,8 +29,8 @@
       "content": "The literature on digital banking adoption reveals a complex interplay of technological, socioeconomic, and cultural factors that influence consumer behavior in emerging economies. Davis's Technology Acceptance Model (TAM) has provided the foundational framework for understanding digital banking adoption, positing that perceived usefulness and perceived ease of use are primary determinants of technology acceptance (Davis, 1989). However, subsequent research has revealed the limitations of applying Western-developed models to African contexts without modification.\n\nVenkatesh et al. (2012) extended TAM through the Unified Theory of Acceptance and Use of Technology (UTAUT2), incorporating constructs such as social influence, facilitating conditions, and hedonic motivation. In the Nigerian context, Aderonke and Charles (2010) found that social influence was particularly significant, with 64% of respondents citing family and peer recommendations as key factors in mobile banking adoption. This finding contrasts with studies from developed economies where individual utility perceptions dominate adoption decisions (Malaquias & Hwang, 2016)."
     },
     {
-      "id": "dissertation_intro_002",
-      "paperType": "dissertation", 
+      "id": "phdDissertation_intro_002",
+      "paperType": "phdDissertation", 
       "section": "introduction",
       "country": "USA",
       "field": "computer_science",
@@ -57,8 +57,8 @@
       "content": "The Amazon rainforest's role as a global carbon sink has been extensively documented, yet the relationship between deforestation rates and carbon sequestration capacity remains contested in the literature. Early studies by Malhi et al. (2008) established baseline measurements indicating that undisturbed Amazon forests sequester approximately 1.3 ± 0.5 Pg C year⁻¹. However, recent analyses suggest this capacity has declined significantly due to increased tree mortality and reduced growth rates (Hubau et al., 2020).\n\nDeforestation impacts on carbon dynamics operate through multiple pathways. Direct biomass loss from clear-cutting represents the most immediate carbon release, with estimates ranging from 100-400 Mg C ha⁻¹ depending on forest type and clearing method (Fearnside, 2005; Walker et al., 2013). More subtle but equally significant are the edge effects that alter carbon cycling in forest fragments, with impacts detectable up to 300 meters from clearcut boundaries (Laurance et al., 2011)."
     },
     {
-      "id": "dissertation_intro_003",
-      "paperType": "dissertation",
+      "id": "phdDissertation_intro_003",
+      "paperType": "phdDissertation",
       "section": "introduction", 
       "country": "UK",
       "field": "sociology",

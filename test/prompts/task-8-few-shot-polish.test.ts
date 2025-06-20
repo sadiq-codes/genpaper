@@ -13,14 +13,12 @@ import {
 import { 
   performFinalPolish, 
   validatePolishQuality,
-  analyzePotentialImprovements,
   type PolishedDocument
 } from '@/lib/prompts/final-polish';
 import { SectionContent, PolishConfig, ImprovementType, PaperTypeKey, SectionContext, SectionConfig } from '@/lib/prompts/types';
 import { 
   generateLiteratureReviewPrompt, 
   generateMethodologyPrompt,
-  generatePaperWithPolish,
   generateSection,
   generateMultipleSections
 } from '@/lib/prompts/generators';
@@ -51,10 +49,10 @@ describe('Task 8: Few-Shot Examples', () => {
       expect(examples[0].content.toLowerCase()).toContain('digital banking');
     });
 
-    it('should return examples for dissertation', () => {
-      const examples = getFewShotExamples('dissertation', 'introduction');
+    it('should return examples for phdDissertation', () => {
+      const examples = getFewShotExamples('phdDissertation', 'introduction');
       expect(examples).toHaveLength(1);
-      expect(examples[0].paperType).toBe('dissertation');
+      expect(examples[0].paperType).toBe('phdDissertation');
       expect(examples[0].section).toBe('introduction');
       expect(examples[0].content).toContain('antimicrobial-resistant bacteria');
     });
@@ -94,7 +92,7 @@ describe('Task 8: Few-Shot Examples', () => {
     });
 
     it('should handle multiple examples', () => {
-      const examples = getFewShotExamples('dissertation', 'introduction');
+      const examples = getFewShotExamples('phdDissertation', 'introduction');
       const formatted = formatFewShotExamples(examples);
       
       expect(formatted).toContain('Example 1:');
@@ -110,8 +108,8 @@ describe('Task 8: Few-Shot Examples', () => {
       // Only test sections that actually exist
     });
 
-    it('should return true for dissertation with available sections', () => {
-      expect(hasFewShotExamples('dissertation', 'introduction')).toBe(true);
+    it('should return true for phdDissertation with available sections', () => {
+      expect(hasFewShotExamples('phdDissertation', 'introduction')).toBe(true);
       // Only test sections that actually exist
     });
 
@@ -123,7 +121,7 @@ describe('Task 8: Few-Shot Examples', () => {
 
     it('should return false for unavailable sections', () => {
       expect(hasFewShotExamples('mastersThesis', 'results')).toBe(false);
-      expect(hasFewShotExamples('dissertation', 'conclusion')).toBe(false);
+      expect(hasFewShotExamples('phdDissertation', 'conclusion')).toBe(false);
     });
   });
 
@@ -134,8 +132,8 @@ describe('Task 8: Few-Shot Examples', () => {
       expect(sections.length).toBeGreaterThan(0);
     });
 
-    it('should return available sections for dissertation', () => {
-      const sections = getAvailableFewShotSections('dissertation');
+    it('should return available sections for phdDissertation', () => {
+      const sections = getAvailableFewShotSections('phdDissertation');
       expect(sections).toContain('introduction');
       expect(sections.length).toBeGreaterThan(0);
     });
@@ -187,9 +185,9 @@ describe('Task 8: Integration with Prompt Generators', () => {
   });
 
   describe('generateMethodologyPrompt with fewShot', () => {
-    it('should include few-shot examples for dissertation', () => {
+    it('should include few-shot examples for phdDissertation', () => {
       const template = generateMethodologyPrompt('Test Topic', ['paper1', 'paper2'], {
-        paperType: 'dissertation',
+        paperType: 'phdDissertation',
         fewShot: true,
         contextChunks: ['Test context'],
         studyDesign: 'mixed',

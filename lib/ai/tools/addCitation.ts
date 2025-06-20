@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { tool } from 'ai'
 import { getSB } from '@/lib/supabase/server'
+import { collisionResistantHash } from '@/lib/utils/hash'
 
 // Zod schema for citation data
 const citationSchema = z.object({
@@ -18,10 +19,11 @@ const citationSchema = z.object({
   section: z.string().min(1, 'Section name is required'),
   start_pos: z.number().int().min(0).optional(),
   end_pos: z.number().int().min(0).optional(),
-  context: z.string().optional()
+  context: z.string().optional(),
+  source_paper_id: z.string().uuid().optional()
 })
 
-// Hash function for generating citation keys with cross-platform crypto support
+// Hash function for generating citation keys with collision-resistant hashing
 async function generateCitationKey(title: string, year?: number, doi?: string): Promise<string> {
   if (doi) {
     return doi.toLowerCase()
@@ -31,36 +33,35 @@ async function generateCitationKey(title: string, year?: number, doi?: string): 
   const yearStr = year ? year.toString() : 'unknown'
   const hashInput = `${normalizedTitle}_${yearStr}`
   
-  // Try Web Crypto API first (available in both browser and edge runtime)
+  // Use collision-resistant hash (UUID v5 with SHA-1) - 128-bit, deterministic
   try {
     if (typeof globalThis.crypto?.subtle !== 'undefined') {
-      const encoder = new TextEncoder()
-      const data = encoder.encode(hashInput)
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-      const hashArray = Array.from(new Uint8Array(hashBuffer))
-      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-      
-      // Return 16 chars instead of 12 for lower collision rate
-      return hashHex.substring(0, 16)
+      // Web Crypto API available - use SHA-256 for maximum security
+      try {
+        const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(hashInput))
+        const hashArray = Array.from(new Uint8Array(hashBuffer))
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16)
+      } catch {
+        // Fallback to collision-resistant hash if Web Crypto fails
+        return collisionResistantHash(hashInput).substring(0, 16)
+      }
     }
   } catch (error) {
-    console.warn('Web Crypto API failed:', error)
+    console.warn('Web Crypto API not available, using collision-resistant hash:', error)
   }
   
-  // Fallback to a deterministic simple hash
-  console.warn('Using fallback hash algorithm')
-  let hash = 0
-  for (let i = 0; i < hashInput.length; i++) {
-    const char = hashInput.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash = hash & hash // Convert to 32-bit integer
-  }
-  return Math.abs(hash).toString(16).substring(0, 16).padStart(16, '0')
+  // Use collision-resistant hash as fallback (UUID v5, much stronger than 32-bit hash)
+  return collisionResistantHash(hashInput).substring(0, 16)
 }
 
 // Convert input to CSL JSON format
 function toCslJson(citation: z.infer<typeof citationSchema>) {
+  // Generate a unique ID for this citation item
+  const citationId = citation.doi || 
+    `${citation.authors[0]?.toLowerCase().replace(/[^a-z]/g, '') || 'unknown'}_${citation.year || 'nd'}`
+  
   return {
+    id: citationId,
     type: 'article-journal',
     title: citation.title,
     author: citation.authors.map(author => {
@@ -161,7 +162,8 @@ export const addCitation = tool({
           ...(typeof payload.start_pos === 'number' ? { start_pos: payload.start_pos } : {}),
           ...(typeof payload.end_pos === 'number' ? { end_pos: payload.end_pos } : {}),
           reason: payload.reason,
-          context: payload.context
+          context: payload.context,
+          source_paper_id: payload.source_paper_id || null
         })
 
       if (linkError) {
@@ -169,12 +171,15 @@ export const addCitation = tool({
         throw new Error(`Failed to create citation link: ${linkError.message}`)
       }
 
-      // Return success message
+      // Return only the neutral citation token - renderer will handle formatting
+      const citationToken = `[CITE:${citationKey}]`
+
       return {
         success: true,
         citationId: record.id,
         citationKey,
-        message: `Citation added: "${payload.title}" (${payload.authors.join(', ')}, ${payload.year || 'n.d.'})`
+        replacement: citationToken,
+        message: `Citation added successfully for "${payload.title}"`
       }
 
     } catch (error) {

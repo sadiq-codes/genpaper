@@ -23,8 +23,9 @@ export const GenerationConfigSchema = z.object({
   
   paper_settings: z.object({
     length: z.enum(['short', 'medium', 'long']).default('medium'),
-    style: z.enum(['academic', 'review', 'survey']).default('academic'),
+    paperType: z.enum(['researchArticle', 'literatureReview', 'capstoneProject', 'mastersThesis', 'phdDissertation']).default('researchArticle'),
     citationStyle: z.enum(['apa', 'mla', 'chicago', 'ieee']).default('apa'),
+    localRegion: z.string().optional(), // TASK 6: Regional boosting support
     includeMethodology: z.boolean().default(true),
     includeFuture: z.boolean().default(false),
     
@@ -45,22 +46,28 @@ export const GenerationConfigSchema = z.object({
   }).optional(),
   
   library_papers_used: z.array(z.string().uuid()).optional(),
-}).passthrough() // Allow additional properties for backward compatibility
+}).strip() // Strip unknown properties to prevent typos from leaking through
 
 export type ValidatedGenerationConfig = z.infer<typeof GenerationConfigSchema>
 
-// Helper to safely validate and extract config
+// Helper to safely validate and extract config with unknown key detection
 export function validateGenerationConfig(config: unknown): ValidatedGenerationConfig {
   const result = GenerationConfigSchema.safeParse(config ?? {})
   
   if (!result.success) {
     console.warn('⚠️ Invalid generation config, using defaults:', result.error.format())
     
+    // Log unknown keys for debugging
+    const flattened = result.error.flatten()
+    if (flattened.formErrors.length > 0) {
+      console.warn('🔧 Unknown config keys detected:', flattened.formErrors)
+    }
+    
     // Return minimal valid config with defaults
     return {
       paper_settings: {
         length: 'medium',
-        style: 'academic', 
+        paperType: 'researchArticle', 
         citationStyle: 'apa',
         includeMethodology: true,
         includeFuture: false,
@@ -68,6 +75,17 @@ export function validateGenerationConfig(config: unknown): ValidatedGenerationCo
         minCitationFloor: GENERATION_DEFAULTS.MIN_CITATION_FLOOR,
         evidenceSnippetLength: GENERATION_DEFAULTS.EVIDENCE_SNIPPET_MAX_LENGTH,
       }
+    }
+  }
+  
+  // Check for unknown keys in successful parse by comparing with original
+  if (typeof config === 'object' && config !== null) {
+    const originalKeys = Object.keys(config as Record<string, unknown>)
+    const validKeys = Object.keys(result.data)
+    const unknownKeys = originalKeys.filter(key => !validKeys.includes(key))
+    
+    if (unknownKeys.length > 0) {
+      console.warn('🔧 Unknown config keys stripped:', unknownKeys)
     }
   }
   
@@ -82,7 +100,7 @@ export function mergeWithDefaults(userConfig: unknown): ValidatedGenerationConfi
   if (!validated.paper_settings) {
     validated.paper_settings = {
       length: 'medium',
-      style: 'academic',
+      paperType: 'researchArticle',
       citationStyle: 'apa', 
       includeMethodology: true,
       includeFuture: false,

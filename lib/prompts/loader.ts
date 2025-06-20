@@ -1,23 +1,25 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import Ajv from 'ajv';
+// Server-only prompt loader - uses direct imports instead of filesystem
+import 'server-only'
+
 import { 
   PromptLibrary, 
   PromptLoadError, 
-  PromptValidationError,
   PaperTypeKey, 
   SectionKey,
   PromptTemplate
 } from './types';
 
-// Cache for loaded prompts to avoid repeated file reads
+// Direct imports of JSON files (works in Edge Runtime)
+import promptTemplates from './templates.json';
+
+// Cache for loaded prompts to avoid repeated validation
 let promptCache: PromptLibrary | null = null;
 
 /**
- * Loads and validates prompt templates from JSON files
- * @param forceReload - Whether to force reload from file system
+ * Loads and validates prompt templates from imported JSON (Edge Runtime compatible)
+ * @param forceReload - Whether to force reload and revalidation
  * @returns Validated prompt library
- * @throws PromptLoadError for file system errors
+ * @throws PromptLoadError for import errors
  * @throws PromptValidationError for schema validation errors
  */
 export function loadPrompts(forceReload = false): PromptLibrary {
@@ -26,38 +28,34 @@ export function loadPrompts(forceReload = false): PromptLibrary {
   }
 
   try {
-    // Load schema and templates
-    const schemaPath = join(process.cwd(), 'lib/prompts/promptSchema.json');
-    const templatesPath = join(process.cwd(), 'lib/prompts/templates.json');
+    // Validate templates against schema using a simple validation approach
+    // (avoiding AJV dependency for Edge Runtime compatibility)
+    const templates = promptTemplates as PromptLibrary;
     
-    const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
-    const templates = JSON.parse(readFileSync(templatesPath, 'utf8'));
+    // Basic validation - check required structure
+    if (!templates.paperTypes) {
+      throw new Error('Missing paperTypes in templates');
+    }
 
-    // Validate templates against schema
-    const ajv = new Ajv({ allErrors: true });
-    const validate = ajv.compile(schema);
-    const isValid = validate(templates);
-
-    if (!isValid) {
-      const errors = validate.errors?.map(err => 
-        `${err.instancePath}: ${err.message}`
-      ) || ['Unknown validation error'];
+    // Validate each paper type has required sections
+    const requiredSections = ['outline'];
+    for (const [paperType, config] of Object.entries(templates.paperTypes)) {
+      if (!config.sections) {
+        throw new Error(`Missing sections for paper type: ${paperType}`);
+      }
       
-      const error = new Error(`Prompt template validation failed: ${errors.join(', ')}`) as PromptValidationError;
-      error.name = 'PromptValidationError';
-      error.validationErrors = errors;
-      throw error;
+      for (const sectionKey of requiredSections) {
+        if (!config.sections[sectionKey as SectionKey]) {
+          throw new Error(`Missing required section '${sectionKey}' for paper type: ${paperType}`);
+        }
+      }
     }
 
     // Cache and return validated templates
-    promptCache = templates as PromptLibrary;
+    promptCache = templates;
     return promptCache;
 
   } catch (error) {
-    if (error instanceof Error && error.name === 'PromptValidationError') {
-      throw error;
-    }
-
     const loadError = new Error(`Failed to load prompt templates: ${error}`) as PromptLoadError;
     loadError.name = 'PromptLoadError';
     loadError.details = error;

@@ -1,33 +1,11 @@
+import { v5 as uuidv5 } from 'uuid'
 import { getSB } from '@/lib/supabase/server'
-import { createBrowserClient } from '@supabase/ssr'
-import type { Paper, Author, PaperWithAuthors, SearchPapersRequest } from '@/types/simplified'
+import type { PaperWithAuthors, Author } from '@/types/simplified'
 import { ai } from '@/lib/ai/vercel-client'
 import { embedMany } from 'ai'
-import { v5 as uuidv5 } from 'uuid'
-import { type PaperDTO } from '@/lib/schemas/paper'
-import { 
-  detectPaperRegion,
-  enrichMetadataWithRegion,
-  type RegionDetectionInputs 
-} from '../utils/global-region-detection'
-
-// Import new modular system components
-import {
-  ingestPaper as ingestPaperModular,
-  batchIngestPapers as batchIngestPapersModular,
-  type PaperIngestionOptions,
-  type IngestionResult,
-  type BatchIngestionResult
-} from '../utils/ingest-paper'
-import {
-  searchPapers as searchPapersModular,
-  getRegionStatistics as getRegionStatisticsModular,
-  getDatabaseStats,
-  type PaperData,
-  type SearchPapersParams,
-  type SearchPapersResult,
-  type RegionStatistics
-} from '../utils/paper-repository'
+import { PaperDTO } from '@/lib/schemas/paper'
+import { RegionDetectionInputs } from '@/lib/utils/global-region-detection'
+import { detectPaperRegion, enrichMetadataWithRegion } from '@/lib/utils/global-region-detection' 
 
 // Namespace UUID for generating deterministic paper UUIDs
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
@@ -244,84 +222,6 @@ interface DatabasePaper {
   authors: PaperAuthorRelation[]
 }
 
-// Browser-side client
-export const createBrowserSupabaseClient = () => {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-}
-
-export async function createOrGetAuthor(name: string): Promise<Author> {
-  const supabase = await getSB()
-  // First try to get existing author
-  const { data: existingAuthor } = await supabase
-    .from('authors')
-    .select('*')
-    .eq('name', name)
-    .single()
-
-  if (existingAuthor) return existingAuthor
-
-  // Create new author if doesn't exist
-  const { data, error } = await supabase
-    .from('authors')
-    .insert({ name })
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
-}
-
-export async function createPaper(
-  paperData: Omit<Paper, 'id' | 'created_at'>,
-  authorNames: string[]
-): Promise<PaperWithAuthors> {
-  const supabase = await getSB()
-  // Create the paper first
-  const { data: paper, error: paperError } = await supabase
-    .from('papers')
-    .insert({
-      title: paperData.title,
-      abstract: paperData.abstract,
-      publication_date: paperData.publication_date,
-      venue: paperData.venue,
-      doi: paperData.doi,
-      url: paperData.url,
-      pdf_url: paperData.pdf_url,
-      metadata: paperData.metadata,
-      source: paperData.source,
-      citation_count: paperData.citation_count,
-      impact_score: paperData.impact_score
-    })
-    .select()
-    .single()
-
-  if (paperError) throw paperError
-
-  // Create or get authors and link them to the paper
-  const authors: Author[] = []
-  for (let i = 0; i < authorNames.length; i++) {
-    const author = await createOrGetAuthor(authorNames[i])
-    authors.push(author)
-
-    // Link author to paper with ordinal
-    await supabase
-      .from('paper_authors')
-      .insert({
-        paper_id: paper.id,
-        author_id: author.id,
-        ordinal: i + 1
-      })
-  }
-
-  return {
-    ...paper,
-    authors,
-    author_names: authorNames
-  }
-}
 
 // Helper function to transform database papers to app format
 function transformDatabasePaper(dbPaper: DatabasePaper): PaperWithAuthors {
@@ -356,96 +256,6 @@ export async function getPaper(paperId: string): Promise<PaperWithAuthors | null
   return transformDatabasePaper(data as DatabasePaper)
 }
 
-export async function searchPapers(
-  query: string,
-  filters: { sources?: string[] } = {},
-  limit = 20,
-  offset = 0
-): Promise<PaperWithAuthors[]> {
-  const supabase = await getSB()
-  let supabaseQuery = supabase
-    .from('papers')
-    .select(`
-      *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
-    `)
-
-  if (query) {
-    // Full-text search on title and abstract
-    supabaseQuery = supabaseQuery.textSearch('search_vector', query)
-  }
-
-  if (filters.sources && filters.sources.length > 0) {
-    supabaseQuery = supabaseQuery.in('source', filters.sources)
-  }
-
-  const { data, error } = await supabaseQuery
-    .order('citation_count', { ascending: false, nullsFirst: false })
-    .order('publication_date', { ascending: false, nullsFirst: false })
-    .limit(limit)
-    .range(offset, offset + limit - 1)
-
-  if (error) throw error
-
-  // Transform the data to include authors
-  return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
-}
-
-export async function getPaperByDOI(doi: string): Promise<Paper | null> {
-  const supabase = await getSB()
-  const { data, error } = await supabase
-    .from('papers')
-    .select(`
-      *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
-    `)
-    .eq('doi', doi)
-    .single()
-
-  if (error && error.code !== 'PGRST116') throw error
-  if (!data) return null
-
-  return transformDatabasePaper(data as DatabasePaper)
-}
-
-export async function updatePaperMetadata(
-  paperId: string,
-  metadata: Partial<Paper>
-): Promise<void> {
-  const supabase = await getSB()
-  const { error } = await supabase
-    .from('papers')
-    .update(metadata)
-    .eq('id', paperId)
-
-  if (error) throw error
-}
-
-export async function getPopularPapers(limit = 10): Promise<Paper[]> {
-  const supabase = await getSB()
-  const { data, error } = await supabase
-    .from('papers')
-    .select(`
-      *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
-    `)
-    .order('citation_count', { ascending: false, nullsFirst: false })
-    .limit(limit)
-
-  if (error) throw error
-
-  return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
-}
-
 export async function getRecentPapers(
   limit = 10
 ): Promise<PaperWithAuthors[]> {
@@ -467,75 +277,6 @@ export async function getRecentPapers(
   return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
 }
 
-// Browser client class for client-side operations
-export class BrowserPapersClient {
-  private supabase = createBrowserSupabaseClient()
-
-  async searchPapers(searchParams: SearchPapersRequest) {
-    let query = this.supabase
-      .from('papers')
-      .select(`
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      `)
-
-    if (searchParams.query) {
-      query = query.textSearch('search_vector', searchParams.query)
-    }
-
-    if (searchParams.sources?.length) {
-      query = query.in('source', searchParams.sources)
-    }
-
-    const { data, error } = await query
-      .order('citation_count', { ascending: false, nullsFirst: false })
-      .limit(searchParams.limit || 20)
-
-    if (error) throw error
-
-    return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
-  }
-
-  async getPaper(paperId: string) {
-    const { data, error } = await this.supabase
-      .from('papers')
-      .select(`
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      `)
-      .eq('id', paperId)
-      .single()
-
-    if (error && error.code !== 'PGRST116') throw error
-    if (!data) return null
-
-    return transformDatabasePaper(data as DatabasePaper)
-  }
-
-  async getPopularPapers(limit = 10) {
-    const { data, error } = await this.supabase
-      .from('papers')
-      .select(`
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      `)
-      .order('citation_count', { ascending: false, nullsFirst: false })
-      .limit(limit)
-
-    if (error) throw error
-
-    return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
-  }
-}
 
 // Fix: Add vector index optimization with better error handling
 async function optimizeVectorIndex(): Promise<void> {
@@ -547,59 +288,6 @@ async function optimizeVectorIndex(): Promise<void> {
     // Log but don't fail - optimization is not critical
     console.warn('Vector index optimization failed:', error)
   }
-}
-
-export async function ingestPaper(paperMeta: PaperDTO): Promise<string> {
-  const supabase = await getSB()
-  
-  // Create text for embedding (title + abstract)
-  const text = `${paperMeta.title}\n${paperMeta.abstract || ''}`
-  
-  // Generate embedding using centralized configuration
-  const [embedding] = await generateEmbeddings([text])
-  
-  // Create deterministic UUID from DOI or content
-  const paperId = paperMeta.doi 
-    ? generatePaperUUID(paperMeta.doi)
-    : generatePaperUUID(text)
-  
-  // Task 5: Detect and enrich metadata with region information
-  const regionInputs: RegionDetectionInputs = {
-    venue: paperMeta.venue,
-    url: paperMeta.url,
-    title: paperMeta.title,
-    affiliations: paperMeta.authors
-  }
-  const regionResult = detectPaperRegion(regionInputs)
-  const enrichedMetadata = enrichMetadataWithRegion(paperMeta.metadata || {}, regionResult)
-  
-  // Upsert paper with embedding and enriched metadata
-  const { error } = await supabase
-    .from('papers')
-    .upsert({
-      id: paperId,
-      title: paperMeta.title,
-      abstract: paperMeta.abstract,
-      publication_date: paperMeta.publication_date,
-      venue: paperMeta.venue,
-      doi: paperMeta.doi,
-      url: paperMeta.url,
-      pdf_url: paperMeta.pdf_url,
-      metadata: enrichedMetadata, // Use enriched metadata with region info
-      source: paperMeta.source || 'unknown',
-      citation_count: paperMeta.citation_count || 0,
-      impact_score: Math.max(paperMeta.impact_score || 0, 0),
-      embedding: embedding
-    })
-  
-  if (error) throw error
-  
-  // Handle authors efficiently with batch operations
-  if (paperMeta.authors && paperMeta.authors.length > 0) {
-    await upsertPaperAuthors(paperId, paperMeta.authors)
-  }
-  
-  return paperId
 }
 
 // Generate embeddings with consistent configuration
@@ -619,84 +307,6 @@ async function generateEmbeddings(inputs: string | string[]): Promise<number[][]
   return embeddings
 }
 
-// Batch ingest function for processing multiple papers efficiently
-export async function batchIngestPapers(papers: PaperDTO[]): Promise<string[]> {
-  const BATCH_SIZE = 100 // OpenAI embeddings batch limit
-  const paperIds: string[] = []
-  
-  // Process papers in batches for embedding generation
-  for (let i = 0; i < papers.length; i += BATCH_SIZE) {
-    const batch = papers.slice(i, i + BATCH_SIZE)
-    
-    // Prepare texts for embedding
-    const texts = batch.map(paper => `${paper.title}\n${paper.abstract || ''}`)
-    
-    // Generate embeddings in batch with consistent dimensions
-    const embeddings = await generateEmbeddings(texts)
-    
-    // Process each paper in the batch
-    for (let j = 0; j < batch.length; j++) {
-      const paper = batch[j]
-      const embedding = embeddings[j]
-      
-      const paperId = await ingestPaperWithEmbedding(paper, embedding)
-      paperIds.push(paperId)
-    }
-  }
-  
-  // Optimize vector index after bulk insertion
-  await optimizeVectorIndex()
-  
-  return paperIds
-}
-
-// Helper function to ingest paper with pre-generated embedding
-async function ingestPaperWithEmbedding(paperMeta: PaperDTO, embedding: number[]): Promise<string> {
-  const supabase = await getSB()
-  
-  const text = `${paperMeta.title}\n${paperMeta.abstract || ''}`
-  const paperId = paperMeta.doi 
-    ? generatePaperUUID(paperMeta.doi)
-    : generatePaperUUID(text)
-  
-  // Task 5: Detect and enrich metadata with region information
-  const regionInputs: RegionDetectionInputs = {
-    venue: paperMeta.venue,
-    url: paperMeta.url,
-    title: paperMeta.title,
-    affiliations: paperMeta.authors
-  }
-  const regionResult = detectPaperRegion(regionInputs)
-  const enrichedMetadata = enrichMetadataWithRegion(paperMeta.metadata || {}, regionResult)
-  
-  // Upsert paper with embedding and enriched metadata
-  const { error } = await supabase
-    .from('papers')
-    .upsert({
-      id: paperId,
-      title: paperMeta.title,
-      abstract: paperMeta.abstract,
-      publication_date: paperMeta.publication_date,
-      venue: paperMeta.venue,
-      doi: paperMeta.doi,
-      url: paperMeta.url,
-      pdf_url: paperMeta.pdf_url,
-      metadata: enrichedMetadata, // Use enriched metadata with region info
-      source: paperMeta.source || 'unknown',
-      citation_count: paperMeta.citation_count || 0,
-      impact_score: Math.max(paperMeta.impact_score || 0, 0),
-      embedding: embedding
-    })
-  
-  if (error) throw error
-  
-  // Handle authors efficiently with batch operations
-  if (paperMeta.authors && paperMeta.authors.length > 0) {
-    await upsertPaperAuthors(paperId, paperMeta.authors)
-  }
-  
-  return paperId
-}
 
 // Task 3: Type definitions for RPC functions
 interface MatchPapersResult {
@@ -735,7 +345,7 @@ export async function semanticSearchPapers(
     .rpc('match_papers', {
       query_embedding: queryEmbedding,
       match_count: options.limit || 8,
-      min_year: options.minYear || 2000
+      min_year: options.minYear || 1900
     })
   
   if (error) throw error
@@ -1391,78 +1001,6 @@ export async function ingestPaperWithChunks(
   return paperId
 }
 
-// Fix: Retry failed chunks function
-export async function retryFailedChunks(maxRetries: number = 100): Promise<{
-  attempted: number
-  successful: number
-  failed: number
-}> {
-  const supabase = await getSB()
-  
-  // Get failed chunks ready for retry
-  const { data: failedChunks, error } = await supabase
-    .rpc('retry_failed_chunks')
-    .limit(maxRetries)
-  
-  if (error) throw error
-  if (!failedChunks || failedChunks.length === 0) {
-    return { attempted: 0, successful: 0, failed: 0 }
-  }
-  
-  console.log(`Retrying ${failedChunks.length} failed chunks`)
-  
-  // Group chunks by paper for batch processing
-  const chunksByPaper = new Map<string, Array<{ content: string; index: number; retryCount: number }>>()
-  
-  for (const chunk of failedChunks) {
-    const paperId = chunk.paper_id
-    if (!chunksByPaper.has(paperId)) {
-      chunksByPaper.set(paperId, [])
-    }
-    chunksByPaper.get(paperId)!.push({
-      content: chunk.content,
-      index: chunk.chunk_index,
-      retryCount: chunk.retry_count
-    })
-  }
-  
-  let totalSuccessful = 0
-  let totalFailed = 0
-  
-  // Process each paper's failed chunks
-  for (const [paperId, chunks] of chunksByPaper) {
-    try {
-      const results = await processChunkBatch(paperId, chunks, chunks[0].retryCount)
-      
-      const successful = results.filter(r => r.success).length
-      const failed = results.filter(r => !r.success).length
-      
-      totalSuccessful += successful
-      totalFailed += failed
-      
-    } catch (error) {
-      console.error(`Retry failed for paper ${paperId}:`, error)
-      totalFailed += chunks.length
-    }
-  }
-  
-  // Clean up successful retries
-  if (totalSuccessful > 0) {
-    try {
-      const cleaned = await supabase.rpc('cleanup_successful_chunks')
-      console.log(`Cleaned up ${cleaned} successfully retried chunks`)
-    } catch (error) {
-      console.error('Failed to clean up successful chunks:', error)
-    }
-  }
-  
-  return {
-    attempted: failedChunks.length,
-    successful: totalSuccessful,
-    failed: totalFailed
-  }
-}
-
 // Optimized batch author creation to replace createOrGetAuthor loops
 export async function batchCreateOrGetAuthors(authorNames: string[]): Promise<Author[]> {
   if (authorNames.length === 0) return []
@@ -1675,96 +1213,4 @@ export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<strin
   console.log(`📚 Lightweight ingestion completed: ${paperMeta.title} (ID: ${paperId})`)
   
   return paperId
-}
-
-/**
- * NEW MODULAR SYSTEM FUNCTIONS
- * 
- * These functions use the new separated modular architecture
- * and can be used alongside the existing implementations
- */
-
-/**
- * Ingest paper using the new modular system
- */
-export async function ingestPaperV3(
-  paperMeta: PaperDTO,
-  options: PaperIngestionOptions = {}
-): Promise<IngestionResult> {
-  // Convert PaperDTO to PaperData format
-  const paperData: PaperData = {
-    title: paperMeta.title,
-    authors: paperMeta.authors || [],
-    abstract: paperMeta.abstract,
-    venue: paperMeta.venue || paperMeta.publication,
-    year: paperMeta.year ? parseInt(paperMeta.year.toString()) : undefined,
-    url: paperMeta.url,
-    doi: paperMeta.doi,
-    pdf_url: paperMeta.pdf_url,
-    metadata: {
-      source: paperMeta.source || 'unknown',
-      ...paperMeta.metadata
-    },
-    content: paperMeta.content
-  }
-
-  return ingestPaperModular(paperData, options)
-}
-
-/**
- * Batch ingest papers using the new modular system
- */
-export async function batchIngestPapersV3(
-  papers: PaperDTO[],
-  options: PaperIngestionOptions = {},
-  concurrency = 3
-): Promise<BatchIngestionResult> {
-  const paperDataArray: PaperData[] = papers.map(paperMeta => ({
-    title: paperMeta.title,
-    authors: paperMeta.authors || [],
-    abstract: paperMeta.abstract,
-    venue: paperMeta.venue || paperMeta.publication,
-    year: paperMeta.year ? parseInt(paperMeta.year.toString()) : undefined,
-    url: paperMeta.url,
-    doi: paperMeta.doi,
-    pdf_url: paperMeta.pdf_url,
-    metadata: {
-      source: paperMeta.source || 'unknown',
-      ...paperMeta.metadata
-    },
-    content: paperMeta.content
-  }))
-
-  return batchIngestPapersModular(paperDataArray, options, concurrency)
-}
-
-/**
- * Get database statistics using the new modular system
- */
-export async function getDatabaseStatsV3() {
-  return getDatabaseStats()
-}
-
-/**
- * Search papers using the new modular system
- */
-export async function searchPapersV3(params: SearchPapersParams = {}): Promise<SearchPapersResult> {
-  return searchPapersModular(params)
-}
-
-/**
- * Get papers by region using the new modular system
- */
-export async function getPapersByRegionV3(
-  region: string,
-  options: { limit?: number; offset?: number } = {}
-): Promise<SearchPapersResult> {
-  return searchPapersModular({ region, ...options })
-}
-
-/**
- * Get region statistics using the new modular system
- */
-export async function getRegionStatisticsV3(): Promise<RegionStatistics[]> {
-  return getRegionStatisticsModular()
 }

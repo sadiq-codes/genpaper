@@ -1,31 +1,17 @@
-import { createBrowserClient } from '@supabase/ssr'
-import { Tables } from '@/types/supabase'
 import { Paper, LibraryPaper, LibraryCollection, Tag, LibraryFilters, PaperMetadata, Author } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
+import { createClient as createBrowserSupabaseClient } from '@/lib/supabase/client'
 import type { CSLItem } from '@/lib/utils/csl'
+import { 
+  transformPaperWithAuthors, 
+  PAPER_WITH_AUTHORS_SELECT,
+  applySorting,
+  applyFilters,
+  type PaperAuthorJoin, 
+  type PaperWithAuthorJoins 
+} from './library-utils'
 
-// Proper types for Supabase relationships
-type DbPaper = Tables<'papers'>
-type DbAuthor = Tables<'authors'>  
-type DbPaperAuthor = Tables<'paper_authors'>
-
-// What Supabase actually returns when we join paper_authors with authors
-type PaperAuthorJoin = DbPaperAuthor & {
-  author: DbAuthor
-}
-
-// Type for what Supabase actually returns from our query
-type PaperWithAuthorJoins = DbPaper & {
-  authors: PaperAuthorJoin[]
-}
-
-// Browser-side client
-export const createBrowserSupabaseClient = () => {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-}
+// Browser-side client now imported from centralized location
 
 export async function addPaperToLibrary(
   userId: string,
@@ -40,33 +26,13 @@ export async function addPaperToLibrary(
       paper_id: paperId,
       notes
     })
-    .select(`
-      *,
-      paper:papers(
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      )
-    `)
+    .select(PAPER_WITH_AUTHORS_SELECT)
     .single()
 
   if (error) throw error
 
-  // Transform the data to include author names
-  const paper = data.paper as PaperWithAuthorJoins
-  const authors = paper.authors
-    ?.sort((a: PaperAuthorJoin, b: PaperAuthorJoin) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
-    ?.map((pa) => pa.author) || []
-
-  return {
-    ...data,
-    paper: {
-      ...paper,
-      authors
-    }
-  }
+  // Use shared transformation utility
+  return transformPaperWithAuthors(data)
 }
 
 export async function removePaperFromLibrary(
@@ -105,63 +71,23 @@ export async function getUserLibraryPapers(
   const supabase = await getSB()
   let query = supabase
     .from('library_papers')
-    .select(`
-      *,
-      paper:papers(
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      )
-    `)
+    .select(PAPER_WITH_AUTHORS_SELECT)
     .eq('user_id', userId)
 
-  // Apply filters
-  if (filters.search) {
-    query = query.or(
-      `paper.title.ilike.%${filters.search}%,paper.abstract.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`
-    )
-  }
+  // Apply filters using shared utility
+  query = applyFilters(query, filters)
 
-  if (filters.source) {
-    query = query.eq('paper.source', filters.source)
-  }
-
-  // Apply sorting
+  // Apply sorting using shared utility  
   const sortBy = filters.sortBy || 'added_at'
   const sortOrder = filters.sortOrder || 'desc'
-  
-  if (sortBy === 'added_at') {
-    query = query.order('added_at', { ascending: sortOrder === 'asc' })
-  } else if (sortBy === 'title') {
-    query = query.order('paper.title', { ascending: sortOrder === 'asc' })
-  } else if (sortBy === 'publication_date') {
-    query = query.order('paper.publication_date', { ascending: sortOrder === 'asc', nullsFirst: false })
-  } else if (sortBy === 'citation_count') {
-    query = query.order('paper.citation_count', { ascending: sortOrder === 'asc', nullsFirst: false })
-  }
+  query = applySorting(query, sortBy, sortOrder)
 
-  const { data, error } = await query
-    .range(offset, offset + limit - 1)
+  const { data, error } = await query.range(offset, offset + limit - 1)
 
   if (error) throw error
 
-  // Transform the data to include author names
-  return (data || []).map((libraryPaper: LibraryPaper & { paper: PaperWithAuthorJoins }) => {
-    const paper = libraryPaper.paper
-    const authors = paper.authors
-      ?.sort((a: PaperAuthorJoin, b: PaperAuthorJoin) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
-      ?.map((pa: PaperAuthorJoin) => pa.author) || []
-
-    return {
-      ...libraryPaper,
-      paper: {
-        ...paper,
-        authors
-      }
-    }
-  })
+  // Transform using shared utility
+  return (data || []).map(transformPaperWithAuthors)
 }
 
 export async function getLibraryPaper(
@@ -171,16 +97,7 @@ export async function getLibraryPaper(
   const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_papers')
-    .select(`
-      *,
-      paper:papers(
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      )
-    `)
+    .select(PAPER_WITH_AUTHORS_SELECT)
     .eq('user_id', userId)
     .eq('paper_id', paperId)
     .single()
@@ -188,18 +105,7 @@ export async function getLibraryPaper(
   if (error && error.code !== 'PGRST116') throw error
   if (!data) return null
 
-  const paper = data.paper as PaperWithAuthorJoins
-  const authors = paper.authors
-    ?.sort((a: PaperAuthorJoin, b: PaperAuthorJoin) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
-    ?.map((pa) => pa.author) || []
-
-  return {
-    ...data,
-    paper: {
-      ...paper,
-      authors
-    }
-  }
+  return transformPaperWithAuthors(data)
 }
 
 export async function isInLibrary(
@@ -433,64 +339,18 @@ export const clientLibraryOperations = {
     
     let query = supabase
       .from('library_papers')
-      .select(`
-        *,
-        paper:papers(
-          *,
-          authors:paper_authors(
-            ordinal,
-            author:authors(*)
-          )
-        )
-      `)
+      .select(PAPER_WITH_AUTHORS_SELECT)
 
-    // Apply filters
-    if (filters.search) {
-      query = query.or(
-        `paper.title.ilike.%${filters.search}%,paper.abstract.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`
-      )
-    }
-
-    if (filters.source) {
-      query = query.eq('paper.source', filters.source)
-    }
-
-    // Apply sorting
-    const sortBy = filters.sortBy || 'added_at'
-    const sortOrder = filters.sortOrder || 'desc'
-    
-    if (sortBy === 'added_at') {
-      query = query.order('added_at', { ascending: sortOrder === 'asc' })
-    } else if (sortBy === 'title') {
-      query = query.order('paper.title', { ascending: sortOrder === 'asc' })
-    } else if (sortBy === 'publication_date') {
-      query = query.order('paper.publication_date', { ascending: sortOrder === 'asc', nullsFirst: false })
-    } else if (sortBy === 'citation_count') {
-      query = query.order('paper.citation_count', { ascending: sortOrder === 'asc', nullsFirst: false })
-    }
+    // Apply filters and sorting using shared utilities
+    query = applyFilters(query, filters)
+    query = applySorting(query, filters.sortBy || 'added_at', filters.sortOrder || 'desc')
 
     const { data, error } = await query.range(offset, offset + limit - 1)
 
     if (error) throw error
 
-    // Transform the data to include author names
-    return (data || []).map((libraryPaper: LibraryPaper & { paper: Paper & { authors: PaperAuthorJoin[] } }) => {
-      const paper = libraryPaper.paper
-      const authors = paper.authors
-        ?.sort((a: PaperAuthorJoin, b: PaperAuthorJoin) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
-        ?.map((pa: PaperAuthorJoin): Author => ({
-          id: pa.author.id,
-          name: pa.author.name
-        })) || []
-
-      return {
-        ...libraryPaper,
-        paper: {
-          ...paper,
-          authors
-        }
-      }
-    })
+    // Transform using shared utility
+    return (data || []).map(transformPaperWithAuthors)
   },
 
   async addToLibrary(paperId: string, notes?: string) {
@@ -551,38 +411,13 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
   
   const { data, error } = await supabase
     .from('library_papers')
-    .select(`
-      *,
-      paper:papers(
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      )
-    `)
+    .select(PAPER_WITH_AUTHORS_SELECT)
     .in('paper_id', paperIds)
 
   if (error) throw error
   if (!data) return []
 
-  return (data || []).map((libraryPaper: LibraryPaper & { paper: Paper & { authors: PaperAuthorJoin[] } }) => {
-    const paper = libraryPaper.paper
-    const authors = paper.authors
-      ?.sort((a: PaperAuthorJoin, b: PaperAuthorJoin) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
-      ?.map((pa: PaperAuthorJoin): Author => ({
-        id: pa.author.id,
-        name: pa.author.name
-      })) || []
-
-    return {
-      ...libraryPaper,
-      paper: {
-        ...paper,
-        authors
-      }
-    }
-  })
+  return (data || []).map(transformPaperWithAuthors)
 }
 
 export async function getRecentActivity(userId: string, limit = 5) {

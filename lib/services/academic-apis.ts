@@ -96,8 +96,8 @@ async function retryWithBackoff<T>(
 ): Promise<T> {
   const { retries, factor, minTimeout, maxTimeout, fastMode = false } = options
   
-  // Fast mode: reduced delays and retries for library search
-  const actualRetries = fastMode ? 1 : retries
+  // Fast mode should shorten delays but still allow the same number of retry attempts
+  const actualRetries = retries
   const actualMinTimeout = fastMode ? 200 : minTimeout
   const actualMaxTimeout = fastMode ? 2000 : maxTimeout
   
@@ -166,8 +166,12 @@ function createCanonicalId(title: string, year?: number, doi?: string, source?: 
   let input: string
   
   if (doi) {
-    // Use DOI as primary identifier for uniqueness, but hash it to UUID
-    input = doi.toLowerCase().trim()
+    // Use DOI as primary identifier for uniqueness, but hash it to UUID.
+    // Strip common resolver prefixes so the same DOI maps to a single canonical hash.
+    input = doi
+      .toLowerCase()
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
+      .trim()
   } else {
     // Fallback to title + year + source for papers without DOI
     const normalizedTitle = title.toLowerCase()
@@ -574,4 +578,76 @@ export function expandKeywords(query: string): string[] {
   }
   
   return Array.from(new Set(expanded))
+}
+
+// ------------------------ Reference fetching ----------------------------
+
+export interface PaperReference {
+  title?: string
+  authors?: string[]
+  year?: number
+  doi?: string
+  source?: 'crossref' | 'semanticscholar'
+  raw?: unknown
+}
+
+/**
+ * Fetch references for a given DOI from Crossref
+ */
+export async function fetchCrossrefReferences(doi: string): Promise<PaperReference[]> {
+  try {
+    const res = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`)
+    if (!res.ok) throw new Error(`Crossref failed: ${res.status}`)
+    const data = await res.json() as any
+    const refs: PaperReference[] = (data?.message?.reference || []).map((r: any) => ({
+      title: r['article-title'] || r['journal-title'] || r['unstructured'],
+      authors: r.author ? [r.author] : undefined,
+      year: r.year ? parseInt(r.year) : undefined,
+      doi: r.DOI || undefined,
+      source: 'crossref',
+      raw: r
+    }))
+    return refs
+  } catch (e) {
+    console.warn('Crossref reference fetch failed', e)
+    return []
+  }
+}
+
+/**
+ * Fetch references for Semantic Scholar paper ID or DOI
+ */
+export async function fetchSemanticScholarReferences(paperIdOrDoi: string): Promise<PaperReference[]> {
+  try {
+    const res = await fetch(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(paperIdOrDoi)}?fields=references.title,references.year,references.authors,references.externalIds`)
+    if (!res.ok) throw new Error(`SemanticScholar failed: ${res.status}`)
+    const data = await res.json() as any
+    const refsRaw = data?.references || []
+    const refs: PaperReference[] = refsRaw.map((r: any) => ({
+      title: r.title,
+      authors: (r.authors || []).map((a: any) => a.name),
+      year: r.year,
+      doi: r.externalIds?.DOI,
+      source: 'semanticscholar',
+      raw: r
+    }))
+    return refs
+  } catch (e) {
+    console.warn('Semantic Scholar reference fetch failed', e)
+    return []
+  }
+}
+
+/**
+ * Unified helper that attempts Crossref first (if DOI present) then Semantic Scholar.
+ */
+export async function getPaperReferences(doi?: string, fallbackId?: string): Promise<PaperReference[]> {
+  let refs: PaperReference[] = []
+  if (doi) {
+    refs = await fetchCrossrefReferences(doi)
+  }
+  if (refs.length === 0 && fallbackId) {
+    refs = await fetchSemanticScholarReferences(fallbackId)
+  }
+  return refs
 } 

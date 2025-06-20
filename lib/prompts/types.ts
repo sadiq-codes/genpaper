@@ -21,6 +21,7 @@ export interface PaperType {
     outline: PromptTemplate;
     introduction?: PromptTemplate;
     literatureReview?: PromptTemplate;
+    thematicSection?: PromptTemplate;
     methodology?: PromptTemplate;
     results?: PromptTemplate;
     discussion?: PromptTemplate;
@@ -36,7 +37,7 @@ export interface PromptLibrary {
     literatureReview: PaperType;
     capstoneProject?: PaperType;
     mastersThesis?: PaperType;
-    dissertation?: PaperType;
+    phdDissertation?: PaperType;
   };
 }
 

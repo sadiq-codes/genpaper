@@ -1,92 +1,60 @@
-// Centralized logging utility to replace raw console calls
-// Allows easy switching to cloud logging or silencing in production
+/**
+ * Development-only logging utilities
+ * Prevents verbose logging in production while maintaining debug capabilities
+ */
 
-type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+const isDevelopment = process.env.NODE_ENV === 'development'
+const isDebugEnabled = process.env.DEBUG_LOGGING === 'true' || isDevelopment
 
-interface LogContext {
-  [key: string]: unknown
-}
-
-class Logger {
-  private logLevel: LogLevel
-  private isDev: boolean
-
-  constructor() {
-    this.logLevel = (process.env.LOG_LEVEL as LogLevel) || 'info'
-    this.isDev = process.env.NODE_ENV !== 'production'
-  }
-
-  private shouldLog(level: LogLevel): boolean {
-    const levels: Record<LogLevel, number> = {
-      debug: 0,
-      info: 1,
-      warn: 2,
-      error: 3
+export const debug = {
+  log: (...args: unknown[]) => {
+    if (isDebugEnabled) {
+      console.log(...args)
     }
-    return levels[level] >= levels[this.logLevel]
-  }
-
-  private formatMessage(level: LogLevel, message: string, context?: LogContext): string {
-    const timestamp = new Date().toISOString()
-    const prefix = this.isDev ? this.getEmoji(level) : `[${level.toUpperCase()}]`
-    const contextStr = context ? ` ${JSON.stringify(context)}` : ''
-    return `${timestamp} ${prefix} ${message}${contextStr}`
-  }
-
-  private getEmoji(level: LogLevel): string {
-    const emojis = {
-      debug: '🔍',
-      info: '📝',
-      warn: '⚠️',
-      error: '❌'
+  },
+  
+  warn: (...args: unknown[]) => {
+    if (isDebugEnabled) {
+      console.warn(...args)
     }
-    return emojis[level]
-  }
-
-  debug(message: string, context?: LogContext): void {
-    if (this.shouldLog('debug')) {
-      console.debug(this.formatMessage('debug', message, context))
+  },
+  
+  error: (...args: unknown[]) => {
+    // Always log errors regardless of environment
+    console.error(...args)
+  },
+  
+  info: (...args: unknown[]) => {
+    if (isDebugEnabled) {
+      console.info(...args)
     }
-  }
-
-  info(message: string, context?: LogContext): void {
-    if (this.shouldLog('info')) {
-      console.info(this.formatMessage('info', message, context))
+  },
+  
+  // Production-safe performance logging
+  perf: (label: string, fn: () => void | Promise<void>) => {
+    if (isDebugEnabled) {
+      const start = Date.now()
+      const result = fn()
+      
+      if (result instanceof Promise) {
+        return result.finally(() => {
+          console.log(`⏱️ ${label}: ${Date.now() - start}ms`)
+        })
+      } else {
+        console.log(`⏱️ ${label}: ${Date.now() - start}ms`)
+        return result
+      }
+    } else {
+      return fn()
     }
-  }
-
-  warn(message: string, context?: LogContext): void {
-    if (this.shouldLog('warn')) {
-      console.warn(this.formatMessage('warn', message, context))
+  },
+  
+  // Count items for performance monitoring
+  count: (label: string, count: number) => {
+    if (isDebugEnabled) {
+      console.log(`📊 ${label}: ${count}`)
     }
-  }
-
-  error(message: string, context?: LogContext): void {
-    if (this.shouldLog('error')) {
-      console.error(this.formatMessage('error', message, context))
-    }
-  }
-
-  // Generation-specific logging methods
-  generation(stage: string, progress: number, message: string, context?: LogContext): void {
-    this.info(`[${stage.toUpperCase()}:${progress}%] ${message}`, context)
-  }
-
-  citation(message: string, context?: LogContext): void {
-    this.info(`📌 ${message}`, context)
-  }
-
-  analytics(message: string, data: LogContext): void {
-    this.info(`📊 ${message}`, data)
-  }
-
-  toolCall(message: string, context?: LogContext): void {
-    this.debug(`🔧 ${message}`, context)
   }
 }
 
-// Export singleton instance
-export const logger = new Logger()
-
-// Export type for external usage
-export type { LogLevel, LogContext } 
+export default debug 

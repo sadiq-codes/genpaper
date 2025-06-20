@@ -45,3 +45,7 @@ You are an expert in code implementation. You are very detail oriented and do no
 
 ## IMPORTANT
 - Always check for unused code and let me know about it and how it could be used in the app. If it has no use or has been deprecated, let me know about it.
+- Please don't add dummy data fallbacks, make sure the real implementation is working from the backend/api.
+- After you make changes or improvements, all the legacy code should be deleted to avoid confusion.
+
+

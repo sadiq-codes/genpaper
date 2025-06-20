@@ -7,11 +7,13 @@ import {
   searchArxiv,
   searchCore,
   expandKeywords,
-  getOpenAccessPdf
+  getOpenAccessPdf,
+  getPaperReferences
 } from './academic-apis'
 import { ingestPaperWithChunks } from '@/lib/db/papers'
 import type { PaperDTO } from '@/lib/schemas/paper'
 import { PaperSources } from '@/types/simplified'
+import { getSB } from '@/lib/supabase/server'
 
 // Enhanced paper type with ranking metadata
 export interface RankedPaper extends AcademicPaper {
@@ -34,43 +36,80 @@ export interface AggregatedSearchOptions extends SearchOptions {
   sources?: PaperSources
 }
 
-// Fix: Improved BM25 scoring with accurate IDF calculation
-function calculateBM25Score(query: string, title: string, abstract: string, allPapers: AcademicPaper[]): number {
+// ---------- BM25 utilities (pre-compute doc frequencies to avoid O(n²) scans) ----------
+
+interface BM25Env {
+  idf: Map<string, number>
+  avgDocLen: number
+  k1: number
+  b: number
+  queryTerms: string[]
+}
+
+function buildBM25Environment(query: string, papers: AcademicPaper[]): BM25Env {
   const k1 = 1.2
   const b = 0.75
-  
+
   const queryTerms = query.toLowerCase().split(/\s+/)
-  const titleTerms = title.toLowerCase().split(/\s+/)
-  const abstractTerms = abstract.toLowerCase().split(/\s+/)
-  const allTerms = [...titleTerms, ...abstractTerms]
-  
-  let score = 0
-  const avgDocLength = 100 // Approximate average document length
-  const docLength = allTerms.length
-  
-  // Fix: Compute N = total docs once per query for accurate IDF
-  const N = allPapers.length
-  
+  const N = papers.length
+
+  // Compute document frequencies for each query term in one sweep
+  const dfCounts = new Map<string, number>()
   for (const term of queryTerms) {
-    const titleFreq = titleTerms.filter(t => t.includes(term)).length
-    const abstractFreq = abstractTerms.filter(t => t.includes(term)).length
-    const termFreq = titleFreq * 2 + abstractFreq // Weight title matches higher
-    
-    if (termFreq > 0) {
-      // Fix: Calculate document frequency (df) across all papers
-      const df = allPapers.filter(paper => {
-        const paperText = `${paper.title} ${paper.abstract}`.toLowerCase()
-        return paperText.includes(term)
-      }).length
-      
-      // Fix: Use proper BM25 IDF formula: log((N - df + 0.5) / (df + 0.5))
-      const idf = Math.log((N - df + 0.5) / (df + 0.5))
-      const numerator = termFreq * (k1 + 1)
-      const denominator = termFreq + k1 * (1 - b + b * (docLength / avgDocLength))
-      score += idf * (numerator / denominator)
+    dfCounts.set(term, 0)
+  }
+
+  let totalDocLength = 0
+  for (const paper of papers) {
+    const text = `${paper.title} ${paper.abstract}`.toLowerCase()
+    totalDocLength += text.split(/\s+/).length
+    for (const term of queryTerms) {
+      if (text.includes(term)) {
+        dfCounts.set(term, (dfCounts.get(term) || 0) + 1)
+      }
     }
   }
-  
+
+  const idf = new Map<string, number>()
+  for (const term of queryTerms) {
+    const df = dfCounts.get(term) || 0
+    // Avoid division by zero; if df==0 we treat idf as 0 (term not present anywhere)
+    const idfVal = df === 0 ? 0 : Math.log((N - df + 0.5) / (df + 0.5))
+    idf.set(term, idfVal)
+  }
+
+  return {
+    idf,
+    avgDocLen: totalDocLength / Math.max(1, N),
+    k1,
+    b,
+    queryTerms
+  }
+}
+
+function calculateBM25Score(env: BM25Env, title: string, abstract: string): number {
+  const { idf, avgDocLen, k1, b, queryTerms } = env
+
+  const titleTerms = title.toLowerCase().split(/\s+/)
+  const abstractTerms = abstract.toLowerCase().split(/\s+/)
+  const docLength = titleTerms.length + abstractTerms.length
+
+  let score = 0
+  for (const term of queryTerms) {
+    const idfVal = idf.get(term) || 0
+    if (idfVal === 0) continue // term never appears in corpus
+
+    // frequency with title double-weighted
+    const freq = titleTerms.filter(t => t.includes(term)).length * 2 +
+                 abstractTerms.filter(t => t.includes(term)).length
+
+    if (freq === 0) continue
+
+    const numerator = freq * (k1 + 1)
+    const denominator = freq + k1 * (1 - b + b * (docLength / avgDocLen))
+    score += idfVal * (numerator / denominator)
+  }
+
   return score
 }
 
@@ -174,8 +213,10 @@ function rankPapers(
     recencyWeight = 0.1
   } = options
   
+  const bm25Env = buildBM25Environment(query, papers)
+
   return papers.map(paper => {
-    const bm25Score = calculateBM25Score(query, paper.title, paper.abstract, papers)
+    const bm25Score = calculateBM25Score(bm25Env, paper.title, paper.abstract)
     const authorityScore = calculateAuthorityScore(paper.citationCount)
     const recencyScore = calculateRecencyScore(paper.year)
     
@@ -216,8 +257,8 @@ export async function parallelSearch(
   
   // Fix: Ensure we have at least one source to search
   if (requestedSources.length === 0) {
-    console.warn('No supported sources provided, defaulting to openalex')
-    requestedSources.push('openalex')
+    console.warn('No supported sources provided, falling back to all default sources')
+    requestedSources.push(...SUPPORTED_SOURCES)
   }
   
   // **SMART PRIORITIZATION**: Order sources by speed/reliability (fastest first)
@@ -240,24 +281,18 @@ export async function parallelSearch(
   console.log(`Fast mode: ${fastMode ? 'ON' : 'OFF'}`)
   
   const allPapers: AcademicPaper[] = []
-  const TARGET_PAPERS = Math.min(maxResults * 2, 40) // Search for 2x target to ensure good results after dedup
+  // Increase the threshold so we do not prematurely stop after a single large response
+  const TARGET_PAPERS = Math.min(maxResults * 4, 100) // Search for up to 4× target (capped at 100) before ranking
   
-  // **SEQUENTIAL SEARCH**: Search sources one by one with early termination
-  for (const source of sourcesByPriority) {
-    if (allPapers.length >= TARGET_PAPERS) {
-      console.log(`✅ Early termination: ${allPapers.length} papers found, target: ${TARGET_PAPERS}`)
-      break
-    }
-    
+  console.log(`Parallel search target paper threshold set to ${TARGET_PAPERS}`)
+  
+  // **PARALLEL SEARCH**: query each requested source concurrently and merge results
+  async function querySource(source: SupportedSource): Promise<AcademicPaper[]> {
     try {
-      console.log(`🔍 Searching ${source} (papers so far: ${allPapers.length})...`)
-      
-      let sourceResults: AcademicPaper[] = []
+      console.log(`🔍 Searching ${source} in parallel…`)
       const searchOptions = { ...options, limit: Math.min(limit, 25), fastMode }
-      
-      // Add per-source timeout for fast mode
-      const sourceTimeout = fastMode ? 6000 : 15000 // 6s vs 15s timeout
-      
+      const sourceTimeout = fastMode ? 6000 : 15000 // 6 s vs 15 s timeout
+
       const searchPromise = (async () => {
         switch (source) {
           case 'openalex':
@@ -274,32 +309,29 @@ export async function parallelSearch(
             return []
         }
       })()
-      
-      // Race against timeout
-      sourceResults = await Promise.race([
+
+      // Race search against a timeout so one slow source does not block the whole batch
+      return await Promise.race([
         searchPromise,
-        new Promise<AcademicPaper[]>((_, reject) => 
+        new Promise<AcademicPaper[]>((_, reject) =>
           setTimeout(() => reject(new Error(`${source} timeout after ${sourceTimeout}ms`)), sourceTimeout)
         )
       ])
-      
-      if (sourceResults.length > 0) {
-        allPapers.push(...sourceResults)
-        console.log(`✅ ${source}: ${sourceResults.length} papers (total: ${allPapers.length})`)
-      } else {
-        console.log(`⚠️  ${source}: 0 papers`)
-      }
-      
-      // Small delay between sources in fast mode to avoid overwhelming APIs
-      if (fastMode && sourcesByPriority.indexOf(source) < sourcesByPriority.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 200))
-      }
-      
     } catch (error) {
       console.log(`❌ ${source} failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
-      // Continue to next source on failure
+      return [] // Swallow individual failure but continue overall search
     }
   }
+
+  const settledResults = await Promise.allSettled(sourcesByPriority.map(querySource))
+
+  for (const res of settledResults) {
+    if (res.status === 'fulfilled' && res.value.length > 0) {
+      allPapers.push(...res.value)
+    }
+  }
+
+  console.log(`✅ Parallel search completed: ${allPapers.length} raw papers collected`)
   
   console.log(`📊 Raw results: ${allPapers.length} papers from ${sourcesByPriority.length} sources`)
   
@@ -348,7 +380,7 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
     source: `academic_search_${paper.source}`,
     citation_count: paper.citationCount,
     impact_score: normalizedImpactScore, // Fix: Use normalized score (0-1 range)
-    authors: paper.authors || []
+    authors: (paper.authors && paper.authors.length > 0) ? paper.authors : ['Unknown']
   }
 }
 
@@ -406,6 +438,9 @@ export async function searchAndIngestPapers(
       const paperId = await ingestPaperWithChunks(paperDTO, contentChunks)
       ingestedIds.push(paperId)
       console.log(`Ingested paper with ${contentChunks.length} chunks: ${paper.title} (ID: ${paperId})`)
+
+      // Fetch and store references for the paper
+      await fetchAndStoreReferencesForPaper(paper, paperId)
     } catch (error) {
       console.error(`Failed to ingest paper "${paper.title}":`, error)
     }
@@ -452,4 +487,25 @@ export interface SearchConfig {
   toYear?: number
   openAccessOnly?: boolean
   fastMode?: boolean // Add fast mode option
-} 
+}
+
+// ------------------ References ingestion ----------------------
+async function fetchAndStoreReferencesForPaper(paper: AcademicPaper, paperId: string) {
+  try {
+    const refs = await getPaperReferences(paper.doi, paperId)
+    if (refs.length === 0) return
+
+    const supabase = await getSB()
+    // prepare rows
+    const rows = refs.slice(0, 100).map(r => ({
+      paper_id: paperId,
+      reference_csl: r
+    }))
+    await supabase.from('paper_references').insert(rows).select()
+    console.log(`📚 Stored ${rows.length} references for paper ${paperId}`)
+  } catch (e) {
+    console.warn('Reference ingestion failed', e)
+  }
+}
+
+// Removed enhancedSearch function - functionality moved to search-orchestrator.ts unifiedSearch() 

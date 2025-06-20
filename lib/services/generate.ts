@@ -1,7 +1,7 @@
 import { 
   updateResearchProjectStatus
 } from '@/lib/db/research'
-import { generateDraftWithRAG } from '@/lib/ai/enhanced-generation'
+import { generateDraftWithRAG } from '@/lib/generation'
 import type { 
   GenerationConfig
 } from '@/types/simplified'
@@ -32,8 +32,7 @@ export async function generatePaperPipeline(params: PaperGenerationParams) {
       useLibraryOnly,
       config: {
         length: generationConfig?.paper_settings?.length || 'medium',
-        style: generationConfig?.paper_settings?.style || 'academic',
-        citationStyle: generationConfig?.paper_settings?.citationStyle || 'apa',
+        paperType: generationConfig?.paper_settings?.paperType || 'researchArticle',
         includeMethodology: generationConfig?.paper_settings?.includeMethodology ?? true,
         includeFuture: true,
         search_parameters: generationConfig?.search_parameters,

@@ -2,7 +2,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { writeFile, unlink } from 'fs/promises'
 import { randomUUID } from 'crypto'
-import { logger } from '@/lib/utils/logger'
+import { debug } from '@/lib/utils/logger'
 import { 
   chunkText, 
   extractTitle, 
@@ -57,7 +57,7 @@ export async function extractPDFMetadata(file: File): Promise<ExtractedPDFData> 
       // Handle the specific webpack bundling issue with test file paths
       if ((error.code === 'ENOENT' && error.path?.includes('test/data')) || 
           error.errno === -2) {
-        logger.warn('PDF parse webpack bundling issue detected, using buffer fallback')
+        debug.warn('PDF parse webpack bundling issue detected, using buffer fallback')
         
         // Fallback: try parsing the buffer directly instead of file path
         try {
@@ -65,7 +65,7 @@ export async function extractPDFMetadata(file: File): Promise<ExtractedPDFData> 
           const buffer = fs.readFileSync(tempFilePath)
           data = await pdfParse(buffer)
         } catch (bufferError) {
-          logger.error('Buffer fallback also failed', { error: bufferError })
+          debug.error('Buffer fallback also failed', { error: bufferError })
           throw new Error('PDF parsing failed due to webpack bundling issues')
         }
       } else {
@@ -76,7 +76,7 @@ export async function extractPDFMetadata(file: File): Promise<ExtractedPDFData> 
     const fullText = data.text
     const lines = fullText.split('\n').map((line: string) => line.trim()).filter((line: string) => line.length > 0)
     
-    logger.info('PDF parsing completed', { 
+    debug.info('PDF parsing completed', { 
       totalLines: lines.length,
       firstLines: lines.slice(0, 5) 
     })
@@ -90,7 +90,7 @@ export async function extractPDFMetadata(file: File): Promise<ExtractedPDFData> 
     const venue = extractVenue(fullText)
     
     // Log extracted metadata (safely truncated)
-    logger.info('Metadata extraction completed', {
+    debug.info('Metadata extraction completed', {
       title,
       authorsCount: authors.length,
       abstract: abstract ? 'Found' : 'Not found',
@@ -101,7 +101,7 @@ export async function extractPDFMetadata(file: File): Promise<ExtractedPDFData> 
     
     // Improved content chunking - use full text for better RAG with fixed overlap
     const contentChunks = chunkText(fullText, 1000, 200)
-    logger.info('Content chunking completed', { chunks: contentChunks.length })
+    debug.info('Content chunking completed', { chunks: contentChunks.length })
     
     const result: ExtractedPDFData = {
       title: title || 'Untitled Paper',
@@ -118,7 +118,7 @@ export async function extractPDFMetadata(file: File): Promise<ExtractedPDFData> 
     return result
     
   } catch (error) {
-    logger.error('PDF parsing error', { error })
+    debug.error('PDF parsing error', { error })
     
     // Fallback to filename-based extraction with proper sanitization
     const sanitizedName = sanitizeFilename(file.name)
@@ -140,7 +140,7 @@ export async function extractPDFMetadata(file: File): Promise<ExtractedPDFData> 
       try {
         await unlink(tempFilePath)
       } catch (cleanupError) {
-        logger.warn('Failed to cleanup temp file', { tempFilePath, error: cleanupError })
+        debug.warn('Failed to cleanup temp file', { tempFilePath, error: cleanupError })
       }
     }
   }

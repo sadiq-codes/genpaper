@@ -14,8 +14,7 @@ import {
 } from '@/lib/prompts/few-shot-examples';
 import {
   performFinalPolish,
-  validatePolishQuality,
-  analyzePotentialImprovements
+  validatePolishQuality
 } from '@/lib/prompts/final-polish';
 import { generateLiteratureReviewPrompt, generateMethodologyPrompt } from '@/lib/prompts/generators';
 import type { SectionContent, PolishConfig } from '@/lib/prompts/types';
@@ -78,10 +77,10 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
   });
 
   describe('Smart Example Selection', () => {
-    it('should return examples for dissertation introduction (available)', () => {
-      const examples = getFewShotExamples('dissertation', 'introduction');
+    it('should return examples for phdDissertation introduction (available)', () => {
+      const examples = getFewShotExamples('phdDissertation', 'introduction');
       expect(examples.length).toBeGreaterThan(0);
-      expect(examples[0].paperType).toBe('dissertation');
+      expect(examples[0].paperType).toBe('phdDissertation');
       expect(examples[0].section).toBe('introduction');
     });
 
@@ -102,7 +101,7 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
     });
 
     it('should ensure geographic diversity in multiple examples', () => {
-      const examples = getFewShotExamples('dissertation', 'introduction', undefined, undefined, 2);
+      const examples = getFewShotExamples('phdDissertation', 'introduction', undefined, undefined, 2);
       if (examples.length > 1) {
         const countries = new Set(examples.map(ex => ex.country));
         expect(countries.size).toBeGreaterThan(1); // Should have different countries
@@ -115,7 +114,7 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
     });
 
     it('should respect maxExamples parameter', () => {
-      const examples = getFewShotExamples('dissertation', 'introduction', undefined, undefined, 1);
+      const examples = getFewShotExamples('phdDissertation', 'introduction', undefined, undefined, 1);
       expect(examples.length).toBeLessThanOrEqual(1);
     });
   });
@@ -123,16 +122,16 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
   describe('Example Availability Checks', () => {
     it('should correctly identify available sections for each paper type', () => {
       // Check what sections are actually available in our data
-      const dissertationSections = getAvailableFewShotSections('dissertation');
+      const phdDissertationSections = getAvailableFewShotSections('phdDissertation');
       const mastersThesisSections = getAvailableFewShotSections('mastersThesis');
       
-      expect(dissertationSections.length).toBeGreaterThan(0);
+      expect(phdDissertationSections.length).toBeGreaterThan(0);
       expect(mastersThesisSections.length).toBeGreaterThan(0);
     });
 
     it('should return true for actually available combinations', () => {
       // Test based on what we actually have in the data
-      expect(hasFewShotExamples('dissertation', 'introduction')).toBe(true);
+      expect(hasFewShotExamples('phdDissertation', 'introduction')).toBe(true);
       expect(hasFewShotExamples('mastersThesis', 'literatureReview')).toBe(true);
     });
 
@@ -149,7 +148,7 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
 
   describe('Example Formatting', () => {
     it('should format examples for prompt inclusion', () => {
-      const examples = getFewShotExamples('dissertation', 'introduction', undefined, undefined, 1);
+      const examples = getFewShotExamples('phdDissertation', 'introduction', undefined, undefined, 1);
       if (examples.length > 0) {
         const formatted = formatFewShotExamples(examples);
         
@@ -161,7 +160,7 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
     });
 
     it('should handle multiple examples with separators', () => {
-      const examples = getFewShotExamples('dissertation', 'introduction', undefined, undefined, 2);
+      const examples = getFewShotExamples('phdDissertation', 'introduction', undefined, undefined, 2);
       if (examples.length > 1) {
         const formatted = formatFewShotExamples(examples);
         expect(formatted).toContain('Example 1:');
@@ -203,11 +202,11 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
       expect(prompt.userPrompt || prompt).not.toContain('Below are examples');
     });
 
-    it('should include methodology few-shot for dissertations', () => {
+    it('should include methodology few-shot for phdDissertations', () => {
       const prompt = generateMethodologyPrompt(
         'Test Topic',
         mockPapers,
-        { fewShot: true, paperType: 'dissertation' }
+        { fewShot: true, paperType: 'phdDissertation' }
       );
       
       expect(prompt).toBeTruthy();
@@ -315,7 +314,7 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
       const hasGlobalCoverage = Object.keys(stats.byCountry).length > 3;
       
       // 2. Test few-shot selection from multiple countries
-      const examples = getFewShotExamples('dissertation', 'introduction', 'Nigeria', undefined, 2);
+      const examples = getFewShotExamples('phdDissertation', 'introduction', 'Nigeria', undefined, 2);
       
       // 3. Test region-agnostic polish
       const sections: SectionContent[] = [
@@ -328,7 +327,7 @@ describe('Task 8: Global Few-Shot Examples & Polish System', () => {
       ];
 
       const config: PolishConfig = {
-        paperType: 'dissertation',
+        paperType: 'phdDissertation',
         topic: 'Global Research Topic',
         citationStyle: 'apa'
       };

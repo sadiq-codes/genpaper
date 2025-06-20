@@ -8,19 +8,19 @@ import { ingestPaperWithChunks } from '@/lib/db/papers'
 import { addPaperToLibrary } from '@/lib/db/library'
 import { extractPDFMetadata } from '@/lib/pdf/extract'
 import { sanitizeFilename } from '@/lib/utils/text'
-import { logger } from '@/lib/utils/logger'
+import { debug } from '@/lib/utils/logger'
 import { PaperDTOSchema } from '@/lib/schemas/paper'
 
 export async function POST(request: NextRequest) {
   try {
-    logger.info('PDF Upload API Started')
+    debug.info('PDF Upload API Started')
     
     // Early size validation from content-length header
     const contentLength = request.headers.get('content-length')
     const maxSize = 10 * 1024 * 1024 // 10MB
     
     if (contentLength && parseInt(contentLength) > maxSize) {
-      logger.warn('File too large (header check)', { contentLength })
+      debug.warn('File too large (header check)', { contentLength })
       return Response.json({ 
         error: 'File too large. Maximum size is 10MB',
         received: contentLength 
@@ -32,11 +32,11 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     
     if (authError || !user) {
-      logger.error('Authentication failed', { error: authError })
+      debug.error('Authentication failed', { error: authError })
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
     }
     
-    logger.info('Authentication successful', { userId: user.id })
+    debug.info('Authentication successful', { userId: user.id })
 
     // Parse form data
     const formData = await request.formData()
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     const fileName = formData.get('fileName') as string
 
     if (!file) {
-      logger.error('No file provided in form data')
+      debug.error('No file provided in form data')
       return Response.json({ error: 'No file provided' }, { status: 400 })
     }
 
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       ? sanitizeFilename(fileName)
       : sanitizeFilename(file.name)
 
-    logger.info('File received', { 
+    debug.info('File received', { 
       fileName: sanitizedFileName, 
       size: file.size, 
       type: file.type 
@@ -61,13 +61,13 @@ export async function POST(request: NextRequest) {
 
     // Validate file type
     if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
-      logger.error('Invalid file type', { type: file.type })
+      debug.error('Invalid file type', { type: file.type })
       return Response.json({ error: 'Only PDF files are allowed' }, { status: 400 })
     }
 
     // Double-check file size (after form parsing)
     if (file.size > maxSize) {
-      logger.error('File too large', { size: file.size })
+      debug.error('File too large', { size: file.size })
       return Response.json({ 
         error: 'File too large. Maximum size is 10MB',
         received: file.size,
@@ -75,13 +75,13 @@ export async function POST(request: NextRequest) {
       }, { status: 413 })
     }
 
-    logger.info('Processing PDF upload', { fileName: sanitizedFileName, size: file.size })
+    debug.info('Processing PDF upload', { fileName: sanitizedFileName, size: file.size })
 
     // Extract metadata and content from PDF
-    logger.info('Starting PDF metadata extraction')
+    debug.info('Starting PDF metadata extraction')
     const extractedData = await extractPDFMetadata(file)
     
-    logger.info('Metadata extraction completed', {
+    debug.info('Metadata extraction completed', {
       title: extractedData.title,
       authorsCount: extractedData.authors?.length,
       abstract: extractedData.abstract ? 'Found' : 'Not found',
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
     // Validate paper data with Zod schema
     const validationResult = PaperDTOSchema.safeParse(paperData)
     if (!validationResult.success) {
-      logger.error('Paper data validation failed', { 
+      debug.error('Paper data validation failed', { 
         errors: validationResult.error.errors 
       })
       return Response.json({ 
@@ -124,18 +124,18 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    logger.info('Starting paper ingestion')
+    debug.info('Starting paper ingestion')
     
     // Ingest paper with content chunks for RAG (creates embeddings for both main paper and chunks)
     const paperId = await ingestPaperWithChunks(validationResult.data, extractedData.contentChunks)
-    logger.info('Paper ingested successfully', { paperId })
+    debug.info('Paper ingested successfully', { paperId })
 
-    logger.info('Adding to user library')
+    debug.info('Adding to user library')
     // Add to user's library
     const libraryPaper = await addPaperToLibrary(user.id, paperId, `Uploaded from file: ${sanitizedFileName}`)
-    logger.info('Added to library successfully', { libraryPaperId: libraryPaper.id })
+    debug.info('Added to library successfully', { libraryPaperId: libraryPaper.id })
 
-    logger.info('Upload completed successfully')
+    debug.info('Upload completed successfully')
 
     // Return success response with extracted data
     return Response.json({
@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    logger.error('PDF upload error', {
+    debug.error('PDF upload error', {
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined,
       error: error

@@ -4,7 +4,6 @@ import {
   getResearchProject, 
   getLatestProjectVersion, 
   getProjectVersions,
-  getProjectCitations,
   getProjectPapersWithCSL
 } from '@/lib/db/research'
 
@@ -54,7 +53,21 @@ export async function GET(
 
     // Get citations if requested
     if (includeCitations) {
-      citations = await getProjectCitations(projectId, latestVersion?.version)
+      const { data: addCitationData, error: addCitationError } = await supabase
+        .from('citations')
+        .select('id, key, csl_json')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: true })
+
+      if (addCitationError) {
+        console.error('Error loading citations:', addCitationError)
+      }
+
+      const map: Record<string, unknown> = {}
+      ;(addCitationData || []).forEach(rec => {
+        map[rec.key] = rec.csl_json
+      })
+      citations = map
     }
 
     // Get papers with CSL data if requested

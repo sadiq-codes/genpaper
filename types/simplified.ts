@@ -37,11 +37,18 @@ export interface GenerationConfig {
     fallbackToKeyword?: boolean
     fallbackToAcademic?: boolean
     forceIngest?: boolean
+    // Optional ranking/weight tuning for power users
+    semanticWeight?: number
+    authorityWeight?: number
+    recencyWeight?: number
+    vectorWeight?: number
+    academicWeight?: number
   }
   paper_settings?: {
     length?: 'short' | 'medium' | 'long'
-    style?: 'academic' | 'review' | 'survey'
+    paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
     citationStyle?: 'apa' | 'mla' | 'chicago' | 'ieee'
+    localRegion?: string // TASK 6: Regional boosting support
     includeMethodology?: boolean
     includeFuture?: boolean
     minCitationCoverage?: number
@@ -142,7 +149,7 @@ export interface GenerateRequest {
   useLibraryOnly?: boolean
   config?: {
     length?: 'short' | 'medium' | 'long'
-    style?: 'academic' | 'review' | 'survey'
+    paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
     citationStyle?: 'apa' | 'mla' | 'chicago' | 'ieee'
     includeMethodology?: boolean
   }

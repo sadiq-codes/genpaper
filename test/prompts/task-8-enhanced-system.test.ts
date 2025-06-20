@@ -164,7 +164,7 @@ describe('Enhanced Few-Shot Examples System', () => {
     test('should handle edge case with single example available', () => {
       // Test with very specific criteria that likely matches only one example
       const examples = getFewShotExamples(
-        'dissertation',
+        'phdDissertation',
         'methodology',
         'Brazil',
         'very_specific_field',
@@ -612,7 +612,7 @@ describe('Integration Tests - Enhanced Task 8 System', () => {
     
     // Check coverage
     const hasThesis = hasFewShotExamples('mastersThesis', 'literatureReview');
-    const hasDissertation = hasFewShotExamples('dissertation', 'introduction');
+    const hasDissertation = hasFewShotExamples('phdDissertation', 'introduction');
 
     console.log('📊 Enhanced Task 8 System Status:');
     console.log(`✅ Examples validation: ${exampleValidation.isValid ? 'PASSED' : 'FAILED'}`);

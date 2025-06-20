@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createResearchProject } from '@/lib/db/research'
 import { generatePaperPipeline } from '@/lib/services/generate'
+import { getUserLocation } from '@/lib/utils/user-location'
 import type { 
   GenerateRequest, 
   GenerateResponse, 
@@ -25,6 +26,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Topic is required' }, { status: 400 })
     }
 
+    // Automatically detect user's location for regional boosting
+    const userLocation = await getUserLocation(user.id, request)
+
     // Create generation config
     const generationConfig: GenerationConfig = {
       temperature: 0.7,
@@ -40,8 +44,8 @@ export async function POST(request: NextRequest) {
       },
       paper_settings: {
         length: config?.length || 'medium',
-        style: config?.style || 'academic',
-        citationStyle: config?.citationStyle || 'apa',
+        paperType: config?.paperType || 'researchArticle',
+        localRegion: config?.localRegion || userLocation, // Auto-detect user's location
         includeMethodology: config?.includeMethodology ?? true
       },
       library_papers_used: libraryPaperIds || []

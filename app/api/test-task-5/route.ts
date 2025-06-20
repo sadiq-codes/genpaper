@@ -23,7 +23,6 @@ export async function GET(request: NextRequest) {
         config: {
           length: 'medium' as const,
           style: 'academic' as const,
-          citationStyle: 'apa' as const,
           includeMethodology: true
         }
       }
@@ -39,7 +38,7 @@ export async function GET(request: NextRequest) {
       if (testRequest.config) {
         if (testRequest.config.length) params.set('length', testRequest.config.length)
         if (testRequest.config.style) params.set('style', testRequest.config.style)
-        if (testRequest.config.citationStyle) params.set('citationStyle', testRequest.config.citationStyle)
+
         if (testRequest.config.includeMethodology !== undefined) {
           params.set('includeMethodology', testRequest.config.includeMethodology.toString())
         }

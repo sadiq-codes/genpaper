@@ -245,6 +245,30 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
         } else {
           const { paperId: actualPaperId } = await ingestResponse.json()
           console.log(`📚 Paper ingested without chunks: ${actualPaperId}`)
+          
+          // If paper has PDF URL, queue it for background processing
+          if (searchResult.pdf_url) {
+            console.log(`📄 Queueing PDF processing for: ${searchResult.title}`)
+            try {
+              const { pdfQueue } = await import('@/lib/services/pdf-queue')
+              const jobId = await pdfQueue.addJob(
+                actualPaperId, 
+                searchResult.pdf_url, 
+                searchResult.title, 
+                'user-id', // TODO: Get actual user ID
+                'normal'
+              )
+              console.log(`✅ PDF processing queued: ${jobId}`)
+              
+              // Subscribe to real-time updates (optional)
+              pdfQueue.subscribeToStatus(jobId, (status) => {
+                console.log(`📄 PDF processing update:`, status)
+                // TODO: Update UI with processing status
+              })
+            } catch (pdfError) {
+              console.warn(`⚠️ PDF processing queue failed, but paper still added to library:`, pdfError)
+            }
+          }
         }
       }
 

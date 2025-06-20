@@ -1,11 +1,14 @@
 import { createClient } from '@/lib/supabase/server'
 import { getOpenAccessPdf } from './academic-apis'
+import { extractPDFMetadata } from '@/lib/pdf/extract'
+import { getSB } from '@/lib/supabase/server'
 
-interface PDFDownloadResult {
+export interface PDFDownloadResult {
   success: boolean
-  pdf_url?: string
+  paperId: string
+  pdfPath?: string
+  extractedContent?: string
   error?: string
-  file_size?: number
 }
 
 // Configuration
@@ -22,7 +25,7 @@ export async function downloadAndStorePDF(
   retries = 2
 ): Promise<PDFDownloadResult> {
   if (!doi) {
-    return { success: false, error: 'No DOI provided' }
+    return { success: false, paperId, error: 'No DOI provided' }
   }
 
   try {
@@ -32,7 +35,7 @@ export async function downloadAndStorePDF(
     const pdfUrl = await getOpenAccessPdf(doi)
     if (!pdfUrl) {
       console.log(`❌ No open access PDF found for DOI: ${doi}`)
-      return { success: false, error: 'No open access PDF available' }
+      return { success: false, paperId, error: 'No open access PDF available' }
     }
 
     console.log(`🔗 Found PDF URL: ${pdfUrl}`)
@@ -40,7 +43,7 @@ export async function downloadAndStorePDF(
     // Download the PDF with timeout and size limits
     const pdfBuffer = await downloadPDFWithLimits(pdfUrl)
     if (!pdfBuffer) {
-      return { success: false, error: 'Failed to download PDF' }
+      return { success: false, paperId, error: 'Failed to download PDF' }
     }
 
     console.log(`📦 Downloaded PDF: ${pdfBuffer.length} bytes`)
@@ -51,15 +54,17 @@ export async function downloadAndStorePDF(
     // Upload to Supabase storage
     const storedUrl = await uploadPDFToStorage(pdfBuffer, filename)
     if (!storedUrl) {
-      return { success: false, error: 'Failed to store PDF' }
+      return { success: false, paperId, error: 'Failed to store PDF' }
     }
 
     console.log(`✅ PDF stored successfully: ${storedUrl}`)
 
     return {
       success: true,
-      pdf_url: storedUrl,
-      file_size: pdfBuffer.length
+      paperId,
+      pdfPath: storedUrl,
+      extractedContent: undefined,
+      error: undefined
     }
 
   } catch (error) {
@@ -74,6 +79,7 @@ export async function downloadAndStorePDF(
 
     return { 
       success: false, 
+      paperId,
       error: error instanceof Error ? error.message : 'Unknown error' 
     }
   }
@@ -274,8 +280,8 @@ export async function batchDownloadPDFs(
       const result = await downloadAndStorePDF(paper.doi!, paper.id)
       
       // Update paper record if successful
-      if (result.success && result.pdf_url) {
-        await updatePaperWithPDF(paper.id, result.pdf_url, result.file_size)
+      if (result.success && result.pdfPath) {
+        await updatePaperWithPDF(paper.id, result.pdfPath, result.extractedContent?.length)
       }
       
       return { paperId: paper.id, result }
@@ -294,4 +300,123 @@ export async function batchDownloadPDFs(
   console.log(`✅ Batch PDF download complete: ${successful}/${results.length} successful`)
 
   return results
+}
+
+/**
+ * Download PDF and extract content for library papers
+ * This happens when user adds paper to library, not during search
+ */
+export async function downloadAndProcessPDF(
+  paperId: string, 
+  pdfUrl: string,
+  paperTitle: string
+): Promise<PDFDownloadResult> {
+  try {
+    console.log(`📄 Starting PDF download and processing for: ${paperTitle}`)
+    
+    // Download PDF
+    const response = await fetch(pdfUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Academic Research Bot)'
+      }
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Failed to download PDF: ${response.status} ${response.statusText}`)
+    }
+    
+    const pdfBuffer = await response.arrayBuffer()
+    const pdfFile = new File([pdfBuffer], `${paperTitle}.pdf`, { type: 'application/pdf' })
+    
+    // Extract text content from PDF
+    console.log(`📄 Extracting content from PDF...`)
+    const extractedData = await extractPDFMetadata(pdfFile)
+    
+    // Store PDF content in database for later chunking
+    const supabase = await getSB()
+    const { error: updateError } = await supabase
+      .from('papers')
+      .update({
+        metadata: {
+          pdf_downloaded: true,
+          pdf_download_date: new Date().toISOString(),
+          pdf_content_extracted: !!extractedData.fullText,
+          pdf_content_length: extractedData.fullText?.length || 0,
+          extraction_metadata: {
+            chunks_count: extractedData.contentChunks?.length || 0,
+            has_abstract: !!extractedData.abstract,
+            has_authors: extractedData.authors && extractedData.authors.length > 0
+          }
+        },
+        // Store extracted content for later chunking during generation
+        pdf_content: extractedData.fullText || extractedData.content
+      })
+      .eq('id', paperId)
+    
+    if (updateError) {
+      console.warn(`⚠️ Failed to update paper with PDF content:`, updateError)
+    }
+    
+    console.log(`✅ PDF processed successfully for: ${paperTitle}`)
+    console.log(`   📊 Content length: ${extractedData.fullText?.length || 0} characters`)
+    console.log(`   📄 Potential chunks: ${extractedData.contentChunks?.length || 0}`)
+    
+    return {
+      success: true,
+      paperId,
+      extractedContent: extractedData.fullText || extractedData.content,
+      pdfPath: pdfUrl
+    }
+    
+  } catch (error) {
+    console.error(`❌ PDF download/processing failed for ${paperTitle}:`, error)
+    
+    return {
+      success: false,
+      paperId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }
+  }
+}
+
+/**
+ * Check if paper has PDF content available for chunking
+ */
+export async function hasPDFContent(paperId: string): Promise<boolean> {
+  try {
+    const supabase = await getSB()
+    const { data, error } = await supabase
+      .from('papers')
+      .select('pdf_content, metadata')
+      .eq('id', paperId)
+      .single()
+    
+    if (error || !data) return false
+    
+    return !!(data.pdf_content && data.pdf_content.length > 0)
+  } catch (error) {
+    console.error('Error checking PDF content:', error)
+    return false
+  }
+}
+
+/**
+ * Get PDF content for chunking during generation
+ */
+export async function getPDFContent(paperId: string): Promise<string | null> {
+  try {
+    const supabase = await getSB()
+    const { data, error } = await supabase
+      .from('papers')
+      .select('pdf_content')
+      .eq('id', paperId)
+      .single()
+    
+    if (error || !data) return null
+    
+    return data.pdf_content || null
+  } catch (error) {
+    console.error('Error getting PDF content:', error)
+    return null
+  }
 } 

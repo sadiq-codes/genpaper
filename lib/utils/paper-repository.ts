@@ -8,9 +8,15 @@
 import { getSB } from '@/lib/supabase/server'
 import type { RegionDetectionResult } from './global-region-detection'
 
-  
+// Lazy-loaded Supabase client to avoid calling cookies() at import time
+let supabaseClient: Awaited<ReturnType<typeof getSB>> | null = null
 
-export const supabase = await getSB()
+async function getSupabase() {
+  if (!supabaseClient) {
+    supabaseClient = await getSB()
+  }
+  return supabaseClient
+}
 
 export interface PaperData {
   id?: string
@@ -80,6 +86,8 @@ export async function createPaper(params: CreatePaperParams): Promise<string> {
   const { data, chunks = [] } = params
 
   try {
+    const supabase = await getSupabase()
+    
     // Insert paper record
     const { data: paperData, error: paperError } = await supabase
       .from('papers')
@@ -103,7 +111,10 @@ export async function createPaper(params: CreatePaperParams): Promise<string> {
       throw new Error(`Failed to create paper: ${paperError.message}`)
     }
 
-    const paperId = paperData.id
+    const paperId = paperData?.id
+    if (!paperId) {
+      throw new Error('Failed to get paper ID from created paper')
+    }
 
     // Insert chunks if provided
     if (chunks.length > 0) {
@@ -147,6 +158,8 @@ export async function updatePaperRegion(
   }
 
   try {
+    const supabase = await getSupabase()
+    
     const { error } = await supabase
       .from('papers')
       .update({
@@ -188,10 +201,10 @@ export async function batchUpdatePaperRegions(
     const promises = batch.map(async ({ paperId, regionResult }) => {
       try {
         await updatePaperRegion(paperId, regionResult)
-        return { success: true, paperId }
+        return { success: true as const, paperId }
       } catch (error) {
         return {
-          success: false,
+          success: false as const,
           paperId: paperId,
           error: error instanceof Error ? error.message : 'Unknown error'
         }
@@ -200,13 +213,13 @@ export async function batchUpdatePaperRegions(
 
     const results = await Promise.all(promises)
     
-    for (const result of results) {
+    results.forEach(result => {
       if (result.success) {
         successful.push(result.paperId)
       } else {
         failed.push({ paperId: result.paperId, error: result.error })
       }
-    }
+    })
   }
 
   return {
@@ -216,7 +229,7 @@ export async function batchUpdatePaperRegions(
 }
 
 /**
- * Search papers with optional filters
+ * Search papers with advanced filtering
  */
 export async function searchPapers(params: SearchPapersParams = {}): Promise<SearchPapersResult> {
   const {
@@ -231,6 +244,8 @@ export async function searchPapers(params: SearchPapersParams = {}): Promise<Sea
   } = params
 
   try {
+    const supabase = await getSupabase()
+    
     let queryBuilder = supabase
       .from('papers')
       .select('*', { count: 'exact' })
@@ -274,72 +289,79 @@ export async function searchPapers(params: SearchPapersParams = {}): Promise<Sea
   }
 }
 
-
 /**
- * Get region statistics for analytics
+ * Get region statistics for papers
  */
 export async function getRegionStatistics(): Promise<RegionStatistics[]> {
   try {
-    // Get region counts
-    const { data: regionCounts, error: regionError } = await supabase
+    const supabase = await getSupabase()
+    
+    // Get total count first
+    const { count: totalCount, error: countError } = await supabase
+      .from('papers')
+      .select('*', { count: 'exact', head: true })
+
+    if (countError) {
+      throw new Error(`Failed to get total count: ${countError.message}`)
+    }
+
+    // Get region statistics
+    const { data: regionData, error: regionError } = await supabase
       .from('papers')
       .select('metadata')
       .not('metadata->>region', 'is', null)
 
     if (regionError) {
-      throw new Error(`Failed to fetch region data: ${regionError.message}`)
+      throw new Error(`Failed to get region data: ${regionError.message}`)
     }
 
-    if (!regionCounts || regionCounts.length === 0) {
-      return []
-    }
-
-    // Process the data to calculate statistics
-    const regionStats: Record<string, {
-      count: number
+    // Process the data to get statistics
+    const regionCounts: Record<string, {
+      total: number
       confidence: { high: number; medium: number; low: number }
       sources: { url: number; venue: number; affiliation: number; title: number; user: number }
     }> = {}
 
-    const totalPapers = regionCounts.length
-
-    for (const paper of regionCounts) {
+    regionData?.forEach(paper => {
       const metadata = paper.metadata as Record<string, unknown>
-      const region = metadata.region as string
-      const confidence = (metadata.region_confidence as string) || 'low'
-      const source = (metadata.region_source as string) || 'venue'
+      const region = metadata?.region as string
+      const confidence = (metadata?.region_confidence as string) || 'unknown'
+      const source = (metadata?.region_source as string) || 'unknown'
 
-      if (!region) {
-        continue // Skip papers without region
-      }
-      
-      if (!regionStats[region]) {
-        regionStats[region] = {
-          count: 0,
+      if (region) {
+        if (!regionCounts[region]) {
+          regionCounts[region] = {
+            total: 0,
           confidence: { high: 0, medium: 0, low: 0 },
           sources: { url: 0, venue: 0, affiliation: 0, title: 0, user: 0 }
         }
       }
 
-      regionStats[region].count++
+        regionCounts[region].total++
       
-      const validConfidence = ['high', 'medium', 'low'].includes(confidence) ? confidence : 'low'
-      regionStats[region].confidence[validConfidence as 'high' | 'medium' | 'low']++
-      
-      const validSource = ['url', 'venue', 'affiliation', 'title', 'user'].includes(source) ? source : 'venue'
-      regionStats[region].sources[validSource as 'url' | 'venue' | 'affiliation' | 'title' | 'user']++
+        // Ensure confidence is one of the expected values
+        if (confidence === 'high' || confidence === 'medium' || confidence === 'low') {
+          regionCounts[region].confidence[confidence]++
+        }
+        
+        // Ensure source is one of the expected values
+        if (source === 'url' || source === 'venue' || source === 'affiliation' || source === 'title' || source === 'user') {
+          regionCounts[region].sources[source]++
     }
+      }
+    })
 
-    // Convert to array format with percentages
-    const statistics: RegionStatistics[] = Object.entries(regionStats)
-      .map(([region, stats]) => ({
+    // Convert to array and calculate percentages
+    const statistics: RegionStatistics[] = Object.entries(regionCounts).map(([region, stats]) => ({
         region,
-        count: stats.count,
-        percentage: (stats.count / totalPapers) * 100,
+      count: stats.total,
+      percentage: totalCount ? (stats.total / totalCount) * 100 : 0,
         confidence_breakdown: stats.confidence,
         sources_breakdown: stats.sources
       }))
-      .sort((a, b) => b.count - a.count) // Sort by count descending
+
+    // Sort by count descending
+    statistics.sort((a, b) => b.count - a.count)
 
     return statistics
 
@@ -349,10 +371,12 @@ export async function getRegionStatistics(): Promise<RegionStatistics[]> {
 }
 
 /**
- * Get paper by ID
+ * Get a paper by ID
  */
 export async function getPaperById(paperId: string): Promise<PaperData | null> {
   try {
+    const supabase = await getSupabase()
+    
     const { data, error } = await supabase
       .from('papers')
       .select('*')
@@ -363,10 +387,10 @@ export async function getPaperById(paperId: string): Promise<PaperData | null> {
       if (error.code === 'PGRST116') {
         return null // Paper not found
       }
-      throw new Error(`Failed to fetch paper: ${error.message}`)
+      throw new Error(`Failed to get paper: ${error.message}`)
     }
 
-    return data
+    return data as PaperData
 
   } catch (error) {
     throw new Error(`Database error: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -374,10 +398,12 @@ export async function getPaperById(paperId: string): Promise<PaperData | null> {
 }
 
 /**
- * Delete paper and its chunks
+ * Delete a paper and its chunks
  */
 export async function deletePaper(paperId: string): Promise<void> {
   try {
+    const supabase = await getSupabase()
+    
     // Delete chunks first (foreign key constraint)
     const { error: chunksError } = await supabase
       .from('paper_chunks')
@@ -385,11 +411,10 @@ export async function deletePaper(paperId: string): Promise<void> {
       .eq('paper_id', paperId)
 
     if (chunksError) {
-      console.warn(`Failed to delete chunks for paper ${paperId}:`, chunksError.message)
-      // Continue with paper deletion
+      throw new Error(`Failed to delete paper chunks: ${chunksError.message}`)
     }
 
-    // Delete paper
+    // Delete the paper
     const { error: paperError } = await supabase
       .from('papers')
       .delete()
@@ -414,13 +439,15 @@ export async function getDatabaseStats(): Promise<{
   regionCoverage: number
 }> {
   try {
+    const supabase = await getSupabase()
+    
     // Get total papers count
-    const { count: totalPapers, error: totalError } = await supabase
+    const { count: totalPapers, error: papersError } = await supabase
       .from('papers')
       .select('*', { count: 'exact', head: true })
 
-    if (totalError) {
-      throw new Error(`Failed to count papers: ${totalError.message}`)
+    if (papersError) {
+      throw new Error(`Failed to get papers count: ${papersError.message}`)
     }
 
     // Get papers with regions count
@@ -430,7 +457,7 @@ export async function getDatabaseStats(): Promise<{
       .not('metadata->>region', 'is', null)
 
     if (regionsError) {
-      throw new Error(`Failed to count papers with regions: ${regionsError.message}`)
+      throw new Error(`Failed to get papers with regions count: ${regionsError.message}`)
     }
 
     // Get total chunks count
@@ -439,14 +466,16 @@ export async function getDatabaseStats(): Promise<{
       .select('*', { count: 'exact', head: true })
 
     if (chunksError) {
-      throw new Error(`Failed to count chunks: ${chunksError.message}`)
+      throw new Error(`Failed to get chunks count: ${chunksError.message}`)
     }
+
+    const regionCoverage = totalPapers ? (papersWithRegions || 0) / totalPapers : 0
 
     return {
       totalPapers: totalPapers || 0,
       papersWithRegions: papersWithRegions || 0,
       totalChunks: totalChunks || 0,
-      regionCoverage: totalPapers ? (papersWithRegions || 0) / totalPapers : 0
+      regionCoverage
     }
 
   } catch (error) {

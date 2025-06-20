@@ -39,7 +39,7 @@ describe('Template Generators', () => {
   };
 
   describe('generateSectionPrompt', () => {
-    const paperTypes: PaperTypeKey[] = ['researchArticle', 'literatureReview', 'capstoneProject', 'mastersThesis', 'dissertation'];
+    const paperTypes: PaperTypeKey[] = ['researchArticle', 'literatureReview', 'capstoneProject', 'mastersThesis', 'phdDissertation'];
     const sections: SectionKey[] = ['outline', 'literatureReview', 'methodology', 'discussion'];
 
     paperTypes.forEach(paperType => {
@@ -77,9 +77,9 @@ describe('Template Generators', () => {
       expect(missing.length).toBeLessThan(template.requiredDepthCues.length);
     });
 
-    it('should generate exhaustive literature review for dissertation', () => {
+    it('should generate exhaustive literature review for phdDissertation', () => {
       const template = generateLiteratureReviewPrompt(mockOptions.topic, mockOptions.paperIds || [], {
-        paperType: 'dissertation',
+        paperType: 'phdDissertation',
         localRegion: mockOptions.localRegion,
         expectedWords: mockOptions.expectedWords,
         contextChunks: mockOptions.contextChunks
@@ -110,15 +110,15 @@ describe('Template Generators', () => {
         expectedWords: mockOptions.expectedWords,
         contextChunks: mockOptions.contextChunks
       });
-      const dissertationTemplate = generateLiteratureReviewPrompt(mockOptions.topic, mockOptions.paperIds || [], {
-        paperType: 'dissertation',
+      const phdDissertationTemplate = generateLiteratureReviewPrompt(mockOptions.topic, mockOptions.paperIds || [], {
+        paperType: 'phdDissertation',
         localRegion: mockOptions.localRegion,
         expectedWords: mockOptions.expectedWords,
         contextChunks: mockOptions.contextChunks
       });
       
       expect(capstoneTemplate.userPromptTemplate).toContain('8-12 key papers');
-      expect(dissertationTemplate.userPromptTemplate).toContain('50+ studies');
+      expect(phdDissertationTemplate.userPromptTemplate).toContain('50+ studies');
     });
   });
 
@@ -219,12 +219,12 @@ describe('Template Generators', () => {
     it('should generate appropriate system prompts for each paper type', () => {
       const researchPrompt = generateOutlineSystemPrompt('researchArticle');
       const thesisPrompt = generateOutlineSystemPrompt('mastersThesis');
-      const dissertationPrompt = generateOutlineSystemPrompt('dissertation');
+      const phdDissertationPrompt = generateOutlineSystemPrompt('phdDissertation');
       
       expect(researchPrompt).toContain('IMRaD format');
       expect(thesisPrompt).toContain('comprehensive chapter outlines');
-      expect(dissertationPrompt).toContain('exhaustive chapter outlines');
-      expect(dissertationPrompt).toContain('doctoral-level research');
+      expect(phdDissertationPrompt).toContain('exhaustive chapter outlines');
+      expect(phdDissertationPrompt).toContain('doctoral-level research');
     });
   });
 
@@ -249,7 +249,7 @@ describe('Template Generators', () => {
         citationStyle: mockOptions.citationStyle === 'ieee' ? 'apa' : mockOptions.citationStyle,
         localRegion: mockOptions.localRegion
       });
-      const dissertationPrompt = generateOutlineUserPrompt('dissertation', mockOptions.topic, mockOptions.paperIds || [], {
+      const phdDissertationPrompt = generateOutlineUserPrompt('phdDissertation', mockOptions.topic, mockOptions.paperIds || [], {
         citationStyle: mockOptions.citationStyle === 'ieee' ? 'apa' : mockOptions.citationStyle,
         localRegion: mockOptions.localRegion
       });
@@ -257,9 +257,9 @@ describe('Template Generators', () => {
       expect(capstonePrompt).toContain('1. Problem Statement');
       expect(capstonePrompt).toContain('2. Literature Review');
       expect(capstonePrompt).toContain('3. Proposed Solution');
-      expect(dissertationPrompt).toContain('Chapter 1 (Introduction)');
-      expect(dissertationPrompt).toContain('Chapter 2 (Literature Review, 50+ papers)');
-      expect(dissertationPrompt).toContain('original contributions');
+      expect(phdDissertationPrompt).toContain('Chapter 1 (Introduction)');
+      expect(phdDissertationPrompt).toContain('Chapter 2 (Literature Review, 50+ papers)');
+      expect(phdDissertationPrompt).toContain('original contributions');
     });
 
     it('should include paper references when provided', () => {
@@ -334,7 +334,7 @@ describe('Template Generators', () => {
 
   describe('Template Structure Validation', () => {
     it('should ensure all paper types have minimum required sections', () => {
-      const paperTypes: PaperTypeKey[] = ['researchArticle', 'literatureReview', 'capstoneProject', 'mastersThesis', 'dissertation'];
+      const paperTypes: PaperTypeKey[] = ['researchArticle', 'literatureReview', 'capstoneProject', 'mastersThesis', 'phdDissertation'];
       
       paperTypes.forEach(paperType => {
         // All paper types should have outline capability
@@ -353,7 +353,7 @@ describe('Template Generators', () => {
         contextChunks: mockOptions.contextChunks
       });
       const longTemplate = generateLiteratureReviewPrompt(mockOptions.topic, mockOptions.paperIds || [], {
-        paperType: 'dissertation',
+        paperType: 'phdDissertation',
         localRegion: mockOptions.localRegion,
         expectedWords: 5000,
         contextChunks: mockOptions.contextChunks
@@ -482,7 +482,7 @@ describe('TASK 3: Outline Generation Module', () => {
 
     it('should include word count estimates', async () => {
       const result = await generateOutline(
-        'dissertation',
+        'phdDissertation',
         'Advanced Research Topic',
         mockSourceIds
       );

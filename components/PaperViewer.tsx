@@ -19,12 +19,18 @@ import {
   Check
 } from 'lucide-react'
 import { format } from 'date-fns'
-import CitationRenderer from '@/components/CitationRenderer'
+import { InteractiveCitationRenderer } from '@/components/citations/InteractiveCitationRenderer'
+import { paperToCSL, type CSLItem } from '@/lib/utils/csl'
 import type { 
   ResearchProject, 
   ResearchProjectVersion,
   PaperWithAuthors
 } from '@/types/simplified'
+
+// Extended type for papers with CSL data
+interface PaperWithCSL extends PaperWithAuthors {
+  csl_json?: CSLItem
+}
 
 interface PaperViewerProps {
   projectId: string
@@ -34,7 +40,8 @@ interface PaperViewerProps {
 export default function PaperViewer({ projectId, className }: PaperViewerProps) {
   const [project, setProject] = useState<ResearchProject | null>(null)
   const [latestVersion, setLatestVersion] = useState<ResearchProjectVersion | null>(null)
-  const [papers, setPapers] = useState<PaperWithAuthors[]>([])
+  const [papers, setPapers] = useState<PaperWithCSL[]>([])
+  const [citations, setCitations] = useState<Record<string, CSLItem>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [copiedText, setCopiedText] = useState<string | null>(null)
@@ -46,9 +53,34 @@ export default function PaperViewer({ projectId, className }: PaperViewerProps) 
   // Calculate cited papers count
   const citedPapersCount = useMemo(() => {
     if (!latestVersion?.content) return 0
-    const citations = latestVersion.content.match(/\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_]+)\]/g)
-    return new Set(citations?.map(cite => cite.match(/\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_]+)\]/)?.[1]).filter(Boolean)).size
+    const citations = latestVersion.content.match(/\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_\-\.\/]+)\]/g)
+    return new Set(
+      citations?.map(cite => cite.match(/\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_\-\.\/]+)\]/)?.[1]).filter(Boolean)
+    ).size
   }, [latestVersion?.content])
+
+  // Create CSL-JSON citations map for the new citation system
+  const citationsMap = useMemo(() => {
+    const map = new Map<string, CSLItem>()
+
+    // Use citations from API if available
+    if (citations && Object.keys(citations).length > 0) {
+      Object.entries(citations).forEach(([key, value]) => {
+        map.set(key, value as CSLItem)
+      })
+      return map
+    }
+
+    // Fallback: derive from content & papers if citations object missing
+    if (!latestVersion?.content) return map
+    const tokens = latestVersion.content.match(/\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_\-\.\/]+)\]/g) || []
+    const ids = new Set(tokens.map(t => t.replace(/\[CITE:\s*([a-f0-9-]{36}|[A-Za-z0-9_\-\.\/]+)\]/, '$1')))
+    ids.forEach(id => {
+      const paper = papers.find(p=>p.id===id)
+      if (paper) map.set(id, paper.csl_json || paperToCSL(paper))
+    })
+    return map
+  }, [latestVersion?.content, papers, citations])
 
   const loadProject = useCallback(async () => {
     try {
@@ -70,10 +102,12 @@ export default function PaperViewer({ projectId, className }: PaperViewerProps) 
         citations: data.citations?.length || 0
       })
       console.log('📄 Papers data:', data.papers)
+      console.log('📄 Citations data:', data.citations)
       
       setProject(data)
       setLatestVersion(data.latest_version)
       setPapers(data.papers || [])
+      setCitations(data.citations || {})
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load project')
     } finally {
@@ -282,10 +316,10 @@ export default function PaperViewer({ projectId, className }: PaperViewerProps) 
       <Card>
         <CardContent className="pt-6">
           <div className="max-w-4xl mx-auto">
-            <CitationRenderer 
+            <InteractiveCitationRenderer 
               content={latestVersion.content || ''}
-              papers={papers}
-              projectId={projectId}
+              citations={citationsMap}
+              documentId={projectId}
               initialStyle="apa"
             />
           </div>

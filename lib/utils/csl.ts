@@ -10,7 +10,7 @@ export interface CSLAuthor {
 
 export interface CSLItem {
   id: string
-  type: 'article-journal' | 'article' | 'book' | 'chapter' | 'paper-conference'
+  type: 'article-journal' | 'article' | 'book' | 'chapter' | 'paper-conference' | 'thesis' | 'report' | 'webpage' | 'manuscript'
   title: string
   author: CSLAuthor[]
   'container-title'?: string
@@ -24,6 +24,11 @@ export interface CSLItem {
   volume?: string
   issue?: string
   publisher?: string
+  'publisher-place'?: string
+  ISBN?: string
+  ISSN?: string
+  keyword?: string
+  note?: string
 }
 
 // Compiled regexes for performance
@@ -185,7 +190,10 @@ export function paperToCSL(paper: PaperWithAuthors): CSLItem {
  */
 export async function validateCSLWithCite(csl: unknown): Promise<boolean> {
   try {
-    const { Cite } = await import('citation-js')
+    const citationJsModule = await import('citation-js')
+    // citation-js lacks proper type declarations; treat constructor generically
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Cite: any = (citationJsModule as any).default || (citationJsModule as any).Cite || citationJsModule
     new Cite([csl])
     return true
   } catch {

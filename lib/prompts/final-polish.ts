@@ -565,25 +565,4 @@ export function validatePolishQuality(
   };
 }
 
-/**
- * Legacy function for backward compatibility (deprecated)
- */
-export function analyzePotentialImprovements(sections: SectionContent[]): ImprovementType[] {
-  console.warn('analyzePotentialImprovements is deprecated, use validatePolishQuality instead');
-  
-  const improvements: ImprovementType[] = [];
-  
-  const combinedContent = sections.map(s => s.content).join(' ');
-  const citationCount = (combinedContent.match(/\[CITE:/g) || []).length;
-  const paragraphCount = combinedContent.split(/\n\s*\n/).length;
-  
-  if (citationCount < paragraphCount * 0.5) {
-    improvements.push('citations');
-  }
-  
-  if (sections.length > 1) {
-    improvements.push('transitions');
-  }
-  
-  return improvements;
-} 
+ 

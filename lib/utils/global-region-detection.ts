@@ -499,24 +499,7 @@ export function enrichMetadataWithRegion(
   return enriched
 }
 
-/**
- * Legacy compatibility function - unified with main function
- */
-export function detectPaperRegionLegacy(
-  venue?: string,
-  authors?: string[],
-  url?: string,
-  metadata?: Record<string, unknown>
-): RegionDetectionResult {
-  return detectPaperRegion({
-    venue,
-    url,
-    affiliations: metadata?.affiliations as string[] | undefined,
-    title: metadata?.title as string | undefined
-  }, {
-    enabled: true  // Legacy behavior - always try to detect
-  })
-}
+
 
 /**
  * Get all available countries for UI dropdowns

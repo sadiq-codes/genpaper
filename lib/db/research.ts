@@ -1,5 +1,5 @@
-import { createBrowserClient } from '@supabase/ssr'
 import { getSB } from '@/lib/supabase/server'
+import { createClient as createBrowserSupabaseClient } from '@/lib/supabase/client'
 import type { 
   ResearchProject, 
   ResearchProjectVersion, 
@@ -9,13 +9,7 @@ import type {
   PaperWithAuthors
 } from '@/types/simplified'
 
-// Browser-side client (for client components)
-export const createBrowserSupabaseClient = () => {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-}
+// Browser-side client now imported from centralized location
 
 export async function createResearchProject(
   userId: string,

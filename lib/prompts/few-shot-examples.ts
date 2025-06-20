@@ -17,7 +17,7 @@ import { z } from 'zod';
 // Schema validation for examples data
 const FewShotExampleSchema = z.object({
   id: z.string().min(1),
-  paperType: z.enum(['mastersThesis', 'dissertation']),
+  paperType: z.enum(['mastersThesis', 'phdDissertation']),
   section: z.enum(['introduction', 'literatureReview', 'methodology', 'discussion', 'conclusion']),
   country: z.string().min(1),
   field: z.string().min(1),
@@ -91,7 +91,7 @@ const DEFAULT_SCORING_WEIGHTS: ScoringWeights = {
 };
 
 // High-stakes paper types that support few-shot examples
-const HIGH_STAKES_TYPES: PaperTypeKey[] = ['mastersThesis', 'dissertation'];
+const HIGH_STAKES_TYPES: PaperTypeKey[] = ['mastersThesis', 'phdDissertation'];
 
 // Validated examples data (cached after first validation)
 let validatedExamples: FewShotExample[] | null = null;
@@ -435,8 +435,8 @@ export function validateExamplesData(): ValidationResult {
     if (!paperTypes.has('mastersThesis')) {
       result.warnings.push('No examples for mastersThesis');
     }
-    if (!paperTypes.has('dissertation')) {
-      result.warnings.push('No examples for dissertation');
+    if (!paperTypes.has('phdDissertation')) {
+      result.warnings.push('No examples for phdDissertation');
     }
     if (!sections.has('introduction')) {
       result.warnings.push('No examples for introduction section');

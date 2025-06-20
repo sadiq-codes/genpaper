@@ -23,10 +23,12 @@ interface PaperGeneratorProps {
 }
 
 // Helper maps for display values
-const styleDisplayMap = {
-  academic: "Academic",
-  review: "Review",
-  survey: "Survey"
+const paperTypeDisplayMap = {
+  researchArticle: "Research Article",
+  literatureReview: "Literature Review", 
+  capstoneProject: "Capstone Project",
+  mastersThesis: "Master&apos;s Thesis",
+  phdDissertation: "PhD Dissertation"
 };
 
 const lengthDisplayMap = {
@@ -35,12 +37,16 @@ const lengthDisplayMap = {
   long: "Long"
 };
 
-const citationStyleDisplayMap = {
-  apa: "APA",
-  mla: "MLA",
-  chicago: "Chicago",
-  ieee: "IEEE"
-};
+
+interface GenerationConfig {
+  length: 'short' | 'medium' | 'long'
+  paperType: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
+}
+
+const defaultConfig: GenerationConfig = {
+  length: 'medium',
+  paperType: 'researchArticle',
+}
 
 export default function PaperGenerator({ className }: PaperGeneratorProps) {
   const router = useRouter()
@@ -50,14 +56,9 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
   const [selectedPapers, setSelectedPapers] = useState<string[]>([])
   const [useLibraryOnly, setUseLibraryOnly] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
-  const [config, setConfig] = useState<{
-    length: keyof typeof lengthDisplayMap | undefined;
-    style: keyof typeof styleDisplayMap | undefined;
-    citationStyle: keyof typeof citationStyleDisplayMap | undefined;
-  }>({
-    length: undefined,
-    style: undefined,
-    citationStyle: undefined
+  const [config, setConfig] = useState<GenerationConfig>({
+    length: defaultConfig.length,
+    paperType: defaultConfig.paperType,
   })
 
   const handlePaperSelection = useCallback((paperId: string, selected: boolean) => {
@@ -79,18 +80,17 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
     
     const params = new URLSearchParams({
       topic: topic.trim(),
-      length: config.length || 'medium', // Fallback to default if undefined
-      style: config.style || 'academic', // Fallback to default if undefined
-      citationStyle: config.citationStyle || 'apa', // Fallback to default if undefined
+      length: config.length,
+      paperType: config.paperType,
       useLibraryOnly: useLibraryOnly.toString(),
       selectedPapers: selectedPapers.join(',')
     })
     
-    router.replace(`/generate/processing?${params.toString()}`)
+    router.replace(`/generate/outline?${params.toString()}`)
   }
 
   return (
-    <div className={`max-w-4xl mx-auto p-6 space-y-6 ${className}`}>
+    <div className={`max-w-6xl mx-auto p-6 space-y-6 ${className}`}>
       <div className="text-center space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Generate Research Paper</h1>
         <p className="text-muted-foreground">
@@ -119,11 +119,11 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
 
             <div className="flex items-center justify-between mt-4">
               <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
-                {/* Writing Style Dropdown */}
+                {/* Paper Type Dropdown */}
                 <Select 
-                  value={config.style} 
-                  onValueChange={(value: keyof typeof styleDisplayMap) => 
-                    setConfig(prev => ({ ...prev, style: value }))
+                  value={config.paperType} 
+                  onValueChange={(value: keyof typeof paperTypeDisplayMap) => 
+                    setConfig(prev => ({ ...prev, paperType: value }))
                   }
                   disabled={isStarting}
                 >
@@ -132,26 +132,38 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
                     suppressHydrationWarning={true}
                   >
                     <FileText className="w-3 h-3 sm:w-4 sm:h-4" />
-                    <span>{config.style ? styleDisplayMap[config.style] : 'Writing Style'}</span>
+                    <span>{config.paperType ? paperTypeDisplayMap[config.paperType] : 'Paper Type'}</span>
 
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="academic">
+                    <SelectItem value="researchArticle">
                       <div className="flex flex-col">
-                        <span className="font-medium">Academic Paper</span>
-                        <span className="text-xs text-gray-500">Traditional research paper format</span>
+                        <span className="font-medium">Research Article</span>
+                        <span className="text-xs text-gray-500">IMRaD format with methods, results, discussion</span>
                       </div>
                     </SelectItem>
-                    <SelectItem value="review">
+                    <SelectItem value="literatureReview">
                       <div className="flex flex-col">
                         <span className="font-medium">Literature Review</span>
-                        <span className="text-xs text-gray-500">Summary of existing research</span>
+                        <span className="text-xs text-gray-500">Critical synthesis of existing research</span>
                       </div>
                     </SelectItem>
-                    <SelectItem value="survey">
+                    <SelectItem value="capstoneProject">
                       <div className="flex flex-col">
-                        <span className="font-medium">Survey Paper</span>
-                        <span className="text-xs text-gray-500">Broad overview of a field</span>
+                        <span className="font-medium">Capstone Project</span>
+                        <span className="text-xs text-gray-500">Final-year project proposal with implementation plan</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="mastersThesis">
+                      <div className="flex flex-col">
+                        <span className="font-medium">Master&apos;s Thesis</span>
+                        <span className="text-xs text-gray-500">Multi-chapter research with 20-30 sources</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="phdDissertation">
+                      <div className="flex flex-col">
+                        <span className="font-medium">PhD Dissertation</span>
+                        <span className="text-xs text-gray-500">Comprehensive research with theoretical framework</span>
                       </div>
                     </SelectItem>
                   </SelectContent>
@@ -189,49 +201,6 @@ export default function PaperGenerator({ className }: PaperGeneratorProps) {
                       <div className="flex flex-col">
                         <span className="font-medium">Long</span>
                         <span className="text-xs text-gray-500">15-20 pages, in-depth research</span>
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {/* Citation Style Dropdown */}
-                <Select 
-                  value={config.citationStyle} 
-                  onValueChange={(value: keyof typeof citationStyleDisplayMap) => 
-                    setConfig(prev => ({ ...prev, citationStyle: value }))
-                  }
-                  disabled={isStarting}
-                >
-                  <SelectTrigger 
-                    className="flex items-center gap-1 text-xs sm:text-sm text-gray-600 dark:text-gray-400 border-0 hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded focus:ring-0 focus:ring-offset-0"
-                    suppressHydrationWarning={true}
-                  >
-                    <BookOpen className="w-3 h-3 sm:w-4 sm:h-4" />
-                    <span>{config.citationStyle ? citationStyleDisplayMap[config.citationStyle] : 'Citation Style'}</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="apa">
-                      <div className="flex flex-col">
-                        <span className="font-medium">APA Style</span>
-                        <span className="text-xs text-gray-500">Psychology, Education, Sciences</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="mla">
-                      <div className="flex flex-col">
-                        <span className="font-medium">MLA Style</span>
-                        <span className="text-xs text-gray-500">Literature, Arts, Humanities</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="chicago">
-                      <div className="flex flex-col">
-                        <span className="font-medium">Chicago Style</span>
-                        <span className="text-xs text-gray-500">History, Literature, Arts</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="ieee">
-                      <div className="flex flex-col">
-                        <span className="font-medium">IEEE Style</span>
-                        <span className="text-xs text-gray-500">Engineering, Computer Science</span>
                       </div>
                     </SelectItem>
                   </SelectContent>

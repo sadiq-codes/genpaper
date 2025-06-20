@@ -14,8 +14,7 @@ export default function ProcessingPage() {
   // Get parameters from URL
   const topic = searchParams.get('topic') || ''
   const length = searchParams.get('length') as 'short' | 'medium' | 'long' || 'medium'
-  const style = searchParams.get('style') as 'academic' | 'review' | 'survey' || 'academic'
-  const citationStyle = searchParams.get('citationStyle') as 'apa' | 'mla' | 'chicago' | 'ieee' || 'apa'
+  const paperType = searchParams.get('paperType') as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation' || 'researchArticle'
   const useLibraryOnly = searchParams.get('useLibraryOnly') === 'true'
   const selectedPapers = useMemo(() => 
     searchParams.get('selectedPapers')?.split(',').filter(Boolean) || [],
@@ -58,8 +57,7 @@ export default function ProcessingPage() {
       useLibraryOnly,
       config: {
         length,
-        style,
-        citationStyle
+        paperType
       }
     }
 
@@ -74,7 +72,7 @@ export default function ProcessingPage() {
     }
 
     startGenerationAsync()
-  }, [topic, selectedPapers, useLibraryOnly, length, style, citationStyle, hasStarted, startGeneration, router])
+  }, [topic, selectedPapers, useLibraryOnly, length, paperType, hasStarted, startGeneration, router])
 
   // Redirect back if no topic
   useEffect(() => {

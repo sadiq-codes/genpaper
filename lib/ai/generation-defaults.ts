@@ -14,26 +14,16 @@ export const GENERATION_DEFAULTS = {
   
   // Evidence processing
   EVIDENCE_SNIPPET_MAX_LENGTH: 115,
+  // Chunk search thresholds
+  CHUNK_MIN_SCORE_INITIAL: 0.18,
+  CHUNK_MIN_SCORE_FALLBACK: 0.12,
   EVIDENCE_WORD_BOUNDARY_THRESHOLD: 0.8, // 80% of max length to consider word boundary
   
-  // Word targets by length (words per section)
-  WORD_TARGETS: {
-    short: { wordsPerSection: 400, estimatedSections: 6, totalWords: 2400 },
-    medium: { wordsPerSection: 900, estimatedSections: 6, totalWords: 5400 },
-    long: { wordsPerSection: 1600, estimatedSections: 6, totalWords: 9600 }
-  },
-  
+
   // Token calculation
   TOKENS_PER_WORD_RATIO: 0.75, // ~0.75 tokens per word
   TOKEN_FUDGE_FACTOR: 2.2, // Safety multiplier for token estimation
   MODEL_COMPLETION_TOKEN_LIMIT: 16000, // Safe limit below 16384
-  
-  // Chunk limits by paper length
-  CHUNK_LIMITS: {
-    short: 20,
-    medium: 40,
-    long: 80
-  },
   
   // Section headings to search for citation insertion
   LITERATURE_SECTION_HEADINGS: [
@@ -45,12 +35,7 @@ export const GENERATION_DEFAULTS = {
     'State of the Art'
   ],
   
-  // Length guidance for prompts
-  LENGTH_GUIDANCE: {
-    short: '1,500–2,500 words (≈3–4 sections)',
-    medium: '3,000–5,000 words (≈5–6 sections)',
-    long: '6,000–10,000 words (≈7–8 sections)',
-  }
+  // (Deprecated) guidance strings removed – prompt library now owns this
 } as const
 
 export type PaperLength = 'short' | 'medium' | 'long'
@@ -74,4 +59,6 @@ export function getMinCitationFloor(config?: { minCitationFloor?: number }): num
 
 export function getEvidenceSnippetLength(config?: { evidenceSnippetLength?: number }): number {
   return config?.evidenceSnippetLength ?? GENERATION_DEFAULTS.EVIDENCE_SNIPPET_MAX_LENGTH
-} 
+}
+
+export const CHUNK_LIMIT_MIN = 80 
