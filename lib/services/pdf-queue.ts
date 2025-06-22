@@ -211,8 +211,7 @@ export class PDFProcessingQueue {
       const extractionResult = await extractPdfMetadataTiered(pdfBuffer, {
         grobidUrl: process.env.GROBID_URL,
         enableOcr: await this.shouldEnableOcr(job.userId),
-        maxTimeoutMs: 30000,
-        trimToTokens: 4000
+        maxTimeoutMs: 30000
       })
 
       job.extractionResult = extractionResult
@@ -388,7 +387,7 @@ export class PDFProcessingQueue {
   private async updateUserQuota(userId: string, usedOcr: boolean): Promise<void> {
     const supabase = await getSB()
     
-    const updates: any = {
+    const updates: Record<string, unknown> = {
       daily_pdf_used: supabase.rpc('increment', { x: 1 })
     }
     
@@ -435,7 +434,7 @@ export class PDFProcessingQueue {
   }
 
   /**
-   * Store extraction result in database
+   * Store extraction result in database with proper chunking and embedding
    */
   private async storeExtractionResult(
     paperId: string, 
@@ -443,6 +442,7 @@ export class PDFProcessingQueue {
   ): Promise<void> {
     const supabase = await getSB()
     
+    // First, update the paper with PDF content and processing metadata
     await supabase
       .from('papers')
       .update({
@@ -461,6 +461,81 @@ export class PDFProcessingQueue {
         }
       })
       .eq('id', paperId)
+    
+         // Process fullText for RAG embeddings using existing ingestPaperWithChunks
+     if (result.fullText && result.fullText.length > 100) {
+       debug.info('Processing tiered extractor full text for chunking and embeddings', { 
+         paperId, 
+         textLength: result.fullText.length,
+         extractionMethod: result.extractionMethod 
+       })
+       
+       try {
+         // Get existing paper data to create a proper PaperDTO
+         const { data: existingPaper, error: fetchError } = await supabase
+           .from('papers')
+           .select('*')
+           .eq('id', paperId)
+           .single()
+
+         if (fetchError || !existingPaper) {
+           throw new Error(`Failed to fetch existing paper: ${fetchError?.message || 'Paper not found'}`)
+         }
+
+         // Create PaperDTO from existing paper data
+         const paperDTO = {
+           title: existingPaper.title,
+           abstract: existingPaper.abstract,
+           publication_date: existingPaper.publication_date,
+           venue: existingPaper.venue,
+           doi: existingPaper.doi,
+           url: existingPaper.url,
+           pdf_url: existingPaper.pdf_url,
+           metadata: {
+             ...existingPaper.metadata,
+             pdf_processing: {
+               extraction_method: result.extractionMethod,
+               extraction_time_ms: result.extractionTimeMs,
+               confidence: result.confidence,
+               word_count: result.metadata?.wordCount,
+               page_count: result.metadata?.pageCount,
+               is_scanned: result.metadata?.isScanned,
+               processing_notes: result.metadata?.processingNotes,
+               processed_at: new Date().toISOString()
+             }
+           },
+           source: existingPaper.source || 'tiered_extractor',
+           citation_count: existingPaper.citation_count || 0,
+           impact_score: existingPaper.impact_score || 0,
+           authors: [] // Will be handled by ingestPaperWithChunks
+         }
+
+         // Use the existing ingestPaperWithChunks function which handles all the complexity
+         const { ingestPaperWithChunks } = await import('@/lib/db/papers')
+         
+         // Pass full text as a single "chunk" with 1MB safety cap - ingestPaperWithChunks will handle proper chunking
+         const text = result.fullText.slice(0, 1_000_000)
+         await ingestPaperWithChunks(paperDTO, [text])
+         
+         debug.info(`Tiered PDF text processing completed for ${paperId}`, {
+           extractionMethod: result.extractionMethod,
+           textLength: result.fullText.length
+         })
+         
+       } catch (chunkError) {
+         debug.error('Failed to process tiered extractor full text', { 
+           paperId, 
+           extractionMethod: result.extractionMethod,
+           error: chunkError 
+         })
+         // Don't fail the entire operation, but log for monitoring
+       }
+     } else {
+       debug.warn('No usable full text available from tiered extractor', { 
+         paperId, 
+         extractionMethod: result.extractionMethod 
+       })
+     }
   }
 
   /**

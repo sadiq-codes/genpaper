@@ -73,7 +73,7 @@ export function CitationEditor({ citationId, initialCsl, onSave, onCancel }: Cit
   }
 
   // Handle form submission
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validateForm()) {
       return
     }
@@ -99,6 +99,33 @@ export function CitationEditor({ citationId, initialCsl, onSave, onCancel }: Cit
         delete (cleanedCsl as any)[key]
       }
     })
+
+    // Save citation fields to database if this is a paper citation
+    if (citationId && cleanedCsl.volume || cleanedCsl.issue || cleanedCsl.page) {
+      try {
+        const response = await fetch('/api/papers/update-citation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            paperId: citationId,
+            citationData: {
+              volume: cleanedCsl.volume,
+              issue: cleanedCsl.issue,
+              page: cleanedCsl.page,
+              publisher: cleanedCsl.publisher,
+              isbn: cleanedCsl.ISBN,
+              issn: cleanedCsl.ISSN
+            }
+          })
+        })
+
+        if (!response.ok) {
+          console.warn('Failed to save citation fields to database')
+        }
+      } catch (error) {
+        console.warn('Error saving citation fields:', error)
+      }
+    }
 
     onSave(cleanedCsl)
   }

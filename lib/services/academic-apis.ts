@@ -19,11 +19,14 @@ export interface SearchOptions {
   toYear?: number
   openAccessOnly?: boolean
   fastMode?: boolean
+  desired?: number // Target number of results to collect before stopping
 }
 
 // Import shared hash utility
 import { collisionResistantHash } from '@/lib/utils/hash'
 import { PaperSource } from '@/types/simplified'
+import { XMLParser } from 'fast-xml-parser'
+import pLimit from 'p-limit'
 
 // API Response interfaces for better typing
 interface OpenAlexWork {
@@ -41,6 +44,10 @@ interface OpenAlexWork {
   }>
 }
 
+interface OpenAlexResponse {
+  results: OpenAlexWork[]
+}
+
 interface CrossrefItem {
   title: string | string[]
   published?: { 'date-parts': Array<Array<number>> }
@@ -55,6 +62,12 @@ interface CrossrefItem {
   }>
 }
 
+interface CrossrefResponse {
+  message?: {
+    items: CrossrefItem[]
+  }
+}
+
 interface SemanticScholarPaper {
   title: string
   year?: number
@@ -64,6 +77,10 @@ interface SemanticScholarPaper {
   url?: string
   citationCount?: number
   authors?: Array<{ name: string }>
+}
+
+interface SemanticScholarResponse {
+  data: SemanticScholarPaper[]
 }
 
 interface CoreWork {
@@ -76,27 +93,74 @@ interface CoreWork {
   authors?: Array<{ name: string }>
 }
 
-// Fix: Add rate limiting and retry utilities
+interface CoreResponse {
+  results: CoreWork[]
+}
+
+interface ArxivAuthor {
+  name: string
+}
+
+interface ArxivLink {
+  '@_type': string
+  '@_href': string
+}
+
+interface ArxivEntry {
+  title: string
+  summary: string
+  published: string
+  id: string
+  author: ArxivAuthor | ArxivAuthor[]
+  link: ArxivLink | ArxivLink[]
+}
+
+// Centralized HTTP helper with timeout and rate limit handling
+async function fetchJSON<T>(
+  url: string,
+  opts: RequestInit & { timeout?: number; fastMode?: boolean } = {},
+): Promise<T> {
+  const { timeout = 12_000, fastMode, ...rest } = opts
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), fastMode ? 8_000 : timeout)
+  
+  try {
+    const response = await fetch(url, { ...rest, signal: controller.signal })
+    
+    if (response.status === 429) {
+      const retryAfter = Number(response.headers.get('retry-after') ?? 0) * 1_000 || (fastMode ? 1_000 : 5_000)
+      throw new Error(`429-${retryAfter}`)
+    }
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+    
+    return await response.json() as T
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+// Rate limit handling for retry logic
 interface RetryOptions {
   retries: number
   factor: number
   minTimeout: number
   maxTimeout: number
+  fastMode?: boolean
 }
 
-// Helper function to sleep/delay execution
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-// Fix: Exponential backoff retry wrapper with fast mode for library search
 async function retryWithBackoff<T>(
   fn: () => Promise<T>,
-  options: RetryOptions & { fastMode?: boolean } = { retries: 3, factor: 2, minTimeout: 1000, maxTimeout: 10000 }
+  options: RetryOptions = { retries: 3, factor: 2, minTimeout: 1000, maxTimeout: 10000, fastMode: false }
 ): Promise<T> {
   const { retries, factor, minTimeout, maxTimeout, fastMode = false } = options
   
-  // Fast mode should shorten delays but still allow the same number of retry attempts
   const actualRetries = retries
   const actualMinTimeout = fastMode ? 200 : minTimeout
   const actualMaxTimeout = fastMode ? 2000 : maxTimeout
@@ -105,7 +169,6 @@ async function retryWithBackoff<T>(
   
   for (let attempt = 0; attempt <= actualRetries; attempt++) {
     try {
-      // Add small delay between requests to be respectful
       if (attempt > 0) {
         const timeout = Math.min(actualMinTimeout * Math.pow(factor, attempt - 1), actualMaxTimeout)
         console.log(`Retry attempt ${attempt}/${actualRetries} after ${timeout}ms`)
@@ -116,31 +179,24 @@ async function retryWithBackoff<T>(
     } catch (error) {
       lastError = error as Error
       
-      // Check if it's a rate limit error
-      if (error instanceof Error && error.message.includes('429')) {
+      // Handle rate limit errors with encoded wait time
+      if (error instanceof Error && error.message.startsWith('429-')) {
+        const waitTime = parseInt(error.message.split('-')[1]) || (fastMode ? 1000 : 5000)
         console.warn(`Rate limit hit, attempt ${attempt + 1}/${actualRetries + 1}`)
         
-        // In fast mode, fail fast on rate limits instead of long waits
-        if (fastMode && attempt === actualRetries) {
-          console.log(`Fast mode: skipping rate limited source`)
-          throw lastError
-        }
-        
-        // Add extra delay for rate limit errors (but less in fast mode)
         if (attempt < actualRetries) {
-          const rateLimitDelay = fastMode ? 1000 : Math.min(5000 * Math.pow(2, attempt), 30000)
-          await sleep(rateLimitDelay)
+          await sleep(waitTime)
         }
         continue
       }
       
-      // For non-rate-limit errors, don't retry certain types
+      // Don't retry client errors
       if (error instanceof Error && (
         error.message.includes('400') || 
         error.message.includes('401') || 
         error.message.includes('403')
       )) {
-        throw error // Don't retry client errors
+        throw error
       }
       
       if (attempt === actualRetries) {
@@ -152,28 +208,22 @@ async function retryWithBackoff<T>(
   throw lastError!
 }
 
-// Fix: Improved date formatting to avoid locale issues
+// Improved date formatting
 function formatDateForAPI(year: number, month = 1, day = 1): string {
-  // Use ISO format to avoid locale-dependent parsing
   const date = new Date(Date.UTC(year, month - 1, day))
-  return date.toISOString().split('T')[0] // Returns YYYY-MM-DD
+  return date.toISOString().split('T')[0]
 }
 
 // Helper function to create canonical ID for deduplication
 function createCanonicalId(title: string, year?: number, doi?: string, source?: string): string {
-  // Always use hash-based UUID generation for consistency
-  // DOI can be used as part of the input for uniqueness but not as the ID itself
   let input: string
   
   if (doi) {
-    // Use DOI as primary identifier for uniqueness, but hash it to UUID.
-    // Strip common resolver prefixes so the same DOI maps to a single canonical hash.
     input = doi
       .toLowerCase()
       .replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
       .trim()
   } else {
-    // Fallback to title + year + source for papers without DOI
     const normalizedTitle = title.toLowerCase()
       .replace(/[^\w\s]/g, '')
       .replace(/\s+/g, ' ')
@@ -181,8 +231,22 @@ function createCanonicalId(title: string, year?: number, doi?: string, source?: 
     input = `${normalizedTitle}${year || ''}${source || ''}`
   }
   
-  // Always return a proper UUID (not shortened)
   return collisionResistantHash(input)
+}
+
+// Deduplication helper
+function deduplicate(papers: AcademicPaper[]): AcademicPaper[] {
+  const seen = new Set<string>()
+  const deduped: AcademicPaper[] = []
+  
+  for (const paper of papers) {
+    if (!seen.has(paper.canonical_id)) {
+      seen.add(paper.canonical_id)
+      deduped.push(paper)
+    }
+  }
+  
+  return deduped
 }
 
 // Helper function to de-invert OpenAlex abstract
@@ -193,27 +257,22 @@ function deInvertAbstract(invertedIndex: Record<string, number[]>): string {
     words.push({ word, positions })
   }
   
-  // Sort by first position to reconstruct order
   words.sort((a, b) => Math.min(...a.positions) - Math.min(...b.positions))
   
-  const result: string[] = []
-  let currentPosition = 0
+  // Pre-size array to avoid memory issues
+  const maxPos = Math.max(...words.flatMap(w => w.positions))
+  const result = new Array<string>(maxPos + 1).fill('')
   
   for (const {word, positions} of words) {
     for (const pos of positions.sort((a, b) => a - b)) {
-      // Fill gaps with spaces if needed
-      while (result.length < pos) {
-        result.push('')
-      }
       result[pos] = word
-      currentPosition = Math.max(currentPosition, pos + 1)
     }
   }
   
   return result.join(' ').replace(/\s+/g, ' ').trim()
 }
 
-// OpenAlex API integration with retry logic
+// OpenAlex API integration
 export async function searchOpenAlex(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
   const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
@@ -230,7 +289,8 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
       filters.push(`to_publication_date:${formatDateForAPI(toYear, 12, 31)}`)
     }
     
-    filters.push('type:journal-article')
+    // Make article type configurable - include more publication types for better coverage
+    filters.push('type:journal-article,type:preprint,type:proceedings-article')
     
     if (openAccessOnly) {
       filters.push('is_oa:true')
@@ -242,27 +302,13 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
     
     url += '&sort=cited_by_count:desc'
     
-    // Reduce delay in fast mode
-    await sleep(fastMode ? 50 : 100)
-    
-    const response = await fetch(url, {
+    const data = await fetchJSON<OpenAlexResponse>(url, {
+      fastMode,
       headers: {
         'User-Agent': `GenPaper/1.0 (mailto:${process.env.CONTACT_EMAIL || 'research@example.com'})`,
         'X-ABS-APP-ID': 'genpaper-dev'
       }
     })
-    
-    if (response.status === 429) {
-      const retryAfter = response.headers.get('retry-after')
-      const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000
-      throw new Error(`429 Rate limit exceeded. Retry after ${waitTime}ms`)
-    }
-    
-    if (!response.ok) {
-      throw new Error(`OpenAlex API error: ${response.status} ${response.statusText}`)
-    }
-    
-    const data = await response.json()
     
     return data.results?.map((work: OpenAlexWork) => ({
       canonical_id: createCanonicalId(work.display_name, work.publication_year, work.doi, 'openalex'),
@@ -273,13 +319,13 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
       doi: work.doi,
       url: work.primary_location?.landing_page_url,
       citationCount: work.cited_by_count || 0,
-      authors: work.authorships?.map((a) => a.author?.display_name).filter(Boolean) || [],
+      authors: work.authorships?.map((a) => a.author?.display_name).filter((name): name is string => Boolean(name)) || [],
       source: 'openalex' as const
     })) || []
   }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
 }
 
-// Fix: Crossref API integration with proper has-full-text handling
+// Crossref API integration
 export async function searchCrossref(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
   const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
@@ -292,32 +338,16 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
       url += `&filter=from-pub-date:${from},until-pub-date:${to}`
     }
     
-    // Fix: Make has-full-text filter conditional based on openAccessOnly option
     if (openAccessOnly) {
       url += '&filter=has-full-text:true'
     }
-    // Note: Removed the always-applied has-full-text filter as it removes many valid papers with DOIs
     
-    // Reduce delay in fast mode
-    await sleep(fastMode ? 50 : 100)
-    
-    const response = await fetch(url, {
+    const data = await fetchJSON<CrossrefResponse>(url, {
+      fastMode,
       headers: {
         'User-Agent': `GenPaper/1.0 (mailto:${process.env.CONTACT_EMAIL || 'research@example.com'})`
       }
     })
-    
-    if (response.status === 429) {
-      const retryAfter = response.headers.get('retry-after')
-      const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000
-      throw new Error(`429 Rate limit exceeded. Retry after ${waitTime}ms`)
-    }
-    
-    if (!response.ok) {
-      throw new Error(`Crossref API error: ${response.status} ${response.statusText}`)
-    }
-    
-    const data = await response.json()
     
     return data.message?.items?.map((item: CrossrefItem) => {
       const title = Array.isArray(item.title) ? item.title[0] : item.title || ''
@@ -340,8 +370,14 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
   }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
 }
 
-// Semantic Scholar API integration with retry logic
+// Semantic Scholar API integration with API key guard
 export async function searchSemanticScholar(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
+  // Guard against missing API key
+  if (!process.env.SEMANTIC_API_KEY) {
+    console.warn('SEMANTIC_API_KEY not set – skipping Semantic Scholar')
+    return []
+  }
+  
   const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
   return retryWithBackoff(async () => {
@@ -358,26 +394,12 @@ export async function searchSemanticScholar(query: string, options: SearchOption
       url += '&openAccessPdf'
     }
     
-    // Reduce delay in fast mode
-    await sleep(fastMode ? 100 : 300)
-    
-    const response = await fetch(url, {
+    const data = await fetchJSON<SemanticScholarResponse>(url, {
+      fastMode,
       headers: {
-        'x-api-key': process.env.SEMANTIC_API_KEY || ''
+        'x-api-key': process.env.SEMANTIC_API_KEY!
       }
     })
-    
-    if (response.status === 429) {
-      const retryAfter = response.headers.get('retry-after')
-      const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000
-      throw new Error(`429 Rate limit exceeded. Retry after ${waitTime}ms`)
-    }
-    
-    if (!response.ok) {
-      throw new Error(`Semantic Scholar API error: ${response.status} ${response.statusText}`)
-    }
-    
-    const data = await response.json()
     
     return data.data?.map((paper: SemanticScholarPaper) => ({
       canonical_id: createCanonicalId(paper.title, paper.year, paper.doi, 'semanticscholar'),
@@ -389,12 +411,12 @@ export async function searchSemanticScholar(query: string, options: SearchOption
       url: paper.url,
       citationCount: paper.citationCount || 0,
       authors: paper.authors?.map(a => a.name) || [],
-      source: 'semanticscholar' as const
+      source: 'semantic_scholar' as const
     })) || []
   }, { retries: 1, factor: 2, minTimeout: 300, maxTimeout: 3000, fastMode })
 }
 
-// Fix: arXiv API integration with correct search parameters
+// arXiv API integration with proper XML parsing
 export async function searchArxiv(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
   const { limit = 50, fromYear, toYear, fastMode = false } = options
   
@@ -407,64 +429,72 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
       searchQuery += ` AND submittedDate:[${from} TO ${to}]`
     }
     
-    // Fix: Add searchtype=all parameter and proper sorting as per arXiv API docs
     const url = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=0&max_results=${limit}&searchtype=all&sortBy=relevance&sortOrder=descending`
     
-    // Reduce delay in fast mode (arXiv can be slow, but we'll try shorter delays)
-    await sleep(fastMode ? 100 : 200)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), fastMode ? 8_000 : 12_000)
     
-    const response = await fetch(url)
-    
-    if (response.status === 429) {
-      throw new Error(`429 Rate limit exceeded. arXiv recommends longer delays`)
-    }
-    
-    if (!response.ok) {
-      throw new Error(`arXiv API error: ${response.status} ${response.statusText}`)
-    }
-    
-    const xmlText = await response.text()
-    
-    // Basic XML parsing for arXiv results
-    const entries = xmlText.match(/<entry>[\s\S]*?<\/entry>/g) || []
-    
-    return entries.map(entry => {
-      const titleMatch = entry.match(/<title>(.*?)<\/title>/)
-      const summaryMatch = entry.match(/<summary>(.*?)<\/summary>/)
-      const publishedMatch = entry.match(/<published>(.*?)<\/published>/)
-      const idMatch = entry.match(/<id>(.*?)<\/id>/)
-      const authorsMatches = entry.match(/<name>(.*?)<\/name>/g) || []
+    try {
+      const response = await fetch(url, { signal: controller.signal })
       
-      const title = titleMatch?.[1]?.replace(/\s+/g, ' ').trim() || ''
-      const abstract = summaryMatch?.[1]?.replace(/\s+/g, ' ').trim() || ''
-      
-      // Fix: Use proper date parsing to avoid locale issues
-      let year = 0
-      if (publishedMatch?.[1]) {
-        const publishedDate = new Date(publishedMatch[1])
-        year = isNaN(publishedDate.getTime()) ? 0 : publishedDate.getFullYear()
+      if (!response.ok) {
+        throw new Error(`arXiv API error: ${response.status} ${response.statusText}`)
       }
       
-      const url = idMatch?.[1] || ''
-      const authors = authorsMatches.map(match => match.replace(/<name>(.*?)<\/name>/, '$1'))
+      const xmlText = await response.text()
       
-      return {
-        canonical_id: createCanonicalId(title, year, undefined, 'arxiv'),
-        title,
-        abstract,
-        year,
-        venue: 'arXiv',
-        url,
-        citationCount: 0, // arXiv doesn't provide citation counts
-        authors,
-        source: 'arxiv' as const
-      }
-    })
+      // Use fast-xml-parser instead of regex
+      const parser = new XMLParser({ ignoreAttributes: false })
+      const parsed = parser.parse(xmlText)
+      
+      const entries = Array.isArray(parsed.feed?.entry) ? parsed.feed.entry : 
+                     parsed.feed?.entry ? [parsed.feed.entry] : []
+      
+             return entries.map((entry: ArxivEntry): AcademicPaper => {
+         const title = entry.title?.replace(/\s+/g, ' ').trim() || ''
+         const abstract = entry.summary?.replace(/\s+/g, ' ').trim() || ''
+         
+         let year = 0
+         if (entry.published) {
+           const publishedDate = new Date(entry.published)
+           year = isNaN(publishedDate.getTime()) ? 0 : publishedDate.getFullYear()
+         }
+         
+         const authors = Array.isArray(entry.author) ? 
+           entry.author.map((a) => a.name || '') :
+           entry.author?.name ? [entry.author.name] : []
+         
+         // Extract PDF URL from links
+         const links = Array.isArray(entry.link) ? entry.link : [entry.link].filter(Boolean)
+         const pdfLink = links.find((l) => l['@_type'] === 'application/pdf')
+        
+        return {
+          canonical_id: createCanonicalId(title, year, undefined, 'arxiv'),
+          title,
+          abstract,
+          year,
+          venue: 'arXiv',
+          url: entry.id || '',
+          pdf_url: pdfLink?.['@_href'],
+          citationCount: 0,
+          authors: authors.filter(Boolean),
+          source: 'arxiv' as const
+        }
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
   }, { retries: 1, factor: 2, minTimeout: 300, maxTimeout: 3000, fastMode })
 }
 
-// CORE API integration with retry logic
+// CORE API integration with API key guard
 export async function searchCore(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
+  // Guard against missing API key
+  if (!process.env.CORE_API_KEY) {
+    console.warn('CORE_API_KEY not set – skipping CORE')
+    return []
+  }
+  
   const { limit = 50, fromYear, toYear, fastMode = false } = options
   
   return retryWithBackoff(async () => {
@@ -478,14 +508,12 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
     
     const url = `https://api.core.ac.uk/v3/search/works`
     
-    // Reduce delay in fast mode
-    await sleep(fastMode ? 50 : 100)
-    
-    const response = await fetch(url, {
+    const data = await fetchJSON<CoreResponse>(url, {
       method: 'POST',
+      fastMode,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.CORE_API_KEY || ''}`
+        'Authorization': `Bearer ${process.env.CORE_API_KEY}`
       },
       body: JSON.stringify({
         q: searchQuery,
@@ -493,18 +521,6 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
         offset: 0
       })
     })
-    
-    if (response.status === 429) {
-      const retryAfter = response.headers.get('retry-after')
-      const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000
-      throw new Error(`429 Rate limit exceeded. Retry after ${waitTime}ms`)
-    }
-    
-    if (!response.ok) {
-      throw new Error(`CORE API error: ${response.status} ${response.statusText}`)
-    }
-    
-    const data = await response.json()
     
     return data.results?.map((work: CoreWork) => ({
       canonical_id: createCanonicalId(work.title, work.yearPublished, work.doi, 'core'),
@@ -515,43 +531,43 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
       doi: work.doi,
       url: work.downloadUrl,
       pdf_url: work.downloadUrl,
-      citationCount: 0, // CORE doesn't provide citation counts
+      citationCount: 0,
       authors: work.authors?.map((a) => a.name).filter(Boolean) || [],
       source: 'core' as const
     })) || []
   }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
 }
 
-// Unpaywall integration for PDF access with retry logic
+// Unpaywall integration for PDF access
 export async function getOpenAccessPdf(doi: string): Promise<string | null> {
   if (!doi) return null
   
   return retryWithBackoff(async () => {
     const url = `https://api.unpaywall.org/v2/${doi}?email=${process.env.CONTACT_EMAIL || 'research@example.com'}`
     
-    // Add rate limiting delay
-    await sleep(100)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 8_000)
     
-    const response = await fetch(url)
-    
-    if (response.status === 429) {
-      throw new Error(`429 Rate limit exceeded`)
+    try {
+      const response = await fetch(url, { signal: controller.signal })
+      
+      if (!response.ok) {
+        return null
+      }
+      
+      const data = await response.json()
+      
+      if (data.is_oa && data.best_oa_location?.url_for_pdf) {
+        return data.best_oa_location.url_for_pdf
+      }
+      
+      return null
+    } finally {
+      clearTimeout(timeoutId)
     }
-    
-    if (!response.ok) {
-      return null // Don't throw for Unpaywall failures, just return null
-    }
-    
-    const data = await response.json()
-    
-    if (data.is_oa && data.best_oa_location?.url_for_pdf) {
-      return data.best_oa_location.url_for_pdf
-    }
-    
-    return null
   }).catch(error => {
     console.error('Unpaywall error:', error)
-    return null // Graceful failure for PDF lookup
+    return null
   })
 }
 
@@ -560,7 +576,6 @@ export function expandKeywords(query: string): string[] {
   const baseQuery = query.trim().toLowerCase()
   const expanded = [baseQuery]
   
-  // Add common synonyms and variations
   const synonymMap: Record<string, string[]> = {
     'machine learning': ['ML', 'artificial intelligence', 'AI', 'deep learning'],
     'artificial intelligence': ['AI', 'machine learning', 'ML', 'deep learning'],
@@ -580,8 +595,51 @@ export function expandKeywords(query: string): string[] {
   return Array.from(new Set(expanded))
 }
 
-// ------------------------ Reference fetching ----------------------------
+// Main orchestrator function that stops when enough papers are collected
+export async function searchAllSources(
+  query: string,
+  options: SearchOptions = {}
+): Promise<AcademicPaper[]> {
+  const { desired = 60, fastMode = false } = options
+  const limit = pLimit(fastMode ? 3 : 2) // Concurrency control
+  
+  const searchFunctions = [
+    () => searchOpenAlex(query, { ...options, limit: Math.ceil(desired / 3) }),
+    () => searchCrossref(query, { ...options, limit: Math.ceil(desired / 3) }),
+    () => searchSemanticScholar(query, { ...options, limit: Math.ceil(desired / 3) }),
+    () => searchArxiv(query, { ...options, limit: Math.ceil(desired / 4) }),
+    () => searchCore(query, { ...options, limit: Math.ceil(desired / 4) }),
+  ]
+  
+  // Run searches with concurrency control
+  const results = await Promise.allSettled(
+    searchFunctions.map(fn => limit(fn))
+  )
+  
+  // Collect successful results
+  const allPapers: AcademicPaper[] = []
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      allPapers.push(...result.value)
+    } else {
+      console.warn('Search source failed:', result.reason)
+    }
+  }
+  
+  // Deduplicate and limit results
+  const deduped = deduplicate(allPapers)
+  
+  // Sort by citation count and recency
+  const sorted = deduped.sort((a, b) => {
+    const citationDiff = b.citationCount - a.citationCount
+    if (citationDiff !== 0) return citationDiff
+    return b.year - a.year
+  })
+  
+  return sorted.slice(0, desired)
+}
 
+// Reference fetching interfaces and functions
 export interface PaperReference {
   title?: string
   authors?: string[]
@@ -591,20 +649,39 @@ export interface PaperReference {
   raw?: unknown
 }
 
-/**
- * Fetch references for a given DOI from Crossref
- */
+interface CrossrefReference {
+  'article-title'?: string
+  'journal-title'?: string
+  unstructured?: string
+  author?: string
+  year?: string
+  DOI?: string
+}
+
+interface CrossrefWorkResponse {
+  message?: {
+    reference?: CrossrefReference[]
+  }
+}
+
+interface SemanticScholarReferenceResponse {
+  references?: Array<{
+    title?: string
+    year?: number
+    authors?: Array<{ name: string }>
+    externalIds?: { DOI?: string }
+  }>
+}
+
 export async function fetchCrossrefReferences(doi: string): Promise<PaperReference[]> {
   try {
-    const res = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`)
-    if (!res.ok) throw new Error(`Crossref failed: ${res.status}`)
-    const data = await res.json() as any
-    const refs: PaperReference[] = (data?.message?.reference || []).map((r: any) => ({
+    const data = await fetchJSON<CrossrefWorkResponse>(`https://api.crossref.org/works/${encodeURIComponent(doi)}`)
+    const refs: PaperReference[] = (data?.message?.reference || []).map((r: CrossrefReference) => ({
       title: r['article-title'] || r['journal-title'] || r['unstructured'],
       authors: r.author ? [r.author] : undefined,
       year: r.year ? parseInt(r.year) : undefined,
       doi: r.DOI || undefined,
-      source: 'crossref',
+      source: 'crossref' as const,
       raw: r
     }))
     return refs
@@ -614,21 +691,16 @@ export async function fetchCrossrefReferences(doi: string): Promise<PaperReferen
   }
 }
 
-/**
- * Fetch references for Semantic Scholar paper ID or DOI
- */
 export async function fetchSemanticScholarReferences(paperIdOrDoi: string): Promise<PaperReference[]> {
   try {
-    const res = await fetch(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(paperIdOrDoi)}?fields=references.title,references.year,references.authors,references.externalIds`)
-    if (!res.ok) throw new Error(`SemanticScholar failed: ${res.status}`)
-    const data = await res.json() as any
+    const data = await fetchJSON<SemanticScholarReferenceResponse>(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(paperIdOrDoi)}?fields=references.title,references.year,references.authors,references.externalIds`)
     const refsRaw = data?.references || []
-    const refs: PaperReference[] = refsRaw.map((r: any) => ({
+    const refs: PaperReference[] = refsRaw.map((r) => ({
       title: r.title,
-      authors: (r.authors || []).map((a: any) => a.name),
+      authors: (r.authors || []).map((a) => a.name),
       year: r.year,
       doi: r.externalIds?.DOI,
-      source: 'semanticscholar',
+      source: 'semanticscholar' as const,
       raw: r
     }))
     return refs
@@ -638,9 +710,6 @@ export async function fetchSemanticScholarReferences(paperIdOrDoi: string): Prom
   }
 }
 
-/**
- * Unified helper that attempts Crossref first (if DOI present) then Semantic Scholar.
- */
 export async function getPaperReferences(doi?: string, fallbackId?: string): Promise<PaperReference[]> {
   let refs: PaperReference[] = []
   if (doi) {

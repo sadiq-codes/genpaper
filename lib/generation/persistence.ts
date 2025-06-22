@@ -58,7 +58,7 @@ export async function persistGenerationResults(
 
   // Step 4: Build analytics from captured tool calls
   const toolCallAnalytics = buildToolCallAnalytics(capturedToolCalls, addedEvidenceCitations)
-  logger.analytics('Generation tool analytics', toolCallAnalytics as unknown as Record<string, unknown>)
+  debug.info('Generation tool analytics', toolCallAnalytics as unknown as Record<string, unknown>)
 
   // Build simple citations array for API consumers (kept for compatibility)
   const citationsArray = (citationRows || []).map(r => ({

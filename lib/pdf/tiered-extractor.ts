@@ -6,7 +6,10 @@
  * Tier 3: OCR (10-20% scanned PDFs)
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { debug } from '@/lib/utils/logger'
+import FormData from 'form-data'
+import { XMLParser } from 'fast-xml-parser'
 
 export interface TieredExtractionResult {
   title?: string
@@ -16,7 +19,6 @@ export interface TieredExtractionResult {
   doi?: string
   year?: string
   fullText?: string
-  contentChunks?: string[]
   extractionMethod: 'grobid' | 'text-layer' | 'ocr' | 'doi-lookup' | 'fallback'
   extractionTimeMs: number
   confidence: 'high' | 'medium' | 'low'
@@ -38,15 +40,13 @@ export async function extractPdfMetadataTiered(
     grobidUrl?: string
     enableOcr?: boolean
     maxTimeoutMs?: number
-    trimToTokens?: number
   } = {}
 ): Promise<TieredExtractionResult> {
   const startTime = Date.now()
   const { 
     grobidUrl = process.env.GROBID_URL || 'http://localhost:8070',
     enableOcr = false,
-    maxTimeoutMs = 30000,
-    trimToTokens = 4000
+    maxTimeoutMs = 30000
   } = options
 
   const notes: string[] = []
@@ -77,10 +77,8 @@ export async function extractPdfMetadataTiered(
       debug.info('Attempting GROBID extraction')
       const grobidResult = await grobidParse(pdfBuffer, grobidUrl, maxTimeoutMs)
       if (grobidResult && grobidResult.title && grobidResult.fullText) {
-        const chunks = await chunkTextOptimized(grobidResult.fullText, trimToTokens)
         return {
           ...grobidResult,
-          contentChunks: chunks,
           extractionMethod: 'grobid',
           extractionTimeMs: Date.now() - startTime,
           confidence: 'high',
@@ -101,12 +99,10 @@ export async function extractPdfMetadataTiered(
     if (!isScanned) {
       try {
         debug.info('Attempting text layer extraction')
-        const textLayerResult = await parseTextLayer(pdfBuffer)
+        const textLayerResult = await withTimeout(() => parseTextLayer(pdfBuffer), maxTimeoutMs)
         if (textLayerResult && textLayerResult.fullText) {
-          const chunks = await chunkTextOptimized(textLayerResult.fullText, trimToTokens)
           return {
             ...textLayerResult,
-            contentChunks: chunks,
             extractionMethod: 'text-layer',
             extractionTimeMs: Date.now() - startTime,
             confidence: 'medium',
@@ -129,12 +125,10 @@ export async function extractPdfMetadataTiered(
     if (enableOcr) {
       try {
         debug.info('Attempting OCR extraction')
-        const ocrResult = await ocrParse(pdfBuffer, maxTimeoutMs)
+        const ocrResult = await withTimeout(() => ocrParse(pdfBuffer, maxTimeoutMs), maxTimeoutMs)
         if (ocrResult && ocrResult.fullText) {
-          const chunks = await chunkTextOptimized(ocrResult.fullText, trimToTokens)
           return {
             ...ocrResult,
-            contentChunks: chunks,
             extractionMethod: 'ocr',
             extractionTimeMs: Date.now() - startTime,
             confidence: 'low',
@@ -160,7 +154,6 @@ export async function extractPdfMetadataTiered(
       authors: ['Unknown'],
       abstract: 'PDF content extraction failed',
       fullText: 'PDF content extraction failed',
-      contentChunks: ['PDF content extraction failed'],
       extractionMethod: 'fallback',
       extractionTimeMs: Date.now() - startTime,
       confidence: 'low',
@@ -176,7 +169,6 @@ export async function extractPdfMetadataTiered(
       authors: ['Unknown'],
       abstract: 'Critical error during PDF processing',
       fullText: 'Critical error during PDF processing',
-      contentChunks: ['Critical error during PDF processing'],
       extractionMethod: 'fallback',
       extractionTimeMs: Date.now() - startTime,
       confidence: 'low',
@@ -200,13 +192,16 @@ async function grobidParse(
 
   try {
     const form = new FormData()
-    form.set('input', new Blob([pdfBuffer]), 'paper.pdf')
-    form.set('includeRawCitations', '1')
-    form.set('includeRawAffiliations', '1')
+    form.append('input', pdfBuffer, {
+      filename: 'paper.pdf',
+      contentType: 'application/pdf'
+    })
+    form.append('includeRawCitations', '1')
+    form.append('includeRawAffiliations', '1')
 
     const response = await fetch(`${grobidUrl}/api/processFulltextDocument`, {
       method: 'POST',
-      body: form,
+      body: form as any,
       signal: controller.signal
     })
 
@@ -258,8 +253,8 @@ async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtracti
     return {
       title: title || 'Untitled Paper',
       authors: authors.length > 0 ? authors : ['Unknown'],
-      abstract,
-      doi,
+      abstract: abstract || undefined,
+      doi: doi || undefined,
       fullText: data.text,
       metadata: {
         pageCount: data.numpages,
@@ -282,8 +277,11 @@ async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
     const pdfParse = await import('pdf-parse').then(m => m.default || m)
     const data = await pdfParse(pdfBuffer, { max: 1 }) // Only first page
     
-    // If very little text found, likely scanned
-    return !data.text || data.text.trim().length < 100
+    const textLen = data.text ? data.text.trim().length : 0
+    const avgCharsPerPage = textLen / (data.numpages || 1)
+
+    // Consider scanned if multi-page PDF has very low text density
+    return (data.numpages ?? 0) >= 4 && avgCharsPerPage < 80
   } catch {
     return true // Assume scanned if can't parse
   }
@@ -293,11 +291,13 @@ async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
  * OCR extraction (Tier 3) - placeholder for AWS Textract/Google Document AI
  */
 async function ocrParse(
-  pdfBuffer: Buffer, 
-  timeoutMs: number
+  _pdfBuffer: Buffer, 
+  _timeoutMs: number
 ): Promise<Partial<TieredExtractionResult> | null> {
   // TODO: Implement OCR service integration
   // Options: AWS Textract, Google Document AI, or Tesseract + LayoutParser
+  void _pdfBuffer; // avoid unused-var lint
+  void _timeoutMs;
   debug.warn('OCR extraction not yet implemented')
   return null
 }
@@ -340,38 +340,7 @@ async function fetchCrossrefMetadata(doi: string): Promise<Partial<TieredExtract
   }
 }
 
-/**
- * Optimized text chunking for RAG
- */
-async function chunkTextOptimized(text: string, maxTokens: number): Promise<string[]> {
-  // Trim to maxTokens first (abstract + intro gives best retrieval)
-  const trimmed = text.substring(0, maxTokens * 4) // Rough char-to-token ratio
-  
-  // Split into meaningful chunks
-  const chunks: string[] = []
-  const sentences = trimmed.split(/[.!?]+/).filter(s => s.trim().length > 0)
-  
-  let currentChunk = ''
-  const maxChunkSize = 1000
-  
-  for (const sentence of sentences) {
-    const trimmedSentence = sentence.trim()
-    if (currentChunk.length + trimmedSentence.length > maxChunkSize) {
-      if (currentChunk) {
-        chunks.push(currentChunk.trim())
-        currentChunk = trimmedSentence
-      }
-    } else {
-      currentChunk += (currentChunk ? '. ' : '') + trimmedSentence
-    }
-  }
-  
-  if (currentChunk) {
-    chunks.push(currentChunk.trim())
-  }
-  
-  return chunks.filter(chunk => chunk.length > 50)
-}
+
 
 // Helper functions for text extraction (simplified implementations)
 function extractTitleFromText(lines: string[]): string | null {
@@ -408,20 +377,80 @@ function extractDoiFromText(text: string): string | null {
  * Parse TEI XML from GROBID (simplified implementation)
  */
 async function parseTeiXml(xml: string): Promise<Partial<TieredExtractionResult>> {
-  // TODO: Implement proper TEI XML parsing
-  // For now, extract basic info with regex (replace with proper XML parser)
-  
-  const titleMatch = xml.match(/<title[^>]*>([^<]+)<\/title>/i)
-  const abstractMatch = xml.match(/<abstract[^>]*>([^<]+)<\/abstract>/i)
-  
-  // Extract body text (simplified)
-  const bodyMatch = xml.match(/<body[^>]*>(.*?)<\/body>/is)
-  const bodyText = bodyMatch ? bodyMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ''
-  
-  return {
-    title: titleMatch ? titleMatch[1].trim() : undefined,
-    abstract: abstractMatch ? abstractMatch[1].trim() : undefined,
-    fullText: bodyText || undefined,
-    authors: [] // TODO: Extract from TEI
+  // Robust TEI XML parsing using fast-xml-parser (handles entities & nested tags)
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '',
+    textNodeName: 'text',
+    ignoreDeclaration: true
+  })
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
+  let teiJson: any
+  try {
+    teiJson = parser.parse(xml)
+  } catch (e) {
+    debug.error('TEI XML parse error', { error: e })
+    return {}
   }
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
+  const TEI: any = teiJson.TEI || teiJson.tei || teiJson
+
+  const safeGet = (...paths: string[]): string | null | undefined => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let node: any = TEI
+    for (const key of paths) {
+      if (node && Object.prototype.hasOwnProperty.call(node, key)) {
+        node = node[key]
+      } else {
+        return undefined
+      }
+    }
+    if (typeof node === 'string') return node
+    if (node?.text) return node.text
+    return undefined
+  }
+
+  const title = safeGet('teiHeader', 'fileDesc', 'titleStmt', 'title')
+  const abstract = safeGet('teiHeader', 'profileDesc', 'abstract')
+
+  // Flatten body text recursively
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const extractBodyText = (node: any): string => {
+    if (!node) return ''
+    if (typeof node === 'string') return node
+    if (typeof node === 'object') {
+      return Object.values(node)
+        .map(extractBodyText)
+        .join(' ')
+    }
+    return ''
+  }
+
+  const bodyObj = TEI?.text?.body
+  const bodyText = extractBodyText(bodyObj).replace(/\s+/g, ' ').trim()
+
+  return {
+    title: title?.trim(),
+    abstract: abstract?.trim(),
+    fullText: bodyText || undefined,
+    authors: [] // TODO: extract authors properly later
+  }
+}
+
+// Helper to add timeout to any async operation
+async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Operation timed out')), timeoutMs)
+    fn()
+      .then(res => {
+        clearTimeout(timer)
+        resolve(res)
+      })
+      .catch(err => {
+        clearTimeout(timer)
+        reject(err)
+      })
+  })
 } 

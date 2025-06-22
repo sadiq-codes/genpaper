@@ -1,6 +1,4 @@
 import { z } from 'zod'
-import { loadPrompts, validateDepthCues } from '@/lib/prompts/loader'
-import type { PaperTypeKey, PaperType } from '@/lib/prompts/types'
 
 // Citation validation schema
 export const citationSchema = z.object({
@@ -37,38 +35,53 @@ export const validateCitationArgs = (args: Record<string, unknown>): { valid: bo
   }
 }
 
-// Prompt template validation
-export function validatePromptTemplate(paperType: string): { valid: boolean; errors: string[] } {
-  try {
-    const library = loadPrompts();
-    const paperTypeConfig = library.paperTypes[paperType as PaperTypeKey];
-    
-    if (!paperTypeConfig) {
-      return {
-        valid: false,
-        errors: [`Paper type '${paperType}' not found in prompt library. Available types: ${Object.keys(library.paperTypes).join(', ')}`]
-      };
-    }
-
-    // Validate depth cues are present
-    const missingCues = validateDepthCues(
-      library.templates.outline, // Assuming outline template
-      paperTypeConfig.depthCues || []
-    );
-    
-    if (missingCues.length > 0) {
-      return {
-        valid: false,
-        errors: [`Template for ${paperType} missing depth cues: ${missingCues.join(', ')}`]
-      };
-    }
-
-    return { valid: true, errors: [] };
-  } catch (error) {
+// Simplified paper type validation - no longer depends on prompt templates
+export function validatePaperType(paperType: string): { valid: boolean; errors: string[] } {
+  const validTypes = [
+    'research-paper',
+    'review-paper', 
+    'case-study',
+    'short-paper',
+    'conference-paper',
+    'journal-article',
+    'thesis-chapter'
+  ]
+  
+  if (!validTypes.includes(paperType)) {
     return {
       valid: false,
-      errors: [`Template validation error: ${error instanceof Error ? error.message : 'Unknown error'}`]
-    };
+      errors: [`Paper type '${paperType}' not supported. Available types: ${validTypes.join(', ')}`]
+    }
+  }
+  
+  return { valid: true, errors: [] }
+}
+
+// Content validation - checks basic structure requirements
+export function validateContentStructure(content: string): { valid: boolean; errors: string[] } {
+  const errors: string[] = []
+  
+  // Check minimum length
+  const wordCount = content.split(/\s+/).length
+  if (wordCount < 100) {
+    errors.push(`Content too short: ${wordCount} words (minimum 100)`)
+  }
+  
+  // Check for basic academic structure
+  if (!content.includes('##') && !content.includes('#')) {
+    errors.push('Content should include section headers')
+  }
+  
+  // Check for citations (basic pattern)
+  const citationPattern = /\([A-Za-z]+(?:\s+\d+)?\)|(?:et al\.|[\w\s]+\s+\(\d{4}\))/g
+  const citations = content.match(citationPattern) || []
+  if (citations.length === 0) {
+    errors.push('Content should include citations')
+  }
+  
+  return {
+    valid: errors.length === 0,
+    errors
   }
 }
 

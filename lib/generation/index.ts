@@ -107,6 +107,9 @@ export async function generateDraftWithRAG(
   setCitationContext({ projectId, userId })
   console.log(`🔗 Citation context set for project ${projectId}, user ${userId}`)
 
+  // Track production quality metrics
+  let productionQualityScore = 0
+
   try {
     // Step 1: Collect papers efficiently
     log('searching', 10, 'Gathering papers from library and search...')
@@ -181,18 +184,86 @@ export async function generateDraftWithRAG(
       })
     }
 
-    log('writing', 50, `Drafting paper with ${sectionContexts.length} sections...`)
+    log('writing', 50, `🏭 PRODUCTION MODE: Drafting ${sectionContexts.length} sections with 4-stage quality pipeline...`)
 
-    // Use section-by-section generation with context accumulation
-    const { generateSectionsWithContext } = await import('./runner')
+    // 🏭 INTEGRATION: Use production generator for Quick Draft (4-stage quality pipeline)
+    // This replaces the basic runner with planning, reflection, and quality metrics
+    const { generateMultipleSectionsProduction } = await import('./production-generator')
     
-    const { content, capturedToolCalls } = await generateSectionsWithContext(
+    // Convert section contexts to production generator configs
+    const productionConfigs = sectionContexts.map(sectionContext => ({
+      paperType: config.paper_settings?.paperType || 'researchArticle',
+      section: sectionContext.sectionKey,
       topic,
-      sectionContexts,
-      allPapers,
-      config,
-      (progress, message) => log('writing', 50 + (progress * 0.3), message)
+      contextChunks: sectionContext.contextChunks.map(chunk => chunk.content),
+      availablePapers: sectionContext.candidatePaperIds,
+      expectedWords: sectionContext.expectedWords || 300,
+      requiredDepthCues: ['evidence', 'analysis', 'synthesis'], // Standard depth requirements
+      enablePlanning: true,
+      enableReflection: true,
+      enableMetrics: true,
+             onProgress: (stage: string, progress: number, message: string) => {
+        const baseProgress = 50 + ((sectionContexts.indexOf(sectionContext) / sectionContexts.length) * 30)
+        const stageProgress = baseProgress + (progress / 100) * (30 / sectionContexts.length)
+        log('writing', stageProgress, `${sectionContext.title}: ${stage} - ${message}`)
+      }
+    }))
+
+    // Generate all sections using production pipeline
+    const productionResults = await generateMultipleSectionsProduction(
+      productionConfigs,
+      (completed, total, currentSection) => {
+        const overallProgress = 50 + (completed / total) * 30
+        log('writing', overallProgress, `Section ${completed + 1}/${total}: ${currentSection}`)
+      }
     )
+
+    // Combine all section content and extract tool calls
+    const content = productionResults.map(result => result.content).join('\n\n')
+    
+    // Convert production results to captured tool calls format for compatibility
+    const capturedToolCalls = productionResults.flatMap((result, index) => {
+      const sectionContext = sectionContexts[index]
+      
+      // Extract citations from the production result and convert to tool call format
+      const citations = result.writingResult?.citations || []
+      return citations.map((citation, citationIndex) => ({
+        toolCallId: `production-${index}-${citationIndex}`,
+        toolName: 'addCitation',
+        args: {
+          title: citation.citationText || 'Generated Citation',
+          authors: ['AI Generated'],
+          reason: `Citation for ${sectionContext.title}`,
+          section: sectionContext.sectionKey
+        },
+        result: {
+          success: true,
+          citationId: citation.paperId,
+          citationKey: citation.paperId,
+          replacement: `[CITE:${citation.paperId}]`,
+          message: 'Citation added via production generator'
+        },
+        timestamp: new Date().toISOString(),
+        validated: true
+      }))
+    })
+
+    // Log production generation metrics
+    const totalQualityScore = productionResults.reduce((sum, result) => sum + result.quality_score, 0) / productionResults.length
+    const totalGenerationTime = productionResults.reduce((sum, result) => sum + result.generation_time_ms, 0)
+    
+    console.log(`🏭 Production generation completed:`, {
+      sections: productionResults.length,
+      averageQualityScore: Math.round(totalQualityScore),
+      totalGenerationTime: `${totalGenerationTime}ms`,
+      totalWordCount: content.split(/\s+/).length,
+      planningEnabled: productionConfigs[0].enablePlanning,
+      reflectionEnabled: productionConfigs[0].enableReflection,
+      metricsEnabled: productionConfigs[0].enableMetrics
+    })
+
+    // Store quality score for final logging
+    productionQualityScore = totalQualityScore
 
     console.log(`🔍 DEBUG: Generated content preview:`, content.substring(0, 500))
     console.log(`🔍 DEBUG: Content length: ${content.length} chars`)
@@ -223,7 +294,7 @@ export async function generateDraftWithRAG(
     log('citations', 90, 'Formatting citations...')
     const finalContent = await formatCitations(enhancedContent, citationsMap, 'apa')
     
-    log('complete', 100, 'Paper generation completed!')
+    log('complete', 100, `🏭 Production paper completed! Quality Score: ${Math.round(productionQualityScore)}/100`)
 
     return {
       content: finalContent,

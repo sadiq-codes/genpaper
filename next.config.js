@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Add serverExternalPackages to opt-out specific dependencies from bundling
-  serverExternalPackages: ['websocket'],
+  // Add serverExternalPackages to opt-out specific dependencies from bundling  
+  serverExternalPackages: ['websocket', 'natural'],
 
   // Performance optimizations
   experimental: {
@@ -30,21 +30,40 @@ const nextConfig = {
       layers: true
     }
     
-    // Fix: Handle tiktoken WASM files
-    if (!isServer) {
-      config.resolve.fallback = {
-        ...config.resolve.fallback,
-        fs: false,
-        path: false,
-        crypto: false,
+    // Fix: Handle tiktoken WASM files for both client and server
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+      path: false,
+      crypto: false,
+      'webworker-threads': false,
+    }
+
+    // Special handling for @dqbd/tiktoken WASM files
+    if (isServer) {
+      // Allow tiktoken to bundle normally on server
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        '@dqbd/tiktoken': '@dqbd/tiktoken'
       }
     }
+
+    // Remove this redundant section since we handle fallbacks above
     
-    // Fix: Add rule for WASM files
+    // Fix: Add rule for WASM files with proper handling
     config.module.rules.push({
       test: /\.wasm$/,
       type: 'asset/resource',
+      generator: {
+        filename: 'static/wasm/[hash][ext][query]',
+      },
     })
+
+    // Fix: Better handling for tiktoken WASM
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@dqbd/tiktoken': '@dqbd/tiktoken',
+    }
 
     // Fix: Suppress warnings for Supabase Realtime client
     config.ignoreWarnings = [

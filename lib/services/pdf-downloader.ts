@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { getOpenAccessPdf } from './academic-apis'
-import { extractPDFMetadata } from '@/lib/pdf/extract'
+import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
 import { getSB } from '@/lib/supabase/server'
 
 export interface PDFDownloadResult {
@@ -165,7 +165,7 @@ async function downloadPDFWithLimits(url: string): Promise<Buffer | null> {
 /**
  * Uploads PDF buffer to Supabase storage
  */
-async function uploadPDFToStorage(buffer: Buffer, filename: string): Promise<string | null> {
+export async function uploadPDFToStorage(buffer: Buffer, filename: string): Promise<string | null> {
   try {
     const supabase = await createClient()
     
@@ -203,7 +203,7 @@ async function uploadPDFToStorage(buffer: Buffer, filename: string): Promise<str
 /**
  * Generates a unique filename for the PDF
  */
-function generatePDFFilename(doi: string, paperId: string): string {
+export function generatePDFFilename(doi: string, paperId: string): string {
   // Clean DOI for filename (remove special characters)
   const cleanDoi = doi
     .replace(/[^a-zA-Z0-9.-]/g, '_')
@@ -325,12 +325,24 @@ export async function downloadAndProcessPDF(
       throw new Error(`Failed to download PDF: ${response.status} ${response.statusText}`)
     }
     
-    const pdfBuffer = await response.arrayBuffer()
-    const pdfFile = new File([pdfBuffer], `${paperTitle}.pdf`, { type: 'application/pdf' })
+    const pdfArrayBuffer = await response.arrayBuffer()
+    const pdfBuffer = Buffer.from(pdfArrayBuffer)
     
-    // Extract text content from PDF
+    // Extract text content from PDF using tiered extractor
     console.log(`📄 Extracting content from PDF...`)
-    const extractedData = await extractPDFMetadata(pdfFile)
+    const tieredResult = await extractPdfMetadataTiered(pdfBuffer, {
+      enableOcr: false,
+      maxTimeoutMs: 20000
+    })
+    
+    // Convert tiered result to expected format for compatibility
+    const extractedData = {
+      title: tieredResult.title,
+      authors: tieredResult.authors,
+      abstract: tieredResult.abstract,
+      content: tieredResult.abstract || tieredResult.fullText?.substring(0, 1000),
+      fullText: tieredResult.fullText
+    }
     
     // Store PDF content in database for later chunking
     const supabase = await getSB()
@@ -343,7 +355,6 @@ export async function downloadAndProcessPDF(
           pdf_content_extracted: !!extractedData.fullText,
           pdf_content_length: extractedData.fullText?.length || 0,
           extraction_metadata: {
-            chunks_count: extractedData.contentChunks?.length || 0,
             has_abstract: !!extractedData.abstract,
             has_authors: extractedData.authors && extractedData.authors.length > 0
           }
@@ -359,7 +370,7 @@ export async function downloadAndProcessPDF(
     
     console.log(`✅ PDF processed successfully for: ${paperTitle}`)
     console.log(`   📊 Content length: ${extractedData.fullText?.length || 0} characters`)
-    console.log(`   📄 Potential chunks: ${extractedData.contentChunks?.length || 0}`)
+    console.log(`   📄 Content will be chunked during ingestion`)
     
     return {
       success: true,

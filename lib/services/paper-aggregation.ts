@@ -14,6 +14,9 @@ import { ingestPaperWithChunks } from '@/lib/db/papers'
 import type { PaperDTO } from '@/lib/schemas/paper'
 import { PaperSources } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
+import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
+import { createClient as createSB } from '@/lib/supabase/client'
+// Note: randomUUID imported for future use in enhanced temp ID generation
 
 // Enhanced paper type with ranking metadata
 export interface RankedPaper extends AcademicPaper {
@@ -36,7 +39,7 @@ export interface AggregatedSearchOptions extends SearchOptions {
   sources?: PaperSources
 }
 
-// ---------- BM25 utilities (pre-compute doc frequencies to avoid O(n²) scans) ----------
+// ---------- Enhanced BM25 utilities with proper tf-idf calculation ----------
 
 interface BM25Env {
   idf: Map<string, number>
@@ -61,11 +64,17 @@ function buildBM25Environment(query: string, papers: AcademicPaper[]): BM25Env {
 
   let totalDocLength = 0
   for (const paper of papers) {
-    const text = `${paper.title} ${paper.abstract}`.toLowerCase()
-    totalDocLength += text.split(/\s+/).length
-    for (const term of queryTerms) {
-      if (text.includes(term)) {
-        dfCounts.set(term, (dfCounts.get(term) || 0) + 1)
+    const tokens = `${paper.title} ${paper.abstract}`.toLowerCase().split(/\s+/)
+    totalDocLength += tokens.length
+    
+    // Track which terms we've seen in this document to avoid double-counting
+    const seenTerms = new Set<string>()
+    for (const token of tokens) {
+      for (const term of queryTerms) {
+        if (token.includes(term) && !seenTerms.has(term)) {
+          dfCounts.set(term, (dfCounts.get(term) || 0) + 1)
+          seenTerms.add(term)
+        }
       }
     }
   }
@@ -99,14 +108,14 @@ function calculateBM25Score(env: BM25Env, title: string, abstract: string): numb
     const idfVal = idf.get(term) || 0
     if (idfVal === 0) continue // term never appears in corpus
 
-    // frequency with title double-weighted
-    const freq = titleTerms.filter(t => t.includes(term)).length * 2 +
-                 abstractTerms.filter(t => t.includes(term)).length
+    // Calculate actual term frequency (not just presence)
+    const tf = titleTerms.filter(t => t === term).length * 2 + // Title terms weighted 2x
+               abstractTerms.filter(t => t === term).length
 
-    if (freq === 0) continue
+    if (tf === 0) continue
 
-    const numerator = freq * (k1 + 1)
-    const denominator = freq + k1 * (1 - b + b * (docLength / avgDocLen))
+    const numerator = tf * (k1 + 1)
+    const denominator = tf + k1 * (1 - b + b * (docLength / avgDocLen))
     score += idfVal * (numerator / denominator)
   }
 
@@ -118,9 +127,9 @@ function calculateAuthorityScore(citationCount: number): number {
   return Math.log10(citationCount + 1)
 }
 
-// Fix: Calculate recency score with BCE edge-case protection
+// Calculate recency score with BCE edge-case protection
 function calculateRecencyScore(year: number): number {
-  // Fix: Guard against negative years producing positives in BCE edge-case
+  // Guard against negative years producing positives in BCE edge-case
   if (year < 1900) {
     return 0
   }
@@ -129,7 +138,7 @@ function calculateRecencyScore(year: number): number {
   return Math.max(0, (year - (currentYear - 10)) * 0.1) // Boost papers from last 10 years
 }
 
-// Fix: Enhanced deduplication with arXiv preprint handling
+// Enhanced deduplication with arXiv preprint handling (no object mutation)
 function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
   const seen = new Set<string>()
   const deduplicated: AcademicPaper[] = []
@@ -164,7 +173,7 @@ function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
       // Check for arXiv preprint vs journal version
       if (paper.source === 'arxiv' && journalPapers.has(normalizedTitle)) {
         const journalVersion = journalPapers.get(normalizedTitle)!
-        // Prefer journal DOI but keep arXiv in metadata.preprint_id
+        // Create new object instead of mutating - prevent side effects
         const enhancedJournal = {
           ...journalVersion,
           preprint_id: paper.url,
@@ -180,7 +189,7 @@ function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
         }
       } else if (paper.doi && arxivPapers.has(normalizedTitle)) {
         const arxivVersion = arxivPapers.get(normalizedTitle)!
-        // Journal version preferred, add preprint metadata
+        // Create new object instead of mutating
         const enhancedJournal = {
           ...paper,
           preprint_id: arxivVersion.url,
@@ -201,7 +210,7 @@ function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
   return deduplicated
 }
 
-// Fix: Rank papers using corrected scoring
+// Rank papers using corrected scoring (no double authority weighting)
 function rankPapers(
   papers: AcademicPaper[], 
   query: string, 
@@ -209,7 +218,7 @@ function rankPapers(
 ): RankedPaper[] {
   const {
     semanticWeight = 1.0,
-    authorityWeight = 0.5, // Fix: Only use this once, not multiply by 0.5 again later
+    authorityWeight = 0.5,
     recencyWeight = 0.1
   } = options
   
@@ -220,10 +229,10 @@ function rankPapers(
     const authorityScore = calculateAuthorityScore(paper.citationCount)
     const recencyScore = calculateRecencyScore(paper.year)
     
-    // Fix: Authority weight already at 0.5, don't multiply by 0.5 again
+    // Fixed: Apply authority weight only once, not double
     const combinedScore = 
       bm25Score * semanticWeight +
-      authorityScore * authorityWeight + // Fix: Remove the extra * 0.5 multiplication
+      authorityScore * authorityWeight +
       recencyScore * recencyWeight
     
     return {
@@ -237,7 +246,24 @@ function rankPapers(
   }).sort((a, b) => b.combinedScore - a.combinedScore)
 }
 
-// Parallel search across all APIs with smart source prioritization
+// Timeout wrapper with AbortController for proper cancellation
+async function withAbortableTimeout<T>(
+  promiseFactory: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number
+): Promise<T> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => {
+    controller.abort()
+  }, timeoutMs)
+  
+  try {
+    return await promiseFactory(controller.signal)
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+// Parallel search across all APIs with smart source prioritization and proper timeout handling
 export async function parallelSearch(
   query: string, 
   options: AggregatedSearchOptions = {}
@@ -250,12 +276,12 @@ export async function parallelSearch(
     fastMode = false
   } = options
   
-  // Fix: Filter to only supported sources to prevent pubmed config mismatch
+  // Filter to only supported sources to prevent pubmed config mismatch
   const SUPPORTED_SOURCES = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'] as const
   type SupportedSource = typeof SUPPORTED_SOURCES[number]
   const requestedSources = sources.filter((s): s is SupportedSource => SUPPORTED_SOURCES.includes(s as SupportedSource))
   
-  // Fix: Ensure we have at least one source to search
+  // Ensure we have at least one source to search
   if (requestedSources.length === 0) {
     console.warn('No supported sources provided, falling back to all default sources')
     requestedSources.push(...SUPPORTED_SOURCES)
@@ -288,12 +314,15 @@ export async function parallelSearch(
   
   // **PARALLEL SEARCH**: query each requested source concurrently and merge results
   async function querySource(source: SupportedSource): Promise<AcademicPaper[]> {
+    const searchOptions = { ...options, limit: Math.min(limit, 25), fastMode }
+    const sourceTimeout = fastMode ? 6000 : 15000 // 6s vs 15s timeout
+
     try {
       console.log(`🔍 Searching ${source} in parallel…`)
-      const searchOptions = { ...options, limit: Math.min(limit, 25), fastMode }
-      const sourceTimeout = fastMode ? 6000 : 15000 // 6 s vs 15 s timeout
-
-      const searchPromise = (async () => {
+      
+      return await withAbortableTimeout(async (_signal) => {
+        void _signal // reference to avoid unused variable lint error
+        // Note: signal parameter ready for future enhancement when academic APIs support AbortSignal
         switch (source) {
           case 'openalex':
             return await searchOpenAlex(primaryQuery, searchOptions)
@@ -308,15 +337,8 @@ export async function parallelSearch(
           default:
             return []
         }
-      })()
-
-      // Race search against a timeout so one slow source does not block the whole batch
-      return await Promise.race([
-        searchPromise,
-        new Promise<AcademicPaper[]>((_, reject) =>
-          setTimeout(() => reject(new Error(`${source} timeout after ${sourceTimeout}ms`)), sourceTimeout)
-        )
-      ])
+      }, sourceTimeout)
+      
     } catch (error) {
       console.log(`❌ ${source} failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       return [] // Swallow individual failure but continue overall search
@@ -349,12 +371,50 @@ export async function parallelSearch(
   return topResults
 }
 
-// Convert AcademicPaper to PaperDTO for ingestion
+// Sentence-aware text chunking for better retrieval
+function chunkText(text: string, maxLength = 500): string[] {
+  // Split into sentences using basic punctuation
+  const sentences = text.split(/(?<=[.!?])\s+/)
+  const chunks: string[] = []
+  let currentChunk = ''
+  
+  for (const sentence of sentences) {
+    const trimmedSentence = sentence.trim()
+    if (!trimmedSentence) continue
+    
+    // Check if adding this sentence would exceed max length
+    const potentialChunk = currentChunk ? `${currentChunk} ${trimmedSentence}` : trimmedSentence
+    
+    if (potentialChunk.length > maxLength && currentChunk) {
+      // Current chunk is ready, start new one with this sentence
+      chunks.push(currentChunk.trim())
+      currentChunk = trimmedSentence
+    } else {
+      // Add sentence to current chunk
+      currentChunk = potentialChunk
+    }
+  }
+  
+  // Add final chunk if it has content
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim())
+  }
+  
+  // If no chunks were created (very long sentences), fall back to character splitting
+  if (chunks.length === 0 && text.length > 0) {
+    const charChunks = text.match(/.{1,500}(?:\s|$)/g) || []
+    chunks.push(...charChunks.map(chunk => chunk.trim()).filter(Boolean))
+  }
+  
+  return chunks
+}
+
+// Convert AcademicPaper to PaperDTO for ingestion with proper guards
 function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
-  // Normalize impact score to 0-1 range to satisfy database constraint
-  // Formula: 1 - 1/(raw + 1) maps 0→0, 1→0.5, 5→0.83, 8→0.89
+  // Normalize impact score to 0-1 range with guard against exceeding 1.0
   const rawScore = paper.combinedScore || 0
-  const normalizedImpactScore = rawScore > 0 ? 1 - 1 / (rawScore + 1) : 0
+  const normalizedImpactScore = rawScore > 0 ? 
+    Math.min(0.999, 1 - 1 / (rawScore + 1)) : 0 // Guard against floating point precision issues
 
   return {
     title: paper.title,
@@ -379,7 +439,7 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
     },
     source: `academic_search_${paper.source}`,
     citation_count: paper.citationCount,
-    impact_score: normalizedImpactScore, // Fix: Use normalized score (0-1 range)
+    impact_score: normalizedImpactScore,
     authors: (paper.authors && paper.authors.length > 0) ? paper.authors : ['Unknown']
   }
 }
@@ -423,23 +483,60 @@ export async function searchAndIngestPapers(
     try {
       const paperDTO = convertToPaperDTO(paper, query)
       
-      // Create content chunks from title and abstract for RAG
-      const contentChunks = []
+      // Create content chunks from title and abstract for RAG using sentence-aware chunking
+      const contentChunks: string[] = []
       if (paperDTO.abstract) {
-        // Split abstract into meaningful chunks for better RAG retrieval
-        const abstractChunks = paperDTO.abstract.match(/.{1,500}(?:\s|$)/g) || []
-        contentChunks.push(...abstractChunks.map((chunk: string) => chunk.trim()).filter(Boolean))
+        // Use sentence-aware chunking for better retrieval
+        const abstractChunks = chunkText(paperDTO.abstract)
+        contentChunks.push(...abstractChunks)
       }
       
       // Always include title as a chunk for title-based matching
       contentChunks.unshift(paperDTO.title)
+      
+      // 🆕 Full-text ingestion – parse PDF when available (no gating)
+      if (paperDTO.pdf_url) {
+        try {
+          console.log(`📥 Downloading PDF for full-text extraction: ${paperDTO.pdf_url}`)
+          const pdfRes = await fetch(paperDTO.pdf_url, { headers: { 'User-Agent': 'GenPaperBot/1.0' } })
+          if (pdfRes.ok) {
+            const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer())
+            const extraction = await extractPdfMetadataTiered(pdfBuffer, {
+              grobidUrl: process.env.GROBID_URL || 'http://localhost:8070',
+              enableOcr: false
+            })
+
+            // Record extraction metrics
+            await recordPdfExtractionMetric({
+              doi: paperDTO.doi,
+              extractionMethod: extraction.extractionMethod,
+              confidence: extraction.confidence,
+              extractionTimeMs: extraction.extractionTimeMs
+            })
+
+            if (extraction.fullText && extraction.fullText.length > 100) {
+              // Add full text to content for chunking by ingestPaperWithChunks (with 1MB safety cap)
+              const text = extraction.fullText.slice(0, 1_000_000)
+              contentChunks.push(text)
+              paperDTO.abstract = extraction.abstract ?? paperDTO.abstract
+              console.log(`✅ Added full-text content (method: ${extraction.extractionMethod}, ${text.length} chars)`)
+            } else {
+              console.warn('PDF extraction returned no usable text content')
+            }
+          } else {
+            console.warn(`Failed to download PDF (${pdfRes.status})`)
+          }
+        } catch (pdfErr) {
+          console.warn('PDF extraction failed, continuing with abstract only', pdfErr)
+        }
+      }
       
       // Use ingestPaperWithChunks to create content chunks for RAG
       const paperId = await ingestPaperWithChunks(paperDTO, contentChunks)
       ingestedIds.push(paperId)
       console.log(`Ingested paper with ${contentChunks.length} chunks: ${paper.title} (ID: ${paperId})`)
 
-      // Fetch and store references for the paper
+      // Fetch and store references for the paper (using canonical_id as fallback)
       await fetchAndStoreReferencesForPaper(paper, paperId)
     } catch (error) {
       console.error(`Failed to ingest paper "${paper.title}":`, error)
@@ -454,7 +551,19 @@ export async function searchAndIngestPapers(
   }
 }
 
-// Batch search for multiple queries
+// Smart batch delay with exponential backoff
+async function smartDelay(previousHadRateLimit: boolean, iteration: number): Promise<void> {
+  if (previousHadRateLimit) {
+    // Exponential backoff if we hit rate limits
+    const delay = Math.min(1000 * Math.pow(2, iteration), 10000) // Cap at 10s
+    await new Promise(resolve => setTimeout(resolve, delay))
+  } else {
+    // Quick delay for normal operation
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+}
+
+// Batch search for multiple queries with smart delays
 export async function batchSearchAndIngest(
   queries: string[],
   options: AggregatedSearchOptions = {}
@@ -462,17 +571,35 @@ export async function batchSearchAndIngest(
   console.log(`Starting batch search for ${queries.length} queries`)
   
   const results = []
+  let previousHadRateLimit = false
   
-  for (const query of queries) {
+  for (let i = 0; i < queries.length; i++) {
+    const query = queries[i]
+    
     try {
       const result = await searchAndIngestPapers(query, options)
       results.push({ query, ...result })
       
-      // Add delay between requests to be respectful to APIs
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Reset rate limit flag on success
+      previousHadRateLimit = false
+      
+      // Smart delay before next query
+      if (i < queries.length - 1) {
+        await smartDelay(previousHadRateLimit, i)
+      }
     } catch (error) {
       console.error(`Batch search failed for query "${query}":`, error)
+      
+      // Check if it was a rate limit error
+      const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''
+      previousHadRateLimit = errorMessage.includes('rate limit') || errorMessage.includes('429')
+      
       results.push({ query, papers: [], ingestedIds: [] })
+      
+      // Longer delay if we hit rate limits
+      if (i < queries.length - 1) {
+        await smartDelay(previousHadRateLimit, i)
+      }
     }
   }
   
@@ -489,10 +616,11 @@ export interface SearchConfig {
   fastMode?: boolean // Add fast mode option
 }
 
-// ------------------ References ingestion ----------------------
+// References ingestion with correct fallback ID
 async function fetchAndStoreReferencesForPaper(paper: AcademicPaper, paperId: string) {
   try {
-    const refs = await getPaperReferences(paper.doi, paperId)
+    // Use canonical_id as fallback instead of paperId (which is a Supabase UUID)
+    const refs = await getPaperReferences(paper.doi, paper.canonical_id)
     if (refs.length === 0) return
 
     const supabase = await getSB()
@@ -508,4 +636,23 @@ async function fetchAndStoreReferencesForPaper(paper: AcademicPaper, paperId: st
   }
 }
 
-// Removed enhancedSearch function - functionality moved to search-orchestrator.ts unifiedSearch() 
+// ---------- PDF observability ----------
+async function recordPdfExtractionMetric(params: {
+  doi?: string
+  extractionMethod: string
+  confidence: 'high' | 'medium' | 'low'
+  extractionTimeMs: number
+}): Promise<void> {
+  try {
+    const sb = await createSB()
+    await sb.from('pdf_extraction_metrics').insert({
+      doi: params.doi || null,
+      extraction_method: params.extractionMethod,
+      confidence: params.confidence,
+      extraction_time_ms: params.extractionTimeMs,
+      timestamp: new Date().toISOString()
+    })
+  } catch (err) {
+    console.warn('Failed to record PDF metric', err)
+  }
+} 

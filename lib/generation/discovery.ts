@@ -40,8 +40,14 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
   // Discover additional papers if not in library-only mode
   let discoveredPapers: PaperWithAuthors[] = []
 
+  console.log(`🔍 Library Only Check:`)
+  console.log(`   useLibraryOnly flag: ${useLibraryOnly}`)
+  console.log(`   remainingSlots: ${remainingSlots}`)
+  console.log(`   Condition (!useLibraryOnly && remainingSlots > 0): ${!useLibraryOnly && remainingSlots > 0}`)
+
   if (!useLibraryOnly && remainingSlots > 0) {
     console.log(`🎯 Starting unified search for fresh papers...`)
+    console.log(`⚠️ LIBRARY ONLY MODE IS DISABLED - SEARCHING FOR MORE PAPERS`)
     
     try {
       // Use unified search orchestrator - eliminates redundant hybridSearchPapers calls
@@ -89,6 +95,14 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
       console.error(`❌ Unified search failed:`, error)
       discoveredPapers = []
     }
+  } else {
+    if (useLibraryOnly) {
+      console.log(`✅ LIBRARY ONLY MODE ENABLED - SKIPPING PAPER SEARCH`)
+      console.log(`   Only using ${pinnedPapers.length} papers from library`)
+    } else if (remainingSlots <= 0) {
+      console.log(`✅ No remaining slots for additional papers`)
+      console.log(`   Already have ${pinnedPapers.length} pinned papers (target: ${targetTotal})`)
+    }
   }
   
   console.log(`🔍 Discovery Search Results: ${discoveredPapers.length} papers found`)
@@ -109,6 +123,18 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
   console.log(`📋 Final Paper Collection: ${finalPapers.length} papers total`)
   console.log(`   📌 From Library: ${pinnedPapers.length}`)
   console.log(`   🔍 From Discovery: ${discoveredPapers.length}`)
+  
+  if (useLibraryOnly && discoveredPapers.length > 0) {
+    console.error(`❌ BUG DETECTED: Library-only mode enabled but ${discoveredPapers.length} papers were discovered!`)
+    console.error(`   This should not happen. Library-only should prevent any search.`)
+  }
+  
+  if (useLibraryOnly) {
+    console.log(`✅ Library-only mode verification: Using only ${pinnedPapers.length} library papers`)
+    finalPapers.forEach((paper, idx) => {
+      console.log(`   ${idx + 1}. "${paper.title}" (${paper.id})`)
+    })
+  }
 
   if (finalPapers.length === 0) {
     console.error(`❌ No papers found for topic: "${topic}"`)

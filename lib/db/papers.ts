@@ -5,7 +5,8 @@ import { ai } from '@/lib/ai/vercel-client'
 import { embedMany } from 'ai'
 import { PaperDTO } from '@/lib/schemas/paper'
 import { RegionDetectionInputs } from '@/lib/utils/global-region-detection'
-import { detectPaperRegion, enrichMetadataWithRegion } from '@/lib/utils/global-region-detection' 
+import { detectPaperRegion, enrichMetadataWithRegion } from '@/lib/utils/global-region-detection'
+import { debug } from '@/lib/utils/logger' 
 
 // Namespace UUID for generating deterministic paper UUIDs
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
@@ -33,7 +34,7 @@ function estimateTokenCount(text: string): number {
 // Fix: Simplified tiktoken encoder with fallback
 async function getTokenEncoder() {
   try {
-    // Dynamic import to avoid loading WASM at startup
+    // Use @dqbd/tiktoken with proper WASM loading
     const { encoding_for_model } = await import('@dqbd/tiktoken')
     return encoding_for_model(EMBEDDING_CONFIG.model)
   } catch (error) {
@@ -69,9 +70,9 @@ async function validateAndClampChunk(text: string, targetTokens: number = 500): 
       
       // If exceeds model limit, perform emergency truncation with sentence boundaries
       if (actualTokens > EMBEDDING_CONFIG.maxTokens) {
-        const safeTokens = Array.from(tokens).slice(0, EMBEDDING_CONFIG.maxTokens - 10) // Leave margin
-        const safeUint32Array = new Uint32Array(safeTokens)
-        const truncatedText = new TextDecoder().decode(encoder.decode(safeUint32Array))
+        const safeTokens = new Uint32Array(Array.from(tokens).slice(0, EMBEDDING_CONFIG.maxTokens - 10)) // Leave margin
+        const truncatedBytes = encoder.decode(safeTokens)
+        const truncatedText = new TextDecoder().decode(truncatedBytes)
         encoder.free()
         
         // Try to preserve sentence boundaries
@@ -1213,4 +1214,39 @@ export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<strin
   console.log(`📚 Lightweight ingestion completed: ${paperMeta.title} (ID: ${paperId})`)
   
   return paperId
+}
+
+/**
+ * Update citation fields for a paper
+ */
+export async function updatePaperCitationFields(
+  paperId: string,
+  citationData: {
+    volume?: string
+    issue?: string
+    page?: string
+    publisher?: string
+    isbn?: string
+    issn?: string
+  }
+): Promise<void> {
+  const supabase = await getSB()
+  
+  const { error } = await supabase
+    .from('papers')
+    .update({
+      volume: citationData.volume || null,
+      issue: citationData.issue || null,
+      page_range: citationData.page || null,
+      publisher: citationData.publisher || null,
+      isbn: citationData.isbn || null,
+      issn: citationData.issn || null
+    })
+    .eq('id', paperId)
+
+  if (error) {
+    throw new Error(`Failed to update paper citation fields: ${error.message}`)
+  }
+
+  debug.info('Updated paper citation fields', { paperId, fields: Object.keys(citationData) })
 }

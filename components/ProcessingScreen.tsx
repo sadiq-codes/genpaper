@@ -1,15 +1,22 @@
 "use client"
 
+import type React from "react"
+
 import { useEffect, useState, useMemo } from "react"
-import { Sparkles, Search, FileText, CheckCircle, Brain, Quote } from "lucide-react"
+import { Sparkles, Search, FileText, CheckCircle, Brain, Quote, Clock, BookOpen, Zap } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
+import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
 import type { GenerationProgress } from "@/types/simplified"
 
 interface Step {
-  stage: string;
-  message: string;
-  icon: React.ElementType;
-  fallbackMessage: string;
+  stage: string
+  message: string
+  icon: React.ElementType
+  fallbackMessage: string
+  description: string
+  estimatedTime: string
 }
 
 interface ProcessingScreenProps {
@@ -17,250 +24,317 @@ interface ProcessingScreenProps {
   progress?: GenerationProgress | null
   isConnected?: boolean
   error?: string | null
+  paperType?: string
+  selectedPapers?: number
 }
 
-export function ProcessingScreen({ 
-  topic, 
-  progress, 
-  isConnected = false, 
-  error 
+export function ProcessingScreen({
+  topic,
+  progress,
+  isConnected = false,
+  error,
+  paperType = "Research Article",
+  selectedPapers = 0,
 }: ProcessingScreenProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [displayProgress, setDisplayProgress] = useState(0)
   const [displayMessage, setDisplayMessage] = useState("Initializing...")
+  const [startTime] = useState(Date.now())
+  const [elapsedTime, setElapsedTime] = useState(0)
+  const [showDetails, setShowDetails] = useState(false)
 
-  // Map backend stages to UI steps, including a UI-specific initial step
-  const steps: Step[] = useMemo(() => [
-    { 
-      stage: 'ui_analyzing', // Pseudo-stage for the initial UI analyzing phase
-      message: "Analyzing your research topic...", // Main message for this phase
-      icon: Brain,
-      fallbackMessage: "Analyzing your research topic..." // Text for the step list item
-    },
-    { 
-      stage: 'searching', // Backend stage name
-      message: "Analyzing your research topic and searching for papers...", // Overall process message for this stage
-      icon: Search, // Icon for searching
-      fallbackMessage: "Searching academic databases for relevant papers..." // Text for the step list item
-    },
-    { 
-      stage: 'evaluating', // Backend stage name
-      message: "Evaluating and selecting the best academic sources...", 
-      icon: FileText, // Icon for evaluating
-      fallbackMessage: "Evaluating and selecting the best academic sources..." // Text for the step list item
-    },
-    { 
-      stage: 'writing', // Backend stage name
-      message: "Generating your research paper with AI assistance...", 
-      icon: Quote,
-      fallbackMessage: "Generating your research paper with proper citations..." // Text for the step list item
-    },
-    { 
-      stage: 'citations', // Backend stage name
-      message: "Adding citations and formatting references...", 
-      icon: CheckCircle,
-      fallbackMessage: "Adding citations and formatting references..." // Text for the step list item
-    },
-    { 
-      stage: 'complete', // Backend stage name
-      message: "Finalizing document structure and formatting...", 
-      icon: Sparkles, // Icon for completion
-      fallbackMessage: "Finalizing document structure and formatting..." // Text for the step list item
-    },
-  ], [])
+  // Enhanced steps with more detailed information
+  const steps: Step[] = useMemo(
+    () => [
+      {
+        stage: "ui_analyzing",
+        message: "Analyzing your research topic...",
+        icon: Brain,
+        fallbackMessage: "Analyzing research topic",
+        description: "Understanding scope, keywords, and research objectives",
+        estimatedTime: "10-15s",
+      },
+      {
+        stage: "searching",
+        message: "Searching academic databases...",
+        icon: Search,
+        fallbackMessage: "Finding relevant papers",
+        description: "Querying multiple academic databases and repositories",
+        estimatedTime: "30-45s",
+      },
+      {
+        stage: "evaluating",
+        message: "Evaluating and ranking sources...",
+        icon: FileText,
+        fallbackMessage: "Selecting best sources",
+        description: "Analyzing relevance, quality, and citation impact",
+        estimatedTime: "20-30s",
+      },
+      {
+        stage: "writing",
+        message: "Generating content with AI...",
+        icon: Quote,
+        fallbackMessage: "Writing your paper",
+        description: "Creating structured content with proper academic flow",
+        estimatedTime: "60-90s",
+      },
+      {
+        stage: "citations",
+        message: "Adding citations and references...",
+        icon: CheckCircle,
+        fallbackMessage: "Formatting citations",
+        description: "Generating proper citations and bibliography",
+        estimatedTime: "15-20s",
+      },
+      {
+        stage: "complete",
+        message: "Finalizing your paper...",
+        icon: Sparkles,
+        fallbackMessage: "Completing generation",
+        description: "Final formatting and quality checks",
+        estimatedTime: "5-10s",
+      },
+    ],
+    [],
+  )
 
-  // Update step and progress based on backend progress or connection state
+  // Timer for elapsed time
   useEffect(() => {
-    if (error) {
-      // Error state is handled by the error display block, no further action here for progress/steps.
-      return;
-    }
+    const timer = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - startTime) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [startTime])
+
+  // Progress and step management (simplified from original)
+  useEffect(() => {
+    if (error) return
 
     if (!isConnected) {
-      setCurrentStep(0); // Default to the first step (Analyzing)
-      setDisplayProgress(0);
-      setDisplayMessage("Connecting to generation service...");
-      return;
+      setCurrentStep(0)
+      setDisplayProgress(0)
+      setDisplayMessage("Connecting to generation service...")
+      return
     }
 
-    // At this point, isConnected is true and no error.
     if (progress) {
-      const { stage: backendStageName, progress: progressValue, message: backendStageMessage } = progress;
-      
-      let targetStepIndex = -1;
-      // Find index in our `steps` array that matches the backend stage.
-      // The first step (ui_analyzing) is not a backend stage.
-      const matchedStep = steps.find(step => step.stage === backendStageName);
+      const { stage: backendStageName, progress: progressValue, message: backendStageMessage } = progress
+      const matchedStep = steps.find((step) => step.stage === backendStageName)
 
       if (matchedStep) {
-        targetStepIndex = steps.indexOf(matchedStep);
+        const targetStepIndex = steps.indexOf(matchedStep)
+        setCurrentStep(targetStepIndex)
+        setDisplayMessage(backendStageMessage || matchedStep.message)
       }
 
-      if (targetStepIndex !== -1) {
-        setCurrentStep(targetStepIndex);
-        const currentStepObject = steps[targetStepIndex];
-        setDisplayMessage(backendStageMessage || (currentStepObject ? currentStepObject.message : "") || "Processing...");
-      } else {
-        // If backend stage is unknown or doesn't map, update message but don't change step
-        // However, if it's 'complete' and somehow missed, ensure we go to the complete step.
-        if (backendStageName === 'complete') {
-          const completeStepIdx = steps.findIndex(s => s.stage === 'complete');
-          if (completeStepIdx !== -1) setCurrentStep(completeStepIdx);
-        }
-        setDisplayMessage(backendStageMessage || "Processing...");
-      }
-      
-      setDisplayProgress(Math.min(progressValue || 0, 100));
-    } else { 
-      // isConnected is true, but no progress object yet (initial "analyzing" phase)
-      setCurrentStep(0); // Activate the first step ("Analyzing your research topic...")
-      setDisplayProgress(0); 
-      const firstStep = steps[0];
-      setDisplayMessage(firstStep ? firstStep.message : "Analyzing your research topic..."); 
+      setDisplayProgress(Math.min(progressValue || 0, 100))
+    } else {
+      setCurrentStep(0)
+      setDisplayProgress(0)
+      setDisplayMessage(steps[0]?.message || "Analyzing your research topic...")
     }
-  }, [steps, progress, isConnected, error]); 
+  }, [steps, progress, isConnected, error])
 
-  // Fallback simulation for progress bar and step advancement if backend is silent
+  // Fallback simulation (simplified)
   useEffect(() => {
     if (!progress && !error && isConnected) {
-      // This simulation runs when connected, no error, and no backend progress signal.
-      // `currentStep` should be 0 initially (set by the other useEffect).
       const interval = setInterval(() => {
-        setDisplayProgress((prevDisplayProgress) => {
-          if (prevDisplayProgress >= 95 && (!progress || (progress && (progress as GenerationProgress).stage !== 'complete'))) {
-            return prevDisplayProgress; 
-          }
-          if (prevDisplayProgress >= 100 && progress && (progress as GenerationProgress).stage === 'complete') {
-            return 100;
-          }
-          
-          const newDisplayProgress = prevDisplayProgress + 2;
-          
-          // Visually advance step if backend is silent.
-          // currentStep indices: 0:Analyzing, 1:Searching, 2:Evaluating, 3:Writing, 4:Citations
-          // This should not advance to step 5 (Complete) via simulation.
-          // The check `currentStep < X` ensures we only advance if not already past that simulated threshold.
-          if (newDisplayProgress >= 15 && currentStep < 1) setCurrentStep(1);
-          else if (newDisplayProgress >= 35 && currentStep < 2) setCurrentStep(2);
-          else if (newDisplayProgress >= 65 && currentStep < 3) setCurrentStep(3);
-          else if (newDisplayProgress >= 85 && currentStep < 4) setCurrentStep(4);
-          
-          return Math.min(newDisplayProgress, 100);
-        });
-      }, 500);
+        setDisplayProgress((prev) => {
+          if (prev >= 95) return prev
+          const increment = Math.random() * 3 + 1
+          const newProgress = Math.min(prev + increment, 95)
 
-      return () => clearInterval(interval);
+          // Update step based on progress
+          if (newProgress >= 15 && currentStep < 1) setCurrentStep(1)
+          else if (newProgress >= 35 && currentStep < 2) setCurrentStep(2)
+          else if (newProgress >= 65 && currentStep < 3) setCurrentStep(3)
+          else if (newProgress >= 85 && currentStep < 4) setCurrentStep(4)
+
+          return newProgress
+        })
+      }, 800)
+
+      return () => clearInterval(interval)
     }
-  }, [progress, error, isConnected, currentStep]); // currentStep is a dependency
+  }, [progress, error, isConnected, currentStep])
 
-  // Handle error state
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, "0")}`
+  }
+
+  const estimatedTotal = useMemo(() => {
+    const baseTime = selectedPapers > 0 ? 120 : 180 // 2-3 minutes
+    const topicComplexity = topic.length > 100 ? 1.2 : 1
+    return Math.round(baseTime * topicComplexity)
+  }, [topic, selectedPapers])
+
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4 sm:p-6 lg:p-8">
-        <div className="w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl space-y-6 sm:space-y-8 text-center">
-          <div className="flex items-center justify-center gap-2 text-lg sm:text-xl lg:text-2xl font-bold">
-            <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 lg:h-7 lg:w-7 text-primary" />
-            <span>GenPaper</span>
-          </div>
-          
-          <div className="space-y-2 sm:space-y-3">
-            <h1 className="text-xl sm:text-2xl lg:text-3xl font-semibold leading-tight text-red-600">
-              Generation Error
-            </h1>
-            <p className="text-base sm:text-lg lg:text-xl text-muted-foreground px-2 sm:px-4">
-              {error}
-            </p>
-          </div>
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
+        <Card className="w-full max-w-md border-red-200">
+          <CardContent className="pt-6 text-center space-y-4">
+            <div className="p-3 rounded-full bg-red-100 w-fit mx-auto">
+              <Sparkles className="h-6 w-6 text-red-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-red-600 mb-2">Generation Failed</h2>
+              <p className="text-sm text-muted-foreground">{error}</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4 sm:p-6 lg:p-8">
-      <div className="w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl space-y-6 sm:space-y-8 text-center">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-2 text-lg sm:text-xl lg:text-2xl font-bold">
-          <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 lg:h-7 lg:w-7 text-primary" />
-          <span>GenPaper</span>
-        </div>
-
-        {/* Topic */}
-        <div className="space-y-2 sm:space-y-3">
-          <h1 className="text-xl sm:text-2xl lg:text-3xl font-semibold leading-tight">
-            Generating Your Paper
-          </h1>
-          <p className="text-base sm:text-lg lg:text-xl text-muted-foreground px-2 sm:px-4">
-            {topic}
-          </p>
-        </div>
-
-        {/* Connection Status */}
-        {!isConnected && !error && (
-          <div className="text-sm text-blue-600">
-            Connecting to generation service...
-          </div>
-        )}
-
-        {/* Progress */}
-        <div className="space-y-4 sm:space-y-6">
-          <Progress value={displayProgress} className="h-2 sm:h-3" />
-
-          {/* Current Status */}
-          <div className="text-sm sm:text-base text-muted-foreground">
-            {displayMessage}
+    <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
+      <div className="w-full max-w-2xl space-y-6">
+        {/* Header */}
+        <div className="text-center space-y-4">
+          <div className="flex items-center justify-center gap-2 text-xl font-bold">
+            <div className="p-2 rounded-full bg-primary/10">
+              <Sparkles className="h-6 w-6 text-primary animate-pulse" />
+            </div>
+            <span>GenPaper</span>
           </div>
 
-          <div className="space-y-3 sm:space-y-4">
-            {steps.map((stepItem: Step, index: number) => {
-              const StepIcon = stepItem.icon
-              const isActive = index === currentStep
-              const isComplete = index < currentStep || 
-                               (progress && (progress as GenerationProgress).stage === 'complete' && 
-                                displayProgress === 100 && 
-                                stepItem.stage === 'complete')
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold">Generating Your Paper</h1>
+            <p className="text-muted-foreground text-sm max-w-md mx-auto line-clamp-2">{topic}</p>
+          </div>
+        </div>
 
-              return (
-                <div
-                  key={index}
-                  className={`flex items-start sm:items-center gap-3 sm:gap-4 transition-all duration-500 ${
-                    isActive ? "opacity-100 scale-105" : isComplete ? "opacity-70" : "opacity-30"
-                  }`}
-                >
-                  <div className={`p-2 sm:p-2.5 lg:p-3 rounded-full transition-colors flex-shrink-0 ${
-                    isActive ? "bg-primary/20" : isComplete ? "bg-green-100" : "bg-muted"
-                  }`}>
-                    <StepIcon className={`h-4 w-4 sm:h-5 sm:w-5 lg:h-6 lg:w-6 ${
-                      isActive ? "text-primary" : isComplete ? "text-green-600" : "text-muted-foreground"
-                    }`} />
-                  </div>
-                  <span className={`text-left text-sm sm:text-base lg:text-lg transition-all leading-relaxed ${
-                    isActive ? "font-medium text-foreground" : isComplete ? "text-muted-foreground" : "text-muted-foreground"
-                  }`}>
-                    {stepItem.fallbackMessage}
-                  </span>
+        {/* Main Progress Card */}
+        <Card>
+          <CardContent className="pt-6 space-y-6">
+            {/* Progress Bar with Percentage */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">{displayMessage}</span>
+                <span className="text-muted-foreground">{Math.round(displayProgress)}%</span>
+              </div>
+              <Progress value={displayProgress} className="h-2" />
+            </div>
+
+            {/* Time and Status Info */}
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1">
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span>{formatTime(elapsedTime)} elapsed</span>
                 </div>
-              )
-            })}
-          </div>
-        </div>
+                <div className="flex items-center gap-1">
+                  <Zap className="h-4 w-4 text-muted-foreground" />
+                  <span>~{formatTime(estimatedTotal)} total</span>
+                </div>
+              </div>
 
-        <div className="space-y-2 sm:space-y-3 px-2 sm:px-4">
-          <p className="text-sm sm:text-base text-muted-foreground">
-            This usually takes 2-4 minutes depending on your topic complexity.
-          </p>
-          <p className="text-xs sm:text-sm text-muted-foreground">
-            Please don&apos;t close this window while your paper is being generated.
-          </p>
-          
-          {/* Real-time connection status */}
-          <div className="text-xs text-muted-foreground">
-            {isConnected ? (
-              <span className="text-green-600">● Connected</span>
-            ) : (
-              <span className="text-orange-600">● Connecting...</span>
-            )}
-          </div>
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-orange-500"}`} />
+                <span className="text-xs text-muted-foreground">{isConnected ? "Connected" : "Connecting..."}</span>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Steps */}
+            <div className="space-y-3">
+              {steps.map((step, index) => {
+                const StepIcon = step.icon
+                const isActive = index === currentStep
+                const isComplete = index < currentStep
+                const isCurrent = index === currentStep
+
+                return (
+                  <div
+                    key={index}
+                    className={`flex items-center gap-3 p-2 rounded-lg transition-all duration-300 ${
+                      isActive ? "bg-primary/5 border border-primary/20" : ""
+                    }`}
+                  >
+                    <div
+                      className={`p-2 rounded-full transition-all ${
+                        isComplete ? "bg-green-100" : isActive ? "bg-primary/20 animate-pulse" : "bg-muted"
+                      }`}
+                    >
+                      <StepIcon
+                        className={`h-4 w-4 ${
+                          isComplete ? "text-green-600" : isActive ? "text-primary" : "text-muted-foreground"
+                        }`}
+                      />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`text-sm font-medium ${
+                            isActive
+                              ? "text-foreground"
+                              : isComplete
+                                ? "text-muted-foreground"
+                                : "text-muted-foreground/70"
+                          }`}
+                        >
+                          {step.fallbackMessage}
+                        </span>
+
+                        <div className="flex items-center gap-2">
+                          {isComplete && <CheckCircle className="h-4 w-4 text-green-600" />}
+                          {isCurrent && (
+                            <Badge variant="secondary" className="text-xs">
+                              {step.estimatedTime}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      {showDetails && <p className="text-xs text-muted-foreground mt-1">{step.description}</p>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Toggle Details */}
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="text-xs text-primary hover:underline mx-auto block"
+            >
+              {showDetails ? "Hide details" : "Show details"}
+            </button>
+          </CardContent>
+        </Card>
+
+        {/* Paper Info */}
+        <Card className="bg-muted/50">
+          <CardContent className="pt-4">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span>{paperType}</span>
+                </div>
+                {selectedPapers > 0 && (
+                  <div className="flex items-center gap-1">
+                    <BookOpen className="h-4 w-4 text-muted-foreground" />
+                    <span>{selectedPapers} library papers</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="text-xs text-muted-foreground">
+                Step {currentStep + 1} of {steps.length}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Footer */}
+        <div className="text-center space-y-2 text-xs text-muted-foreground">
+          <p>Please keep this window open while your paper is being generated.</p>
+          <p>Generation time varies based on topic complexity and source availability.</p>
         </div>
       </div>
     </div>

@@ -198,4 +198,12 @@ export function sanitizeFilename(filename: string): string {
   return filename
     .replace(/[^a-zA-Z0-9\s\-_.]/g, '')
     .substring(0, 255)
+}
+
+/**
+ * Rough token estimation (GPT-4/4o ~0.75 tokens per word)
+ */
+export function estimateTokenCount(text: string): number {
+  const words = text.trim().split(/\s+/).length
+  return Math.ceil(words * 0.75)
 } 

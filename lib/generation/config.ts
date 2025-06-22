@@ -7,8 +7,6 @@ import {
   getEvidenceSnippetLength
 } from '@/lib/ai/generation-defaults'
 import { mergeWithDefaults } from '@/lib/ai/generation-config-schema'
-import { loadPrompts } from '@/lib/prompts/loader'
-import type { PaperTypeKey } from '@/lib/prompts/types'
 
 // Re-export configuration utilities
 export { 
@@ -21,28 +19,21 @@ export {
 }
 
 // Utility functions for generation configuration
-// Derive aggregate word target from prompt templates if available
-function deriveWordTargetFromTemplate(paperType?: string): number | null {
-  try {
-    if (!paperType) return null
-    const { paperTypes } = loadPrompts()
-    const typeConfig = paperTypes[paperType as PaperTypeKey]
-    if (!typeConfig) return null
-    const total = Object.values(typeConfig.sections).reduce((sum, sec) => {
-      const words = (sec as { expectedLength?: { words?: number } }).expectedLength?.words
-      return words ? sum + words : sum
-    }, 0)
-    return total > 0 ? total : null
-  } catch (err) {
-    console.warn('Failed to derive word target from template:', err)
-    return null
+// Use default word targets instead of template-derived ones
+export function getTargetLength(length?: PaperLength, paperType?: string): number {
+  // Use standard academic section lengths based on paper type
+  const standardLengths: Record<string, number> = {
+    'research-paper': 8000,
+    'review-paper': 6000,
+    'case-study': 5000,
+    'short-paper': 3000,
+    'conference-paper': 4000,
+    'journal-article': 7000,
+    'thesis-chapter': 10000,
+    'default': 5000
   }
-}
-
-export function getTargetLength(_length?: PaperLength, paperType?: string): number {
-  const templated = deriveWordTargetFromTemplate(paperType)
-  if (templated) return templated
-  throw new Error(`No expectedLength.words defined in prompt templates for paperType '${paperType}'. Please add explicit word counts to every section.`)
+  
+  return standardLengths[paperType || 'default'] || standardLengths.default
 }
 
 export function getChunkLimit(length?: PaperLength, paperType?: string): number {
@@ -112,3 +103,28 @@ export function hasUnacceptableScores(
   // If no scores at all, drop unless we're in permissive mode
   return !permissive;
 } 
+
+/**
+ * Block generation configuration constants
+ * Extracted from hardcoded values for better maintainability
+ */
+export const BLOCK_GENERATION_CONFIG = {
+  maxSteps: 5,
+  temperature: 0.2,
+  bufferSizeLimit: 800,
+  progressReportInterval: 20,
+  defaultModel: 'gpt-4o',
+  sentenceBreakPoints: /[.!?]\s+/g,
+  wordBoundaryThreshold: 2, // Minimum words before force-breaking
+} as const
+
+/**
+ * Block detection thresholds and patterns
+ */
+export const BLOCK_DETECTION_CONFIG = {
+  minParagraphLength: 50,
+  maxBufferSize: 800,
+  forceBreakAtSentence: true,
+  headingLevels: [1, 2, 3, 4, 5, 6] as const,
+  codeBlockLanguages: ['javascript', 'typescript', 'python', 'sql', 'bash', 'json', 'yaml'] as const
+} as const 

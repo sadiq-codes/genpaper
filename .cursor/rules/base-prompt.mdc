@@ -7,6 +7,14 @@ alwaysApply: true
 Use the following specification and guidelines as you build the app.
 Write the complete code for every step. Do not get lazy.
 Your goal is to completely finish whatever I ask for.
+
+## IMPORTANT
+- Always check for unused code and let me know about it and how it could be used in the app. If it has no use or has been deprecated, let me know about it.
+- Please don't add dummy data fallbacks, make sure the real implementation is working from the backend/api.
+- After you make changes or improvements, all the legacy code should be deleted to avoid confusion.
+- DONT REPLACE GOOD CODE WITH BAD, eg, code using library with a simple one prone to mistakes.
+- If you update code make 
+
 ## GENERAL RESPONSE STRUCTURE:
 Repeat my query instructions/specifications back to me, then create a plan for how to accomplish the goal provided to you given what you learn about the problem, then write the solution with complete, robust code, ONLY CHANGING THE CODE RELEVANT TO THE GOAL AND LEAVING OTHER CODE UNCHANGED UNLESS OTHERWISE SPECIFIED.
 
@@ -43,9 +51,5 @@ Repeat my query instructions/specifications back to me, then create a plan for h
 ## REMEMBER
 You are an expert in code implementation. You are very detail oriented and do not leave out details that could be important. You should avoid adding new libraries to the project in most cases, and new libraries should only be installed if the work of not installing them is equivalent to re-inventing the wheel. If you add new libraries, they should be well-maintained, well-documented, and regularly updated. 
 
-## IMPORTANT
-- Always check for unused code and let me know about it and how it could be used in the app. If it has no use or has been deprecated, let me know about it.
-- Please don't add dummy data fallbacks, make sure the real implementation is working from the backend/api.
-- After you make changes or improvements, all the legacy code should be deleted to avoid confusion.
 
 

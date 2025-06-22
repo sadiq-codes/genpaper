@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { 
   History, 
   Search, 
-  Eye, 
+  Edit3, 
   Trash2, 
   MoreVertical,
   Calendar,
@@ -93,7 +93,7 @@ export default function HistoryManager({ className }: HistoryManagerProps) {
   }
 
   const viewProject = (projectId: string) => {
-    router.push(`/projects/${projectId}`)
+    router.push(`/generate/editor?projectId=${projectId}`)
   }
 
   const downloadProject = async (project: ResearchProjectWithLatestVersion) => {
@@ -213,11 +213,15 @@ export default function HistoryManager({ className }: HistoryManagerProps) {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => viewProject(project.id)}>
-                    <Eye className="h-4 w-4 mr-2" />
-                    View Paper
+                    <Edit3 className="h-4 w-4 mr-2" />
+                    Edit Paper
                   </DropdownMenuItem>
                   {project.status === 'complete' && project.latest_version?.content && (
                     <>
+                      <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>
+                        <FileText className="h-4 w-4 mr-2" />
+                        View Only
+                      </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => downloadProject(project)}>
                         <Download className="h-4 w-4 mr-2" />
                         Download
@@ -414,8 +418,8 @@ export default function HistoryManager({ className }: HistoryManagerProps) {
               
               <div className="flex gap-2">
                 <Button onClick={() => viewProject(selectedProject.id)}>
-                  <Eye className="h-4 w-4 mr-2" />
-                  View Paper
+                  <Edit3 className="h-4 w-4 mr-2" />
+                  Edit Paper
                 </Button>
                 {selectedProject.status === 'complete' && (
                   <>

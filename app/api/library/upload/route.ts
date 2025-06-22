@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { ingestPaperWithChunks } from '@/lib/db/papers'
 import { addPaperToLibrary } from '@/lib/db/library'
-import { extractPDFMetadata } from '@/lib/pdf/extract'
+
 import { sanitizeFilename } from '@/lib/utils/text'
 import { debug } from '@/lib/utils/logger'
 import { PaperDTOSchema } from '@/lib/schemas/paper'
@@ -17,12 +17,12 @@ export async function POST(request: NextRequest) {
     
     // Early size validation from content-length header
     const contentLength = request.headers.get('content-length')
-    const maxSize = 10 * 1024 * 1024 // 10MB
+    const maxSize = 20 * 1024 * 1024 // 20MB (many academic PDFs are 11-14MB)
     
     if (contentLength && parseInt(contentLength) > maxSize) {
       debug.warn('File too large (header check)', { contentLength })
       return Response.json({ 
-        error: 'File too large. Maximum size is 10MB',
+        error: 'File too large. Maximum size is 20MB',
         received: contentLength 
       }, { status: 413 })
     }
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     if (file.size > maxSize) {
       debug.error('File too large', { size: file.size })
       return Response.json({ 
-        error: 'File too large. Maximum size is 10MB',
+        error: 'File too large. Maximum size is 20MB',
         received: file.size,
         limit: maxSize 
       }, { status: 413 })
@@ -77,9 +77,32 @@ export async function POST(request: NextRequest) {
 
     debug.info('Processing PDF upload', { fileName: sanitizedFileName, size: file.size })
 
-    // Extract metadata and content from PDF
-    debug.info('Starting PDF metadata extraction')
-    const extractedData = await extractPDFMetadata(file)
+    // Check for OCR flag from query params (for power users with scanned PDFs)
+    const url = new URL(request.url)
+    const enableOcr = url.searchParams.get('ocr') === '1'
+    
+    // Extract metadata and content from PDF using tiered extractor for better results
+    debug.info('Starting PDF metadata extraction using tiered extractor', { enableOcr })
+    
+    const fileBuffer = Buffer.from(await file.arrayBuffer())
+    const { extractPdfMetadataTiered } = await import('@/lib/pdf/tiered-extractor')
+    
+    const tieredResult = await extractPdfMetadataTiered(fileBuffer, {
+      enableOcr, // Allow OCR via ?ocr=1 query parameter
+      maxTimeoutMs: enableOcr ? 30000 : 15000 // Longer timeout for OCR
+    })
+    
+    // Convert tiered result to expected format for compatibility
+    const extractedData = {
+      title: tieredResult.title,
+      authors: tieredResult.authors,
+      abstract: tieredResult.abstract,
+      venue: tieredResult.venue,
+      doi: tieredResult.doi,
+      year: tieredResult.year,
+      content: tieredResult.abstract || tieredResult.fullText?.substring(0, 1000),
+      fullText: tieredResult.fullText?.substring(0, 200) // Truncated for logging
+    }
     
     debug.info('Metadata extraction completed', {
       title: extractedData.title,
@@ -126,9 +149,36 @@ export async function POST(request: NextRequest) {
 
     debug.info('Starting paper ingestion')
     
-    // Ingest paper with content chunks for RAG (creates embeddings for both main paper and chunks)
-    const paperId = await ingestPaperWithChunks(validationResult.data, extractedData.contentChunks)
+    // Ingest paper with content for RAG (creates embeddings for main paper and chunks the full text)
+    const text = tieredResult.fullText?.slice(0, 1_000_000)   // 1 MB safety cap to prevent network choking
+    const paperId = await ingestPaperWithChunks(validationResult.data, text ? [text] : undefined)
     debug.info('Paper ingested successfully', { paperId })
+
+    // Store the original PDF file in Supabase storage for future reference
+    debug.info('Uploading PDF to storage')
+    try {
+      const { uploadPDFToStorage, generatePDFFilename, updatePaperWithPDF } = await import('@/lib/services/pdf-downloader')
+      
+      // Generate filename using the same convention as downloads
+      const filename = generatePDFFilename(
+        validationResult.data.doi || `upload-${Date.now()}`, 
+        paperId
+      )
+      
+      // Upload PDF to storage
+      const storedUrl = await uploadPDFToStorage(fileBuffer, filename)
+      
+      if (storedUrl) {
+        // Update paper record with PDF URL
+        await updatePaperWithPDF(paperId, storedUrl, file.size)
+        debug.info('PDF stored successfully', { storedUrl, filename })
+      } else {
+        debug.warn('Failed to store PDF, but paper ingestion succeeded')
+      }
+    } catch (storageError) {
+      debug.error('PDF storage failed, but paper ingestion succeeded', { error: storageError })
+      // Don't fail the entire operation if storage fails
+    }
 
     debug.info('Adding to user library')
     // Add to user's library
@@ -137,11 +187,26 @@ export async function POST(request: NextRequest) {
 
     debug.info('Upload completed successfully')
 
+    // Get the stored PDF URL for response
+    let storedPdfUrl: string | undefined
+    try {
+      const supabase = await createClient()
+      const { data } = await supabase
+        .from('papers')
+        .select('pdf_url')
+        .eq('id', paperId)
+        .single()
+      storedPdfUrl = data?.pdf_url || undefined
+    } catch {
+      // Ignore errors getting PDF URL
+    }
+
     // Return success response with extracted data
     return Response.json({
       success: true,
       paperId,
       libraryPaperId: libraryPaper.id,
+      pdfUrl: storedPdfUrl,
       extractedData: {
         title: extractedData.title,
         authors: extractedData.authors,

@@ -151,6 +151,22 @@ export const addCitation = tool({
 
       const record = citationRecord as CitationRecord
 
+      // Validate source_paper_id exists if provided
+      let validatedSourcePaperId = null
+      if (payload.source_paper_id) {
+        const { data: paperExists, error: paperCheckError } = await supabase
+          .from('papers')
+          .select('id')
+          .eq('id', payload.source_paper_id)
+          .single()
+
+        if (paperCheckError || !paperExists) {
+          console.warn(`Source paper ${payload.source_paper_id} not found in papers table, proceeding without source link`)
+        } else {
+          validatedSourcePaperId = payload.source_paper_id
+        }
+      }
+
       // Create the citation link
       const { error: linkError } = await supabase
         .from('citation_links')
@@ -163,7 +179,7 @@ export const addCitation = tool({
           ...(typeof payload.end_pos === 'number' ? { end_pos: payload.end_pos } : {}),
           reason: payload.reason,
           context: payload.context,
-          source_paper_id: payload.source_paper_id || null
+          source_paper_id: validatedSourcePaperId
         })
 
       if (linkError) {
@@ -179,7 +195,7 @@ export const addCitation = tool({
         citationId: record.id,
         citationKey,
         replacement: citationToken,
-        message: `Citation added successfully for "${payload.title}"`
+        message: `Citation added successfully for "${payload.title}"${validatedSourcePaperId ? ' with source link' : ''}`
       }
 
     } catch (error) {

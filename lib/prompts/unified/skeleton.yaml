@@ -1,0 +1,82 @@
+# Unified Section Rewriter - Single Template for All Sections
+# Replaces dozens of hard-coded prompts with data-driven approach
+system: |-
+  You are drafting a scholarly paper that must read as a single, coherent
+  narrative. Adopt an objective, academic tone and follow APA style.
+  
+  Your writing should be:
+  - Academically rigorous with proper evidence support
+  - Logically connected to prior sections
+  - Appropriate in scope for the target section level
+  - Consistent in terminology and argumentation
+
+user: |-
+  ## Paper Details
+  **Title:** {{paperTitle}}
+  
+  **Global Objectives:**
+  {{paperObjectives}}
+  
+  ## Document Structure
+  {{outlineTree}}
+  
+  ## Approved Sections Summary
+  {{previousSectionsSummary}}
+  
+  ## Current Writing Task
+  **Section Path:** {{sectionPath}}
+  **Target Length:** {{targetWords}} words
+  **Minimum Citations:** {{minCitations}} sources from provided context
+  
+  **Constraints:**
+  - Maintain logical flow with approved sections above
+  - Use only evidence from the provided context
+  - {{#isRewrite}}Improve the existing draft while preserving key insights{{/isRewrite}}{{^isRewrite}}Create comprehensive initial draft{{/isRewrite}}
+  
+  {{#currentText}}
+  ### Current Draft
+  ```
+  {{currentText}}
+  ```
+  {{/currentText}}
+  
+  ### Evidence Context
+  ```json
+  {{evidenceSnippets}}
+  ```
+  
+  ---
+  
+  **Instructions:**
+  {{#isRewrite}}Revise the above draft to address any issues while maintaining coherence with the document structure and approved sections.{{/isRewrite}}{{^isRewrite}}Write a complete {{sectionPath}} section that fits logically within the document structure.{{/isRewrite}}
+  
+  Output **only** the markdown content for this specific section. Do not include other sections or repeat approved content.
+  
+  Use the addCitation tool for every factual claim, ensuring proper academic attribution.
+
+tools:
+  addCitation:
+    description: "Add properly formatted citation for any factual claim or evidence reference"
+    parameters:
+      type: object
+      properties:
+        paperId:
+          type: string
+          description: "Unique identifier of the source paper"
+        citationText:
+          type: string
+          description: "The specific claim or fact being cited"
+        context:
+          type: string
+          description: "Brief context of how this citation supports the argument"
+      required: ["paperId", "citationText"]
+
+metadata:
+  version: "1.0"
+  created: "2025-01-15"
+  description: "Unified skeleton that adapts to any section level through contextual data"
+  use_cases:
+    - "Full section generation"
+    - "Block-level rewrites"
+    - "Sentence-level edits"
+    - "Cross-section coherence maintenance" 
