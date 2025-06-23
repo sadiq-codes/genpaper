@@ -127,4 +127,4 @@ export const BLOCK_DETECTION_CONFIG = {
   forceBreakAtSentence: true,
   headingLevels: [1, 2, 3, 4, 5, 6] as const,
   codeBlockLanguages: ['javascript', 'typescript', 'python', 'sql', 'bash', 'json', 'yaml'] as const
-} as const 
+} as const

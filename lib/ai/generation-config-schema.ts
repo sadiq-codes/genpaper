@@ -24,7 +24,7 @@ export const GenerationConfigSchema = z.object({
   paper_settings: z.object({
     length: z.enum(['short', 'medium', 'long']).default('medium'),
     paperType: z.enum(['researchArticle', 'literatureReview', 'capstoneProject', 'mastersThesis', 'phdDissertation']).default('researchArticle'),
-    citationStyle: z.enum(['apa', 'mla', 'chicago', 'ieee']).default('apa'),
+    // citationStyle removed - system is now citation-agnostic
     localRegion: z.string().optional(), // TASK 6: Regional boosting support
     includeMethodology: z.boolean().default(true),
     includeFuture: z.boolean().default(false),
@@ -68,7 +68,6 @@ export function validateGenerationConfig(config: unknown): ValidatedGenerationCo
       paper_settings: {
         length: 'medium',
         paperType: 'researchArticle', 
-        citationStyle: 'apa',
         includeMethodology: true,
         includeFuture: false,
         minCitationCoverage: GENERATION_DEFAULTS.MIN_CITATION_COVERAGE,
@@ -101,7 +100,6 @@ export function mergeWithDefaults(userConfig: unknown): ValidatedGenerationConfi
     validated.paper_settings = {
       length: 'medium',
       paperType: 'researchArticle',
-      citationStyle: 'apa', 
       includeMethodology: true,
       includeFuture: false,
       minCitationCoverage: GENERATION_DEFAULTS.MIN_CITATION_COVERAGE,

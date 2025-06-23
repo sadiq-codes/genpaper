@@ -1,0 +1,53 @@
+import type { SectionContext } from '@/lib/prompts/types'
+import type { GeneratedOutline } from '@/lib/prompts/types'
+import type { PaperChunk } from './types'
+import { getRelevantChunks } from './chunks'
+
+/**
+ * Builds the context for each section of the paper, including retrieving relevant
+ * chunks of text from source documents.
+ * @param outline - The generated outline of the paper.
+ * @param topic - The main topic of the paper.
+ * @returns An array of section contexts, ready for the generation pipeline.
+ */
+export async function buildSectionContexts(
+  outline: GeneratedOutline,
+  topic: string
+): Promise<SectionContext[]> {
+  const sectionContexts: SectionContext[] = []
+  const chunkCache = new Map<string, PaperChunk[]>()
+
+  for (const section of outline.sections) {
+    const cacheKey = section.candidatePaperIds.sort().join(',')
+    let contextChunks = chunkCache.get(cacheKey)
+
+    if (!contextChunks) {
+      try {
+        contextChunks = await getRelevantChunks(
+          topic,
+          section.candidatePaperIds,
+          Math.min(20, section.candidatePaperIds.length * 3)
+        )
+        chunkCache.set(cacheKey, contextChunks)
+        console.log(`📄 Cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
+      } catch (error) {
+        console.warn(`⚠️ No relevant chunks found for section "${section.title}": ${error}`)
+        console.warn(`⚠️ This section may have limited content quality due to lack of relevant source material`)
+        contextChunks = []
+        chunkCache.set(cacheKey, contextChunks)
+      }
+    } else {
+      console.log(`📄 Using cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
+    }
+
+    sectionContexts.push({
+      sectionKey: section.sectionKey,
+      title: section.title,
+      candidatePaperIds: section.candidatePaperIds,
+      contextChunks,
+      expectedWords: section.expectedWords,
+    })
+  }
+
+  return sectionContexts
+} 

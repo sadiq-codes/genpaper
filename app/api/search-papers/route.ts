@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { unifiedSearch } from '@/lib/services/search-orchestrator'
+import { unifiedSearch } from '@/lib/search'
 import type { SearchPapersRequest, SearchPapersResponse, PaperSources } from '@/types/simplified'
 
 export async function GET(request: NextRequest) {

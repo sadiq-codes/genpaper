@@ -292,7 +292,7 @@ async function optimizeVectorIndex(): Promise<void> {
 }
 
 // Generate embeddings with consistent configuration
-async function generateEmbeddings(inputs: string | string[]): Promise<number[][]> {
+export async function generateEmbeddings(inputs: string | string[]): Promise<number[][]> {
   // Convert single input to array for consistent processing
   const inputArray = Array.isArray(inputs) ? inputs : [inputs]
   
@@ -449,11 +449,11 @@ export async function hybridSearchPapers(
   // Check if RPC function exists
   const { error: funcError } = await supabase
     .rpc('hybrid_search_papers', {
-      query_text: 'test',
-      query_embedding: new Array(384).fill(0),
-      match_count: 1,
-      min_year: 2020,
-      semantic_weight: 0.7
+      query_text: query,
+      query_embedding: queryEmbedding,
+      match_count: limit * 2,
+      min_year: minYear,
+      semantic_weight: semanticWeight
     })
     .limit(0) // Don't return results, just test if function exists
   
@@ -467,7 +467,7 @@ export async function hybridSearchPapers(
     .rpc('hybrid_search_papers', {
       query_text: query,
       query_embedding: queryEmbedding,
-      match_count: limit * 2, // Get more results to account for filtering
+      match_count: limit * 2,
       min_year: minYear,
       semantic_weight: semanticWeight
     })
@@ -837,7 +837,8 @@ export async function searchPaperChunks(
     .rpc('match_paper_chunks', {
       query_embedding: queryEmbedding,
       match_count: options.limit || 10,
-      min_score: options.minScore || 0.5
+      min_score: options.minScore || 0.5,
+      paper_ids: options.paperIds || null  // 🎯 NEW: Pass paper IDs to RPC for database-level filtering
     })
   
   if (error) {
@@ -847,15 +848,9 @@ export async function searchPaperChunks(
 
   console.log(`📄 RPC returned ${matches?.length || 0} chunk matches`)
   
-  // Filter by paper IDs if specified
-  let finalMatches = matches || []
-  if (options.paperIds && options.paperIds.length > 0) {
-    const beforeFilter = finalMatches.length
-    finalMatches = finalMatches.filter((match: { paper_id: string }) => 
-      options.paperIds!.includes(match.paper_id)
-    )
-    console.log(`🔧 Filtered chunks by paper IDs: ${beforeFilter} → ${finalMatches.length}`)
-  }
+  // No need for JavaScript filtering anymore - RPC handles it
+  const finalMatches = matches || []
+  console.log(`✅ Database-filtered results: ${finalMatches.length} chunks (no JS filtering needed)`)
 
   console.log(`✅ Final chunk results: ${finalMatches.length}`)
   finalMatches.forEach((match: { paper_id: string; chunk_index: number; content: string; score: number }, idx: number) => {

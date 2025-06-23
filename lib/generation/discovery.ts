@@ -3,10 +3,16 @@ import type { PaperWithAuthors } from '@/types/simplified'
 import type { EnhancedGenerationOptions, PaperWithScores } from './types'
 import { isScoreAcceptable, hasUnacceptableScores } from './config'
 import type { PaperSource } from '@/types/simplified'
-import { unifiedSearch, type UnifiedSearchOptions } from '@/lib/services/search-orchestrator'
+import { unifiedSearch, type UnifiedSearchOptions } from '@/lib/search'
+import { estimateEmbeddingCost, formatCostEstimate } from '@/lib/ai/generation-defaults'
+import { decideIngest } from './policy'
+import { WordTokenizer } from 'natural'
+
+// Initialize NLP tools
+const tokenizer = new WordTokenizer()
 
 export async function collectPapers(options: EnhancedGenerationOptions): Promise<PaperWithAuthors[]> {
-  const { topic, libraryPaperIds = [], useLibraryOnly, config } = options
+  const { topic, libraryPaperIds = [], useLibraryOnly, config, userId } = options
   
   console.log(`📋 Generation Request:`)
   console.log(`   🎯 Topic: "${topic}"`)
@@ -28,7 +34,7 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
   })
   
   const pinnedIds = pinnedPapers.map(lp => lp.paper.id)
-  const targetTotal = config?.search_parameters?.limit || 10
+  const targetTotal = config?.search_parameters?.limit || 90
   const remainingSlots = Math.max(0, targetTotal - pinnedPapers.length)
   
   console.log(`🔍 Search Parameters:`)
@@ -50,7 +56,23 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
     console.log(`⚠️ LIBRARY ONLY MODE IS DISABLED - SEARCHING FOR MORE PAPERS`)
     
     try {
-      // Use unified search orchestrator - eliminates redundant hybridSearchPapers calls
+      // Use server-side policy for auto-ingest decisions
+      const autoIngest = decideIngest({
+        librarySize: pinnedPapers.length,
+        explicitForce: config?.search_parameters?.forceIngest,
+        userId
+      })
+      
+      console.log(`🔧 ForceIngest Decision:`)
+      console.log(`   📚 Library papers: ${pinnedPapers.length}`)
+      console.log(`   ⚙️ Explicit setting: ${config?.search_parameters?.forceIngest ?? 'not set'}`)
+      console.log(`   🤖 Auto-ingest enabled by policy: ${autoIngest}`)
+      
+      if (autoIngest && !config?.search_parameters?.forceIngest) {
+        const estimatedCost = estimateEmbeddingCost(remainingSlots, false)
+        console.log(`   💰 Estimated embedding cost: ${formatCostEstimate(estimatedCost)} for ${remainingSlots} papers`)
+      }
+      
       const searchOptions: UnifiedSearchOptions = {
         maxResults: remainingSlots,
         minResults: Math.min(5, remainingSlots),
@@ -61,10 +83,10 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
         useKeywordSearch: true,
         useAcademicAPIs: !useLibraryOnly, // Only use APIs if not library-only
         combineResults: true,
-        forceIngest: false,
+        forceIngest: autoIngest,
         fastMode: false, // Default to false since not in config
         sources: (config?.search_parameters?.sources as PaperSource[]) ?? ['openalex', 'crossref', 'semantic_scholar'],
-        semanticWeight: config?.search_parameters?.semanticWeight || 0.7,
+        semanticWeight: config?.search_parameters?.semanticWeight || 0.4,
         authorityWeight: config?.search_parameters?.authorityWeight || 0.5,
         recencyWeight: config?.search_parameters?.recencyWeight || 0.1
       }
@@ -149,54 +171,137 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
   return finalPapers
 }
 
+/**
+ * Extract significant terms using enhanced tokenization and frequency analysis
+ * Replaces the flawed TF-IDF implementation that used only a single document
+ */
+function extractSignificantTerms(text: string, minLength: number = 3): string[] {
+  // Enhanced tokenization with preprocessing
+  const preprocessed = text
+    .replace(/([a-z])([A-Z])/g, '$1 $2') // camelCase -> camel Case
+    .replace(/[-_]/g, ' ') // hyphens and underscores to spaces
+    .toLowerCase()
+  
+  const tokens = tokenizer.tokenize(preprocessed) || []
+  
+  // Filter out very common English words (minimal stop word list)
+  const commonWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+    'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
+    'between', 'among', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
+    'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can',
+    'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him',
+    'her', 'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our', 'their'
+  ])
+  
+  // Filter and score tokens
+  const filteredTokens = tokens.filter(token => {
+    // Always include long technical terms (likely domain-specific)
+    if (token.length >= 6) return /^[a-zA-Z]/.test(token)
+    
+    // For shorter terms, filter out common words and ensure minimum length
+    return token.length >= minLength && 
+           /^[a-zA-Z]/.test(token) && 
+           !commonWords.has(token)
+  })
+  
+  // Calculate term frequencies
+  const termFrequencies = new Map<string, number>()
+  filteredTokens.forEach(token => {
+    termFrequencies.set(token, (termFrequencies.get(token) || 0) + 1)
+  })
+  
+  // Score terms based on frequency and length
+  const scoredTerms = Array.from(termFrequencies.entries()).map(([term, freq]) => ({
+    term,
+    score: freq * Math.log(term.length) // Favor longer, more frequent terms
+  }))
+  
+  // Sort by score and return top terms
+  const significantTerms = scoredTerms
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(5, Math.ceil(scoredTerms.length * 0.4))) // Top 40% or at least 5 terms
+    .map(item => item.term)
+  
+  // Fallback to most frequent terms if scoring doesn't yield good results
+  if (significantTerms.length === 0) {
+    return Array.from(termFrequencies.keys()).slice(0, 10)
+  }
+  
+  return significantTerms
+}
+
 export function filterOnTopicPapers(
   papers: PaperWithAuthors[],
   topic: string,
-  options?: { permissive?: boolean }
+  options?: { permissive?: boolean; minScore?: number }
 ): PaperWithAuthors[] {
   const permissive = !!options?.permissive;
-  
-  const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'for', 'to', 'with', 'by', 'from', 'as', 'into', 'like', 'through', 'after', 'over', 'between', 'out', 'against', 'during', 'without', 'before', 'under', 'around', 'among']);
-  const britishAmericanMap: Record<string, string> = { 'modelling': 'modeling' };
+  const minScore = options?.minScore ?? 0.05; // Stricter default min score
 
-  const topicTokens = topic
-    .toLowerCase()
-    .split(/\W+/)
-    .filter(tok => tok.length > 2 && !stopWords.has(tok))
-    .map(tok => britishAmericanMap[tok] || tok)
+  // Titles that are definitely not research papers
+  const junkTitles = new Set(['acknowledgments', 'copyright', 'index', 'table of contents', 'front matter', 'back matter']);
 
-  if (topicTokens.length === 0) return papers
+  // Use more flexible term extraction instead of hardcoded stop words
+  const topicTerms = extractSignificantTerms(topic)
   
-  // 2. Precompute regexes for whole-word matching
-  const tokenRegexes = topicTokens.map(
-    tok => new RegExp(`\\b${tok}\\b`, 'i')
+  if (topicTerms.length === 0) return papers
+  
+  // Create regex patterns for whole-word matching
+  const termRegexes = topicTerms.map(
+    term => new RegExp(`\\b${term}\\b`, 'i')
   );
 
   return (papers as PaperWithScores[]).filter(paper => {
     const titleLower = paper.title?.toLowerCase() || '';
+
+    // 1. Filter out junk titles
+    if (junkTitles.has(titleLower)) {
+      console.debug(`🚫 Filtered out junk title: "${paper.title}"`);
+      return false;
+    }
+
     const abstractLower = paper.abstract?.toLowerCase() || '';
     const combinedText = titleLower + ' ' + abstractLower;
 
-    const matches = tokenRegexes.filter(rx => rx.test(combinedText));
-    const hasTwoOrMoreMatches = matches.length >= 2
+    // 2. Count matches with the significant terms
+    const matches = termRegexes.filter(rx => rx.test(combinedText));
+    const matchRatio = matches.length / topicTerms.length
+    
+    // More flexible matching: require at least 30% term overlap for short topics,
+    // or at least 2 matches for longer topics
+    const hasGoodMatch = topicTerms.length <= 3 
+      ? matchRatio >= 0.3
+      : matches.length >= 2
 
-    // 4. Check semantic/keyword scores using helper functions
+    // 3. Check semantic/keyword scores using helper functions
     const { semantic_score: semanticScore, keyword_score: keywordScore } = paper;
     const scoresAreAcceptable = isScoreAcceptable(semanticScore, keywordScore, permissive);
     const scoresAreUnacceptable = hasUnacceptableScores(semanticScore, keywordScore, permissive);
+    
+    // 4. Stricter score check
+    const combinedScore = (semanticScore || 0) + (keywordScore || 0);
+    if (combinedScore < minScore && !hasGoodMatch) {
+       if (process.env.NODE_ENV === 'development') {
+        console.debug(
+          `🚫 Filtered out low score: "${paper.title}" ` +
+            `(combined score: ${combinedScore.toFixed(2)} < ${minScore})`
+        );
+      }
+      return false;
+    }
 
-    // 5. Decision logic: Include if EITHER token match OR acceptable scores
-    // Drop only if NO token match AND scores are unacceptable
-    if (!hasTwoOrMoreMatches && scoresAreUnacceptable) {
-      // Only log if explicitly debugging
+    // Decision logic: Include if EITHER good term match OR acceptable scores
+    // Drop only if NO good match AND scores are unacceptable
+    if (!hasGoodMatch && scoresAreUnacceptable) {
       if (process.env.NODE_ENV === 'development') {
         const scoreInfo = typeof semanticScore === 'number' || typeof keywordScore === 'number'
           ? `semantic: ${semanticScore ?? 'N/A'}, keyword: ${keywordScore ?? 'N/A'}`
           : 'no scores available';
 
         console.debug(
-          `🚫 Filtered out (1-match): "${paper.title}" ` +
-            `(matches: ${matches.length}, ${scoreInfo}, mode: ${permissive ? 'permissive' : 'standard'})`
+          `🚫 Filtered out: "${paper.title}" ` +
+            `(match ratio: ${matchRatio.toFixed(2)}, ${scoreInfo}, mode: ${permissive ? 'permissive' : 'standard'})`
         );
       }
       return false;
@@ -204,8 +309,8 @@ export function filterOnTopicPapers(
 
     // Log inclusion reasoning in debug mode
     if (process.env.NODE_ENV === 'development') {
-      const reason = hasTwoOrMoreMatches
-        ? 'token match'
+      const reason = hasGoodMatch
+        ? `term match (${matchRatio.toFixed(2)})`
         : scoresAreAcceptable
           ? 'acceptable scores'
           : 'default inclusion';

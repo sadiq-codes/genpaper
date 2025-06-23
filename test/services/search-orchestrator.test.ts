@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { unifiedSearch, clearSearchCache, type UnifiedSearchOptions } from '@/lib/services/search-orchestrator'
+import { unifiedSearch, clearSearchCache, type UnifiedSearchOptions } from '@/lib/search'
 import type { PaperWithAuthors } from '@/types/simplified'
 import type { RankedPaper } from '@/lib/services/paper-aggregation'
 

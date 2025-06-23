@@ -1,5 +1,6 @@
 import type { PaperWithAuthors, GenerationConfig, GenerationProgress } from '@/types/simplified'
 import type { CSLItem } from '@/lib/utils/csl'
+import type { PaperTypeKey } from '@/lib/prompts/types'
 
 // Tool call analytics types
 export interface CapturedToolCall {
@@ -29,9 +30,14 @@ export interface EnhancedGenerationOptions {
   projectId: string
   userId: string
   topic: string
+  paperType: PaperTypeKey
+  sourceIds: string[]
   libraryPaperIds?: string[]
   useLibraryOnly?: boolean
-  config: GenerationConfig
+  config: GenerationConfig & {
+    studyDesign?: 'qualitative' | 'quantitative' | 'mixed'
+    fewShot?: boolean
+  }
   onProgress?: (progress: GenerationProgress) => void
 }
 
@@ -43,6 +49,7 @@ export interface GenerationResult {
     positionStart?: number
     positionEnd?: number
     pageRange?: string
+    toolCall?: CapturedToolCall
   }>
   citationsMap: Map<string, CSLItem>
   wordCount: number
@@ -79,4 +86,30 @@ export interface TemplateVars {
   lengthGuidance: string
   paperTypeName: string
   paperTypeDescription: string
+}
+
+// Section types for production generator
+export type SectionKey = 
+  | 'literatureReview'
+  | 'outline'
+  | 'introduction'
+  | 'thematicSection'
+  | 'methodology'
+  | 'results'
+  | 'discussion'
+  | 'conclusion'
+  | 'abstract'
+
+// Production generator configuration
+export interface ProductionGenerationConfig {
+  paperType: PaperTypeKey
+  section: SectionKey
+  topic: string
+  contextChunks: string[]
+  availablePapers: PaperWithAuthors[]
+  expectedWords: number
+  enablePlanning: boolean
+  enableReflection: boolean
+  enableMetrics: boolean
+  onProgress?: (stage: string, progress: number, message: string) => void
 } 

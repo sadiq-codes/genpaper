@@ -1,11 +1,13 @@
 import 'server-only'
-import { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
-import { buildUnifiedPrompt, SectionContext as UnifiedContext } from '@/lib/prompts/unified/prompt-builder'
-import { generateWithUnifiedTemplate } from './unified-generator'
 import { generateSectionPlan, writeFromPlan, PlanningResult, WritingResult } from './planning-chain'
+import { shouldUseReflection } from './policy'
 import { runReflectionCycle } from './reflection-system'
-import { calculateContentMetrics, storeMetrics, GenerationMetrics } from './metrics-system'
-import { estimateTokenCount } from '@/lib/utils/text'
+import { calculateContentMetrics, calculateOverallQuality } from './metrics-system'
+import type { GenerationMetrics } from './metrics-system'
+import type { PaperWithAuthors } from '@/types/simplified'
+import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
+import { generateWithUnifiedTemplate } from './unified-generator'
+import type { SectionContext as UnifiedContext } from '@/lib/prompts/unified/prompt-builder'
 
 /**
  * Production-grade content generator that integrates:
@@ -15,68 +17,46 @@ import { estimateTokenCount } from '@/lib/utils/text'
  * 4. Automated metrics and scoring
  */
 
-// Configurable quality weights (can be overridden via environment)
-const QUALITY_WEIGHTS = {
-  planning_quality: parseFloat(process.env.WEIGHT_PLANNING || '0.20'),
-  writing_quality: parseFloat(process.env.WEIGHT_WRITING || '0.40'),
-  reflection_quality: parseFloat(process.env.WEIGHT_REFLECTION || '0.25'),
-  metrics_score: parseFloat(process.env.WEIGHT_METRICS || '0.15')
-}
-
 export interface ProductionGenerationConfig {
-  // Core generation settings
   paperType: PaperTypeKey
   section: SectionKey
   topic: string
   contextChunks: string[]
-  availablePapers: string[]
-  
-  // Quality settings
+  availablePapers: PaperWithAuthors[]
   expectedWords: number
-  requiredDepthCues: string[]
-  
-  // System settings
   promptVersion?: string
   enablePlanning?: boolean
   enableReflection?: boolean
   maxReflectionCycles?: number
   enableMetrics?: boolean
-  
-  // Callbacks for progress tracking
-  onProgress?: (stage: string, progress: number, message: string, data?: any) => void
+  onProgress?: (stage: string, progress: number, message: string, data?: Record<string, unknown>) => void
 }
 
 export interface ProductionGenerationResult {
-  // Content results
   content: string
   wordCount: number
-  
-  // Generation process data
   planningResult?: PlanningResult
   writingResult?: WritingResult
-  reflectionResult?: {
-    revisions_made: number
-    final_quality_score: number
-    improvement_log: string[]
-  }
-  
-  // Quality metrics
-  metrics?: GenerationMetrics
-  
-  // Performance data
+  reflectionResult?: ReflectionResult
+  final_metrics?: GenerationMetrics
   generation_time_ms: number
   total_tokens_used: number
   model_used: string
   prompt_version: string
-  
-  // Quality assessment
-  quality_score: number // 0-100 composite score
+  quality_score: number
   quality_breakdown: {
     planning_quality: number
     writing_quality: number
     reflection_quality: number
     metrics_score: number
   }
+}
+
+export interface ReflectionResult {
+  final_content: string
+  final_quality_score: number
+  revisions_made: number
+  improvement_log: string[]
 }
 
 /**
@@ -93,10 +73,9 @@ export async function generateSectionProduction(
     contextChunks,
     availablePapers,
     expectedWords,
-    requiredDepthCues,
     promptVersion = 'v1',
     enablePlanning = shouldUsePlanning(expectedWords), // Auto-disable for short sections
-    enableReflection = true,
+    enableReflection = true, // Keep this as a master switch
     maxReflectionCycles = 2,
     enableMetrics = true,
     onProgress
@@ -107,6 +86,7 @@ export async function generateSectionProduction(
     model_used: 'gpt-4o',
     prompt_version: promptVersion,
     total_tokens_used: 0,
+    generation_time_ms: 0,
     quality_breakdown: {
       planning_quality: 0,
       writing_quality: 0,
@@ -120,8 +100,8 @@ export async function generateSectionProduction(
 
   try {
     // Stage 1: Planning (if enabled)
-    const progress = (stage: string, pct: number, msg: string, data?: any) => {
-      const safe = stage==='complete'?100:Math.min(pct,99)
+    const progress = (stage: string, pct: number, msg: string, data?: Record<string, unknown>) => {
+      const safe = stage === 'complete' ? 100 : Math.min(pct, 99)
       onProgress?.(stage, safe, msg, data)
     }
     
@@ -135,7 +115,7 @@ export async function generateSectionProduction(
         topic,
         contextChunks,
         expectedWords,
-        availablePapers
+        availablePapers.map(p => p.id)
       )
       
       result.planningResult = planningResult
@@ -160,23 +140,60 @@ export async function generateSectionProduction(
         topic,
         planningResult.plan,
         contextChunks,
-        availablePapers
+        availablePapers.map(p => p.id)
       )
     } else {
-      // Fallback to direct generation
-      writingResult = await generateDirectly(
+      // Fallback to direct generation using unified template
+      const unifiedContext: UnifiedContext = {
+        projectId: `fallback-${Date.now()}`,
+        sectionId: `fallback-section-${Date.now()}`,
         paperType,
-        section,
-        topic,
-        contextChunks,
-        availablePapers,
-        expectedWords,
-        promptVersion
-      )
+        sectionKey: section,
+        availablePapers: availablePapers.map(p => p.id),
+        contextChunks: contextChunks.map((content, idx) => ({
+          paper_id: availablePapers[idx]?.id || `paper-${idx}`,
+          content
+        }))
+      }
+
+      const unifiedResult = await generateWithUnifiedTemplate({
+        context: unifiedContext,
+        options: {
+          targetWords: expectedWords
+        }
+      })
+
+      writingResult = {
+        content: unifiedResult.content,
+        citations: unifiedResult.citations,
+        qualityMetrics: {
+          outlineAdherence: 0.7, // Default for fallback
+          citationCoverage: unifiedResult.citations.length / Math.max(1, availablePapers.length),
+          argumentStrength: unifiedResult.quality_score / 100
+        }
+      }
+    }
+    
+    // Calculate initial metrics for reflection decision
+    const initialMetrics: GenerationMetrics = {
+      citation_coverage: writingResult.qualityMetrics.citationCoverage,
+      relevance_score: writingResult.qualityMetrics.argumentStrength,
+      verbosity_ratio: 1.0, // Default
+      fact_density: writingResult.qualityMetrics.outlineAdherence,
+      depth_score: writingResult.qualityMetrics.argumentStrength,
+      coherence_score: writingResult.qualityMetrics.outlineAdherence,
+      style_score: 0.8, // Default for initial draft
+      technical_accuracy: writingResult.qualityMetrics.outlineAdherence,
+      source_integration: writingResult.qualityMetrics.citationCoverage,
+      argument_structure: writingResult.qualityMetrics.argumentStrength,
+      readability_score: 0.8, // Default for initial draft
+      jargon_density: 0.5, // Default for initial draft
+      bias_score: 0.8, // Default for initial draft
+      novelty_score: 0.7 // Default for initial draft
     }
     
     result.writingResult = writingResult
-    qualityBreakdown.writing_quality = calculateWritingQualityScore(writingResult)
+    qualityBreakdown.writing_quality = calculateOverallQuality(initialMetrics)
     
     progress('writing', 50, 'Content generated successfully', {
       word_count: writingResult.content.split(' ').length,
@@ -186,111 +203,75 @@ export async function generateSectionProduction(
 
     // Stage 3: Reflection and Improvement (if enabled)
     let finalContent = writingResult.content
-    let reflectionResult: any = undefined
     
     if (enableReflection) {
-      progress('reflection', 60, 'Running reflection and improvement cycle...')
-      
-      reflectionResult = await runReflectionCycle(
-        finalContent,
-        paperType,
+      // Use adaptive reflection system based on section characteristics
+      const reflectionDecision = shouldUseReflection(
         section,
-        topic,
-        availablePapers,
-        contextChunks,
-        maxReflectionCycles
+        expectedWords,
+        initialMetrics
       )
       
-      finalContent = reflectionResult.final_content
-      result.reflectionResult = reflectionResult
-      qualityBreakdown.reflection_quality = Math.min(reflectionResult.final_quality_score, 100)
-      
-      progress('reflection', 75, `Reflection complete: ${reflectionResult.revisions_made} revisions made`, {
-        quality_improvement: reflectionResult.final_quality_score,
-        improvement_log: reflectionResult.improvement_log
-      })
+      if (reflectionDecision.useReflection) {
+        progress('reflection', 60, `Running adaptive reflection cycle: ${reflectionDecision.reason}`)
+        
+        const reflectionResult = await runReflectionCycle(
+          finalContent,
+          paperType,
+          section,
+          topic,
+          availablePapers,
+          contextChunks,
+          reflectionDecision.maxCycles || maxReflectionCycles
+        )
+        
+        finalContent = reflectionResult.final_content
+        result.reflectionResult = reflectionResult
+        qualityBreakdown.reflection_quality = Math.min(reflectionResult.final_quality_score, 100)
+        
+        progress('reflection', 75, `Reflection complete: ${reflectionResult.revisions_made} revisions made`, {
+          quality_improvement: reflectionResult.final_quality_score,
+          improvement_log: reflectionResult.improvement_log,
+          cycles_used: reflectionDecision.maxCycles
+        })
+      } else {
+        progress('reflection', 60, `Skipping reflection: ${reflectionDecision.reason}`)
+        qualityBreakdown.reflection_quality = 75 // Default score when skipping
+      }
     }
 
-    // Stage 4: Metrics Calculation and Storage (if enabled)
-    let metrics: GenerationMetrics | undefined
+    // Stage 4: Final Quality Assessment
     if (enableMetrics) {
-      progress('metrics', 85, 'Calculating quality metrics...')
-      
-      const generationTimeMs = Date.now() - startTime
-      metrics = calculateContentMetrics(
+      const finalMetrics = calculateContentMetrics(
         finalContent,
         topic,
-        availablePapers,
+        availablePapers.map(p => p.id),
         contextChunks,
-        requiredDepthCues
+        []
       )
       
-      result.metrics = metrics
-      qualityBreakdown.metrics_score = calculateMetricsScore(metrics)
+      result.final_metrics = finalMetrics
+      qualityBreakdown.metrics_score = calculateOverallQuality(finalMetrics)
       
-      // Store metrics in database for tracking
-      const sectionId = `${paperType}_${section}_${Date.now()}`
-      const contentWordCount = finalContent.split(' ').length
-      await storeMetrics(
-        sectionId,
-        paperType,
-        section,
-        topic,
-        metrics,
-        generationTimeMs,
-        result.model_used!,
-        promptVersion,
-        contentWordCount
-      )
-      
-      progress('metrics', 90, 'Metrics calculated and stored', {
-        citation_coverage: metrics.citation_coverage,
-        relevance_score: metrics.relevance_score,
-        fact_density: metrics.fact_density
+      progress('metrics', 90, 'Quality assessment complete', {
+        final_quality_score: qualityBreakdown.metrics_score,
+        metrics: finalMetrics
       })
     }
 
-    // Stage 5: Final Quality Assessment
-    progress('finalization', 95, 'Finalizing results...')
-    
-    const generationTime = Date.now() - startTime
-    const tokensUsed = estimateTokenCount(finalContent)
-    result.total_tokens_used = tokensUsed
-    const qualityScore = calculateOverallQualityScore(qualityBreakdown)
-    
-    progress('complete', 100, 'Generation complete!')
+    // Calculate overall quality score
+    const overallQuality = Object.values(qualityBreakdown).reduce((a, b) => a + b, 0) / 4
+    result.quality_score = Math.round(overallQuality)
+    result.generation_time_ms = Date.now() - startTime
+    result.content = finalContent
+    result.wordCount = finalContent.split(' ').length
 
     // Return complete result
-    return {
-      content: finalContent,
-      wordCount: finalContent.split(' ').length,
-      planningResult: result.planningResult,
-      writingResult: result.writingResult,
-      reflectionResult: result.reflectionResult,
-      metrics: result.metrics,
-      generation_time_ms: generationTime,
-      total_tokens_used: result.total_tokens_used || 0,
-      model_used: result.model_used!,
-      prompt_version: promptVersion,
-      quality_score: qualityScore,
-      quality_breakdown: qualityBreakdown
-    } as ProductionGenerationResult
+    return result as ProductionGenerationResult
 
   } catch (error) {
-    console.error('Production generation failed:', error)
-    
-    // Return error result with minimal content
-    const generationTime = Date.now() - startTime
-    return {
-      content: `Error generating ${section} section: ${error}`,
-      wordCount: 0,
-      generation_time_ms: generationTime,
-      total_tokens_used: 0,
-      model_used: result.model_used!,
-      prompt_version: promptVersion,
-      quality_score: 0,
-      quality_breakdown: qualityBreakdown
-    }
+    console.error('Error in production generator:', error)
+    throw error
   }
 }
 
@@ -299,101 +280,6 @@ export async function generateSectionProduction(
  */
 function shouldUsePlanning(expectedWords: number): boolean {
   return expectedWords >= 400 // Disable planning for short sections
-}
-
-/**
- * Fallback direct generation when planning fails
- */
-async function generateDirectly(
-  paperType: PaperTypeKey,
-  section: SectionKey,
-  topic: string,
-  contextChunks: string[],
-  availablePapers: string[],
-  expectedWords: number,
-  promptVersion: string
-): Promise<WritingResult> {
-  
-  // Use unified template approach
-  const unifiedContext: UnifiedContext = {
-    projectId: `fallback-${Date.now()}`,
-    sectionId: `fallback-section-${Date.now()}`,
-    paperType,
-    sectionKey: section,
-    availablePapers,
-    contextChunks: contextChunks.map((content, idx) => ({
-      paper_id: availablePapers[idx] || `paper-${idx}`,
-      content
-    }))
-  }
-
-  const result = await generateWithUnifiedTemplate({
-    context: unifiedContext,
-    options: { targetWords: expectedWords },
-    enableReflection: false, // No reflection for fallback
-    enableDriftDetection: false
-  })
-
-  // Convert unified result to WritingResult format
-  return {
-    content: result.content,
-    citations: result.citations.map(c => ({
-      paperId: c.paperId,
-      citationText: c.citationText
-    })),
-    qualityMetrics: {
-      outlineAdherence: 0.7,
-      citationCoverage: result.citations.length / Math.max(1, availablePapers.length),
-      argumentStrength: result.quality_score / 100
-    }
-  }
-}
-
-/**
- * Calculate writing quality score from writing result
- */
-function calculateWritingQualityScore(writingResult: WritingResult): number {
-  const metrics = writingResult.qualityMetrics
-  
-  // Weighted composite score
-  const score = (
-    metrics.outlineAdherence * 0.4 +
-    metrics.citationCoverage * 0.4 +
-    metrics.argumentStrength * 0.2
-  ) * 100
-  
-  return Math.round(score)
-}
-
-/**
- * Calculate metrics-based quality score
- */
-function calculateMetricsScore(metrics: GenerationMetrics): number {
-  // Weighted composite of key metrics
-  const score = (
-    metrics.citation_coverage * 0.25 +
-    metrics.relevance_score * 0.20 +
-    metrics.fact_density * 0.15 +
-    metrics.depth_cue_coverage * 0.15 +
-    metrics.evidence_integration * 0.15 +
-    Math.min(metrics.argument_complexity, 1.0) * 0.10
-  ) * 100
-  
-  return Math.round(score)
-}
-
-/**
- * Calculate overall quality score from all components (now uses configurable weights)
- */
-function calculateOverallQualityScore(breakdown: ProductionGenerationResult['quality_breakdown']): number {
-  const score = (
-    breakdown.planning_quality * QUALITY_WEIGHTS.planning_quality +
-    breakdown.writing_quality * QUALITY_WEIGHTS.writing_quality +
-    breakdown.reflection_quality * QUALITY_WEIGHTS.reflection_quality +
-    breakdown.metrics_score * QUALITY_WEIGHTS.metrics_score
-  )
-  
-  return Math.round(score)
 }
 
 /**

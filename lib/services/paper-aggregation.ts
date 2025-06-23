@@ -6,16 +6,16 @@ import {
   searchSemanticScholar,
   searchArxiv,
   searchCore,
-  expandKeywords,
   getOpenAccessPdf,
   getPaperReferences
-} from './academic-apis'
+} from '@/lib/services/academic-apis'
 import { ingestPaperWithChunks } from '@/lib/db/papers'
 import type { PaperDTO } from '@/lib/schemas/paper'
 import { PaperSources } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
 import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
 import { createClient as createSB } from '@/lib/supabase/client'
+import { generateQueryRewrites } from '@/lib/search/query-rewrite'
 // Note: randomUUID imported for future use in enhanced temp ID generation
 
 // Enhanced paper type with ranking metadata
@@ -299,7 +299,7 @@ export async function parallelSearch(
   }
   
   // Expand search terms
-  const expandedQueries = expandKeywords(query)
+  const expandedQueries = await generateQueryRewrites(query, 3)
   const primaryQuery = expandedQueries[0]
   
   console.log(`Starting smart sequential search for: "${primaryQuery}"`)

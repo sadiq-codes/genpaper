@@ -2,7 +2,7 @@ import 'server-only'
 import { streamText } from 'ai'
 import { ai } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, checkTopicDrift, type SectionContext, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
-import { runReflectionCycle } from './reflection-system'
+import { runReflectionCycle, shouldUseReflection } from './reflection-system'
 import { calculateContentMetrics, storeMetrics } from './metrics-system'
 import { addCitation } from '@/lib/ai/tools/addCitation'
 import { estimateTokenCount } from '@/lib/utils/text'
@@ -113,8 +113,12 @@ export async function generateWithUnifiedTemplate(
     })
 
     let content = ''
+    let toolCalls: any[] = []
     for await (const delta of result.textStream) {
       content += delta
+      if (delta.toolCall) {
+        toolCalls.push(delta.toolCall)
+      }
     }
 
     // Extract token usage from result (if available from SDK)
@@ -128,8 +132,20 @@ export async function generateWithUnifiedTemplate(
 
     progress('generation', 50, 'Content generated successfully', {
       word_count: content.split(' ').length,
-      character_count: content.length
+      character_count: content.length,
+      tool_calls: toolCalls.length
     })
+
+    // Extract citations from tool calls
+    const citations = toolCalls
+      .filter(tc => tc.name === 'addCitation')
+      .map(tc => ({
+        paperId: tc.result.citationId,
+        citationText: tc.result.replacement,
+        positionStart: tc.args.start_pos,
+        positionEnd: tc.args.end_pos,
+        toolCall: tc
+      }))
 
     // Stage 3: Topic drift detection (if enabled)
     let driftCheck: UnifiedGenerationResult['driftCheck'] = undefined
@@ -150,30 +166,36 @@ export async function generateWithUnifiedTemplate(
     let reflectionResult: UnifiedGenerationResult['reflectionResult'] = undefined
     
     if (enableReflection && !options.sentenceMode) {
-      progress('reflection', 70, 'Running reflection cycle...')
+      // Use adaptive reflection system
+      const reflectionDecision = shouldUseReflection(content, context.sectionKey)
       
-      reflectionResult = await runReflectionCycle(
-        finalContent,
-        context.paperType,
-        context.sectionKey,
-        `${context.paperType} section`, // Topic approximation
-        context.availablePapers,
-        context.contextChunks.map(c => c.content),
-        maxReflectionCycles
-      )
-      
-      finalContent = reflectionResult.final_content
-      
-      progress('reflection', 85, `Reflection complete: ${reflectionResult.revisions_made} revisions`, {
-        quality_score: reflectionResult.final_quality_score,
-        revisions: reflectionResult.revisions_made
-      })
+      if (reflectionDecision.useReflection) {
+        progress('reflection', 70, `Running adaptive reflection cycle: ${reflectionDecision.reason}`)
+        
+        reflectionResult = await runReflectionCycle(
+          finalContent,
+          context.paperType,
+          context.sectionKey,
+          `${context.paperType} section`, // Topic approximation
+          context.availablePapers,
+          context.contextChunks.map(c => c.content),
+          reflectionDecision.maxCycles // Use adaptive cycle count
+        )
+        
+        finalContent = reflectionResult.final_content
+        
+        progress('reflection', 85, `Reflection complete: ${reflectionResult.revisions_made} revisions`, {
+          quality_score: reflectionResult.final_quality_score,
+          revisions: reflectionResult.revisions_made
+        })
+      } else {
+        progress('reflection', 70, `Skipping reflection: ${reflectionDecision.reason}`)
+      }
     }
 
     // Stage 5: Extract citations and calculate metrics
     progress('finalization', 90, 'Extracting citations and calculating metrics...')
     
-    const citations = extractCitationsFromContent(finalContent, context.availablePapers)
     const generationTime = Date.now() - startTime
     
     // Calculate simple quality score
@@ -338,31 +360,6 @@ async function getProjectSummaryForDrift(projectId: string): Promise<{ previousS
   return {
     previousSummary: 'Project summary for drift detection not yet implemented. All similarity checks will return 1.0 (no drift detected).'
   }
-}
-
-function extractCitationsFromContent(
-  content: string,
-  validPaperIds: string[]
-): Array<{ paperId: string; citationText: string; positionStart?: number; positionEnd?: number }> {
-  const citations: Array<{ paperId: string; citationText: string; positionStart?: number; positionEnd?: number }> = []
-  
-  // Look for [CITE:paperId] patterns
-  const citationRegex = /\[CITE:([^\]]+)\]/g
-  let match
-  
-  while ((match = citationRegex.exec(content)) !== null) {
-    const paperId = match[1]
-    if (validPaperIds.includes(paperId)) {
-      citations.push({
-        paperId,
-        citationText: match[0],
-        positionStart: match.index,
-        positionEnd: match.index + match[0].length
-      })
-    }
-  }
-  
-  return citations
 }
 
 function calculateUnifiedQualityScore(params: {

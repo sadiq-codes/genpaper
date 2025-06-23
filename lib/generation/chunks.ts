@@ -1,8 +1,22 @@
+// Re-export functions from centralized modules
+export {
+  getContentStatus,
+  checkContentAvailability,
+  ensureBulkContentIngestion,
+  ContentRetrievalError,
+  NoRelevantContentError,
+  ContentQualityError
+} from '@/lib/content'
+
+export {
+  getRelevantChunks,
+  assertChunksFound
+} from './rag-retrieval'
+
+// Keep citation-specific functionality in this file
 import { searchPaperChunks } from '@/lib/db/papers'
-import { getSB } from '@/lib/supabase/server'
-import { ingestPaperWithChunks } from '@/lib/db/papers'
 import type { PaperWithAuthors, GenerationConfig } from '@/types/simplified'
-import type { PaperChunk, PaperWithEvidence } from './types'
+import type { PaperWithEvidence } from './types'
 import { 
   getMinCitationCoverage, 
   getMinCitationFloor, 
@@ -11,213 +25,26 @@ import {
 } from './config'
 import { debug } from '@/lib/utils/logger'
 import type { GeneratedOutline, OutlineSection } from '@/lib/prompts/types'
+import { createHash } from 'crypto'
 
-export async function ensureChunksForPapers(papers: PaperWithAuthors[]): Promise<void> {
-  // Check if papers have chunks, create them if missing (for papers added via Library Manager)
-  const papersNeedingChunks = []
-  const supabase = await getSB()
-  
-  for (const paper of papers) {
-    const { data: existingChunks, error } = await supabase
-      .from('paper_chunks')
-      .select('id')
-      .eq('paper_id', paper.id)
-      .limit(1)
-    
-    if (error || !existingChunks || existingChunks.length === 0) {
-      papersNeedingChunks.push(paper)
-    }
-  }
-  
-  if (papersNeedingChunks.length === 0) {
-    console.log('✅ All papers already have chunks')
-    return
-  }
-  
-  console.log(`📄 ${papersNeedingChunks.length} papers need chunk processing for generation`)
-  
-  // Process each paper that needs chunks
-  for (const paper of papersNeedingChunks) {
-    try {
-      console.log(`📄 Processing chunks for: ${paper.title}`)
-      
-             // Check if paper has PDF content or full text
-       let contentToChunk = ''
-       
-       // First, try to get stored PDF content (from tiered extraction)
-       try {
-         const { getPDFContent } = await import('@/lib/services/pdf-downloader')
-         const pdfContent = await getPDFContent(paper.id)
-         if (pdfContent && pdfContent.length > 100) {
-           console.log(`📄 Using stored PDF content for: ${paper.title} (${pdfContent.length} chars)`)
-           contentToChunk = pdfContent
-         } else {
-           console.log(`📄 No stored PDF content found for: ${paper.title}`)
-         }
-       } catch (pdfError) {
-         console.warn(`⚠️ Failed to get PDF content for ${paper.title}:`, pdfError)
-       }
-       
-       // Fallback to abstract if no PDF content
-       if (!contentToChunk && paper.abstract) {
-         console.log(`📄 Using abstract as content for: ${paper.title}`)
-         contentToChunk = paper.abstract
-       }
-      
-      // If we have content, perform full ingestion with chunks
-      if (contentToChunk) {
-        // Split content into chunks
-        const chunks = splitIntoChunks(contentToChunk)
-        
-        // Convert paper to PaperDTO format for ingestion
-        const paperDTO = {
-          title: paper.title,
-          abstract: paper.abstract,
-          publication_date: paper.publication_date,
-          venue: paper.venue,
-          doi: paper.doi,
-          url: paper.url,
-          pdf_url: paper.pdf_url,
-          metadata: paper.metadata || {},
-          source: 'generation_processing',
-          citation_count: paper.citation_count || 0,
-          impact_score: paper.impact_score || 0,
-          authors: paper.author_names || []
-        }
-        
-        // Perform full ingestion with chunks
-        await ingestPaperWithChunks(paperDTO, chunks)
-        console.log(`✅ Chunks created for: ${paper.title} (${chunks.length} chunks)`)
-      } else {
-        console.warn(`⚠️ No content available for chunking: ${paper.title}`)
-      }
-    } catch (error) {
-      console.error(`❌ Failed to create chunks for ${paper.title}:`, error)
-    }
-  }
-  
-  console.log(`✅ Chunk processing completed for ${papersNeedingChunks.length} papers`)
+interface PaperChunk {
+  id: string
+  paper_id: string
+  content: string
+  metadata: Record<string, unknown>
+  score: number
 }
 
-// Helper function to split content into chunks
-function splitIntoChunks(content: string, maxChunkSize: number = 8000, overlapSize: number = 200): string[] {
-  const chunks: string[] = []
-  const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 0)
+// Helper function to create deterministic chunk IDs
+function createDeterministicChunkId(paperId: string, content: string, index?: number): string {
+  const contentHash = createHash('sha256')
+    .update(content.substring(0, 100)) // Use first 100 chars for hash
+    .digest('hex')
+    .substring(0, 8) // Take first 8 chars of hash
   
-  let currentChunk = ''
-  
-  for (const sentence of sentences) {
-    const trimmedSentence = sentence.trim()
-    if (!trimmedSentence) continue
-    
-    const potentialChunk = currentChunk + (currentChunk ? '. ' : '') + trimmedSentence
-    
-    if (potentialChunk.length <= maxChunkSize) {
-      currentChunk = potentialChunk
-    } else {
-      // Current chunk is full, save it and start new one
-      if (currentChunk) {
-        chunks.push(currentChunk + '.')
-        
-        // Start new chunk with overlap
-        const words = currentChunk.split(' ')
-        const overlapWords = words.slice(-Math.floor(overlapSize / 6)) // Rough word count estimate
-        currentChunk = overlapWords.join(' ') + '. ' + trimmedSentence
-      } else {
-        // Single sentence is too long, split it
-        currentChunk = trimmedSentence
-      }
-    }
-  }
-  
-  // Add final chunk
-  if (currentChunk) {
-    chunks.push(currentChunk + '.')
-  }
-  
-  return chunks.filter(chunk => chunk.trim().length > 100) // Filter out very short chunks
-}
-
-export async function getRelevantChunks(
-  topic: string, 
-  paperIds: string[], 
-  chunkLimit: number
-): Promise<PaperChunk[]> {
-  console.log(`📄 Searching for relevant content chunks...`)
-  console.log(`   🎯 Query: "${topic}"`)
-  console.log(`   📋 Paper IDs: [${paperIds.join(', ')}]`)
-  console.log(`   📊 Chunk Limit: ${chunkLimit}`)
-  console.log(`   🎯 Min Score: 0.3`)
-  
-  // --- Adaptive multi-pass retrieval ------------------------------------
-  const attempts: Array<{ minScore?: number; label: string }> = [
-    { minScore: GENERATION_DEFAULTS.CHUNK_MIN_SCORE_INITIAL, label: 'initial' },
-    { minScore: GENERATION_DEFAULTS.CHUNK_MIN_SCORE_FALLBACK, label: 'fallback-low-score' },
-    { minScore: undefined, label: 'fallback-no-score' }
-  ]
-
-  let allChunks: PaperChunk[] = []
-  let firstError: unknown = null
-
-  for (const attempt of attempts) {
-    console.log(`📄 Chunk search attempt (${attempt.label}) with minScore=${attempt.minScore ?? 'none'}`)
-    const attemptChunks = await searchPaperChunks(topic, {
-      // Pass paperIds only on the first attempt—later passes drop the filter in case
-      // the ingestion layer stored chunks under a different deterministic UUID.
-      paperIds: attempt.label === 'initial' ? paperIds : undefined,
-      limit: chunkLimit,
-      minScore: attempt.minScore
-    }).catch((error: unknown) => {
-      console.warn(`⚠️ Content chunks search failed on ${attempt.label}:`, error)
-      if (!firstError) firstError = error
-      return []
-    })
-
-    if (attemptChunks.length > 0) {
-      allChunks = attemptChunks
-      break
-    }
-  }
-
-  if (allChunks.length === 0 && firstError) {
-    throw firstError
-  }
-  console.log(`📄 Content Chunks Retrieved: ${allChunks.length}`)
-  if (process.env.NODE_ENV === 'development') {
-    allChunks.forEach((chunk, idx) => {
-      console.log(`   ${idx + 1}. Paper: ${chunk.paper_id}`)
-      console.log(`      Content: "${chunk.content?.substring(0, 100) || 'N/A'}..."`)
-      console.log(`      Score: ${chunk.score || 'N/A'}`)
-    })
-  }
-
-  // 🔀 Balance chunks across papers so one long paper does not dominate context
-  // Compute a dynamic per-paper cap: at least 2, otherwise proportional to total limit
-  const perPaperCap = Math.max(2, Math.floor(chunkLimit / Math.max(1, paperIds.length)))
-  const balanced: PaperChunk[] = []
-  const counts = new Map<string, number>()
-  const seen = new Set<string>()
-  for (const chunk of allChunks) {
-    if (balanced.length >= chunkLimit) break
-    const current = counts.get(chunk.paper_id) || 0
-    if (current >= perPaperCap) continue
-    balanced.push(chunk)
-    seen.add(chunk.content)
-    counts.set(chunk.paper_id, current + 1)
-  }
-
-  if (balanced.length < chunkLimit) {
-    // If we did not reach the desired limit (e.g., few unique papers), fill with remaining chunks
-    for (const chunk of allChunks) {
-      if (balanced.length >= chunkLimit) break
-      if (seen.has(chunk.content)) continue
-      balanced.push(chunk)
-      seen.add(chunk.content)
-    }
-  }
-
-  console.log(`📄 Balanced Chunks (perPaperCap = ${perPaperCap}): ${balanced.length}`)
-  return balanced
+  return index !== undefined 
+    ? `chunk-${paperId}-${index}-${contentHash}`
+    : `chunk-${paperId}-${contentHash}`
 }
 
 export async function addEvidenceBasedCitations(
@@ -246,7 +73,7 @@ export async function addEvidenceBasedCitations(
   const minCitations = Math.max(minCitationFloor, Math.floor(papers.length * coverageTarget))
   const currentCitations = citedPaperIds.size
   
-  // 🔥 NEW: Check if we have author-year citations (indicating tool citations are working)
+  // Check if we have author-year citations (indicating tool citations are working)
   const authorYearCitations = content.match(/\([A-Za-z][^)]*,\s*\d{4}\)/g) || []
   const hasToolCitations = authorYearCitations.length > 0
   
@@ -271,11 +98,17 @@ export async function addEvidenceBasedCitations(
     if (chunks.length === 0) {
       try {
         console.log('🔄 No RAG chunks available – performing blind chunk search for evidence')
-        const fallbackChunks = await searchPaperChunks(papers[0]?.title ?? '', {
+        const fallbackChunks = (await searchPaperChunks(papers[0]?.title ?? '', {
           paperIds: papers.map(p => p.id),
           limit: 40,
           minScore: GENERATION_DEFAULTS.CHUNK_MIN_SCORE_FALLBACK
-        })
+        })).map(result => ({
+          id: createDeterministicChunkId(result.paper_id, result.content),
+          paper_id: result.paper_id,
+          content: result.content,
+          metadata: { source: 'chunk_search' },
+          score: result.score
+        }))
         chunks = fallbackChunks
       } catch (e) {
         console.warn('⚠️ Fallback chunk search failed:', e)
@@ -323,9 +156,6 @@ export async function addEvidenceBasedCitations(
           continue
         }
         
-        const authors = paper.author_names?.length ? paper.author_names[0] : "Unknown"
-        const year = paper.publication_date ? new Date(paper.publication_date).getFullYear() : undefined
-        
         // Improve evidence summary quality - clean and truncate properly  
         const rawContent = chunk!.content || ''
         const cleanedContent = rawContent
@@ -347,7 +177,7 @@ export async function addEvidenceBasedCitations(
         }
         
         // Create evidence-based sentence with direct paper citation
-        const evidenceText = `\n\n${evidenceSummary} (${authors}, ${year || 'n.d.'}) [CITE:${paper.id}].`
+        const evidenceText = `\n\n${evidenceSummary} [CITE:${paper.id}].`
         
         // Use the exact section title from the outline to find the insertion point
         const litReviewSection = outline.sections.find((s: OutlineSection) => s.sectionKey === 'literatureReview');
@@ -399,7 +229,7 @@ export async function addEvidenceBasedCitations(
     console.log(`✅ Citation coverage adequate (${currentCitations}/${adjustedMinCitations})`)
   }
 
-  // ---------- Secondary citations from reference lists ----------
+  // Secondary citations from reference lists
   if (referencesByPaper && currentCitations + addedEvidenceCitations < adjustedMinCitations) {
     const needed = adjustedMinCitations - (currentCitations + addedEvidenceCitations)
     let added = 0
@@ -423,15 +253,5 @@ export async function addEvidenceBasedCitations(
   return {
     enhancedContent,
     addedCitationsCount: addedEvidenceCitations
-  }
-}
-
-// Fail fast helper when chunks remain empty after adaptive attempts
-export function assertChunksFound(chunks: PaperChunk[], context: string): void {
-  if (chunks.length === 0) {
-    throw new Error(
-      `RAG failed: no content chunks found for ${context}. ` +
-      `Ensure papers are ingested with chunks or disable paperId filtering.`
-    )
   }
 } 

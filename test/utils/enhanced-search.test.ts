@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { unifiedSearch } from '@/lib/services/search-orchestrator'
+import { unifiedSearch } from '@/lib/search'
 import type { PaperWithAuthors } from '@/types/simplified'
 
 // Mock the dependencies

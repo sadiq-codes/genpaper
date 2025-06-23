@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { generateSectionsAsBlocks } from '@/lib/generation/block-runner'
 import { collectPapers } from '@/lib/generation/discovery'
-import { ensureChunksForPapers, getRelevantChunks } from '@/lib/generation/chunks'
+import { ensureBulkContentIngestion } from '@/lib/content'
+import { getRelevantChunks } from '@/lib/generation/chunks'
 import { generateOutline } from '@/lib/prompts/generators'
 import { mergeWithDefaults } from '@/lib/generation/config'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
@@ -94,8 +95,9 @@ export async function POST(request: NextRequest) {
             message: `Found ${allPapers.length} papers`
           }) + '\n'))
 
-          // Step 2: Ensure chunks and generate outline
-          await ensureChunksForPapers(allPapers)
+          // Step 2: Ensure content is available for generation
+          console.log(`📄 Ensuring content availability for ${allPapers.length} papers...`)
+          await ensureBulkContentIngestion(allPapers)
           
           const outline = await generateOutline(
             config.paper_settings?.paperType || 'researchArticle',

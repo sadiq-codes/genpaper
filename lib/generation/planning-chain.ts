@@ -23,6 +23,7 @@ export interface SectionPlan {
   key_arguments: string[]
   estimated_paragraphs: number
   quality_checks: string[]
+  quality_criteria?: string[]
 }
 
 export interface PlanningResult {
@@ -72,7 +73,7 @@ function parseJsonResponse(text: string): SectionPlan {
 }
 
 /**
- * Step 1: Generate a structured plan for the section
+ * Step 1: Generate a structured plan for the section with dynamic quality criteria
  */
 export async function generateSectionPlan(
   paperType: PaperTypeKey,
@@ -82,6 +83,24 @@ export async function generateSectionPlan(
   expectedWords: number,
   availablePapers: string[]
 ): Promise<PlanningResult> {
+  
+  // First, generate discipline-specific quality criteria for this section
+  const { generateQualityCriteria } = await import('@/lib/prompts/generators')
+  
+  let qualityCriteria: string[] = []
+  try {
+    // Generate dynamic quality criteria based on the topic, section, and paper type
+    qualityCriteria = await generateQualityCriteria(
+      topic,
+      section,
+      paperType
+    )
+    console.log(`✨ Generated quality criteria for ${section}:`, qualityCriteria)
+  } catch (error) {
+    console.warn(`Failed to generate quality criteria for ${section}:`, error)
+    // Fallback to basic criteria
+    qualityCriteria = ['evidence-based reasoning', 'logical coherence', 'scholarly depth']
+  }
   
   const planningPrompt = {
     system: `You are an expert academic writer creating a structured plan for a ${section} section.
@@ -93,16 +112,22 @@ The JSON must include:
 2. "citation_plan": Array of objects with "placeholder", "need", and optional "target_papers"
 3. "key_arguments": Array of main arguments to develop
 4. "estimated_paragraphs": Number of paragraphs needed
-5. "quality_checks": Array of quality criteria to verify
+5. "quality_checks": Array of specific ways you will address the quality criteria
+6. "quality_criteria": Array of the quality criteria that guided this plan
 
 Use placeholders like [A], [B], [C] for citations. Ensure the plan is feasible given the available papers and context.`,
 
     user: `Create a structured plan for the ${section} section on "${topic}".
 
+QUALITY CRITERIA FOR THIS SECTION:
+The following quality criteria must be addressed in this section:
+${qualityCriteria.map(c => `• ${c}`).join('\n')}
+
 Available papers: ${availablePapers.join(', ')}
 Context snippets: ${contextChunks.slice(0, 3).join('; ')}
 Target length: ${expectedWords} words
 
+Your plan must demonstrate how it will address each quality criterion listed above.
 Respond with valid JSON only.`
   }
 
@@ -131,6 +156,12 @@ Respond with valid JSON only.`
     }
     
     const plan = parseJsonResponse(planText)
+    
+    // Ensure the plan includes the quality criteria for later use
+    if (!plan.quality_criteria) {
+      plan.quality_criteria = qualityCriteria
+    }
+    
     const validation = validatePlan(plan, availablePapers)
 
     return {
@@ -142,7 +173,7 @@ Respond with valid JSON only.`
   } catch (error) {
     console.error('Error generating section plan:', error)
     return {
-      plan: createFallbackPlan(section, expectedWords, topic),
+      plan: createFallbackPlan(section, expectedWords, topic, qualityCriteria),
       isValid: false,
       validationErrors: [`Planning failed: ${error}`]
     }
@@ -318,7 +349,7 @@ function validatePlan(
 /**
  * Create a fallback plan when JSON planning fails (enhanced with topic keywords)
  */
-function createFallbackPlan(section: SectionKey, expectedWords: number, topic: string): SectionPlan {
+function createFallbackPlan(section: SectionKey, expectedWords: number, topic: string, qualityCriteria: string[]): SectionPlan {
   const baseParagraphs = Math.max(3, Math.ceil(expectedWords / 150))
   const topicKeywords = topic.split(' ').slice(0, 2).join(' ') // Use first two words of topic
   
@@ -343,7 +374,8 @@ function createFallbackPlan(section: SectionKey, expectedWords: number, topic: s
       'Clear logical flow',
       'Adequate citation support',
       'Strong evidence base'
-    ]
+    ],
+    quality_criteria: qualityCriteria
   }
 }
 

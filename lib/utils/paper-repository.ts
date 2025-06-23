@@ -7,6 +7,7 @@
 
 import { getSB } from '@/lib/supabase/server'
 import type { RegionDetectionResult } from './global-region-detection'
+import { generatePaperUUID } from '@/lib/db/papers'
 
 // Lazy-loaded Supabase client to avoid calling cookies() at import time
 let supabaseClient: Awaited<ReturnType<typeof getSB>> | null = null
@@ -88,10 +89,18 @@ export async function createPaper(params: CreatePaperParams): Promise<string> {
   try {
     const supabase = await getSupabase()
     
-    // Insert paper record
+    // Build deterministic UUID (use DOI when available)
+    const uuidInput = data.doi && data.doi.trim() !== ''
+      ? data.doi
+      : `${data.title}|${(data.authors && data.authors.length > 0) ? data.authors[0] : ''}|${data.year || ''}`
+
+    const paperIdDeterministic = generatePaperUUID(uuidInput)
+
+    // Upsert paper record with deterministic ID to avoid duplicates / mismatches
     const { data: paperData, error: paperError } = await supabase
       .from('papers')
-      .insert({
+      .upsert({
+        id: paperIdDeterministic,
         title: data.title,
         authors: data.authors,
         abstract: data.abstract,
@@ -103,6 +112,9 @@ export async function createPaper(params: CreatePaperParams): Promise<string> {
         metadata: data.metadata,
         content: data.content,
         embedding: data.embedding
+      }, {
+        onConflict: 'id',
+        ignoreDuplicates: true
       })
       .select('id')
       .single()

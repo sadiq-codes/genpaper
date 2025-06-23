@@ -59,4 +59,18 @@ export function sanitizeBibliography(dirty: string): string {
     console.error('Bibliography sanitization failed:', error)
     return dirty.replace(/<[^>]*>/g, '')
   }
+}
+
+/**
+ * Sanitize a string for logging by removing characters that could be used for log injection.
+ * This is NOT for preventing XSS. It's to ensure log integrity.
+ */
+export function sanitizeForLogs(input: string): string {
+  if (!input) {
+    return ''
+  }
+  // Remove newlines, carriage returns, and other control characters
+  // that could be used to forge log entries.
+  // eslint-disable-next-line no-control-regex
+  return input.replace(/[\r\n\x00-\x1F\x7F]/g, '')
 } 

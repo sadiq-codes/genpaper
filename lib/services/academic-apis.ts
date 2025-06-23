@@ -20,13 +20,43 @@ export interface SearchOptions {
   openAccessOnly?: boolean
   fastMode?: boolean
   desired?: number // Target number of results to collect before stopping
+  includeOtherTypes?: boolean // Include books, datasets, etc.
 }
 
 // Import shared hash utility
-import { collisionResistantHash } from '@/lib/utils/hash'
 import { PaperSource } from '@/types/simplified'
 import { XMLParser } from 'fast-xml-parser'
 import pLimit from 'p-limit'
+import { formatDateForAPI, createCanonicalId, deduplicate } from '@/lib/utils/paper-id'
+import { openalexAdapter } from '@/lib/services/adapters/openalex'
+import { crossrefAdapter } from '@/lib/services/adapters/crossref'
+import { semanticScholarAdapter } from '@/lib/services/adapters/semantic_scholar'
+import { arxivAdapter } from '@/lib/services/adapters/arxiv'
+import { coreAdapter } from '@/lib/services/adapters/core'
+
+// OpenAlex publication types - using correct names per API docs
+// Note: OpenAlex uses different type names than Crossref
+const PUBLICATION_TYPES = [
+  'article',      // journal articles, conference papers
+  'preprint',     // preprints and working papers
+] as const;
+
+const OTHER_PUBLICATION_TYPES = [
+  'book',
+  'book-chapter', 
+  'dissertation',
+  'dataset',
+  'editorial',
+  'erratum',
+  'letter',
+  'review'
+] as const;
+
+// Contact email validation
+const CONTACT_EMAIL = process.env.CONTACT_EMAIL || process.env.EMAIL;
+if (!CONTACT_EMAIL) {
+  console.warn('⚠️ CONTACT_EMAIL not set - OpenAlex searches may fail. Set CONTACT_EMAIL or EMAIL environment variable.');
+}
 
 // API Response interfaces for better typing
 interface OpenAlexWork {
@@ -46,6 +76,10 @@ interface OpenAlexWork {
 
 interface OpenAlexResponse {
   results: OpenAlexWork[]
+  meta?: {
+    count: number
+    next_cursor?: string
+  }
 }
 
 interface CrossrefItem {
@@ -165,7 +199,7 @@ async function retryWithBackoff<T>(
   const actualMinTimeout = fastMode ? 200 : minTimeout
   const actualMaxTimeout = fastMode ? 2000 : maxTimeout
   
-  let lastError: Error
+  let lastError: Error | undefined
   
   for (let attempt = 0; attempt <= actualRetries; attempt++) {
     try {
@@ -200,113 +234,81 @@ async function retryWithBackoff<T>(
       }
       
       if (attempt === actualRetries) {
-        throw lastError
+        break
       }
     }
   }
   
-  throw lastError!
+  throw lastError || new Error('Retry failed with unknown error')
 }
 
-// Improved date formatting
-function formatDateForAPI(year: number, month = 1, day = 1): string {
-  const date = new Date(Date.UTC(year, month - 1, day))
-  return date.toISOString().split('T')[0]
-}
-
-// Helper function to create canonical ID for deduplication
-function createCanonicalId(title: string, year?: number, doi?: string, source?: string): string {
-  let input: string
-  
-  if (doi) {
-    input = doi
-      .toLowerCase()
-      .replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
-      .trim()
-  } else {
-    const normalizedTitle = title.toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-    input = `${normalizedTitle}${year || ''}${source || ''}`
-  }
-  
-  return collisionResistantHash(input)
-}
-
-// Deduplication helper
-function deduplicate(papers: AcademicPaper[]): AcademicPaper[] {
-  const seen = new Set<string>()
-  const deduped: AcademicPaper[] = []
-  
-  for (const paper of papers) {
-    if (!seen.has(paper.canonical_id)) {
-      seen.add(paper.canonical_id)
-      deduped.push(paper)
-    }
-  }
-  
-  return deduped
-}
-
-// Helper function to de-invert OpenAlex abstract
+// Utility to reconstruct abstract from OpenAlex inverted index
 function deInvertAbstract(invertedIndex: Record<string, number[]>): string {
-  const words: Array<{word: string, positions: number[]}> = []
+  const words: Array<{ word: string; position: number }> = []
   
   for (const [word, positions] of Object.entries(invertedIndex)) {
-    words.push({ word, positions })
-  }
-  
-  words.sort((a, b) => Math.min(...a.positions) - Math.min(...b.positions))
-  
-  // Pre-size array to avoid memory issues
-  const maxPos = Math.max(...words.flatMap(w => w.positions))
-  const result = new Array<string>(maxPos + 1).fill('')
-  
-  for (const {word, positions} of words) {
-    for (const pos of positions.sort((a, b) => a - b)) {
-      result[pos] = word
+    for (const position of positions) {
+      words.push({ word, position })
     }
   }
   
-  return result.join(' ').replace(/\s+/g, ' ').trim()
+  return words
+    .sort((a, b) => a.position - b.position)
+    .map(item => item.word)
+    .join(' ')
 }
 
-// OpenAlex API integration
+/**
+ * Build OpenAlex filter string with proper syntax
+ */
+function buildOpenAlexFilter(options: SearchOptions): string {
+  const parts: string[] = []
+  
+  if (options.fromYear) {
+    parts.push(`from_publication_date:${formatDateForAPI(options.fromYear)}`)
+  }
+  
+  if (options.toYear) {
+    parts.push(`to_publication_date:${formatDateForAPI(options.toYear, 12, 31)}`)
+  }
+  
+  // ONE type filter with pipe-separated values (OR logic)
+  const types = options.includeOtherTypes 
+    ? [...PUBLICATION_TYPES, ...OTHER_PUBLICATION_TYPES]
+    : PUBLICATION_TYPES
+  parts.push(`type:${types.join('|')}`)
+  
+  if (options.openAccessOnly) {
+    parts.push('is_oa:true')
+  }
+  
+  return parts.join(',')
+}
+
+// OpenAlex API integration with proper filter syntax
 export async function searchOpenAlex(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
-  const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
+  // Early validation
+  if (!CONTACT_EMAIL) {
+    throw new Error('CONTACT_EMAIL environment variable is required for OpenAlex API')
+  }
+  
+  const { limit = 50, fastMode = false } = options
   
   return retryWithBackoff(async () => {
-    let url = `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per_page=${limit}&mailto=${process.env.CONTACT_EMAIL || 'research@example.com'}`
+    const perPage = Math.min(limit, 200) // OpenAlex limit
+    const filters = buildOpenAlexFilter(options)
+    const base = 'https://api.openalex.org/works'
     
-    const filters: string[] = []
-    
-    if (fromYear) {
-      filters.push(`from_publication_date:${formatDateForAPI(fromYear)}`)
-    }
-    
-    if (toYear) {
-      filters.push(`to_publication_date:${formatDateForAPI(toYear, 12, 31)}`)
-    }
-    
-    // Make article type configurable - include more publication types for better coverage
-    filters.push('type:journal-article,type:preprint,type:proceedings-article')
-    
-    if (openAccessOnly) {
-      filters.push('is_oa:true')
-    }
-    
-    if (filters.length > 0) {
-      url += `&filter=${filters.join(',')}`
-    }
-    
-    url += '&sort=cited_by_count:desc'
+    const url = `${base}?search=${encodeURIComponent(query)}` +
+                `&per_page=${perPage}` +
+                `&filter=${encodeURIComponent(filters)}` +
+                `&sort=cited_by_count:desc` +
+                `&mailto=${encodeURIComponent(CONTACT_EMAIL)}`
     
     const data = await fetchJSON<OpenAlexResponse>(url, {
       fastMode,
       headers: {
-        'User-Agent': `GenPaper/1.0 (mailto:${process.env.CONTACT_EMAIL || 'research@example.com'})`,
-        'X-ABS-APP-ID': 'genpaper-dev'
+        'User-Agent': `GenPaper/1.0 (mailto:${CONTACT_EMAIL})`
       }
     })
     
@@ -571,30 +573,6 @@ export async function getOpenAccessPdf(doi: string): Promise<string | null> {
   })
 }
 
-// Expand keywords for better search coverage
-export function expandKeywords(query: string): string[] {
-  const baseQuery = query.trim().toLowerCase()
-  const expanded = [baseQuery]
-  
-  const synonymMap: Record<string, string[]> = {
-    'machine learning': ['ML', 'artificial intelligence', 'AI', 'deep learning'],
-    'artificial intelligence': ['AI', 'machine learning', 'ML', 'deep learning'],
-    'deep learning': ['neural networks', 'machine learning', 'AI'],
-    'natural language processing': ['NLP', 'text processing', 'language models'],
-    'computer vision': ['image processing', 'visual recognition', 'image analysis'],
-    'climate change': ['global warming', 'environmental change', 'climate science'],
-    'quantum computing': ['quantum information', 'quantum mechanics', 'quantum algorithms']
-  }
-  
-  for (const [key, synonyms] of Object.entries(synonymMap)) {
-    if (baseQuery.includes(key)) {
-      expanded.push(...synonyms.map(s => baseQuery.replace(key, s)))
-    }
-  }
-  
-  return Array.from(new Set(expanded))
-}
-
 // Main orchestrator function that stops when enough papers are collected
 export async function searchAllSources(
   query: string,
@@ -719,4 +697,12 @@ export async function getPaperReferences(doi?: string, fallbackId?: string): Pro
     refs = await fetchSemanticScholarReferences(fallbackId)
   }
   return refs
-} 
+}
+
+export const adapters = [
+  openalexAdapter,
+  crossrefAdapter,
+  semanticScholarAdapter,
+  arxivAdapter,
+  coreAdapter
+] as const; 

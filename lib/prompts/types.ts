@@ -2,7 +2,7 @@
  * Types for prompt templates matching the JSON schema
  */
 
-export type CitationStyle = 'apa' | 'mla' | 'chicago';
+// Citation style removed - system is now citation-agnostic
 
 export interface PromptTemplate {
   systemPrompt: string;
@@ -68,13 +68,13 @@ export interface GeneratedOutline {
   topic: string;
   sections: OutlineSection[];
   totalEstimatedWords?: number;
-  citationStyle?: string;
+  // citationStyle removed - system is now citation-agnostic
   localRegion?: string;
 }
 
 export interface OutlineConfig {
   topic?: string;
-  citationStyle?: 'apa' | 'mla' | 'chicago';
+  // citationStyle removed - system is now citation-agnostic
   pageLength?: number;
   localRegion?: string;
   temperature?: number;
@@ -98,7 +98,7 @@ export interface SectionContext {
 export interface SectionConfig {
   temperature?: number;
   maxTokens?: number;
-  citationStyle?: CitationStyle;
+  // citationStyle removed - system is now citation-agnostic
   localRegion?: string;
   studyDesign?: 'qualitative' | 'quantitative' | 'mixed';
   fewShot?: boolean;
@@ -158,7 +158,7 @@ export interface SectionContent {
 export interface PolishConfig {
   paperType: PaperTypeKey;
   topic: string;
-  citationStyle: CitationStyle;
+  // citationStyle removed - system is now citation-agnostic
   localRegion?: string;
   targetWordCount?: number;
   temperature?: number;

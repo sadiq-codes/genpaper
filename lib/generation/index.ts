@@ -1,321 +1,275 @@
-import { setCitationContext, clearCitationContext } from '@/lib/ai/tools/addCitation'
+import { runWithCitationContext } from '@/lib/ai/tools/addCitation'
 import { debug } from '@/lib/utils/logger'
+import { sanitizeForLogs } from '@/lib/utils/sanitize'
 import { mergeWithDefaults, getChunkLimit } from './config'
 import { extractSections, extractAbstract } from './validators'
 import { collectPapers } from './discovery'
-import { ensureChunksForPapers, getRelevantChunks } from './chunks'
+import { 
+  getRelevantChunks, 
+  ensureBulkContentIngestion,
+  ContentRetrievalError,
+  NoRelevantContentError,
+  ContentQualityError
+} from './chunks'
 import { persistGenerationResults } from './persistence'
-import type { EnhancedGenerationOptions, GenerationResult } from './types'
-import type { SectionContext } from '@/lib/prompts/types'
-import type { CSLItem } from '@/lib/utils/csl'
+import type { 
+  EnhancedGenerationOptions, 
+  GenerationResult, 
+  CapturedToolCall,
+  ProductionGenerationConfig,
+  SectionKey
+} from './types'
+import { buildSectionContexts } from './helpers'
+import type { GeneratedOutline, OutlineSection, PaperTypeKey } from '@/lib/prompts/types'
 
-/**
- * Format citations in the content by replacing [CITE:key] tokens with formatted citations
- */
-async function formatCitations(
-  content: string, 
-  citationsMap: Map<string, CSLItem>, 
-  style: 'apa' | 'mla' = 'apa'
-): Promise<string> {
-  let formattedContent = content;
-  const citationKeys = content.match(/\[CITE:([^\]]+)\]/g) || [];
-
-  console.log(`🔗 Formatting ${citationKeys.length} citation placeholders...`);
-
-  for (const placeholder of citationKeys) {
-    const key = placeholder.replace('[CITE:', '').replace(']', '');
-    const cslData = citationsMap.get(key);
-
-    if (cslData) {
-      // Format citation based on style
-      const formattedCitation = formatCSLToStyle(cslData, style);
-      formattedContent = formattedContent.replace(placeholder, formattedCitation);
-      console.log(`✅ Formatted citation: ${placeholder} -> ${formattedCitation}`);
-    } else {
-      // If key not found, remove the placeholder
-      formattedContent = formattedContent.replace(placeholder, '[CITATION_ERROR]');
-      console.warn(`⚠️ Citation key not found: ${key}`);
-    }
-  }
-
-  // Add a full "References" section at the end
-  const referencesList = Array.from(citationsMap.values())
-    .map(csl => formatCSLToReference(csl, style))
-    .join('\n');
-  
-  if (referencesList) {
-    formattedContent += '\n\n## References\n\n' + referencesList;
-  }
-
-  return formattedContent;
-}
-
-/**
- * Format CSL data to in-text citation
- */
-function formatCSLToStyle(csl: CSLItem, style: 'apa' | 'mla'): string {
-  const author = csl.author?.[0]?.family || 'Unknown';
-  const year = csl.issued?.['date-parts']?.[0]?.[0] || 'n.d.';
-  
-  if (style === 'apa') {
-    return `(${author}, ${year})`;
-  } else {
-    return `(${author} ${year})`;
-  }
-}
-
-/**
- * Format CSL data to reference list entry
- */
-function formatCSLToReference(csl: CSLItem, style: 'apa' | 'mla'): string {
-  const author = csl.author?.[0]?.family || 'Unknown';
-  const year = csl.issued?.['date-parts']?.[0]?.[0] || 'n.d.';
-  const title = csl.title || 'Untitled';
-  const journal = csl['container-title'] || '';
-  const doi = csl.DOI ? `https://doi.org/${csl.DOI}` : '';
-  
-  if (style === 'apa') {
-    return `${author} (${year}). ${title}. ${journal}. ${doi}`;
-  } else {
-    return `${author}. "${title}." ${journal}, ${year}. ${doi}`;
+// Custom error for generation failures
+class GenerationError extends Error {
+  constructor(message: string, public details?: Record<string, unknown>) {
+    super(message)
+    this.name = 'GenerationError'
   }
 }
 
 export async function generateDraftWithRAG(
   options: EnhancedGenerationOptions
 ): Promise<GenerationResult> {
-  const { projectId, userId, topic, config: rawConfig, onProgress } = options
-  
-  // Validate and merge config with defaults
-  const config = mergeWithDefaults(rawConfig)
-  
-  debug.info('Starting enhanced paper generation', { 
-    projectId, 
-    topic: topic.substring(0, 100), 
-    libraryPaperCount: options.libraryPaperIds?.length || 0,
-    useLibraryOnly: options.useLibraryOnly,
-    paperSettings: config.paper_settings 
-  })
-  
-  type Stage = 'searching' | 'analyzing' | 'writing' | 'citations' | 'complete' | 'failed'
-  const log = (stage: Stage, progress: number, message: string) => {
-    onProgress?.({ stage, progress, message })
-    debug.log(`${stage}: ${message}`)
-  }
+  const { projectId, userId, topic: rawTopic, config: rawConfig, onProgress } = options;
 
-  // Set up citation context for addCitation tool
-  setCitationContext({ projectId, userId })
-  console.log(`🔗 Citation context set for project ${projectId}, user ${userId}`)
+  return runWithCitationContext({ projectId, userId }, async () => {
+    const topic = sanitizeForLogs(rawTopic);
+    try {
+      const config = mergeWithDefaults(rawConfig);
+      const log = (stage: 'searching' | 'analyzing' | 'writing' | 'citations' | 'complete' | 'failed', progress: number, message: string) => {
+        onProgress?.({ stage, progress, message });
+        debug.log(`${stage}: ${message}`);
+      };
 
-  // Track production quality metrics
-  let productionQualityScore = 0
+      debug.info('Starting enhanced paper generation', {
+        projectId,
+        topic: topic.substring(0, 100),
+        libraryPaperCount: options.libraryPaperIds?.length || 0,
+        useLibraryOnly: options.useLibraryOnly,
+        paperSettings: config.paper_settings
+      });
 
-  try {
-    // Step 1: Collect papers efficiently
-    log('searching', 10, 'Gathering papers from library and search...')
-    const allPapers = await collectPapers(options)
+      // Step 1: Collect papers efficiently
+      log('searching', 10, 'Gathering papers from library and search...');
+      const allPapers = await collectPapers(options);
 
-    log('analyzing', 30, `Found ${allPapers.length} papers. Retrieving content chunks...`)
+      if (allPapers.length === 0) {
+        throw new GenerationError('No papers found for the given topic')
+      }
 
-    // Step 2: Get relevant content chunks for RAG
-    await ensureChunksForPapers(allPapers)
-    
-    const chunkLimit = Math.max(
-      50,
-      getChunkLimit(
-        config?.paper_settings?.length,
-        config?.paper_settings?.paperType || 'researchArticle'
-      )
-    )
-    const chunks = await getRelevantChunks(
-      topic,
-      allPapers.map(p => p.id),
-      chunkLimit
-    )
+      log('analyzing', 30, `Found ${allPapers.length} papers. Checking content availability...`);
 
-    // Abort early if RAG returned nothing – prevents placeholder paper IDs later
-    const { assertChunksFound } = await import('./chunks')
-    assertChunksFound(chunks, topic)
+      // Step 2: Ensure content is available for generation
+      console.log(`📄 Ensuring content availability for ${allPapers.length} papers...`)
+      await ensureBulkContentIngestion(allPapers);
 
-    // ---------------- Modular Section Drafting (Task 4) ------------------
-    log('writing', 40, 'Generating outline...')
+      log('analyzing', 35, 'Retrieving content chunks...');
 
-    const { generateOutline } = await import('@/lib/prompts/generators')
-
-    const outline = await generateOutline(
-      config.paper_settings?.paperType || 'researchArticle',
-      topic,
-      allPapers.map(p => p.id),
-    )
-
-    console.log(`📋 Generated outline with ${outline.sections.length} sections:`, 
-      outline.sections.map(s => `${s.sectionKey}: ${s.title} (${s.expectedWords} words)`))
-
-    // 3. Build section contexts for generation (optimized chunk retrieval)
-    const sectionContexts: SectionContext[] = []
-    
-    // Cache chunks to avoid repetitive searches for the same papers
-    const chunkCache = new Map<string, typeof chunks>()
-    
-    for (const section of outline.sections) {
-      // Create a cache key based on the paper IDs for this section
-      const cacheKey = section.candidatePaperIds.sort().join(',')
-      
-      let contextChunks = chunkCache.get(cacheKey)
-      if (!contextChunks) {
-        // Only search if we haven't cached results for this combination of papers
-        contextChunks = await getRelevantChunks(
+      // Step 3: Get relevant content chunks for RAG
+      try {
+        await getRelevantChunks(
           topic,
-          section.candidatePaperIds,
-          Math.min(20, section.candidatePaperIds.length * 3)
-        )
-        chunkCache.set(cacheKey, contextChunks)
-        console.log(`📄 Cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
-      } else {
-        console.log(`📄 Using cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
+          allPapers.map(p => p.id),
+          Math.max(
+            50,
+            getChunkLimit(
+              config?.paper_settings?.length,
+              config?.paper_settings?.paperType || 'researchArticle'
+            )
+          ),
+          allPapers
+        );
+      } catch (error) {
+        if (error instanceof NoRelevantContentError) {
+          throw new GenerationError(
+            'Could not find enough relevant content in the selected papers. Please try adding more papers about this topic.',
+            { originalError: error.message }
+          );
+        } else if (error instanceof ContentQualityError) {
+          throw new GenerationError(
+            'The available content is not relevant enough to generate a quality paper.',
+            { originalError: error.message }
+          );
+        } else if (error instanceof ContentRetrievalError) {
+          throw new GenerationError(
+            'Failed to retrieve paper content. Please ensure papers are properly imported.',
+            { originalError: error.message }
+          );
+        }
+        throw error;
       }
-      
-      sectionContexts.push({
-        sectionKey: section.sectionKey,
-        title: section.title,
-        candidatePaperIds: section.candidatePaperIds,
-        contextChunks,
-        expectedWords: section.expectedWords
+
+      // ---------------- Modular Section Drafting ------------------
+      log('writing', 40, 'Generating outline...');
+
+      const { generateOutline } = await import('@/lib/prompts/generators')
+
+      const outline = await generateOutline(
+        config.paper_settings?.paperType || 'researchArticle',
+        topic
+      ) as { sections: OutlineSection[] }
+
+      // Add missing properties to match GeneratedOutline type
+      const completeOutline: GeneratedOutline = {
+        ...outline,
+        paperType: config.paper_settings?.paperType as PaperTypeKey || 'researchArticle',
+        topic
+      }
+
+      console.log(`📋 Generated outline with ${outline.sections.length} sections:`, 
+        outline.sections.map(s => `${s.sectionKey}: ${s.title} (${s.expectedWords} words)`))
+
+      // Build section contexts for generation
+      const sectionContexts = await buildSectionContexts(completeOutline, topic)
+
+      log('writing', 50, `🏭 PRODUCTION MODE: Drafting ${sectionContexts.length} sections with 4-stage quality pipeline...`)
+
+      // Convert section contexts to production generator configs
+      const productionConfigs: ProductionGenerationConfig[] = sectionContexts.map(sectionContext => {
+        const onProgressCallback = (stage: string, progress: number, message: string) => {
+          const baseProgress = 50 + ((sectionContexts.indexOf(sectionContext) / sectionContexts.length) * 30)
+          const stageProgress = baseProgress + (progress / 100) * (30 / sectionContexts.length)
+          onProgress?.({ 
+            stage: 'writing', 
+            progress: stageProgress, 
+            message: `${sectionContext.title}: ${stage} - ${message}` 
+          })
+        }
+
+        return {
+          paperType: config.paper_settings?.paperType || 'researchArticle',
+          section: sectionContext.sectionKey as SectionKey,
+          topic,
+          contextChunks: sectionContext.contextChunks.map(chunk => chunk.content),
+          availablePapers: allPapers.filter(p => sectionContext.candidatePaperIds.includes(p.id)),
+          expectedWords: sectionContext.expectedWords || 300,
+          enablePlanning: true,
+          enableReflection: true,
+          enableMetrics: true,
+          onProgress: onProgressCallback
+        }
       })
-    }
 
-    log('writing', 50, `🏭 PRODUCTION MODE: Drafting ${sectionContexts.length} sections with 4-stage quality pipeline...`)
+      // Generate all sections using production pipeline
+      const { generateMultipleSectionsProduction } = await import('./production-generator')
+      const productionResults = await generateMultipleSectionsProduction(
+        productionConfigs,
+        (completed, total, currentSection) => {
+          const overallProgress = 50 + (completed / total) * 30
+          onProgress?.({
+            stage: 'writing',
+            progress: overallProgress,
+            message: `Section ${completed + 1}/${total}: ${currentSection}`
+          })
+        }
+      )
 
-    // 🏭 INTEGRATION: Use production generator for Quick Draft (4-stage quality pipeline)
-    // This replaces the basic runner with planning, reflection, and quality metrics
-    const { generateMultipleSectionsProduction } = await import('./production-generator')
-    
-    // Convert section contexts to production generator configs
-    const productionConfigs = sectionContexts.map(sectionContext => ({
-      paperType: config.paper_settings?.paperType || 'researchArticle',
-      section: sectionContext.sectionKey,
-      topic,
-      contextChunks: sectionContext.contextChunks.map(chunk => chunk.content),
-      availablePapers: sectionContext.candidatePaperIds,
-      expectedWords: sectionContext.expectedWords || 300,
-      requiredDepthCues: ['evidence', 'analysis', 'synthesis'], // Standard depth requirements
-      enablePlanning: true,
-      enableReflection: true,
-      enableMetrics: true,
-             onProgress: (stage: string, progress: number, message: string) => {
-        const baseProgress = 50 + ((sectionContexts.indexOf(sectionContext) / sectionContexts.length) * 30)
-        const stageProgress = baseProgress + (progress / 100) * (30 / sectionContexts.length)
-        log('writing', stageProgress, `${sectionContext.title}: ${stage} - ${message}`)
+      // Validate generation results
+      if (!productionResults || productionResults.length === 0) {
+        throw new GenerationError('No content was generated')
       }
-    }))
 
-    // Generate all sections using production pipeline
-    const productionResults = await generateMultipleSectionsProduction(
-      productionConfigs,
-      (completed, total, currentSection) => {
-        const overallProgress = 50 + (completed / total) * 30
-        log('writing', overallProgress, `Section ${completed + 1}/${total}: ${currentSection}`)
-      }
-    )
+      // Extract and validate content from results
+      const sectionContents = productionResults.map((result, index) => {
+        const sectionKey = sectionContexts[index].sectionKey
+        const content = result.content ?? result.writingResult?.content ?? 
+                       (typeof result.writingResult === 'string' ? result.writingResult : null)
 
-    // Combine all section content and extract tool calls
-    const content = productionResults.map(result => result.content).join('\n\n')
-    
-    // Convert production results to captured tool calls format for compatibility
-    const capturedToolCalls = productionResults.flatMap((result, index) => {
-      const sectionContext = sectionContexts[index]
+        if (!content) {
+          throw new GenerationError(`Failed to generate content for section: ${sectionKey}`)
+        }
+
+        // Validate minimum content length
+        if (content.split(/\s+/).length < 50) {
+          throw new GenerationError(
+            `Generated content too short for section: ${sectionKey}`,
+            { wordCount: content.split(/\s+/).length }
+          )
+        }
+
+        return content
+      })
+
+      const content = sectionContents.join('\n\n')
+
+      // Convert production results to captured tool calls format
+      const capturedToolCalls: CapturedToolCall[] = []
       
-      // Extract citations from the production result and convert to tool call format
-      const citations = result.writingResult?.citations || []
-      return citations.map((citation, citationIndex) => ({
-        toolCallId: `production-${index}-${citationIndex}`,
-        toolName: 'addCitation',
-        args: {
-          title: citation.citationText || 'Generated Citation',
-          authors: ['AI Generated'],
-          reason: `Citation for ${sectionContext.title}`,
-          section: sectionContext.sectionKey
+      // Extract citations from production results
+      productionResults.forEach(result => {
+        if (result.writingResult?.citations) {
+          result.writingResult.citations.forEach(citation => {
+            if ('toolCall' in citation && citation.toolCall) {
+              const toolCall = citation.toolCall as CapturedToolCall
+              if (toolCall.toolCallId && toolCall.toolName && toolCall.args && toolCall.result) {
+                capturedToolCalls.push(toolCall)
+              }
+            }
+          })
+        }
+      })
+      
+      console.log(`✅ Captured ${capturedToolCalls.length} citation tool calls from production generator`)
+
+      log('citations', 85, 'Saving to database...')
+
+      // Step 6: Persist to database
+      const {
+        citationsMap,
+        citations,
+        toolCallAnalytics
+      } = await persistGenerationResults(
+        projectId,
+        content,
+        allPapers,
+        capturedToolCalls,
+        0 // No additional citations added
+      )
+
+      // Calculate quality score based on various metrics
+      const qualityScore = Math.min(100, Math.round(
+        (citations.length * 5) + // Points for citations
+        (content.length / 100) + // Points for length
+        (capturedToolCalls.length * 3) // Points for tool usage
+      ))
+      
+      onProgress?.({
+        stage: 'complete',
+        progress: 100,
+        message: `🏭 Production paper completed! Quality Score: ${qualityScore}/100`
+      })
+
+      return {
+        content,
+        citations,
+        citationsMap,
+        wordCount: content.split(/\s+/).length,
+        sources: allPapers,
+        structure: {
+          sections: extractSections(content),
+          abstract: extractAbstract(content)
         },
-        result: {
-          success: true,
-          citationId: citation.paperId,
-          citationKey: citation.paperId,
-          replacement: `[CITE:${citation.paperId}]`,
-          message: 'Citation added via production generator'
-        },
-        timestamp: new Date().toISOString(),
-        validated: true
-      }))
-    })
-
-    // Log production generation metrics
-    const totalQualityScore = productionResults.reduce((sum, result) => sum + result.quality_score, 0) / productionResults.length
-    const totalGenerationTime = productionResults.reduce((sum, result) => sum + result.generation_time_ms, 0)
-    
-    console.log(`🏭 Production generation completed:`, {
-      sections: productionResults.length,
-      averageQualityScore: Math.round(totalQualityScore),
-      totalGenerationTime: `${totalGenerationTime}ms`,
-      totalWordCount: content.split(/\s+/).length,
-      planningEnabled: productionConfigs[0].enablePlanning,
-      reflectionEnabled: productionConfigs[0].enableReflection,
-      metricsEnabled: productionConfigs[0].enableMetrics
-    })
-
-    // Store quality score for final logging
-    productionQualityScore = totalQualityScore
-
-    console.log(`🔍 DEBUG: Generated content preview:`, content.substring(0, 500))
-    console.log(`🔍 DEBUG: Content length: ${content.length} chars`)
-    console.log(`🔍 DEBUG: Tool calls captured: ${capturedToolCalls.length}`)
-
-    // Skip automatic evidence-based enrichment – use model-produced citations only
-    const enhancedContent = content
-    const addedCitationsCount = 0
-
-    console.log(`🔍 DEBUG: Enhanced content preview:`, enhancedContent.substring(0, 500))
-
-    log('citations', 85, 'Saving to database...')
-
-    // Step 6: Persist to database
-    const {
-      citationsMap,
-      citations,
-      toolCallAnalytics
-    } = await persistGenerationResults(
-      projectId,
-      enhancedContent,
-      allPapers,
-      capturedToolCalls,
-      addedCitationsCount
-    )
-    
-    // Step 7: Format citations in the final content
-    log('citations', 90, 'Formatting citations...')
-    const finalContent = await formatCitations(enhancedContent, citationsMap, 'apa')
-    
-    log('complete', 100, `🏭 Production paper completed! Quality Score: ${Math.round(productionQualityScore)}/100`)
-
-    return {
-      content: finalContent,
-      citations,
-      citationsMap,
-      wordCount: finalContent.split(/\s+/).length,
-      sources: allPapers,
-      structure: {
-        sections: extractSections(finalContent),
-        abstract: extractAbstract(finalContent)
-      },
-      toolCallAnalytics
+        toolCallAnalytics,
+        qualityScore
+      }
+    } catch (error) {
+      console.error(`❌ Error generating paper:`, error)
+      
+      // Log failure with specific stage
+      onProgress?.({
+        stage: 'failed',
+        progress: 0,
+        message: error instanceof GenerationError ? 
+          error.message : 
+          'An unexpected error occurred during paper generation'
+      })
+      
+      throw error
     }
-  } catch (error) {
-    console.error(`❌ Error generating paper:`, error)
-    throw error
-  } finally {
-    // Always clear citation context
-    clearCitationContext()
-    console.log(`🔗 Citation context cleared`)
-  }
+  });
 }
 
 // Re-export types for convenience

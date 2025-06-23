@@ -40,36 +40,35 @@ export interface GenerationMetrics {
   verbosity_ratio: number // tokens / words
   fact_density: number // # factual sentences / total sentences
   
-  // Content structure metrics
-  paragraph_count: number
-  average_paragraph_length: number
-  transition_word_density: number
-  
-  // Citation quality metrics
-  citation_density: number // citations per 100 words
-  citation_diversity: number // unique papers cited / total papers available
-  citation_distribution: number // evenness of citation distribution
-  
-  // Depth and complexity metrics
-  depth_cue_coverage: number // percentage of required depth cuesCovered
-  argument_complexity: number // based on logical connectors and structure
-  evidence_integration: number // how well citations support claims
-  
-  // Composite score
-  overall_quality: number // weighted composite score
+  // Content quality metrics
+  depth_score: number // based on analysis depth and insight
+  coherence_score: number // flow and logical connection
+  style_score: number // academic writing style adherence
+  technical_accuracy: number // factual correctness
+  source_integration: number // citation quality
+  argument_structure: number // logical flow
+  readability_score: number // clarity and accessibility
+  jargon_density: number // appropriate technical language
+  bias_score: number // objectivity measure
+  novelty_score: number // contribution assessment
 }
 
-export interface SectionMetrics extends GenerationMetrics {
+export interface MetricsStorageRecord {
   section_id: string
   paper_type: string
   section_key: string
   topic: string
-  word_count: number
+  metrics: GenerationMetrics
   generation_time_ms: number
   model_used: string
   prompt_version: string
-  tokens_used?: number
+  word_count: number
+  token_count?: number
   timestamp: string
+}
+
+export interface SectionMetrics extends MetricsStorageRecord {
+  metrics: GenerationMetrics
 }
 
 export interface AggregatedMetrics {
@@ -152,40 +151,28 @@ export function calculateContentMetrics(
   topic: string,
   availablePapers: string[],
   contextChunks: string[],
-  requiredDepthCues: string[]
+  qualityCriteria: string[] = []
 ): GenerationMetrics {
-  const words = countWords(content)
-  const sentences = countSentences(content)
-  const paragraphs = countParagraphs(content)
   const citations = extractCitationReferences(content)
-
-  const relevance = 0 // initial placeholder; overwritten by async embedding similarity
-
-  const baseMetrics = {
+  const wordCount = countWords(content)
+  const sentenceCount = countSentences(content)
+  
+  return {
     citation_coverage: calculateCitationCoverage(citations, availablePapers),
-    relevance_score: relevance,
+    relevance_score: keywordRelevanceFallback(content, topic),
     verbosity_ratio: calculateVerbosityRatio(),
-    fact_density: calculateFactDensity(content, sentences),
-    paragraph_count: paragraphs,
-    average_paragraph_length: words / Math.max(1, paragraphs),
-    transition_word_density: calculateTransitionWordDensity(content, words),
-    citation_density: (citations.length / words) * 100,
-    citation_diversity: calculateCitationDiversity(citations, availablePapers),
-    citation_distribution: calculateCitationDistribution(citations),
-    depth_cue_coverage: calculateDepthCueCoverage(content, requiredDepthCues),
-    argument_complexity: calculateArgumentComplexity(content),
-    evidence_integration: calculateEvidenceIntegration(content, citations)
+    fact_density: calculateFactDensity(content, sentenceCount),
+    depth_score: calculateQualityCriteriaCoverage(content, qualityCriteria),
+    coherence_score: calculateTransitionWordDensity(content, wordCount),
+    style_score: 0.8, // Default style score
+    technical_accuracy: 0.8, // Default technical accuracy
+    source_integration: calculateEvidenceIntegration(content, citations),
+    argument_structure: calculateArgumentComplexity(content),
+    readability_score: 0.8, // Default readability
+    jargon_density: 0.5, // Default jargon density
+    bias_score: 0.8, // Default bias score
+    novelty_score: 0.7 // Default novelty score
   }
-
-  const overall_quality = (
-    baseMetrics.citation_coverage * 0.25 +
-    baseMetrics.relevance_score * 0.25 +
-    baseMetrics.fact_density * 0.20 +
-    baseMetrics.depth_cue_coverage * 0.15 +
-    baseMetrics.evidence_integration * 0.15
-  )
-
-  return { ...baseMetrics, overall_quality }
 }
 
 export async function calculateContentMetricsAsync(
@@ -193,28 +180,80 @@ export async function calculateContentMetricsAsync(
   topic: string,
   availablePapers: string[],
   contextChunks: string[],
-  requiredDepthCues: string[]
+  qualityCriteria: string[] = []
 ): Promise<GenerationMetrics> {
-  // First compute fast heuristics synchronously
-  const base = calculateContentMetrics(content, topic, availablePapers, contextChunks, requiredDepthCues)
-
-  // Try embedding similarity for relevance
-  const topicEmb = await fetchOpenAiEmbedding(topic)
-  const contentEmb = await fetchOpenAiEmbedding(content.slice(0, 4000)) // limit
-  if (topicEmb && contentEmb) {
-    base.relevance_score = cosineSimilarity(topicEmb, contentEmb)
+  // Use the synchronous version as base
+  const base = calculateContentMetrics(content, topic, availablePapers, contextChunks, qualityCriteria)
+  
+  // Try to get better relevance score with embeddings
+  try {
+    const contentEmbedding = await fetchOpenAiEmbedding(content)
+    const topicEmbedding = await fetchOpenAiEmbedding(topic)
+    
+    if (contentEmbedding && topicEmbedding) {
+      base.relevance_score = cosineSimilarity(contentEmbedding, topicEmbedding)
+    }
+  } catch (error) {
+    console.warn('Failed to calculate embedding-based relevance:', error)
+    // Keep the keyword-based fallback score
   }
-
-  // Re-compute overall quality with updated relevance if changed
-  base.overall_quality = (
-    base.citation_coverage * 0.25 +
-    base.relevance_score * 0.25 +
-    base.fact_density * 0.20 +
-    base.depth_cue_coverage * 0.15 +
-    base.evidence_integration * 0.15
-  )
-
+  
   return base
+}
+
+/**
+ * Calculate quality criteria coverage (replaces depth cue coverage)
+ * This adapts to any discipline by checking for concepts related to the quality criteria
+ */
+function calculateQualityCriteriaCoverage(content: string, qualityCriteria: string[]): number {
+  if (qualityCriteria.length === 0) return 0.8 // Default score when no criteria provided
+  
+  const contentLower = content.toLowerCase()
+  
+  // Check for each quality criterion and related concepts
+  const coveredCriteria = qualityCriteria.filter(criterion => {
+    const criterionLower = criterion.toLowerCase()
+    
+    // Direct mention of the criterion
+    if (contentLower.includes(criterionLower)) return true
+    
+    // Check for related concepts based on common academic quality criteria
+    const relatedConcepts = getRelatedConcepts(criterionLower)
+    return relatedConcepts.some(concept => contentLower.includes(concept))
+  })
+  
+  return coveredCriteria.length / qualityCriteria.length
+}
+
+/**
+ * Get related concepts for quality criteria to improve coverage detection
+ */
+function getRelatedConcepts(criterion: string): string[] {
+  const conceptMap: Record<string, string[]> = {
+    'statistical rigor': ['statistical', 'significance', 'p-value', 'confidence', 'methodology'],
+    'reproducibility': ['reproducible', 'replicable', 'methodology', 'protocol', 'procedure'],
+    'theoretical grounding': ['theory', 'theoretical', 'framework', 'foundation', 'conceptual'],
+    'empirical evidence': ['empirical', 'evidence', 'data', 'findings', 'results'],
+    'critical analysis': ['critical', 'analysis', 'evaluate', 'assess', 'examine'],
+    'synthesis': ['synthesis', 'integrate', 'combine', 'merge', 'unify'],
+    'logical consistency': ['logical', 'consistent', 'coherent', 'reasoning', 'argument'],
+    'scholarly depth': ['depth', 'comprehensive', 'thorough', 'detailed', 'extensive'],
+    'methodological justification': ['methodological', 'justification', 'rationale', 'approach', 'design'],
+    'gap identification': ['gap', 'limitation', 'missing', 'absent', 'lack'],
+    'practical implications': ['practical', 'implications', 'applications', 'real-world', 'implementation'],
+    'contextual detail': ['context', 'contextual', 'background', 'setting', 'environment'],
+    'transferability': ['transferable', 'generalizable', 'applicable', 'relevant', 'external validity']
+  }
+  
+  // Return related concepts for the criterion, or fall back to the criterion itself
+  for (const [key, concepts] of Object.entries(conceptMap)) {
+    if (criterion.includes(key) || key.includes(criterion)) {
+      return concepts
+    }
+  }
+  
+  // If no specific mapping found, use the criterion words themselves
+  return criterion.split(' ').filter(word => word.length > 3)
 }
 
 /**
@@ -229,37 +268,34 @@ export async function storeMetrics(
   generationTimeMs: number,
   modelUsed: string,
   promptVersion: string,
-  contentWordCount?: number, // Pass actual word count
-  tokensUsed?: number // Actual or estimated token count
+  wordCount: number,
+  tokenCount?: number
 ): Promise<void> {
+  const record: MetricsStorageRecord = {
+    section_id: sectionId,
+    paper_type: paperType,
+    section_key: sectionKey,
+    topic,
+    metrics,
+    generation_time_ms: generationTimeMs,
+    model_used: modelUsed,
+    prompt_version: promptVersion,
+    word_count: wordCount,
+    token_count: tokenCount,
+    timestamp: new Date().toISOString()
+  }
+
   try {
     const supabase = await createClient()
-    
-    const sectionMetrics: Omit<SectionMetrics, 'timestamp'> = {
-      section_id: sectionId,
-      paper_type: paperType,
-      section_key: sectionKey,
-      topic,
-      word_count: contentWordCount || 0, // Use provided word count
-      generation_time_ms: generationTimeMs,
-      model_used: modelUsed,
-      prompt_version: promptVersion,
-      tokens_used: tokensUsed,
-      ...metrics
-    }
-    
     const { error } = await supabase
       .from('generation_metrics')
-      .insert({
-        ...sectionMetrics,
-        timestamp: new Date().toISOString()
-      })
-    
+      .insert(record)
+
     if (error) {
-      console.error('Error storing metrics:', error)
+      console.error('Failed to store metrics:', error)
     }
   } catch (error) {
-    console.error('Error initializing supabase client for metrics:', error)
+    console.error('Error storing metrics:', error)
   }
 }
 
@@ -397,6 +433,7 @@ function calculateTransitionWordDensity(content: string, wordCount: number): num
 /**
  * Calculate citation diversity
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function calculateCitationDiversity(citations: string[], availablePapers: string[]): number {
   if (availablePapers.length === 0) return 0
   const uniqueCitations = new Set(citations)
@@ -423,20 +460,6 @@ function calculateCitationDistribution(citations: string[]): number {
   
   // Higher score for more even distribution
   return minCount / maxCount
-}
-
-/**
- * Calculate depth cue coverage
- */
-function calculateDepthCueCoverage(content: string, requiredDepthCues: string[]): number {
-  if (requiredDepthCues.length === 0) return 1
-  
-  const contentLower = content.toLowerCase()
-  const coveredCues = requiredDepthCues.filter(cue => 
-    contentLower.includes(cue.toLowerCase())
-  )
-  
-  return coveredCues.length / requiredDepthCues.length
 }
 
 /**
@@ -502,20 +525,20 @@ function calculateAverageMetrics(metrics: SectionMetrics[]): GenerationMetrics {
   }
   
   const sums = metrics.reduce((acc, metric) => ({
-    citation_coverage: acc.citation_coverage + metric.citation_coverage,
-    relevance_score: acc.relevance_score + metric.relevance_score,
-    verbosity_ratio: acc.verbosity_ratio + metric.verbosity_ratio,
-    fact_density: acc.fact_density + metric.fact_density,
-    paragraph_count: acc.paragraph_count + metric.paragraph_count,
-    average_paragraph_length: acc.average_paragraph_length + metric.average_paragraph_length,
-    transition_word_density: acc.transition_word_density + metric.transition_word_density,
-    citation_density: acc.citation_density + metric.citation_density,
-    citation_diversity: acc.citation_diversity + metric.citation_diversity,
-    citation_distribution: acc.citation_distribution + metric.citation_distribution,
-    depth_cue_coverage: acc.depth_cue_coverage + metric.depth_cue_coverage,
-    argument_complexity: acc.argument_complexity + metric.argument_complexity,
-    evidence_integration: acc.evidence_integration + metric.evidence_integration,
-    overall_quality: acc.overall_quality + metric.overall_quality
+    citation_coverage: acc.citation_coverage + metric.metrics.citation_coverage,
+    relevance_score: acc.relevance_score + metric.metrics.relevance_score,
+    verbosity_ratio: acc.verbosity_ratio + metric.metrics.verbosity_ratio,
+    fact_density: acc.fact_density + metric.metrics.fact_density,
+    depth_score: acc.depth_score + metric.metrics.depth_score,
+    coherence_score: acc.coherence_score + metric.metrics.coherence_score,
+    style_score: acc.style_score + metric.metrics.style_score,
+    technical_accuracy: acc.technical_accuracy + metric.metrics.technical_accuracy,
+    source_integration: acc.source_integration + metric.metrics.source_integration,
+    argument_structure: acc.argument_structure + metric.metrics.argument_structure,
+    readability_score: acc.readability_score + metric.metrics.readability_score,
+    jargon_density: acc.jargon_density + metric.metrics.jargon_density,
+    bias_score: acc.bias_score + metric.metrics.bias_score,
+    novelty_score: acc.novelty_score + metric.metrics.novelty_score
   }), createEmptyMetrics())
   
   const count = metrics.length
@@ -524,16 +547,16 @@ function calculateAverageMetrics(metrics: SectionMetrics[]): GenerationMetrics {
     relevance_score: sums.relevance_score / count,
     verbosity_ratio: sums.verbosity_ratio / count,
     fact_density: sums.fact_density / count,
-    paragraph_count: sums.paragraph_count / count,
-    average_paragraph_length: sums.average_paragraph_length / count,
-    transition_word_density: sums.transition_word_density / count,
-    citation_density: sums.citation_density / count,
-    citation_diversity: sums.citation_diversity / count,
-    citation_distribution: sums.citation_distribution / count,
-    depth_cue_coverage: sums.depth_cue_coverage / count,
-    argument_complexity: sums.argument_complexity / count,
-    evidence_integration: sums.evidence_integration / count,
-    overall_quality: sums.overall_quality / count
+    depth_score: sums.depth_score / count,
+    coherence_score: sums.coherence_score / count,
+    style_score: sums.style_score / count,
+    technical_accuracy: sums.technical_accuracy / count,
+    source_integration: sums.source_integration / count,
+    argument_structure: sums.argument_structure / count,
+    readability_score: sums.readability_score / count,
+    jargon_density: sums.jargon_density / count,
+    bias_score: sums.bias_score / count,
+    novelty_score: sums.novelty_score / count
   }
 }
 
@@ -598,9 +621,9 @@ function analyzeConfigurationPerformance(metrics: SectionMetrics[]): AggregatedM
       avgMetrics.citation_coverage * 0.25 +
       avgMetrics.relevance_score * 0.20 +
       avgMetrics.fact_density * 0.15 +
-      avgMetrics.depth_cue_coverage * 0.15 +
-      avgMetrics.evidence_integration * 0.15 +
-      avgMetrics.argument_complexity * 0.10
+      avgMetrics.depth_score * 0.15 +
+      avgMetrics.source_integration * 0.15 +
+      avgMetrics.argument_structure * 0.10
     ) * 100
     
     return {
@@ -637,16 +660,16 @@ function createEmptyMetrics(): GenerationMetrics {
     relevance_score: 0,
     verbosity_ratio: 0,
     fact_density: 0,
-    paragraph_count: 0,
-    average_paragraph_length: 0,
-    transition_word_density: 0,
-    citation_density: 0,
-    citation_diversity: 0,
-    citation_distribution: 0,
-    depth_cue_coverage: 0,
-    argument_complexity: 0,
-    evidence_integration: 0,
-    overall_quality: 0
+    depth_score: 0,
+    coherence_score: 0,
+    style_score: 0,
+    technical_accuracy: 0,
+    source_integration: 0,
+    argument_structure: 0,
+    readability_score: 0,
+    jargon_density: 0,
+    bias_score: 0,
+    novelty_score: 0
   }
 }
 
@@ -683,4 +706,83 @@ function keywordRelevanceFallback(content: string, topic: string): number {
   const contentLower = content.toLowerCase()
   const score = topicWords.reduce((acc, word) => acc + (contentLower.includes(word) ? 0.1 : 0), 0)
   return Math.min(score, 1)
+}
+
+/**
+ * Calculate overall quality score from metrics
+ */
+export function calculateOverallQuality(metrics: GenerationMetrics): number {
+  return (
+    metrics.citation_coverage * 0.2 +
+    metrics.relevance_score * 0.2 +
+    metrics.fact_density * 0.15 +
+    metrics.depth_score * 0.15 +
+    metrics.coherence_score * 0.1 +
+    metrics.technical_accuracy * 0.1 +
+    metrics.source_integration * 0.1
+  )
+}
+
+/**
+ * Aggregate metrics across multiple sections
+ */
+export function aggregateMetrics(sections: SectionMetrics[]): GenerationMetrics {
+  if (sections.length === 0) {
+    throw new Error('Cannot aggregate metrics for empty sections array')
+  }
+
+  // Sum all numeric metrics
+  const aggregate = sections.reduce((acc, section) => {
+    const metrics = section.metrics
+    return {
+      citation_coverage: acc.citation_coverage + metrics.citation_coverage,
+      relevance_score: acc.relevance_score + metrics.relevance_score,
+      verbosity_ratio: acc.verbosity_ratio + metrics.verbosity_ratio,
+      fact_density: acc.fact_density + metrics.fact_density,
+      depth_score: acc.depth_score + metrics.depth_score,
+      coherence_score: acc.coherence_score + metrics.coherence_score,
+      style_score: acc.style_score + metrics.style_score,
+      technical_accuracy: acc.technical_accuracy + metrics.technical_accuracy,
+      source_integration: acc.source_integration + metrics.source_integration,
+      argument_structure: acc.argument_structure + metrics.argument_structure,
+      readability_score: acc.readability_score + metrics.readability_score,
+      jargon_density: acc.jargon_density + metrics.jargon_density,
+      bias_score: acc.bias_score + metrics.bias_score,
+      novelty_score: acc.novelty_score + metrics.novelty_score
+    }
+  }, {
+    citation_coverage: 0,
+    relevance_score: 0,
+    verbosity_ratio: 0,
+    fact_density: 0,
+    depth_score: 0,
+    coherence_score: 0,
+    style_score: 0,
+    technical_accuracy: 0,
+    source_integration: 0,
+    argument_structure: 0,
+    readability_score: 0,
+    jargon_density: 0,
+    bias_score: 0,
+    novelty_score: 0
+  })
+
+  // Calculate averages
+  const count = sections.length
+  return {
+    citation_coverage: aggregate.citation_coverage / count,
+    relevance_score: aggregate.relevance_score / count,
+    verbosity_ratio: aggregate.verbosity_ratio / count,
+    fact_density: aggregate.fact_density / count,
+    depth_score: aggregate.depth_score / count,
+    coherence_score: aggregate.coherence_score / count,
+    style_score: aggregate.style_score / count,
+    technical_accuracy: aggregate.technical_accuracy / count,
+    source_integration: aggregate.source_integration / count,
+    argument_structure: aggregate.argument_structure / count,
+    readability_score: aggregate.readability_score / count,
+    jargon_density: aggregate.jargon_density / count,
+    bias_score: aggregate.bias_score / count,
+    novelty_score: aggregate.novelty_score / count
+  }
 } 

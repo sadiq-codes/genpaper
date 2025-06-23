@@ -11,6 +11,7 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "types:generate": "supabase gen types typescript --linked > types/supabase.ts",
+    "backfill-embeddings": "curl -X POST http://localhost:3000/api/backfill-embeddings",
     "postinstall": "cp node_modules/@dqbd/tiktoken/tiktoken_bg.wasm public/ 2>/dev/null || true"
   },
   "dependencies": {
@@ -86,6 +87,7 @@
     "p-limit": "^6.2.0",
     "parse-author": "^2.0.0",
     "pdf-parse": "^1.1.1",
+    "quick-lru": "^7.0.1",
     "react": "^19.0.0",
     "react-day-picker": "^9.7.0",
     "react-dom": "^19.0.0",

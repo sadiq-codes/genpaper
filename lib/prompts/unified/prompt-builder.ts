@@ -167,7 +167,7 @@ async function loadSkeletonTemplate(): Promise<{ system: string; user: string; t
     console.error('Failed to load skeleton template:', error)
     // Fallback to embedded template
     return {
-      system: "You are drafting a scholarly paper. Adopt academic tone and follow APA style.",
+      system: "You are drafting a scholarly paper. Adopt academic tone appropriate for scholarly writing.",
       user: "Write the {{sectionPath}} section for {{paperTitle}}. Target: {{targetWords}} words.",
       tools: {}
     }

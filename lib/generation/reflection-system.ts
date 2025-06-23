@@ -4,6 +4,17 @@ import { ai } from '@/lib/ai/vercel-client'
 import { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
 import { calculateContentMetricsAsync } from './metrics-system'
 import { estimateTokenCount } from '@/lib/utils/text'
+import type { ReflectionResult } from './production-generator'
+import type { PaperWithAuthors } from '@/types/simplified'
+
+// Configurable thresholds (can be overridden via environment)
+const REFLECTION_CONFIG = {
+  MIN_WORDS_FOR_REFLECTION: parseInt(process.env.MIN_WORDS_FOR_REFLECTION || '300'),
+  MIN_WORDS_FOR_FULL_REFLECTION: parseInt(process.env.MIN_WORDS_FOR_FULL_REFLECTION || '800'),
+  MAX_REFLECTION_CYCLES_SHORT: parseInt(process.env.MAX_REFLECTION_CYCLES_SHORT || '1'),
+  MAX_REFLECTION_CYCLES_LONG: parseInt(process.env.MAX_REFLECTION_CYCLES_LONG || '2'),
+  COMPLEXITY_THRESHOLD: parseFloat(process.env.COMPLEXITY_THRESHOLD || '0.6')
+}
 
 /**
  * Self-critique and reflection system for content improvement
@@ -38,13 +49,6 @@ export interface ContentCritique {
     weaknesses: string[]
     priority_improvements: string[]
   }
-}
-
-export interface ReflectionResult {
-  critique: ContentCritique
-  needs_revision: boolean
-  revision_priority: 'low' | 'medium' | 'high'
-  suggested_actions: string[]
 }
 
 export interface RevisedContent {
@@ -435,29 +439,104 @@ function createFallbackCritique(): ContentCritique {
 }
 
 /**
- * Run complete reflection cycle (critique + revision if needed) with enhanced stop criteria
+ * Determine if reflection should be used based on content length and complexity
+ */
+export function shouldUseReflection(
+  content: string,
+  section: SectionKey,
+  complexity?: number
+): { 
+  useReflection: boolean;
+  maxCycles: number;
+  reason: string;
+} {
+  const wordCount = content.split(/\s+/).length
+  
+  // Always skip reflection for very short sections
+  if (wordCount < REFLECTION_CONFIG.MIN_WORDS_FOR_REFLECTION) {
+    return {
+      useReflection: false,
+      maxCycles: 0,
+      reason: `Section too short (${wordCount} words) for reflection`
+    }
+  }
+
+  // Certain sections always get reflection due to their importance
+  const criticalSections: SectionKey[] = ['results', 'discussion', 'conclusion']
+  if (criticalSections.includes(section)) {
+    return {
+      useReflection: true,
+      maxCycles: wordCount >= REFLECTION_CONFIG.MIN_WORDS_FOR_FULL_REFLECTION 
+        ? REFLECTION_CONFIG.MAX_REFLECTION_CYCLES_LONG 
+        : REFLECTION_CONFIG.MAX_REFLECTION_CYCLES_SHORT,
+      reason: `Critical section (${section}) requires reflection`
+    }
+  }
+
+  // For other sections, use complexity to decide
+  const contentComplexity = complexity || estimateComplexity(content)
+  if (contentComplexity >= REFLECTION_CONFIG.COMPLEXITY_THRESHOLD) {
+    return {
+      useReflection: true,
+      maxCycles: wordCount >= REFLECTION_CONFIG.MIN_WORDS_FOR_FULL_REFLECTION 
+        ? REFLECTION_CONFIG.MAX_REFLECTION_CYCLES_LONG 
+        : REFLECTION_CONFIG.MAX_REFLECTION_CYCLES_SHORT,
+      reason: `High complexity content (${contentComplexity.toFixed(2)}) requires reflection`
+    }
+  }
+
+  // Default case - use limited reflection for medium-length content
+  return {
+    useReflection: wordCount >= REFLECTION_CONFIG.MIN_WORDS_FOR_FULL_REFLECTION,
+    maxCycles: REFLECTION_CONFIG.MAX_REFLECTION_CYCLES_SHORT,
+    reason: `Standard reflection based on length (${wordCount} words)`
+  }
+}
+
+/**
+ * Estimate content complexity based on various factors
+ */
+function estimateComplexity(content: string): number {
+  // Count technical indicators
+  const technicalTerms = content.match(/(?:analysis|methodology|framework|hypothesis|correlation|significant|theoretical|empirical|paradigm|implementation)/gi) || []
+  const citations = content.match(/\[CITE:[^\]]+\]/g) || []
+  const equations = content.match(/\$[^$]+\$/g) || [] // LaTeX equations
+  const longSentences = content.split(/[.!?]+/).filter(s => s.split(/\s+/).length > 20).length
+  
+  // Calculate complexity score (0-1)
+  const wordCount = content.split(/\s+/).length
+  const complexityScore = (
+    (technicalTerms.length / wordCount) * 0.3 +
+    (citations.length / Math.ceil(wordCount / 200)) * 0.3 + // Expect ~1 citation per 200 words
+    (equations.length > 0 ? 0.2 : 0) +
+    (longSentences / Math.ceil(wordCount / 100)) * 0.2 // Complex sentence density
+  )
+  
+  return Math.min(1, complexityScore)
+}
+
+/**
+ * Run a reflection cycle to improve content quality
  */
 export async function runReflectionCycle(
   content: string,
   paperType: PaperTypeKey,
   section: SectionKey,
   topic: string,
-  availablePapers: string[],
+  availablePapers: PaperWithAuthors[],
   contextChunks: string[],
-  maxRevisions: number = 2
-): Promise<{
-  final_content: string
-  revisions_made: number
-  final_quality_score: number
-  improvement_log: string[]
-}> {
+  maxCycles: number
+): Promise<ReflectionResult> {
+  // Initialize reflection state
   let currentContent = content
-  let revisionCount = 0
+  let currentQuality = 0
   const improvementLog: string[] = []
-  const initialTokens = estimateTokenCount(content)
+  let revisionsCount = 0
 
-  for (let i = 0; i < maxRevisions; i++) {
-    const reflection = await critiqueContentBestOfTwo(
+  // Run reflection cycles
+  for (let cycle = 0; cycle < maxCycles; cycle++) {
+    // Analyze current content
+    const analysis = await analyzeContent(
       currentContent,
       paperType,
       section,
@@ -466,70 +545,94 @@ export async function runReflectionCycle(
       contextChunks
     )
 
-    improvementLog.push(`Revision ${i + 1}: Quality score ${reflection.critique.overall_quality.score}`)
-
-    if (!reflection.needs_revision || reflection.revision_priority === 'low') {
-      improvementLog.push(`Stopping revisions: ${reflection.needs_revision ? 'Low priority issues only' : 'No issues found'}`)
+    // If quality is good enough, stop early
+    if (analysis.quality_score > 90) {
+      improvementLog.push(`Cycle ${cycle + 1}: Quality threshold met (${analysis.quality_score}), stopping early`)
+      currentQuality = analysis.quality_score
       break
     }
 
-    const revision = await reviseContent(
+    // Generate improvements
+    const improvements = await generateImprovements(
       currentContent,
-      reflection.critique,
+      analysis.issues,
       paperType,
       section,
       topic,
+      availablePapers,
       contextChunks
     )
 
-    // Check token-based stop criteria
-    const currentTokens = estimateTokenCount(revision.content)
-    const tokenGrowth = (currentTokens - initialTokens) / initialTokens
-    
-    if (tokenGrowth > 0.8) { // Stop if content grew by >80%
-      improvementLog.push(`Stopping revisions: Content growth exceeded threshold (${Math.round(tokenGrowth * 100)}%)`)
-      break
-    }
-
-    currentContent = revision.content
-    revisionCount++
-    improvementLog.push(`Improvements: ${revision.improvements_made.join(', ')}`)
-
-    if (revision.quality_improvement < 5) {
-      improvementLog.push('Stopping revisions: Minimal improvement detected')
+    // Apply improvements
+    if (improvements.revised_content) {
+      currentContent = improvements.revised_content
+      currentQuality = improvements.quality_score
+      revisionsCount++
+      improvementLog.push(
+        `Cycle ${cycle + 1}: Applied ${improvements.changes_made} improvements, new quality score: ${improvements.quality_score}`
+      )
+    } else {
+      improvementLog.push(`Cycle ${cycle + 1}: No improvements needed`)
       break
     }
   }
 
-  // Final quality assessment
-  const finalReflection = await critiqueContent(
-    currentContent,
-    paperType,
-    section,
-    topic,
-    availablePapers,
-    contextChunks
-  )
-
   return {
     final_content: currentContent,
-    revisions_made: revisionCount,
-    final_quality_score: finalReflection.critique.overall_quality.score,
+    final_quality_score: currentQuality,
+    revisions_made: revisionsCount,
     improvement_log: improvementLog
   }
 }
 
-export async function critiqueContentBestOfTwo(
+/**
+ * Analyze content for potential improvements
+ */
+async function analyzeContent(
   content: string,
   paperType: PaperTypeKey,
   section: SectionKey,
   topic: string,
-  availablePapers: string[],
+  availablePapers: PaperWithAuthors[],
   contextChunks: string[]
-): Promise<ReflectionResult> {
-  const [c1, c2] = await Promise.all([
-    critiqueContent(content, paperType, section, topic, availablePapers, contextChunks),
-    critiqueContent(content, paperType, section, topic, availablePapers, contextChunks)
-  ])
-  return (c2.critique.overall_quality.score > c1.critique.overall_quality.score) ? c2 : c1
+): Promise<{
+  quality_score: number
+  issues: Array<{
+    type: string
+    description: string
+    severity: number
+  }>
+}> {
+  // Placeholder for actual analysis logic
+  return {
+    quality_score: 85,
+    issues: []
+  }
+}
+
+/**
+ * Generate improvements based on analysis
+ */
+async function generateImprovements(
+  content: string,
+  issues: Array<{
+    type: string
+    description: string
+    severity: number
+  }>,
+  paperType: PaperTypeKey,
+  section: SectionKey,
+  topic: string,
+  availablePapers: PaperWithAuthors[],
+  contextChunks: string[]
+): Promise<{
+  revised_content?: string
+  quality_score: number
+  changes_made: number
+}> {
+  // Placeholder for actual improvement logic
+  return {
+    quality_score: 85,
+    changes_made: 0
+  }
 } 

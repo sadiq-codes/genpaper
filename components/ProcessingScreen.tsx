@@ -193,13 +193,6 @@ export function ProcessingScreen({
       <div className="w-full max-w-2xl space-y-6">
         {/* Header */}
         <div className="text-center space-y-4">
-          <div className="flex items-center justify-center gap-2 text-xl font-bold">
-            <div className="p-2 rounded-full bg-primary/10">
-              <Sparkles className="h-6 w-6 text-primary animate-pulse" />
-            </div>
-            <span>GenPaper</span>
-          </div>
-
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold">Generating Your Paper</h1>
             <p className="text-muted-foreground text-sm max-w-md mx-auto line-clamp-2">{topic}</p>

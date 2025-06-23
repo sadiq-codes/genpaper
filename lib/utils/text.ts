@@ -1,46 +1,203 @@
-// Text manipulation utilities for content processing
+/**
+ * Centralized Text Processing Utilities
+ * 
+ * All text chunking, splitting, and processing functions are consolidated here
+ * to avoid duplication across the codebase.
+ */
+
+import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
+
+export interface ChunkOptions {
+  maxLength?: number
+  overlap?: number
+  preserveParagraphs?: boolean
+  minChunkSize?: number
+}
+
+export interface TextChunk {
+  id: string
+  content: string
+  position: number
+  metadata?: {
+    wordCount: number
+    charCount: number
+    isOverlap?: boolean
+  }
+}
 
 /**
- * Content chunking for RAG with intelligent sentence breaks
+ * Split text into chunks with deterministic IDs
+ * Consolidates all the various splitIntoChunks implementations
  */
-export function chunkText(text: string, chunkSize: number = 1000, overlap: number = 200): string[] {
-  if (text.length <= chunkSize) {
-    return [text]
+export function splitIntoChunks(
+  text: string,
+  paperId: string,
+  options: ChunkOptions = {}
+): TextChunk[] {
+  const {
+    maxLength = 1000,
+    overlap = 100,
+    preserveParagraphs = true,
+    minChunkSize = 100
+  } = options
+
+  if (!text || text.trim().length < minChunkSize) {
+    return []
   }
-  
-  const chunks: string[] = []
-  let start = 0
-  
-  while (start < text.length) {
-    let end = start + chunkSize
-    
-    // If not at the end, try to break at a sentence or paragraph
-    if (end < text.length) {
-      // Look for sentence endings within the last 200 characters
-      const lastPart = text.slice(end - 200, end)
-      const sentenceEndings = ['. ', '.\n', '! ', '!\n', '? ', '?\n']
+
+  const chunks: TextChunk[] = []
+  let position = 0
+
+  // Split by paragraphs first if preserveParagraphs is true
+  const segments = preserveParagraphs 
+    ? text.split(/\n\s*\n/).filter(seg => seg.trim().length > 0)
+    : [text]
+
+  for (const segment of segments) {
+    if (segment.length <= maxLength) {
+      // Segment fits in one chunk
+      const chunkId = createDeterministicChunkId({
+        paperId,
+        content: segment,
+        position
+      })
+
+      chunks.push({
+        id: chunkId,
+        content: segment.trim(),
+        position,
+        metadata: {
+          wordCount: segment.trim().split(/\s+/).length,
+          charCount: segment.length
+        }
+      })
+      position += segment.length
+    } else {
+      // Split segment into multiple chunks with overlap
+      let segmentStart = 0
       
-      let bestBreak = -1
-      for (const ending of sentenceEndings) {
-        const index = lastPart.lastIndexOf(ending)
-        if (index > bestBreak) {
-          bestBreak = index
+      while (segmentStart < segment.length) {
+        const chunkEnd = Math.min(segmentStart + maxLength, segment.length)
+        let chunkContent = segment.slice(segmentStart, chunkEnd)
+        
+        // Try to break at word boundaries
+        if (chunkEnd < segment.length) {
+          const lastSpaceIndex = chunkContent.lastIndexOf(' ')
+          if (lastSpaceIndex > maxLength * 0.8) {
+            chunkContent = chunkContent.slice(0, lastSpaceIndex)
+          }
+        }
+
+        if (chunkContent.trim().length >= minChunkSize) {
+          const chunkId = createDeterministicChunkId({
+            paperId,
+            content: chunkContent,
+            position: position + segmentStart
+          })
+
+          chunks.push({
+            id: chunkId,
+            content: chunkContent.trim(),
+            position: position + segmentStart,
+            metadata: {
+              wordCount: chunkContent.trim().split(/\s+/).length,
+              charCount: chunkContent.length,
+              isOverlap: segmentStart > 0
+            }
+          })
+        }
+
+        // Move to next chunk with overlap
+        segmentStart = chunkEnd - overlap
+        if (segmentStart >= segment.length - minChunkSize) {
+          break // Avoid tiny trailing chunks
         }
       }
-      
-      if (bestBreak > -1) {
-        end = end - 200 + bestBreak + 2 // +2 to include the punctuation and space
-      }
+      position += segment.length
     }
-    
-    chunks.push(text.slice(start, end).trim())
-    
-    // Move start position with overlap, preventing negative values
-    start = Math.max(0, end - overlap)
-    if (start >= text.length) break
+  }
+
+  return chunks
+}
+
+/**
+ * Estimate token count (approximate)
+ */
+export function estimateTokenCount(text: string): number {
+  // Rough approximation: 1 token ≈ 4 characters for English text
+  return Math.ceil(text.length / 4)
+}
+
+/**
+ * Clean and normalize text for processing
+ */
+export function normalizeText(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')           // Normalize line endings
+    .replace(/\n{3,}/g, '\n\n')       // Collapse multiple newlines
+    .replace(/[ \t]+/g, ' ')          // Normalize whitespace
+    .trim()
+}
+
+/**
+ * Extract meaningful sentences from text
+ */
+export function extractSentences(text: string): string[] {
+  // Simple sentence splitting (can be enhanced with NLP libraries)
+  return text
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 10) // Filter out very short fragments
+}
+
+/**
+ * Calculate text similarity (simple word overlap)
+ */
+export function calculateTextSimilarity(text1: string, text2: string): number {
+  const words1 = new Set(text1.toLowerCase().split(/\s+/))
+  const words2 = new Set(text2.toLowerCase().split(/\s+/))
+  
+  const intersection = new Set([...words1].filter(word => words2.has(word)))
+  const union = new Set([...words1, ...words2])
+  
+  return union.size > 0 ? intersection.size / union.size : 0
+}
+
+/**
+ * Truncate text to a maximum length while preserving word boundaries
+ */
+export function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text
   }
   
-  return chunks.filter(chunk => chunk.length > 50) // Filter out very small chunks
+  const truncated = text.slice(0, maxLength)
+  const lastSpaceIndex = truncated.lastIndexOf(' ')
+  
+  return lastSpaceIndex > maxLength * 0.8 
+    ? truncated.slice(0, lastSpaceIndex) + '...'
+    : truncated + '...'
+}
+
+/**
+ * Extract keywords from text (simple frequency-based)
+ */
+export function extractKeywords(text: string, maxKeywords: number = 10): string[] {
+  const words = text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .split(/\s+/)
+    .filter(word => word.length > 3) // Filter short words
+  
+  const frequency = new Map<string, number>()
+  words.forEach(word => {
+    frequency.set(word, (frequency.get(word) || 0) + 1)
+  })
+  
+  return Array.from(frequency.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxKeywords)
+    .map(([word]) => word)
 }
 
 /**
@@ -198,12 +355,4 @@ export function sanitizeFilename(filename: string): string {
   return filename
     .replace(/[^a-zA-Z0-9\s\-_.]/g, '')
     .substring(0, 255)
-}
-
-/**
- * Rough token estimation (GPT-4/4o ~0.75 tokens per word)
- */
-export function estimateTokenCount(text: string): number {
-  const words = text.trim().split(/\s+/).length
-  return Math.ceil(words * 0.75)
 } 
