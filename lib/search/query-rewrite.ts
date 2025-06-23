@@ -1,4 +1,4 @@
-import crypto from 'crypto'
+import type { SearchOptions } from '@/contracts/search-sources'
 
 /**
  * Generate up to k alternative keyword search queries that are semantically
@@ -31,8 +31,7 @@ Return the list as a JSON array of plain strings. Do not add any explanation.`
         'Content-Type': 'application/json',
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
       },
-      body: JSON.stringify(body),
-      timeout: 10000
+      body: JSON.stringify(body)
     })
 
     if (!resp.ok) throw new Error(`OpenAI ${resp.status}`)
@@ -44,7 +43,7 @@ Return the list as a JSON array of plain strings. Do not add any explanation.`
       arr = JSON.parse(text)
     } catch {
       // fallback: attempt to split by newline / dash
-      arr = text.split(/\n|\r|-/).map((s) => s.trim()).filter(Boolean)
+      arr = text.split(/\n|\r|-/).map((s: string) => s.trim()).filter(Boolean)
     }
 
     rewrites.push(...arr.slice(0, k))
@@ -52,6 +51,6 @@ Return the list as a JSON array of plain strings. Do not add any explanation.`
     console.warn('query-rewrite failed', err)
   }
 
-  // Remove dups & empty
+  // Remove dups & empty, limit to k+1 items
   return Array.from(new Set(rewrites)).filter(Boolean).slice(0, k + 1)
 } 

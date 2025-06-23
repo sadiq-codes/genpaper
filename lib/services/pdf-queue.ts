@@ -10,6 +10,7 @@
 
 import { getSB } from '@/lib/supabase/server'
 import { extractPdfMetadataTiered, type TieredExtractionResult } from '@/lib/pdf/tiered-extractor'
+import { downloadPdfBuffer } from '@/lib/pdf/pdf-utils'
 import { debug } from '@/lib/utils/logger'
 
 export interface PDFProcessingJob {
@@ -61,6 +62,7 @@ export class PDFProcessingQueue {
   private jobs = new Map<string, PDFProcessingJob>()
   private processing = new Set<string>()
   private statusCallbacks = new Map<string, (status: ProcessingStatus) => void>()
+  private realtimeChannel: unknown = null // 🔌 Single Realtime channel to prevent socket leaks
 
   // Configuration
   private readonly MAX_CONCURRENT_JOBS = 3
@@ -73,8 +75,68 @@ export class PDFProcessingQueue {
   static getInstance(): PDFProcessingQueue {
     if (!this.instance) {
       this.instance = new PDFProcessingQueue()
+      // Initialize job recovery on first instantiation
+      this.instance.recoverStrandedJobs()
     }
     return this.instance
+  }
+
+  /**
+   * 🔄 Job Recovery: Reclaim pending/processing jobs on restart
+   */
+  private async recoverStrandedJobs(): Promise<void> {
+    try {
+      const supabase = await getSB()
+      
+      // Find jobs that were pending or processing when the service went down
+      const { data: strandedJobs, error } = await supabase
+        .from('pdf_processing_logs')
+        .select('*')
+        .in('status', ['pending', 'processing'])
+        .order('created_at', { ascending: true })
+      
+      if (error) {
+        debug.error('Failed to recover stranded jobs', error)
+        return
+      }
+      
+      if (!strandedJobs || strandedJobs.length === 0) {
+        debug.info('No stranded jobs found during recovery')
+        return
+      }
+      
+      debug.info(`🔄 Recovering ${strandedJobs.length} stranded jobs`)
+      
+      // Convert database records back to job objects and re-queue them
+      for (const dbJob of strandedJobs) {
+        const job: PDFProcessingJob = {
+          id: dbJob.job_id,
+          paperId: dbJob.paper_id,
+          pdfUrl: dbJob.pdf_url,
+          paperTitle: dbJob.paper_title || 'Unknown',
+          userId: dbJob.user_id || 'system',
+          priority: (dbJob.priority as 'low' | 'normal' | 'high') || 'normal',
+          status: 'pending', // Reset to pending for recovery
+          attempts: dbJob.attempts || 0,
+          maxAttempts: this.DEFAULT_MAX_ATTEMPTS,
+          createdAt: new Date(dbJob.created_at),
+          error: dbJob.error || undefined,
+          metadata: dbJob.metadata as PDFProcessingJob['metadata']
+        }
+        
+        // Add back to memory queue
+        this.jobs.set(job.id, job)
+        debug.info(`🔄 Recovered job ${job.id} for paper ${job.paperId}`)
+      }
+      
+      debug.info(`✅ Job recovery completed: ${strandedJobs.length} jobs restored`)
+      
+      // Start processing recovered jobs
+      setTimeout(() => this.processNextJob(), 1000)
+      
+    } catch (error) {
+      debug.error('Job recovery failed', error)
+    }
   }
 
   /**
@@ -85,9 +147,15 @@ export class PDFProcessingQueue {
     pdfUrl: string,
     paperTitle: string,
     userId: string,
-    priority: 'low' | 'normal' | 'high' = 'normal'
+    priority: 'low' | 'normal' | 'high' = 'normal',
+    options: { fastTrack?: boolean } = {}
   ): Promise<string> {
-    // Check user quota
+    // Fast track for small PDFs (< 5MB, immediate processing)
+    if (options.fastTrack) {
+      return await this.processFastTrack(paperId, pdfUrl, paperTitle)
+    }
+
+    // Check user quota for regular queue processing
     const quotaCheck = await this.checkUserQuota(userId)
     if (!quotaCheck.allowed) {
       throw new Error(`Quota exceeded: ${quotaCheck.reason}`)
@@ -184,9 +252,16 @@ export class PDFProcessingQueue {
       message: 'Starting PDF processing...'
     })
 
+    // 🕐 Adaptive timeout: Longer for OCR and large files
+    const enableOcr = await this.shouldEnableOcr(job.userId)
+    const fileSize = job.metadata?.fileSize || 0
+    const adaptiveTimeout = enableOcr 
+      ? Math.max(300000, Math.min(600000, fileSize / 1024)) // 5-10 minutes for OCR based on size
+      : this.JOB_TIMEOUT_MS // 1 minute for regular processing
+    
     const timeoutId = setTimeout(() => {
       this.handleJobTimeout(job)
-    }, this.JOB_TIMEOUT_MS)
+    }, adaptiveTimeout)
 
     try {
       // Download PDF
@@ -197,7 +272,7 @@ export class PDFProcessingQueue {
         message: 'Downloading PDF...'
       })
 
-      const pdfBuffer = await this.downloadPDF(job.pdfUrl)
+      const pdfBuffer = await downloadPdfBuffer(job.pdfUrl)
       job.metadata!.fileSize = pdfBuffer.length
 
       // Extract content using tiered approach
@@ -255,6 +330,12 @@ export class PDFProcessingQueue {
       clearTimeout(timeoutId)
       this.processing.delete(job.id)
       await this.persistJob(job)
+      
+      // 🧹 Memory hygiene: Clean up completed/failed/poisoned jobs from memory
+      if (['completed', 'failed', 'poisoned'].includes(job.status)) {
+        this.jobs.delete(job.id)
+        this.statusCallbacks.delete(job.id)
+      }
       
       // Process next job
       setTimeout(() => this.processNextJob(), 100)
@@ -387,12 +468,24 @@ export class PDFProcessingQueue {
   private async updateUserQuota(userId: string, usedOcr: boolean): Promise<void> {
     const supabase = await getSB()
     
-    const updates: Record<string, unknown> = {
-      daily_pdf_used: supabase.rpc('increment', { x: 1 })
+    // 🔧 Fix: Fetch current counts, then increment properly
+    const { data: currentQuota } = await supabase
+      .from('user_quotas')
+      .select('daily_pdf_used, monthly_ocr_used')
+      .eq('user_id', userId)
+      .single()
+    
+    if (!currentQuota) {
+      debug.warn('No quota found for user during increment', { userId })
+      return
+    }
+    
+    const updates: Record<string, number> = {
+      daily_pdf_used: currentQuota.daily_pdf_used + 1
     }
     
     if (usedOcr) {
-      updates.monthly_ocr_used = supabase.rpc('increment', { x: 1 })
+      updates.monthly_ocr_used = currentQuota.monthly_ocr_used + 1
     }
 
     await supabase
@@ -401,40 +494,10 @@ export class PDFProcessingQueue {
       .eq('user_id', userId)
   }
 
-  /**
-   * Download PDF with size and timeout limits
-   */
-  private async downloadPDF(url: string): Promise<Buffer> {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 15000)
 
-    try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'GenPaper/2.0 Academic Research Tool'
-        }
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-      }
-
-      const buffer = await response.arrayBuffer()
-      
-      // Check size limit (50MB)
-      if (buffer.byteLength > 50 * 1024 * 1024) {
-        throw new Error(`PDF too large: ${buffer.byteLength} bytes`)
-      }
-
-      return Buffer.from(buffer)
-    } finally {
-      clearTimeout(timeoutId)
-    }
-  }
 
   /**
-   * Store extraction result in database with proper chunking and embedding
+   * Store extraction result in database with direct chunking (no recursive calls)
    */
   private async storeExtractionResult(
     paperId: string, 
@@ -442,7 +505,7 @@ export class PDFProcessingQueue {
   ): Promise<void> {
     const supabase = await getSB()
     
-    // First, update the paper with PDF content and processing metadata
+    // 1. Update the paper with PDF content and processing metadata
     await supabase
       .from('papers')
       .update({
@@ -462,80 +525,41 @@ export class PDFProcessingQueue {
       })
       .eq('id', paperId)
     
-         // Process fullText for RAG embeddings using existing ingestPaperWithChunks
-     if (result.fullText && result.fullText.length > 100) {
-       debug.info('Processing tiered extractor full text for chunking and embeddings', { 
-         paperId, 
-         textLength: result.fullText.length,
-         extractionMethod: result.extractionMethod 
-       })
-       
-       try {
-         // Get existing paper data to create a proper PaperDTO
-         const { data: existingPaper, error: fetchError } = await supabase
-           .from('papers')
-           .select('*')
-           .eq('id', paperId)
-           .single()
-
-         if (fetchError || !existingPaper) {
-           throw new Error(`Failed to fetch existing paper: ${fetchError?.message || 'Paper not found'}`)
-         }
-
-         // Create PaperDTO from existing paper data
-         const paperDTO = {
-           title: existingPaper.title,
-           abstract: existingPaper.abstract,
-           publication_date: existingPaper.publication_date,
-           venue: existingPaper.venue,
-           doi: existingPaper.doi,
-           url: existingPaper.url,
-           pdf_url: existingPaper.pdf_url,
-           metadata: {
-             ...existingPaper.metadata,
-             pdf_processing: {
-               extraction_method: result.extractionMethod,
-               extraction_time_ms: result.extractionTimeMs,
-               confidence: result.confidence,
-               word_count: result.metadata?.wordCount,
-               page_count: result.metadata?.pageCount,
-               is_scanned: result.metadata?.isScanned,
-               processing_notes: result.metadata?.processingNotes,
-               processed_at: new Date().toISOString()
-             }
-           },
-           source: existingPaper.source || 'tiered_extractor',
-           citation_count: existingPaper.citation_count || 0,
-           impact_score: existingPaper.impact_score || 0,
-           authors: [] // Will be handled by ingestPaperWithChunks
-         }
-
-         // Use the existing ingestPaperWithChunks function which handles all the complexity
-         const { ingestPaperWithChunks } = await import('@/lib/db/papers')
-         
-         // Pass full text as a single "chunk" with 1MB safety cap - ingestPaperWithChunks will handle proper chunking
+    // 2. If we have text, trigger chunking directly (no recursive ingestion)
+    if (result.fullText && result.fullText.length > 100) {
+      debug.info('Processing PDF text for chunking and embeddings', { 
+        paperId, 
+        textLength: result.fullText.length,
+        extractionMethod: result.extractionMethod 
+      })
+      
+      try {
+        // Import chunking utilities directly
+        const { processAndSaveChunks } = await import('@/lib/utils/chunk-processor')
+        
+                 // Process text with 1MB safety cap
          const text = result.fullText.slice(0, 1_000_000)
-         await ingestPaperWithChunks(paperDTO, [text])
-         
-         debug.info(`Tiered PDF text processing completed for ${paperId}`, {
-           extractionMethod: result.extractionMethod,
-           textLength: result.fullText.length
-         })
-         
-       } catch (chunkError) {
-         debug.error('Failed to process tiered extractor full text', { 
-           paperId, 
-           extractionMethod: result.extractionMethod,
-           error: chunkError 
-         })
-         // Don't fail the entire operation, but log for monitoring
-       }
-     } else {
-       debug.warn('No usable full text available from tiered extractor', { 
-         paperId, 
-         extractionMethod: result.extractionMethod 
-       })
-     }
+         await processAndSaveChunks(paperId, [text])
+        
+        debug.info(`PDF text processing completed for ${paperId}`, {
+          extractionMethod: result.extractionMethod,
+          textLength: result.fullText.length
+        })
+        
+      } catch (chunkError) {
+        debug.error('Failed to process PDF text for chunking', { 
+          paperId, 
+          extractionMethod: result.extractionMethod,
+          error: chunkError 
+        })
+        // Don't fail the entire operation, but log for monitoring
+      }
+    } else {
+      debug.warn('No usable full text available from PDF extraction', { 
+        paperId, 
+        extractionMethod: result.extractionMethod 
+      })
+    }
   }
 
   /**
@@ -602,6 +626,78 @@ export class PDFProcessingQueue {
   }
 
   /**
+   * Fast track processing for small PDFs (< 5MB, immediate processing)
+   * Use for CLI tools, dev environments, or guaranteed small files
+   */
+  private async processFastTrack(
+    paperId: string,
+    pdfUrl: string,
+    paperTitle: string
+  ): Promise<string> {
+    const jobId = `fast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    
+    debug.info('Fast track PDF processing', { jobId, paperId, paperTitle })
+    
+    try {
+      // Quick size check first
+      const response = await fetch(pdfUrl, { method: 'HEAD' })
+      const contentLength = response.headers.get('content-length')
+      const sizeBytes = contentLength ? parseInt(contentLength) : 0
+      
+      // Reject large files for fast track
+      if (sizeBytes > 5 * 1024 * 1024) { // 5MB limit
+        throw new Error(`File too large for fast track: ${sizeBytes} bytes (max: 5MB)`)
+      }
+      
+      // Process immediately with timeout
+      const pdfBuffer = await downloadPdfBuffer(pdfUrl)
+      
+      const extractionResult = await extractPdfMetadataTiered(pdfBuffer, {
+        enableOcr: false, // No OCR for fast track
+        maxTimeoutMs: 10000 // 10s timeout
+      })
+      
+      await this.storeExtractionResult(paperId, extractionResult)
+      
+      // 💾 Fast-track persistence: Maintain history & SSE consistency
+      const completedJob: PDFProcessingJob = {
+        id: jobId,
+        paperId,
+        pdfUrl,
+        paperTitle,
+        userId: 'system', // Fast track typically used by system
+        priority: 'high',
+        status: 'completed',
+        attempts: 1,
+        maxAttempts: 1,
+        createdAt: new Date(),
+        startedAt: new Date(),
+        completedAt: new Date(),
+        extractionResult,
+        metadata: {
+          fileSize: sizeBytes,
+          estimatedCost: 0,
+          userQuotaUsed: 0
+        }
+      }
+      
+      await this.persistJob(completedJob)
+      
+      debug.info('Fast track processing completed', { 
+        jobId, 
+        method: extractionResult.extractionMethod,
+        timeMs: extractionResult.extractionTimeMs 
+      })
+      
+      return jobId
+      
+    } catch (error) {
+      debug.error('Fast track processing failed', { jobId, error })
+      throw new Error(`Fast track failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  /**
    * Send real-time status update
    */
   private updateStatus(jobId: string, status: ProcessingStatus): void {
@@ -615,18 +711,29 @@ export class PDFProcessingQueue {
   }
 
   /**
-   * Broadcast status via Supabase Realtime
+   * Broadcast status via Supabase Realtime (single channel to prevent socket leaks)
    */
   private async broadcastStatus(status: ProcessingStatus): Promise<void> {
-    const supabase = await getSB()
-    
-    await supabase
-      .channel('pdf-processing')
-      .send({
-        type: 'broadcast',
-        event: 'status-update',
-        payload: status
-      })
+    try {
+      const supabase = await getSB()
+      
+      // 🔌 Initialize single channel on first use to prevent socket leaks
+      if (!this.realtimeChannel) {
+        this.realtimeChannel = supabase.channel('pdf-processing')
+      }
+      
+      // Send via the persistent channel
+      if (this.realtimeChannel && typeof this.realtimeChannel === 'object') {
+        const channel = this.realtimeChannel as { send: (data: unknown) => Promise<unknown> }
+        await channel.send({
+          type: 'broadcast',
+          event: 'status-update',
+          payload: status
+        })
+      }
+    } catch (error) {
+      debug.warn('Failed to broadcast status', { error })
+    }
   }
 }
 

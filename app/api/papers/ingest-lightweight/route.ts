@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { ingestPaperLightweight } from '@/lib/db/papers'
+import { ingestPaper } from '@/lib/db/papers'
 import { createClient } from '@/lib/supabase/server'
 import { PaperDTO } from '@/lib/schemas/paper'
 
@@ -40,13 +40,16 @@ export async function POST(request: NextRequest) {
       authors: paper.authors || []
     }
 
-    // Ingest paper without chunks for fast library addition
-    const paperId = await ingestPaperLightweight(paperDTO)
+    // Use unified ingestion with abstract-only processing
+    const result = await ingestPaper(paperDTO, {
+      // No options needed - will process abstract automatically if available
+    })
 
     return NextResponse.json({ 
       success: true, 
-      paperId,
-      message: 'Paper ingested without chunks for library'
+      paperId: result.paperId,
+      isNewPaper: result.isNew,
+      message: `Paper ${result.isNew ? 'ingested' : 'already exists'} - ready for library`
     })
 
   } catch (error) {

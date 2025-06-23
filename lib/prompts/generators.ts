@@ -107,8 +107,19 @@ Respond with NOTHING BUT a JSON array of strings, each describing one quality cr
       temperature: 0.3 // Lower temperature for more consistent criteria
     });
 
-    const criteria = JSON.parse(response.text || '[]') as string[];
-    return criteria.slice(0, 5); // Limit to max 5 criteria
+    const parsedJson = JSON.parse(response.text || '[]');
+
+    // Ensure the parsed result is an array of strings
+    if (Array.isArray(parsedJson)) {
+      const criteria = parsedJson.filter((item: unknown): item is string => typeof item === 'string');
+      if (criteria.length > 0) {
+        return criteria.slice(0, 5); // Limit to max 5 criteria
+      }
+    }
+
+    // If we reach here, the AI response was not in the expected format
+    console.warn('AI returned non-array or empty array for quality criteria, falling back to defaults.');
+    return ['evidence-based reasoning', 'logical coherence', 'scholarly depth'];
   } catch (error) {
     console.error('Failed to generate quality criteria:', error);
     // Fallback to basic discipline-agnostic criteria

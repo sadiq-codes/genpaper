@@ -8,7 +8,7 @@
 import { getSB } from '@/lib/supabase/server'
 import { splitIntoChunks, normalizeText } from '@/lib/utils/text'
 import { ContentRetrievalError, NoRelevantContentError, IngestionError, ChunkingError } from './errors'
-import { getPDFContent, hasPDFContent } from '@/lib/services/pdf-downloader'
+import { getPDFContent, hasPDFContent } from '@/lib/pdf/pdf-utils'
 import type { PaperWithAuthors } from '@/types/simplified'
 
 export interface ContentStatus {

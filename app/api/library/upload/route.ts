@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { ingestPaperWithChunks } from '@/lib/db/papers'
+import { ingestPaper } from '@/lib/db/papers'
 import { addPaperToLibrary } from '@/lib/db/library'
 
 import { sanitizeFilename } from '@/lib/utils/text'
@@ -149,21 +149,25 @@ export async function POST(request: NextRequest) {
 
     debug.info('Starting paper ingestion')
     
-    // Ingest paper with content for RAG (creates embeddings for main paper and chunks the full text)
+    // Ingest paper using the unified system
     const text = tieredResult.fullText?.slice(0, 1_000_000)   // 1 MB safety cap to prevent network choking
-    const paperId = await ingestPaperWithChunks(validationResult.data, text ? [text] : undefined)
+    const result = await ingestPaper(validationResult.data, {
+      fullText: text || undefined
+      // Process immediately for uploads (default behavior)
+    })
+    const paperId = result.paperId
     debug.info('Paper ingested successfully', { paperId })
 
     // Store the original PDF file in Supabase storage for future reference
     debug.info('Uploading PDF to storage')
     try {
-      const { uploadPDFToStorage, generatePDFFilename, updatePaperWithPDF } = await import('@/lib/services/pdf-downloader')
+      const { uploadPDFToStorage, generatePDFFilename, updatePaperWithPDF } = await import('@/lib/pdf/pdf-utils')
       
-      // Generate filename using the same convention as downloads
-      const filename = generatePDFFilename(
-        validationResult.data.doi || `upload-${Date.now()}`, 
-        paperId
-      )
+      // Generate filename using the same convention as downloads  
+      const doiForFilename = (validationResult.data.doi && typeof validationResult.data.doi === 'string') 
+        ? validationResult.data.doi 
+        : `upload-${Date.now()}`
+      const filename = generatePDFFilename(doiForFilename, paperId)
       
       // Upload PDF to storage
       const storedUrl = await uploadPDFToStorage(fileBuffer, filename)

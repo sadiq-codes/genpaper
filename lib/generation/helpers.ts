@@ -18,15 +18,17 @@ export async function buildSectionContexts(
   const chunkCache = new Map<string, PaperChunk[]>()
 
   for (const section of outline.sections) {
-    const cacheKey = section.candidatePaperIds.sort().join(',')
+    const ids = Array.isArray(section.candidatePaperIds) ? section.candidatePaperIds : []
+    const cacheKey = ids.slice().sort().join(',')
     let contextChunks = chunkCache.get(cacheKey)
 
     if (!contextChunks) {
       try {
         contextChunks = await getRelevantChunks(
           topic,
-          section.candidatePaperIds,
-          Math.min(20, section.candidatePaperIds.length * 3)
+          ids,
+          Math.min(20, ids.length * 3),
+          []
         )
         chunkCache.set(cacheKey, contextChunks)
         console.log(`📄 Cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
@@ -43,7 +45,7 @@ export async function buildSectionContexts(
     sectionContexts.push({
       sectionKey: section.sectionKey,
       title: section.title,
-      candidatePaperIds: section.candidatePaperIds,
+      candidatePaperIds: ids,
       contextChunks,
       expectedWords: section.expectedWords,
     })

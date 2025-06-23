@@ -564,37 +564,3 @@ export function getRegionDetails(metadata?: Record<string, unknown>): {
     wasOverridden: metadata.region_was_overridden as boolean
   }
 }
-
-/**
- * Performance testing helper
- */
-export function benchmarkDetection(iterations = 1000): {
-  avgTimeMs: number
-  totalTimeMs: number
-  cacheHitRate: number
-} {
-  const testInputs = [
-    { venue: 'University of Lagos, Nigeria' },
-    { url: 'https://cambridge.ac.uk' },
-    { venue: 'Harvard University, USA' },
-    { venue: 'University of Tokyo, Japan' }
-  ]
-
-  globalDetector.clearCache()
-  const startTime = Date.now()
-  let cacheHits = 0
-
-  for (let i = 0; i < iterations; i++) {
-    const input = testInputs[i % testInputs.length]
-    const result = detectPaperRegion(input, { enableDebug: true })
-    if (result.debugInfo?.cacheHit) cacheHits++
-  }
-
-  const totalTime = Date.now() - startTime
-  
-  return {
-    avgTimeMs: totalTime / iterations,
-    totalTimeMs: totalTime,
-    cacheHitRate: cacheHits / iterations
-  }
-} 

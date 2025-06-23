@@ -243,22 +243,21 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
         if (!ingestResponse.ok) {
           console.warn('Failed to ingest paper, but continuing with library addition')
         } else {
-          const { paperId: actualPaperId } = await ingestResponse.json()
-          console.log(`📚 Paper ingested without chunks: ${actualPaperId}`)
+          const { paperId: actualPaperId, isNewPaper, message } = await ingestResponse.json()
+          console.log(`📚 ${message}: ${actualPaperId}`)
           
           // If paper has PDF URL, queue it for background processing
-          if (searchResult.pdf_url) {
+          if (searchResult.pdf_url || searchResult.doi) {
             console.log(`📄 Queueing PDF processing for: ${searchResult.title}`)
             try {
-              const pdfResponse = await fetch('/api/pdf-queue', {
+              const pdfResponse = await fetch('/api/papers/download-pdf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({
                   paperId: actualPaperId,
-                  pdfUrl: searchResult.pdf_url,
-                  title: searchResult.title,
-                  priority: 'normal'
+                  directPdfUrl: searchResult.pdf_url,
+                  directTitle: searchResult.title
                 })
               })
               

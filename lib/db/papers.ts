@@ -1,204 +1,21 @@
-import { v5 as uuidv5 } from 'uuid'
 import { getSB } from '@/lib/supabase/server'
 import type { PaperWithAuthors, Author } from '@/types/simplified'
-import { ai } from '@/lib/ai/vercel-client'
-import { embedMany } from 'ai'
+import { generateEmbeddings as generateEmbeddingsUtil } from '@/lib/utils/embedding'
 import { PaperDTO } from '@/lib/schemas/paper'
-import { RegionDetectionInputs } from '@/lib/utils/global-region-detection'
-import { detectPaperRegion, enrichMetadataWithRegion } from '@/lib/utils/global-region-detection'
+import { generateDeterministicPaperId } from '@/lib/utils/deterministic-id'
 import { debug } from '@/lib/utils/logger' 
 
-// Namespace UUID for generating deterministic paper UUIDs
-const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
-
-// Helper function to generate deterministic UUID for papers
-export function generatePaperUUID(input: string): string {
-  // Use UUID v5 for deterministic UUID generation based on input
-  return uuidv5(input, PAPER_NAMESPACE)
-}
-
 // Centralized embedding configuration to ensure consistency
-const EMBEDDING_CONFIG = {
-  model: 'text-embedding-3-small' as const,
-  dimensions: 384,
-  maxTokens: 8192 // Fix: Add token limit for embedding model
-} as const
+
 
 // Fix: Fallback token estimation without tiktoken dependency
-function estimateTokenCount(text: string): number {
-  // Rough estimation: 1 token ≈ 4 characters for English text
-  // This is less accurate than tiktoken but prevents WASM loading issues
-  return Math.ceil(text.length / 4)
-}
-
-// Fix: Simplified tiktoken encoder with fallback
-async function getTokenEncoder() {
-  try {
-    // Use @dqbd/tiktoken with proper WASM loading
-    const { encoding_for_model } = await import('@dqbd/tiktoken')
-    return encoding_for_model(EMBEDDING_CONFIG.model)
-  } catch (error) {
-    console.warn('Tiktoken not available, using fallback token estimation:', error)
-    return null
-  }
-}
+// Removed estimateTokenCount and getTokenEncoder - now handled by chunk-processor utility
 
 // Fix: Smart chunk validation with simplified tiktoken usage
-async function validateAndClampChunk(text: string, targetTokens: number = 500): Promise<string> {
-  // First, do a quick estimate to avoid expensive operations
-  const estimatedTokens = estimateTokenCount(text)
-  
-  // If estimate is within target, return as-is
-  if (estimatedTokens <= targetTokens) {
-    return text
-  }
-  
-  // Try to get precise token count if available
-  let actualTokens = estimatedTokens
-  
-  try {
-    const encoder = await getTokenEncoder()
-    if (encoder) {
-      const tokens = encoder.encode(text)
-      actualTokens = tokens.length
-      
-      // If within target size with precise counting, return as-is
-      if (actualTokens <= targetTokens) {
-        encoder.free()
-        return text
-      }
-      
-      // If exceeds model limit, perform emergency truncation with sentence boundaries
-      if (actualTokens > EMBEDDING_CONFIG.maxTokens) {
-        const safeTokens = new Uint32Array(Array.from(tokens).slice(0, EMBEDDING_CONFIG.maxTokens - 10)) // Leave margin
-        const truncatedBytes = encoder.decode(safeTokens)
-        const truncatedText = new TextDecoder().decode(truncatedBytes)
-        encoder.free()
-        
-        // Try to preserve sentence boundaries
-        const sentences = truncatedText.split(/[.!?]\s+/)
-        if (sentences.length > 1) {
-          sentences.pop() // Remove potentially incomplete last sentence
-          return sentences.join('. ') + '.'
-        }
-        
-        return truncatedText
-      }
-      
-      encoder.free()
-    }
-  } catch (error) {
-    console.warn('Token counting failed, using character-based fallback:', error)
-  }
-  
-  // Fallback to character-based truncation with sentence preservation
-  if (estimatedTokens > EMBEDDING_CONFIG.maxTokens) {
-    const maxChars = EMBEDDING_CONFIG.maxTokens * 4 // Conservative estimate
-    const truncated = text.substring(0, maxChars)
-    
-    // Try to preserve sentence boundaries
-    const sentences = truncated.split(/[.!?]\s+/)
-    if (sentences.length > 1) {
-      sentences.pop()
-      return sentences.join('. ') + '.'
-    }
-    
-    return truncated
-  }
-  
-  return text
-}
+// Removed validateAndClampChunk - now handled by chunk-processor utility
 
-// Fix: Enhanced chunk processing with error tracking
-interface ChunkProcessingResult {
-  success: boolean
-  chunkIndex: number
-  error?: string
-}
-
-// Fix: Batch chunk processing with error handling and async token validation
-async function processChunkBatch(
-  paperId: string,
-  chunks: Array<{ content: string; index: number }>,
-  retryAttempt: number = 0
-): Promise<ChunkProcessingResult[]> {
-  const supabase = await getSB()
-  const results: ChunkProcessingResult[] = []
-  
-  try {
-    // Validate and clamp chunks for token limits (now async)
-    const validatedChunks = await Promise.all(
-      chunks.map(async (chunk) => ({
-        ...chunk,
-        content: await validateAndClampChunk(chunk.content)
-      }))
-    )
-    
-    // Generate embeddings for batch
-    const chunkTexts = validatedChunks.map(chunk => chunk.content)
-    const chunkEmbeddings = await generateEmbeddings(chunkTexts)
-    
-    // Prepare chunk records
-    const chunkRecords = validatedChunks.map((chunk, batchIndex) => ({
-      paper_id: paperId,
-      chunk_index: chunk.index,
-      content: chunk.content,
-      embedding: chunkEmbeddings[batchIndex],
-      processing_status: 'completed',
-      error_count: retryAttempt
-    }))
-    
-    // Insert chunks with improved error handling
-    const { error: chunksError } = await supabase
-      .from('paper_chunks')
-      .upsert(chunkRecords, {
-        onConflict: 'paper_id,chunk_index',
-        ignoreDuplicates: false
-      })
-    
-    if (chunksError) {
-      throw new Error(`Chunk insertion failed: ${chunksError.message}`)
-    }
-    
-    // Mark all chunks as successful
-    chunks.forEach(chunk => {
-      results.push({ success: true, chunkIndex: chunk.index })
-    })
-    
-  } catch (error) {
-    console.error(`Chunk batch processing failed (attempt ${retryAttempt + 1}):`, error)
-    
-    // Mark all chunks in batch as failed and track them
-    for (const chunk of chunks) {
-      results.push({ 
-        success: false, 
-        chunkIndex: chunk.index,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      })
-      
-      // Insert into failed_chunks table for retry
-      try {
-        await supabase
-          .from('failed_chunks')
-          .upsert({
-            paper_id: paperId,
-            chunk_index: chunk.index,
-            content: chunk.content,
-            error_message: error instanceof Error ? error.message : 'Unknown error',
-            error_count: retryAttempt + 1,
-            last_attempt_at: new Date().toISOString()
-          }, {
-            onConflict: 'paper_id,chunk_index',
-            ignoreDuplicates: false
-          })
-      } catch (trackingError) {
-        console.error('Failed to track failed chunk:', trackingError)
-      }
-    }
-  }
-  
-  return results
-}
+// Import the unified chunk processor
+import { processAndSaveChunks } from '@/lib/utils/chunk-processor'
 
 // Type definitions for database query results
 interface PaperAuthorRelation {
@@ -279,40 +96,27 @@ export async function getRecentPapers(
 }
 
 
-// Fix: Add vector index optimization with better error handling
-async function optimizeVectorIndex(): Promise<void> {
-  try {
-    const supabase = await getSB()
-    // Call the optimize function if available
-    await supabase.rpc('optimize_vector_index')
-  } catch (error) {
-    // Log but don't fail - optimization is not critical
-    console.warn('Vector index optimization failed:', error)
-  }
-}
+// Removed optimizeVectorIndex - now handled automatically by the database
 
-// Generate embeddings with consistent configuration
-export async function generateEmbeddings(inputs: string | string[]): Promise<number[][]> {
-  // Convert single input to array for consistent processing
-  const inputArray = Array.isArray(inputs) ? inputs : [inputs]
-  
-  // Use AI SDK embedMany for batch processing with proper dimensions
-  const { embeddings } = await embedMany({
-    model: ai.embedding(EMBEDDING_CONFIG.model, {
-      dimensions: EMBEDDING_CONFIG.dimensions
-    }),
-    values: inputArray,
-    maxRetries: 3 // Built-in retry logic
-  })
-  
-  return embeddings
+// Internal re-export for backward compatibility - use @/lib/utils/embedding directly
+async function generateEmbeddings(inputs: string | string[]): Promise<number[][]> {
+  return await generateEmbeddingsUtil(inputs)
 }
 
 
 // Task 3: Type definitions for RPC functions
-interface MatchPapersResult {
+interface SearchResult {
   paper_id: string
-  score: number
+  title: string
+  abstract: string
+  publication_date: string
+  venue: string
+  doi: string
+  citation_count: number
+  similarity_score?: number
+  semantic_score?: number
+  keyword_score?: number
+  combined_score?: number
 }
 
 interface HybridSearchResult {
@@ -333,62 +137,93 @@ export async function semanticSearchPapers(
   options: {
     limit?: number
     minYear?: number
+    maxYear?: number
     sources?: string[]
+    threshold?: number
   } = {}
 ): Promise<PaperWithAuthors[]> {
   const supabase = await getSB()
   
-  // Generate embedding for the query using centralized configuration
-  const [queryEmbedding] = await generateEmbeddings([query])
-  
-  // Call the match_papers RPC function
-  const { data: matches, error } = await supabase
-    .rpc('match_papers', {
-      query_embedding: queryEmbedding,
-      match_count: options.limit || 8,
-      min_year: options.minYear || 1900
-    })
-  
-  if (error) throw error
-  if (!matches || matches.length === 0) return []
-  
-  // Get full paper details with authors
-  let papersQuery = supabase
-    .from('papers')
-    .select(`
-      *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
-    `)
-    .in('id', (matches as MatchPapersResult[]).map(m => m.paper_id))
-  
-  // Apply source filter if provided
-  if (options.sources && options.sources.length > 0) {
-    papersQuery = papersQuery.in('source', options.sources)
+  // Prepare JSONB configuration for the RPC
+  const searchConfig = {
+    query,
+    limit: options.limit || 20,
+    threshold: options.threshold || 0.1,
+    ...(options.minYear && { minYear: options.minYear }),
+    ...(options.maxYear && { maxYear: options.maxYear }),
+    ...(options.sources && { sources: options.sources })
   }
   
-  const { data: papers, error: papersError } = await papersQuery
+  // Call the enhanced RPC function
+  const { data: searchResults, error } = await supabase
+    .rpc('semantic_search_papers', { search_config: searchConfig })
   
-  if (papersError) throw papersError
+  if (error) {
+    console.error('Enhanced semantic search failed:', error)
+    throw error
+  }
   
-  // Transform and sort by similarity score
-  const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
+  if (!searchResults || searchResults.length === 0) {
+    return []
+  }
   
-  return (matches as MatchPapersResult[])
-    .map(match => {
-      const paper = paperMap.get(match.paper_id)
-      if (!paper) return null
-      
-      const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
-      
-      return {
-        ...transformedPaper,
-        relevance_score: match.score
+  // Get paper IDs for author fetching
+  const paperIds = searchResults.map((result: SearchResult) => result.paper_id)
+  
+  // Fetch authors for all papers in one query
+  const { data: authorsData, error: authorsError } = await supabase
+    .from('paper_authors')
+    .select(`
+      paper_id,
+        ordinal,
+      authors (
+        id,
+        name
+      )
+    `)
+    .in('paper_id', paperIds)
+    .order('ordinal')
+  
+  if (authorsError) {
+    console.error('Error fetching authors:', authorsError)
+  }
+  
+  // Group authors by paper ID
+  const authorsByPaper = new Map<string, PaperAuthorRelation[]>()
+  authorsData?.forEach(item => {
+    if (!authorsByPaper.has(item.paper_id)) {
+      authorsByPaper.set(item.paper_id, [])
+    }
+    authorsByPaper.get(item.paper_id)!.push({
+      ordinal: item.ordinal,
+      author: {
+        id: (item.authors as any).id,
+        name: (item.authors as any).name
       }
     })
-    .filter(Boolean) as PaperWithAuthors[]
+  })
+  
+  // Transform results to include authors and search scores
+  return searchResults.map((result: SearchResult) => ({
+    id: result.paper_id,
+    title: result.title,
+    abstract: result.abstract,
+    publication_date: result.publication_date,
+    venue: result.venue,
+    doi: result.doi,
+    url: null,
+    pdf_url: null,
+    metadata: {
+      search_scores: {
+        similarity_score: result.similarity_score
+      }
+    },
+    source: 'search',
+    citation_count: result.citation_count,
+    impact_score: null,
+    created_at: new Date().toISOString(),
+    authors: authorsByPaper.get(result.paper_id) || []
+  }))
 }
 
 export async function hybridSearchPapers(
@@ -736,16 +571,6 @@ export async function hybridSearchPapers(
     })
     .filter(Boolean) as PaperWithAuthors[]
 
-  console.log(`✅ Hybrid search completed: ${finalResults.length} final papers`)
-  finalResults.forEach((paper, idx) => {
-    console.log(`   ${idx + 1}. "${paper.title}"`)
-    console.log(`      Authors: ${paper.author_names?.join(', ') || 'Unknown'}`)
-    console.log(`      Year: ${paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'Unknown'}`)
-    console.log(`      Venue: ${paper.venue || 'Unknown'}`)
-    console.log(`      Relevance: ${(paper as { relevance_score?: number }).relevance_score?.toFixed(3) || 'N/A'}`)
-    console.log(`      Source: ${paper.source}`)
-  })
-
   return finalResults
 }
 
@@ -820,181 +645,184 @@ export async function searchPaperChunks(
   } = {}
 ): Promise<Array<{paper_id: string, content: string, score: number}>> {
   const supabase = await getSB()
-  console.log(`📄 Searching paper chunks:`)
-  console.log(`   🎯 Query: "${query}"`)
-  console.log(`   📊 Limit: ${options.limit || 10}`)
-  console.log(`   📋 Paper IDs: ${options.paperIds ? `[${options.paperIds.join(', ')}]` : 'All papers'}`)
-  console.log(`   🎯 Min Score: ${options.minScore || 0.5}`)
-
-  // Generate embedding for the query using centralized configuration
-  console.log(`🧠 Generating embedding for chunk search...`)
-  const [queryEmbedding] = await generateEmbeddings([query])
-  console.log(`✅ Chunk search embedding generated: ${queryEmbedding.length} dimensions`)
   
-  // Search chunks using cosine similarity
-  console.log(`🗄️ Calling match_paper_chunks RPC...`)
-  const { data: matches, error } = await supabase
-    .rpc('match_paper_chunks', {
-      query_embedding: queryEmbedding,
-      match_count: options.limit || 10,
-      min_score: options.minScore || 0.5,
-      paper_ids: options.paperIds || null  // 🎯 NEW: Pass paper IDs to RPC for database-level filtering
-    })
+  // Prepare JSONB configuration for enhanced search
+  const searchConfig = {
+    query,
+    limit: options.limit || 50,
+    threshold: options.minScore || 0.1,
+    ...(options.paperIds && { paperIds: options.paperIds })
+  }
+  
+  // Call the enhanced RPC function
+  const { data: searchResults, error } = await supabase
+    .rpc('search_paper_chunks', { search_config: searchConfig })
   
   if (error) {
-    console.error(`❌ Chunk search RPC failed:`, error)
+    console.error('Enhanced chunk search failed:', error)
     throw error
   }
 
-  console.log(`📄 RPC returned ${matches?.length || 0} chunk matches`)
-  
-  // No need for JavaScript filtering anymore - RPC handles it
-  const finalMatches = matches || []
-  console.log(`✅ Database-filtered results: ${finalMatches.length} chunks (no JS filtering needed)`)
-
-  console.log(`✅ Final chunk results: ${finalMatches.length}`)
-  finalMatches.forEach((match: { paper_id: string; chunk_index: number; content: string; score: number }, idx: number) => {
-    console.log(`   ${idx + 1}. Paper: ${match.paper_id}, Chunk: ${match.chunk_index}`)
-    console.log(`      Score: ${match.score?.toFixed(3) || 'N/A'}`)
-    console.log(`      Content: "${match.content.substring(0, 150)}..."`)
-  })
-  
-  return finalMatches
+  return searchResults?.map((result: any) => ({
+    paper_id: result.paper_id,
+    content: result.chunk_content,
+    score: result.similarity_score
+  })) || []
 }
 
-// Fix: Enhanced ingest paper with chunks and comprehensive error handling
-export async function ingestPaperWithChunks(
-  paperMeta: PaperDTO, 
-  contentChunks?: string[]
-): Promise<string> {
+// Clean, Simple Ingestion Interface
+
+/**
+ * THE ONLY ENTRY POINT for paper ingestion - Clean Gatekeeper Architecture
+ * 
+ * This function is the front door that validates requests and decides whether to:
+ * 1. Process immediately (for small content)
+ * 2. Hand off to background queue (for PDFs and large content)
+ * 3. Create metadata only (for lightweight ingestion)
+ * 
+ * The key insight: This function NEVER does heavy processing itself.
+ * It's purely a decision-maker and dispatcher.
+ * 
+ * @param paperData - Complete paper metadata
+ * @param options - Processing configuration
+ * @returns Result with paper ID and processing status
+ */
+export async function ingestPaper(
+  paperData: PaperDTO,
+  options: { fullText?: string; pdfUrl?: string; background?: boolean; priority?: 'low' | 'normal' | 'high' } = {}
+): Promise<{ paperId: string; isNew: boolean; status: 'metadata_only' | 'processed' | 'queued' }> {
+  
+  // 1. Check for duplicates (idempotent)
+  const { exists, paperId: existingId } = await checkPaperExists(paperData.doi, paperData.title)
+  if (exists && existingId) {
+    console.log(`📚 Paper already exists: ${existingId}`)
+    
+    // If we have new content for existing paper, process it
+    if (options.pdfUrl) {
+      await queuePdfProcessing(existingId, options.pdfUrl, paperData.title, options.priority || 'normal')
+      return { paperId: existingId, isNew: false, status: 'queued' }
+    } else if (options.fullText) {
+      await processContentImmediately(existingId, options.fullText)
+      return { paperId: existingId, isNew: false, status: 'processed' }
+    }
+    
+    return { paperId: existingId, isNew: false, status: 'metadata_only' }
+  }
+
+  // 2. Create the basic paper metadata record
+  const newPaperId = await createPaperMetadata(paperData)
+  console.log(`📚 Created new paper: ${newPaperId}`)
+
+  // 3. Decide how to handle content
+  if (options.pdfUrl) {
+    // If there's a PDF URL, ALWAYS queue it for background processing
+    await queuePdfProcessing(newPaperId, options.pdfUrl, paperData.title, options.priority || 'normal')
+    return { paperId: newPaperId, isNew: true, status: 'queued' }
+  } 
+  else if (options.fullText) {
+    // If raw text is provided, process it immediately (or queue if requested)
+    if (options.background) {
+      // TODO: Implement proper background text processing queue
+      console.log(`📋 Background text processing requested for ${newPaperId} - processing immediately`)
+      await processContentImmediately(newPaperId, options.fullText)
+    } else {
+      await processContentImmediately(newPaperId, options.fullText)
+    }
+    return { paperId: newPaperId, isNew: true, status: 'processed' }
+  }
+  else if (paperData.abstract) {
+    // Generate embedding for abstract only
+    await generatePaperEmbedding(newPaperId, paperData.title, paperData.abstract)
+    return { paperId: newPaperId, isNew: true, status: 'processed' }
+  }
+
+  // If no content, we are done
+  return { paperId: newPaperId, isNew: true, status: 'metadata_only' }
+}
+
+/**
+ * Create paper metadata (extracted from old ingestPaperLightweight)
+ */
+async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
   const supabase = await getSB()
   
-  // Create main embedding from title + abstract (existing behavior)
-  const mainText = `${paperMeta.title}\n${paperMeta.abstract || ''}`
+  // Create deterministic paper ID using intelligent logic
+  const paperId = generateDeterministicPaperId({
+    doi: paperData.doi,
+    title: paperData.title,
+    authors: paperData.authors,
+    publication_date: paperData.publication_date
+  })
   
-  // Generate main embedding using centralized configuration
-  const [mainEmbedding] = await generateEmbeddings([mainText])
+  // Use pre-enriched metadata (region detection handled by caller)
+  const enrichedMetadata = paperData.metadata || {}
   
-  // Create deterministic UUID from DOI or content
-  const paperId = paperMeta.doi 
-    ? generatePaperUUID(paperMeta.doi)
-    : generatePaperUUID(mainText)
-  
-  // Task 5: Detect and enrich metadata with region information
-  const regionInputs: RegionDetectionInputs = {
-    venue: paperMeta.venue,
-    url: paperMeta.url,
-    title: paperMeta.title,
-    affiliations: paperMeta.authors
-  }
-  const regionResult = detectPaperRegion(regionInputs)
-  const enrichedMetadata = enrichMetadataWithRegion(paperMeta.metadata || {}, regionResult)
-  
-  // Upsert main paper record with main embedding and enriched metadata
+  // Insert paper metadata
   const { error } = await supabase
     .from('papers')
     .upsert({
       id: paperId,
-      title: paperMeta.title,
-      abstract: paperMeta.abstract,
-      publication_date: paperMeta.publication_date,
-      venue: paperMeta.venue,
-      doi: paperMeta.doi,
-      url: paperMeta.url,
-      pdf_url: paperMeta.pdf_url,
-      metadata: enrichedMetadata, // Use enriched metadata with region info
-      source: paperMeta.source || 'unknown',
-      citation_count: paperMeta.citation_count || 0,
-      impact_score: Math.max(paperMeta.impact_score || 0, 0),
-      embedding: mainEmbedding
+      title: paperData.title,
+      abstract: paperData.abstract,
+      publication_date: paperData.publication_date,
+      venue: paperData.venue,
+      doi: paperData.doi,
+      url: paperData.url,
+      pdf_url: paperData.pdf_url,
+      metadata: enrichedMetadata,
+      source: paperData.source || 'unknown',
+      citation_count: paperData.citation_count || 0,
+      impact_score: Math.max(paperData.impact_score || 0, 0),
+      embedding: null // Will be set later if content is processed
     })
   
   if (error) throw error
   
-  // Handle authors efficiently with batch operations
-  if (paperMeta.authors && paperMeta.authors.length > 0) {
-    await upsertPaperAuthors(paperId, paperMeta.authors)
-  }
-  
-  // Fix: Enhanced chunk processing with error tracking and retry mechanism
-  if (contentChunks && contentChunks.length > 0) {
-    console.log(`Processing ${contentChunks.length} chunks for paper ${paperId}`)
-    
-    // Remove existing chunks for this paper
-    await supabase
-      .from('paper_chunks')
-      .delete()
-      .eq('paper_id', paperId)
-    
-    // Clear any previous failed chunks for this paper
-    await supabase
-      .from('failed_chunks')
-      .delete()
-      .eq('paper_id', paperId)
-    
-    // Process chunks in batches with enhanced error handling
-    const BATCH_SIZE = 50 // Smaller batches for better error isolation
-    let totalSuccessful = 0
-    let totalFailed = 0
-    
-    for (let i = 0; i < contentChunks.length; i += BATCH_SIZE) {
-      const batch = contentChunks.slice(i, i + BATCH_SIZE)
-      const batchChunks = batch.map((chunk, index) => ({
-        content: chunk,
-        index: i + index
-      }))
-      
-      try {
-        const results = await processChunkBatch(paperId, batchChunks)
-        
-        // Count successes and failures
-        const successful = results.filter(r => r.success).length
-        const failed = results.filter(r => !r.success).length
-        
-        totalSuccessful += successful
-        totalFailed += failed
-        
-        console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${successful} successful, ${failed} failed`)
-        
-      } catch (batchError) {
-        console.error(`Entire batch ${Math.floor(i / BATCH_SIZE) + 1} failed:`, batchError)
-        totalFailed += batch.length
-        
-        // Track all chunks in failed batch
-        for (const batchChunk of batchChunks) {
-          try {
-            await supabase
-              .from('failed_chunks')
-              .insert({
-                paper_id: paperId,
-                chunk_index: batchChunk.index,
-                content: batchChunk.content,
-                error_message: batchError instanceof Error ? batchError.message : 'Batch processing failed',
-                error_count: 1,
-                last_attempt_at: new Date().toISOString()
-              })
-          } catch (trackingError) {
-            console.error('Failed to track failed chunk:', trackingError)
-          }
-        }
-      }
-    }
-    
-    console.log(`Chunk processing summary: ${totalSuccessful} successful, ${totalFailed} failed`)
-    
-    // Fix: Ensure paper exists with chunks before continuing
-    if (totalSuccessful === 0 && totalFailed > 0) {
-      console.warn(`Paper ${paperId} has no successfully processed chunks - marking for retry`)
-      // Don't fail the entire operation, but log for monitoring
-    }
-    
-    // Optimize vector index after chunk insertion (only if we have successful chunks)
-    if (totalSuccessful > 0) {
-      await optimizeVectorIndex()
-    }
+  // Handle authors
+  if (paperData.authors && paperData.authors.length > 0) {
+    await upsertPaperAuthors(paperId, paperData.authors)
   }
   
   return paperId
+}
+
+/**
+ * Generate embedding for paper metadata only (title + abstract)
+ */
+async function generatePaperEmbedding(paperId: string, title: string, abstract?: string): Promise<void> {
+  const supabase = await getSB()
+  const text = `${title}\n${abstract || ''}`
+  const [embedding] = await generateEmbeddings([text])
+  
+  await supabase
+    .from('papers')
+    .update({ embedding })
+    .eq('id', paperId)
+}
+
+
+
+/**
+ * Process content immediately (synchronous)
+ */
+async function processContentImmediately(paperId: string, fullText: string): Promise<void> {
+  // Use the new unified chunk processor
+  await processAndSaveChunks(paperId, [fullText])
+}
+
+/**
+ * Queue PDF processing
+ */
+async function queuePdfProcessing(paperId: string, pdfUrl: string, title: string, priority: 'low' | 'normal' | 'high'): Promise<void> {
+  const { PDFProcessingQueue } = await import('@/lib/services/pdf-queue')
+  const queue = PDFProcessingQueue.getInstance()
+  
+  // Get user ID from context (for quota tracking)  
+  const supabase = await getSB()
+  const { data: { user } } = await supabase.auth.getUser()
+  const userId = user?.id || 'system'
+  
+  await queue.addJob(paperId, pdfUrl, title, userId, priority)
 }
 
 // Optimized batch author creation to replace createOrGetAuthor loops
@@ -1148,69 +976,6 @@ export async function checkPaperExists(doi?: string, title?: string): Promise<{ 
   return { exists: false }
 }
 
-// Lightweight ingestion for Library Manager - no chunks, faster UX
-export async function ingestPaperLightweight(paperMeta: PaperDTO): Promise<string> {
-  const supabase = await getSB()
-  
-  // Check for duplicates first
-  const { exists, paperId: existingId } = await checkPaperExists(paperMeta.doi, paperMeta.title)
-  if (exists && existingId) {
-    console.log(`📚 Paper already exists, returning existing ID: ${existingId}`)
-    return existingId
-  }
-  
-  // Create text for embedding (title + abstract)
-  const text = `${paperMeta.title}\n${paperMeta.abstract || ''}`
-  
-  // Generate embedding using centralized configuration
-  const [embedding] = await generateEmbeddings([text])
-  
-  // Create deterministic UUID from DOI or content
-  const paperId = paperMeta.doi 
-    ? generatePaperUUID(paperMeta.doi)
-    : generatePaperUUID(text)
-  
-  // Task 5: Detect and enrich metadata with region information
-  const regionInputs: RegionDetectionInputs = {
-    venue: paperMeta.venue,
-    url: paperMeta.url,
-    title: paperMeta.title,
-    affiliations: paperMeta.authors
-  }
-  const regionResult = detectPaperRegion(regionInputs)
-  const enrichedMetadata = enrichMetadataWithRegion(paperMeta.metadata || {}, regionResult)
-  
-  // Upsert paper with embedding (no chunks) and enriched metadata
-  const { error } = await supabase
-    .from('papers')
-    .upsert({
-      id: paperId,
-      title: paperMeta.title,
-      abstract: paperMeta.abstract,
-      publication_date: paperMeta.publication_date,
-      venue: paperMeta.venue,
-      doi: paperMeta.doi,
-      url: paperMeta.url,
-      pdf_url: paperMeta.pdf_url,
-      metadata: enrichedMetadata, // Use enriched metadata with region info
-      source: paperMeta.source || 'unknown',
-      citation_count: paperMeta.citation_count || 0,
-      impact_score: Math.max(paperMeta.impact_score || 0, 0),
-      embedding: embedding
-    })
-  
-  if (error) throw error
-  
-  // Handle authors efficiently with batch operations
-  if (paperMeta.authors && paperMeta.authors.length > 0) {
-    await upsertPaperAuthors(paperId, paperMeta.authors)
-  }
-  
-  console.log(`📚 Lightweight ingestion completed: ${paperMeta.title} (ID: ${paperId})`)
-  
-  return paperId
-}
-
 /**
  * Update citation fields for a paper
  */
@@ -1245,3 +1010,4 @@ export async function updatePaperCitationFields(
 
   debug.info('Updated paper citation fields', { paperId, fields: Object.keys(citationData) })
 }
+

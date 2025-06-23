@@ -6,8 +6,8 @@
  */
 
 import { getSB } from '@/lib/supabase/server'
-import type { RegionDetectionResult } from './global-region-detection'
-import { generatePaperUUID } from '@/lib/db/papers'
+import type { RegionDetectionResult } from './region-detection'
+import { generateDeterministicPaperId } from './deterministic-id'
 
 // Lazy-loaded Supabase client to avoid calling cookies() at import time
 let supabaseClient: Awaited<ReturnType<typeof getSB>> | null = null
@@ -89,12 +89,13 @@ export async function createPaper(params: CreatePaperParams): Promise<string> {
   try {
     const supabase = await getSupabase()
     
-    // Build deterministic UUID (use DOI when available)
-    const uuidInput = data.doi && data.doi.trim() !== ''
-      ? data.doi
-      : `${data.title}|${(data.authors && data.authors.length > 0) ? data.authors[0] : ''}|${data.year || ''}`
-
-    const paperIdDeterministic = generatePaperUUID(uuidInput)
+    // Build deterministic paper ID using intelligent logic
+    const paperIdDeterministic = generateDeterministicPaperId({
+      doi: data.doi,
+      title: data.title,
+      authors: data.authors,
+      year: data.year
+    })
 
     // Upsert paper record with deterministic ID to avoid duplicates / mismatches
     const { data: paperData, error: paperError } = await supabase

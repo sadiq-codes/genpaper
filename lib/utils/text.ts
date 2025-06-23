@@ -56,11 +56,7 @@ export function splitIntoChunks(
   for (const segment of segments) {
     if (segment.length <= maxLength) {
       // Segment fits in one chunk
-      const chunkId = createDeterministicChunkId({
-        paperId,
-        content: segment,
-        position
-      })
+      const chunkId = createDeterministicChunkId(paperId, segment, position)
 
       chunks.push({
         id: chunkId,
@@ -89,11 +85,7 @@ export function splitIntoChunks(
         }
 
         if (chunkContent.trim().length >= minChunkSize) {
-          const chunkId = createDeterministicChunkId({
-            paperId,
-            content: chunkContent,
-            position: position + segmentStart
-          })
+          const chunkId = createDeterministicChunkId(paperId, chunkContent, position + segmentStart)
 
           chunks.push({
             id: chunkId,
@@ -121,9 +113,35 @@ export function splitIntoChunks(
 }
 
 /**
- * Estimate token count (approximate)
+ * Get precise token count using tiktoken (reliable implementation)
+ */
+export async function getTokenCount(text: string): Promise<number> {
+  let encoder: any = null
+  try {
+    const { encoding_for_model } = await import('@dqbd/tiktoken')
+    encoder = encoding_for_model('text-embedding-3-small')
+    const tokens = encoder.encode(text)
+    return tokens.length
+  } catch (error) {
+    throw new Error(`Failed to count tokens with tiktoken: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  } finally {
+    // Always free the encoder in finally block to prevent memory leaks
+    if (encoder) {
+      try {
+        encoder.free()
+      } catch (freeError) {
+        console.warn('Failed to free tiktoken encoder:', freeError)
+      }
+    }
+  }
+}
+
+/**
+ * @deprecated Use getTokenCount() instead for accurate token counting
+ * Kept for backward compatibility, but should be migrated
  */
 export function estimateTokenCount(text: string): number {
+  console.warn('estimateTokenCount is deprecated. Use getTokenCount() for accurate token counting.')
   // Rough approximation: 1 token ≈ 4 characters for English text
   return Math.ceil(text.length / 4)
 }

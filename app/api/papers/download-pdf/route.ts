@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { downloadAndStorePDF, updatePaperWithPDF, batchDownloadPDFs } from '@/lib/services/pdf-downloader'
+import { pdfQueue } from '@/lib/services/pdf-queue'
 
 // Download PDF for a single paper
 export async function POST(request: NextRequest) {
@@ -14,49 +14,127 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { paperId, doi, batch } = body
+    const { paperId, doi, batch, directPdfUrl, directTitle, fastTrack = false } = body
 
-    // Handle batch download
+    // Handle batch download via queue
     if (batch && Array.isArray(batch)) {
       console.log(`🔄 Starting batch PDF download for ${batch.length} papers`)
       
-      const results = await batchDownloadPDFs(batch, 3) // Process 3 at a time
+      const jobIds: string[] = []
+      const results: Array<{ paperId: string; jobId?: string; error?: string }> = []
       
-      const successful = results.filter(r => r.result.success).length
+      for (const paper of batch) {
+        try {
+          if (!paper.id || !paper.pdf_url || !paper.title) {
+            results.push({ 
+              paperId: paper.id || 'unknown', 
+              error: 'Missing required fields' 
+            })
+            continue
+          }
+          
+          const jobId = await pdfQueue.addJob(
+            paper.id,
+            paper.pdf_url,
+            paper.title,
+            user.id,
+            'low' // Use low priority for batch jobs
+          )
+          
+          jobIds.push(jobId)
+          results.push({ paperId: paper.id, jobId })
+          
+        } catch (error) {
+          results.push({ 
+            paperId: paper.id || 'unknown', 
+            error: error instanceof Error ? error.message : 'Failed to queue job'
+          })
+        }
+      }
+      
+      const successful = results.filter(r => r.jobId).length
       
       return NextResponse.json({
         success: true,
-        message: `Downloaded ${successful}/${results.length} PDFs`,
+        message: `Queued ${successful}/${batch.length} PDFs for processing`,
+        jobIds,
         results
       })
     }
 
-    // Handle single paper download
+    // Handle direct PDF URL case (from LibraryManager)
+    if (directPdfUrl && directTitle) {
+      console.log(`📄 Queueing direct PDF processing for: ${directTitle}`)
+      
+              try {
+          const jobId = await pdfQueue.addJob(
+            paperId,
+            directPdfUrl,
+            directTitle,
+            user.id,
+            'normal',
+            { fastTrack }
+          )
+        
+        return NextResponse.json({
+          success: true,
+          jobId,
+          message: 'PDF processing queued successfully'
+        })
+      } catch (error) {
+        return NextResponse.json({
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to queue PDF processing'
+        }, { status: 500 })
+      }
+    }
+
+    // Handle single paper download via queue
     if (!paperId || !doi) {
       return NextResponse.json({ 
-        error: 'Paper ID and DOI are required' 
+        error: 'Paper ID and DOI are required (or provide directPdfUrl and directTitle)' 
       }, { status: 400 })
     }
 
-    console.log(`📄 Downloading PDF for paper: ${paperId}`)
+    console.log(`📄 Queueing PDF processing for paper: ${paperId}`)
 
-    const result = await downloadAndStorePDF(doi, paperId)
+    // First, get paper details for the job
+    const { data: paper, error: paperError } = await supabase
+      .from('papers')
+      .select('title, pdf_url')
+      .eq('id', paperId)
+      .single()
 
-    if (result.success && result.pdf_url) {
-      // Update the paper record with the PDF URL
-      await updatePaperWithPDF(paperId, result.pdf_url, result.file_size)
+    if (paperError || !paper) {
+      return NextResponse.json({
+        success: false,
+        error: 'Paper not found'
+      }, { status: 404 })
+    }
+
+    // Use existing PDF URL or construct from DOI
+    const pdfUrl = paper.pdf_url || `https://www.unpaywall.org/pdf/${doi}`
+
+    try {
+      const jobId = await pdfQueue.addJob(
+        paperId,
+        pdfUrl,
+        paper.title,
+        user.id,
+        'normal', // Normal priority for single downloads
+        { fastTrack }
+      )
       
       return NextResponse.json({
         success: true,
-        pdf_url: result.pdf_url,
-        file_size: result.file_size,
-        message: 'PDF downloaded and stored successfully'
+        jobId,
+        message: 'PDF processing queued successfully'
       })
-    } else {
+    } catch (error) {
       return NextResponse.json({
         success: false,
-        error: result.error || 'Failed to download PDF'
-      }, { status: 400 })
+        error: error instanceof Error ? error.message : 'Failed to queue PDF processing'
+      }, { status: 500 })
     }
 
   } catch (error) {

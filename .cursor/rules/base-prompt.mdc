@@ -14,6 +14,7 @@ Your goal is to completely finish whatever I ask for.
 - After you make changes or improvements, all the legacy code should be deleted to avoid confusion.
 - DONT REPLACE GOOD CODE WITH BAD, eg, code using library with a simple one prone to mistakes.
 - Please note that I do not want keywords or anything to be hardcoded. This paper is not topic-specific; it could cover any discipline and any type of paper.
+- When you improved/enhanced fucntions/methods make sure the update/delete the old ones.
 
 ## GENERAL RESPONSE STRUCTURE:
 Repeat my query instructions/specifications back to me, then create a plan for how to accomplish the goal provided to you given what you learn about the problem, then write the solution with complete, robust code, ONLY CHANGING THE CODE RELEVANT TO THE GOAL AND LEAVING OTHER CODE UNCHANGED UNLESS OTHERWISE SPECIFIED.

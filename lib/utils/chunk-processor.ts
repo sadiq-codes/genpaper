@@ -5,6 +5,9 @@
  * and retry logic for paper ingestion pipeline.
  */
 
+import { generateEmbeddings } from '@/lib/utils/embedding'
+import { getSB } from '@/lib/supabase/server'
+
 export interface ChunkValidationResult {
   isValid: boolean
   errors: string[]
@@ -18,6 +21,7 @@ export interface ChunkProcessingOptions {
   overlapSize?: number
   retryAttempts?: number
   retryDelayMs?: number
+  concurrency?: number
 }
 
 export interface ProcessedChunk {
@@ -51,7 +55,8 @@ const DEFAULT_CHUNK_OPTIONS: Required<ChunkProcessingOptions> = {
   minChunkSize: 100,
   overlapSize: 200,
   retryAttempts: 3,
-  retryDelayMs: 1000
+  retryDelayMs: 1000,
+  concurrency: 5
 }
 
 /**
@@ -127,15 +132,21 @@ export async function processSingleChunk(
       throw new Error(`Chunk validation failed: ${validation.errors.join(', ')}`)
     }
 
+    const finalContent = validation.clampedContent || content
+    
+    // Generate embedding for the chunk
+    const [embedding] = await generateEmbeddings([finalContent])
+
     const processedChunk: ProcessedChunk = {
       id,
-      content: validation.clampedContent || content,
+      content: finalContent,
       metadata: {
         ...metadata,
         originalLength: content.length,
-        processedLength: (validation.clampedContent || content).length,
+        processedLength: finalContent.length,
         processedAt: new Date().toISOString()
       },
+      embedding,
       processingTime: Date.now() - startTime,
       warnings: validation.warnings.length > 0 ? validation.warnings : undefined
     }
@@ -148,13 +159,33 @@ export async function processSingleChunk(
 }
 
 /**
- * Process multiple chunks in batch with concurrency control
+ * THE UNIFIED CHUNK PROCESSOR
+ * Process and save chunks with concurrency control, embeddings, and database persistence
  */
-export async function processChunkBatch(
-  chunks: Array<{ id: string; content: string; metadata?: Record<string, unknown> }>,
-  options: ChunkProcessingOptions = {},
-  concurrency = 5
+export async function processAndSaveChunks(
+  paperId: string,
+  contentChunks: string[],
+  options: ChunkProcessingOptions = {}
 ): Promise<ChunkBatchResult> {
+  // Convert content to chunk format
+  const chunks = contentChunks.map((content, index) => ({
+    id: `chunk-${index}`,
+    content,
+    metadata: { chunkIndex: index, paperId }
+  }))
+  
+  return await processChunkBatchInternal(chunks, options)
+}
+
+/**
+ * Internal batch processing with concurrency control
+ */
+async function processChunkBatchInternal(
+  chunks: Array<{ id: string; content: string; metadata?: Record<string, unknown> }>,
+  options: ChunkProcessingOptions = {}
+): Promise<ChunkBatchResult> {
+  const opts = { ...DEFAULT_CHUNK_OPTIONS, ...options }
+  const concurrency = opts.concurrency
   const startTime = Date.now()
   const successful: ProcessedChunk[] = []
   const failed: Array<{ id: string; error: string; chunk: FailedChunk }> = []
@@ -195,7 +226,7 @@ export async function processChunkBatch(
     }
   }
 
-  return {
+  const result = {
     successful,
     failed,
     stats: {
@@ -205,6 +236,24 @@ export async function processChunkBatch(
       processingTimeMs: Date.now() - startTime
     }
   }
+
+  // Save successful chunks to database
+  if (successful.length > 0) {
+    const paperId = successful[0]?.metadata?.paperId as string
+    if (paperId) {
+      await saveChunksToDatabase(paperId, successful)
+    }
+  }
+
+  // Save failed chunks for retry tracking
+  if (failed.length > 0) {
+    const paperId = failed[0]?.chunk?.metadata?.paperId as string
+    if (paperId) {
+      await saveFailedChunks(paperId, failed)
+    }
+  }
+
+  return result
 }
 
 /**
@@ -358,5 +407,67 @@ export function getProcessingStats(
     failedChunks: totalStats.failed,
     avgProcessingTime: totalStats.total > 0 ? totalStats.totalTime / totalStats.total : 0,
     successRate: totalStats.total > 0 ? totalStats.successful / totalStats.total : 0
+  }
+}
+
+/**
+ * Save processed chunks to database
+ */
+export async function saveChunksToDatabase(
+  paperId: string,
+  processedChunks: ProcessedChunk[]
+): Promise<void> {
+  const supabase = await getSB()
+  
+  // Prepare chunk records for database
+  const chunkRecords = processedChunks.map((chunk, index) => ({
+    paper_id: paperId,
+    chunk_index: (chunk.metadata.chunkIndex as number) ?? index, // Use metadata chunkIndex directly
+    content: chunk.content,
+    embedding: chunk.embedding,
+    processing_status: 'completed' as const,
+    error_count: 0
+  }))
+  
+  // Insert chunks with error handling
+  const { error } = await supabase
+    .from('paper_chunks')
+    .upsert(chunkRecords, {
+      onConflict: 'paper_id,chunk_index',
+      ignoreDuplicates: false
+    })
+  
+  if (error) {
+    throw new Error(`Failed to save chunks to database: ${error.message}`)
+  }
+}
+
+/**
+ * Save failed chunks to database for retry tracking
+ */
+export async function saveFailedChunks(
+  paperId: string,
+  failedChunks: Array<{ id: string; error: string; chunk: FailedChunk }>
+): Promise<void> {
+  const supabase = await getSB()
+  
+  const failedRecords = failedChunks.map(failed => ({
+    paper_id: paperId,
+    chunk_index: (failed.chunk.metadata?.chunkIndex as number) ?? 0,
+    content: failed.chunk.content,
+    error_message: failed.error,
+    error_count: 1,
+    last_attempt_at: new Date().toISOString()
+  }))
+  
+  const { error } = await supabase
+    .from('failed_chunks')
+    .upsert(failedRecords, {
+      onConflict: 'paper_id,chunk_index',
+      ignoreDuplicates: false
+    })
+  
+  if (error) {
+    console.error('Failed to save failed chunks:', error)
   }
 } 

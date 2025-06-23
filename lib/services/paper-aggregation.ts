@@ -8,8 +8,8 @@ import {
   searchCore,
   getOpenAccessPdf,
   getPaperReferences
-} from '@/lib/services/academic-apis'
-import { ingestPaperWithChunks } from '@/lib/db/papers'
+} from './academic-apis'
+import { ingestPaper } from '@/lib/db/papers'
 import type { PaperDTO } from '@/lib/schemas/paper'
 import { PaperSources } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
@@ -298,8 +298,8 @@ export async function parallelSearch(
     }
   }
   
-  // Expand search terms
-  const expandedQueries = await generateQueryRewrites(query, 3)
+  // Generate embedding-based query rewrites (async)
+  const expandedQueries = await generateQueryRewrites(query)
   const primaryQuery = expandedQueries[0]
   
   console.log(`Starting smart sequential search for: "${primaryQuery}"`)
@@ -515,7 +515,7 @@ export async function searchAndIngestPapers(
             })
 
             if (extraction.fullText && extraction.fullText.length > 100) {
-              // Add full text to content for chunking by ingestPaperWithChunks (with 1MB safety cap)
+              // Add full text to content for chunking by unified ingestion (with 1MB safety cap)
               const text = extraction.fullText.slice(0, 1_000_000)
               contentChunks.push(text)
               paperDTO.abstract = extraction.abstract ?? paperDTO.abstract
@@ -531,8 +531,12 @@ export async function searchAndIngestPapers(
         }
       }
       
-      // Use ingestPaperWithChunks to create content chunks for RAG
-      const paperId = await ingestPaperWithChunks(paperDTO, contentChunks)
+      // Use unified ingestion to create content chunks for RAG
+      const result = await ingestPaper(paperDTO, {
+        fullText: contentChunks.join('\n\n')
+        // Process immediately for search results (default behavior)
+      })
+      const paperId = result.paperId
       ingestedIds.push(paperId)
       console.log(`Ingested paper with ${contentChunks.length} chunks: ${paper.title} (ID: ${paperId})`)
 
