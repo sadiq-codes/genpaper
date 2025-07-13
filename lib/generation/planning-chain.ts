@@ -4,7 +4,7 @@ import { ai } from '@/lib/ai/vercel-client'
 import { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
 import { type SectionContext } from '@/lib/prompts/unified/prompt-builder'
 import { generateWithUnifiedTemplate } from './unified-generator'
-import { estimateTokenCount } from '@/lib/utils/text'
+import { getTokenCount } from '@/lib/utils/text'
 
 /**
  * Two-step planning chain for better content generation
@@ -24,6 +24,8 @@ export interface SectionPlan {
   estimated_paragraphs: number
   quality_checks: string[]
   quality_criteria?: string[]
+  context_factor?: number
+  scaled_words?: number
 }
 
 export interface PlanningResult {
@@ -73,7 +75,7 @@ function parseJsonResponse(text: string): SectionPlan {
 }
 
 /**
- * Step 1: Generate a structured plan for the section with dynamic quality criteria
+ * Generate a detailed section plan with context-aware scaling
  */
 export async function generateSectionPlan(
   paperType: PaperTypeKey,
@@ -84,51 +86,76 @@ export async function generateSectionPlan(
   availablePapers: string[]
 ): Promise<PlanningResult> {
   
-  // First, generate discipline-specific quality criteria for this section
-  const { generateQualityCriteria } = await import('@/lib/prompts/generators')
+  // SURGICAL FIX: Scale word targets based on available context
+  const chunkFactor = Math.min(1, contextChunks.length / 50) // 0-1 scaling
+  const scaledWords = (target: number) => Math.round(target * Math.max(chunkFactor, 0.25)) || 250 // Min 250 words
   
+  const contextAwareWords = scaledWords(expectedWords)
+  
+  console.log(`📊 Context-Aware Planning:`)
+  console.log(`   📚 Available Chunks: ${contextChunks.length}`)
+  console.log(`   📊 Chunk Factor: ${chunkFactor.toFixed(2)}`)
+  console.log(`   🎯 Original Target: ${expectedWords} words`)
+  console.log(`   🎯 Scaled Target: ${contextAwareWords} words`)
+  
+  if (chunkFactor < 0.3) {
+    console.warn(`⚠️ WARNING: Very low context availability (${(chunkFactor * 100).toFixed(1)}%). Scaling down expectations.`)
+  }
+
+  // Generate quality criteria specific to this section and topic
+  const { generateQualityCriteria } = await import('@/lib/prompts/generators')
   let qualityCriteria: string[] = []
+  
   try {
-    // Generate dynamic quality criteria based on the topic, section, and paper type
     qualityCriteria = await generateQualityCriteria(
       topic,
       section,
       paperType
     )
-    console.log(`✨ Generated quality criteria for ${section}:`, qualityCriteria)
+    console.log(`✨ Generated quality criteria for ${section}: [`, qualityCriteria.map(c => `'${c}'`).join(', '), ']')
   } catch (error) {
-    console.warn(`Failed to generate quality criteria for ${section}:`, error)
-    // Fallback to basic criteria
+    console.warn('Failed to generate quality criteria, using defaults:', error)
     qualityCriteria = ['evidence-based reasoning', 'logical coherence', 'scholarly depth']
   }
   
   const planningPrompt = {
-    system: `You are an expert academic writer creating a structured plan for a ${section} section.
+    system: `You are an expert academic writer creating a detailed plan for the "${section}" section of a ${paperType} about "${topic}".
 
-Your task is to respond with NOTHING BUT a single, valid JSON object. No explanatory text, markdown, or anything else.
+CONTEXT CONSTRAINTS:
+- Available evidence chunks: ${contextChunks.length}
+- Context richness: ${chunkFactor < 0.3 ? 'LOW' : chunkFactor < 0.6 ? 'MODERATE' : 'HIGH'}
+- Target word count: ${contextAwareWords} words (scaled based on available context)
 
-The JSON must include:
-1. "outline": Array of 3-6 main points/subsections
-2. "citation_plan": Array of objects with "placeholder", "need", and optional "target_papers"
-3. "key_arguments": Array of main arguments to develop
-4. "estimated_paragraphs": Number of paragraphs needed
-5. "quality_checks": Array of specific ways you will address the quality criteria
-6. "quality_criteria": Array of the quality criteria that guided this plan
-
-Use placeholders like [A], [B], [C] for citations. Ensure the plan is feasible given the available papers and context.`,
-
-    user: `Create a structured plan for the ${section} section on "${topic}".
-
-QUALITY CRITERIA FOR THIS SECTION:
-The following quality criteria must be addressed in this section:
+Your plan should ensure the content will meet these quality criteria:
 ${qualityCriteria.map(c => `• ${c}`).join('\n')}
 
-Available papers: ${availablePapers.join(', ')}
-Context snippets: ${contextChunks.slice(0, 3).join('; ')}
-Target length: ${expectedWords} words
+${chunkFactor < 0.3 ? 'NOTE: With limited context, focus on synthesis and high-level analysis rather than detailed evidence.' : ''}
 
-Your plan must demonstrate how it will address each quality criterion listed above.
-Respond with valid JSON only.`
+Respond with NOTHING BUT a valid JSON object.`,
+
+    user: `Create a detailed plan for the "${section}" section (target: ${contextAwareWords} words).
+
+Available evidence chunks: ${contextChunks.length}
+${contextChunks.slice(0, 3).map((chunk, i) => `${i + 1}. ${chunk.substring(0, 200)}...`).join('\n')}
+
+Available papers for citation: ${availablePapers.length} papers
+
+Your JSON response must match this structure:
+{
+  "outline": ["First main point", "Second main point", "Third main point"],
+  "citation_plan": [
+    {
+      "placeholder": "CITE_INTRO_CLAIM",
+      "need": "Evidence for opening claim about...",
+      "target_papers": ["paper-id-1", "paper-id-2"]
+    }
+  ],
+  "key_arguments": ["Primary argument 1", "Primary argument 2"],
+  "estimated_paragraphs": ${Math.max(2, Math.ceil(contextAwareWords / 200))},
+  "quality_checks": ["How to ensure criterion 1", "How to ensure criterion 2"],
+  "context_factor": ${chunkFactor},
+  "scaled_words": ${contextAwareWords}
+}`
   }
 
   try {
@@ -137,7 +164,7 @@ Respond with valid JSON only.`
       system: planningPrompt.system,
       prompt: planningPrompt.user,
       temperature: 0.2,
-      maxTokens: Math.ceil(expectedWords / 1.33) + 400 // GPT-4o token estimation: ~1.33 words/token
+      maxTokens: Math.ceil(contextAwareWords / 1.33) + 400 // GPT-4o token estimation: ~1.33 words/token
     })
 
     let planText = ''
@@ -145,22 +172,24 @@ Respond with valid JSON only.`
       planText += delta
     }
     
-    // Capture token usage for metrics
-    let tokensUsed = estimateTokenCount(planText)
+    // Capture token usage for metrics using the proper async function
+    let tokensUsed = await getTokenCount(planText)
     try {
       const usage = await result.usage
       tokensUsed = usage?.totalTokens || tokensUsed
-      console.log(`Planning tokens used: ${tokensUsed} (estimated: ${estimateTokenCount(planText)})`)
+      console.log(`Planning tokens used: ${tokensUsed} (calculated: ${await getTokenCount(planText)})`)
     } catch {
-      // Usage not available, keep estimate
+      // Usage not available, keep calculated count
     }
     
     const plan = parseJsonResponse(planText)
     
-    // Ensure the plan includes the quality criteria for later use
+    // Ensure the plan includes the quality criteria and context info for later use
     if (!plan.quality_criteria) {
       plan.quality_criteria = qualityCriteria
     }
+    plan.context_factor = chunkFactor
+    plan.scaled_words = contextAwareWords
     
     const validation = validatePlan(plan, availablePapers)
 
@@ -173,7 +202,7 @@ Respond with valid JSON only.`
   } catch (error) {
     console.error('Error generating section plan:', error)
     return {
-      plan: createFallbackPlan(section, expectedWords, topic, qualityCriteria),
+      plan: createFallbackPlan(section, contextAwareWords, topic, qualityCriteria, chunkFactor),
       isValid: false,
       validationErrors: [`Planning failed: ${error}`]
     }
@@ -347,35 +376,40 @@ function validatePlan(
 }
 
 /**
- * Create a fallback plan when JSON planning fails (enhanced with topic keywords)
+ * Create fallback plan when AI planning fails, with context awareness
  */
-function createFallbackPlan(section: SectionKey, expectedWords: number, topic: string, qualityCriteria: string[]): SectionPlan {
-  const baseParagraphs = Math.max(3, Math.ceil(expectedWords / 150))
-  const topicKeywords = topic.split(' ').slice(0, 2).join(' ') // Use first two words of topic
+function createFallbackPlan(
+  section: SectionKey, 
+  expectedWords: number, 
+  topic: string, 
+  qualityCriteria: string[],
+  chunkFactor: number = 0.5
+): SectionPlan {
+  const paragraphs = Math.max(2, Math.ceil(expectedWords / 200))
   
   return {
     outline: [
-      `Introduction to ${topicKeywords} ${section} scope and context`,
-      `Analysis of key ${topicKeywords} research findings`,
-      `Critical evaluation and synthesis of ${topicKeywords}`,
-      `Implications and conclusions for ${topicKeywords}`
-    ].slice(0, Math.min(6, baseParagraphs)),
+      `Introduction to ${topic} in context of ${section}`,
+      `Key findings and evidence`,
+      `Analysis and implications`,
+      `Summary and connections`
+    ].slice(0, paragraphs),
     citation_plan: [
-      { placeholder: '[A]', need: `foundational ${topicKeywords} research` },
-      { placeholder: '[B]', need: `supporting ${topicKeywords} evidence` },
-      { placeholder: '[C]', need: `comparative ${topicKeywords} studies` }
+      {
+        placeholder: "CITE_MAIN_EVIDENCE",
+        need: `Supporting evidence for ${section} discussion`,
+        target_papers: []
+      }
     ],
     key_arguments: [
-      `Establish ${topicKeywords} theoretical foundation`,
-      `Present evidence-based ${topicKeywords} analysis`
+      `Primary analysis of ${topic}`,
+      `Supporting evidence and context`
     ],
-    estimated_paragraphs: baseParagraphs,
-    quality_checks: [
-      'Clear logical flow',
-      'Adequate citation support',
-      'Strong evidence base'
-    ],
-    quality_criteria: qualityCriteria
+    estimated_paragraphs: paragraphs,
+    quality_checks: qualityCriteria,
+    quality_criteria: qualityCriteria,
+    context_factor: chunkFactor,
+    scaled_words: expectedWords
   }
 }
 

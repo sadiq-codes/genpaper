@@ -9,6 +9,20 @@ system: |-
   - Logically connected to prior sections
   - Appropriate in scope for the target section level
   - Consistent in terminology and argumentation
+  
+  CRITICAL FUNCTION CALLING INSTRUCTIONS:
+  - You have access to an addCitation function tool
+  - When you reference information from the provided context, immediately call addCitation
+  - Use the exact paper_id from the [CONTEXT FROM: paper_id] tags
+  - The function will return a placeholder like ⟦1⟧ that you must include in your text
+  - Do NOT write text describing function calls - actually make the function calls
+  
+  CONTENT QUALITY REQUIREMENTS:
+  - Write unique, non-repetitive content
+  - Avoid copying phrases or sentences from the provided context
+  - Do NOT repeat the same information multiple times
+  - Focus on synthesizing information rather than listing facts
+  - Each paragraph should cover distinct aspects of the topic
 
 user: |-
   ## Paper Details
@@ -52,28 +66,56 @@ user: |-
   
   Output **only** the markdown content for this specific section. Do not include other sections or repeat approved content.
   
-  Use the addCitation tool for every factual claim, ensuring proper academic attribution.
+  **MANDATORY: USE THE addCitation FUNCTION**
+  
+  You MUST call the addCitation function when referencing context. Here's how:
+  
+  1. Write a sentence using information from context
+  2. Immediately call: addCitation(paper_id="exact-id-from-context", reason="brief explanation")  
+  3. Include the returned placeholder (⟦1⟧) in your text
+  4. Continue writing
+  
+  Example context: `[CONTEXT FROM: abc-123-def]`
+  Example call: addCitation(paper_id="abc-123-def", reason="Source discusses topic X")
+  
+  DO NOT write about calling the function - ACTUALLY CALL IT.
+  
+  **ACADEMIC STRUCTURE REQUIREMENTS:**
+  - Use proper section headings (## for main sections, ### for subsections)
+  - Write focused paragraphs (3-5 sentences each)
+  - Maintain logical flow between paragraphs
+  - Synthesize information from multiple sources
+  - Avoid repetitive opening phrases like "The spoilage of agricultural products..."
+  
+  **EXAMPLE WORKFLOW:**
+  1. Write: "Artificial intelligence has revolutionized healthcare information systems."
+  2. Call: addCitation(paper_id="context-source-id", reason="Source discusses AI in healthcare")
+  3. Include the returned placeholder: "⟦1⟧" in your text
+  4. Continue writing...
+  
+  Remember: CALL the function, don't write about calling it.
 
 tools:
   addCitation:
-    description: "Add properly formatted citation for any factual claim or evidence reference"
+    description: "Call this tool IMMEDIATELY after a sentence that uses information from a provided source. You must provide the exact paper_id from the context chunks you used. Do not cite your own general knowledge."
     parameters:
       type: object
       properties:
-        paperId:
+        paper_id:
           type: string
-          description: "Unique identifier of the source paper"
-        citationText:
+          description: "The exact UUID of the source paper from the provided context"
+        reason:
           type: string
-          description: "The specific claim or fact being cited"
-        context:
+          description: "Brief explanation of why this source supports your claim"
+        quote:
           type: string
-          description: "Brief context of how this citation supports the argument"
-      required: ["paperId", "citationText"]
+          description: "Optional: exact quote from source for verification"
+      required: ["paper_id", "reason"]
 
 metadata:
-  version: "1.0"
+  version: "1.1"
   created: "2025-01-15"
+  updated: "2025-01-16"
   description: "Unified skeleton that adapts to any section level through contextual data"
   use_cases:
     - "Full section generation"

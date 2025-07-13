@@ -8,7 +8,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { debug } from '@/lib/utils/logger'
-import FormData from 'form-data'
+// Using native FormData instead of form-data package
+// import FormData from 'form-data'
 import { XMLParser } from 'fast-xml-parser'
 
 export interface TieredExtractionResult {
@@ -191,21 +192,49 @@ async function grobidParse(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
+    // Validate PDF buffer
+    if (!pdfBuffer || pdfBuffer.length === 0) {
+      throw new Error('PDF buffer is empty or null')
+    }
+    
+    if (pdfBuffer.length < 1024) {
+      throw new Error(`PDF buffer too small: ${pdfBuffer.length} bytes`)
+    }
+    
+    // Check PDF header
+    const header = pdfBuffer.subarray(0, 4).toString()
+    if (!header.startsWith('%PDF')) {
+      throw new Error(`Invalid PDF header: ${header}`)
+    }
+
+    // Convert Buffer to Blob for native FormData
+    const pdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' })
+    
     const form = new FormData()
-    form.append('input', pdfBuffer, {
-      filename: 'paper.pdf',
-      contentType: 'application/pdf'
-    })
+    form.append('input', pdfBlob, 'paper.pdf')
     form.append('includeRawCitations', '1')
     form.append('includeRawAffiliations', '1')
 
+    // Debug logging
+    console.log('GROBID request details:')
+    console.log('- URL:', `${grobidUrl}/api/processFulltextDocument`)
+    console.log('- PDF buffer size:', pdfBuffer.length)
+    console.log('- PDF header:', header)
+    console.log('- Form data fields: input, includeRawCitations, includeRawAffiliations')
+    console.log('- Using native FormData with Blob')
+
     const response = await fetch(`${grobidUrl}/api/processFulltextDocument`, {
       method: 'POST',
-      body: form as any,
+      body: form,
+      // Don't set Content-Type header - let fetch handle it automatically for FormData
       signal: controller.signal
     })
 
     if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`GROBID request failed with status ${response.status}`);
+      console.error(`Error body: ${errorBody}`);
+      console.error(`Request used native FormData with PDF blob`);
       throw new Error(`GROBID HTTP ${response.status}: ${response.statusText}`)
     }
 

@@ -1,33 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateWithUnifiedTemplate } from '@/lib/generation/unified-generator'
+import { generateWithUnifiedTemplate, StreamEvent } from '@/lib/generation/unified-generator'
+import {
+  executeAddCitation,
+  runWithCitationContext,
+  type CitationContext,
+  type CitationPayload,
+} from '@/lib/ai/tools/addCitation'
 import type { SectionContext } from '@/lib/prompts/unified/prompt-builder'
-
-// Command to section mapping - this could be made more flexible
-const COMMAND_SECTION_MAP = {
-  write: 'introduction',
-  rewrite: 'discussion', 
-  cite: 'references',
-  outline: 'structure'
-} as const
 
 /**
  * Unified Generation API - Single endpoint for all content generation levels 
  * 
- * Supports:
- * - Full section generation
- * - Block-level rewrites  
- * - Sentence-level edits
- * - Multi-section batch processing
- * 
- * All using the same underlying skeleton template with contextual data
+ * Streams sentences and citations for a given prompt.
  */
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
     
-    // Get user - this could be optimized with signed cookies for streaming
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
       return new NextResponse('Unauthorized', { status: 401 })
@@ -35,31 +26,43 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { 
-      command, 
       projectId, 
-      selectedText, 
-      sectionKey = COMMAND_SECTION_MAP[command as keyof typeof COMMAND_SECTION_MAP] || 'general'
+      sectionKey = 'introduction',
+      paperType = 'researchArticle',
+      topic,
+      selectedText
     } = body
 
-    if (!command || !projectId) {
-      return new NextResponse('Missing required fields', { status: 400 })
+    if (!projectId || !topic) {
+      return new NextResponse('Missing required fields: projectId and topic are required.', { status: 400 })
     }
+    
+    // Fetch project details for citation style
+    const { data: project, error: projectError } = await supabase
+        .from('research_projects')
+        .select('citation_style')
+        .eq('id', projectId)
+        .single()
 
-    // Create a streaming response with proper headers for Safari compatibility
+    if (projectError) throw projectError
+
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       async start(controller) {
-        try {
-          // Generate unique block ID using crypto
-          const blockId = crypto.randomUUID()
+        
+        const writer = (event: StreamEvent) => {
+            controller.enqueue(encoder.encode(JSON.stringify(event) + '\n'))
+        }
 
-          // Build section context for unified generator
+        let fullContent = ''
+
+        try {
           const sectionContext: SectionContext = {
             projectId,
-            sectionId: blockId,
-            paperType: 'researchArticle',
+            sectionId: crypto.randomUUID(),
+            paperType,
             sectionKey,
-            availablePapers: [],
+            availablePapers: [], // This should be populated based on user's library/sources
             contextChunks: selectedText ? [{
               paper_id: 'current_selection',
               content: selectedText,
@@ -67,71 +70,52 @@ export async function POST(request: NextRequest) {
             }] : []
           }
 
-          // Generate content using the unified generator
-          const result = await generateWithUnifiedTemplate({
+          const citationContext: Omit<CitationContext, 'draftStore'> = {
+              projectId,
+              userId: user.id,
+              citationStyle: project?.citation_style || 'apa'
+          }
+
+          await generateWithUnifiedTemplate({
             context: sectionContext,
             options: {
-              targetWords: command === 'cite' ? 100 : command === 'outline' ? 200 : 300,
-              sentenceMode: command === 'cite',
-              forceRewrite: command === 'rewrite'
+              targetWords: 300
             },
-            onProgress: (stage: string, progress: number, message: string) => {
-              controller.enqueue(
-                encoder.encode(JSON.stringify({ 
-                  type: 'progress',
-                  stage,
-                  progress,
-                  message
-                }) + '\n')
-              )
+            onStreamEvent: async (event) => {
+              writer(event) // forward progress and errors to client
+              if (event.type === 'sentence') {
+                fullContent += event.data.text
+              } else if (event.type === 'citation') {
+                const citationResult = await runWithCitationContext(citationContext, () => executeAddCitation(event.data.args as CitationPayload))
+                if (citationResult.success && citationResult.formatted_citation) {
+                    const citationText = ` ${citationResult.formatted_citation} `
+                    fullContent += citationText
+                    writer({ type: 'sentence', data: { text: citationText }})
+                }
+              }
             }
           })
 
-          // Stream the final content
-          controller.enqueue(
-            encoder.encode(JSON.stringify({ 
-              type: 'content', 
-              content: result.content,
-              blockId 
-            }) + '\n')
-          )
-
-          // Store block in database
-          await supabase
-            .from('blocks')
-            .upsert({
-              id: blockId,
-              document_id: projectId,
-              type: command === 'outline' ? 'heading' : 'paragraph',
-              content: {
-                type: command === 'outline' ? 'heading' : 'paragraph',
-                attrs: command === 'outline' ? { level: 2 } : {},
-                content: [{ type: 'text', text: result.content }]
-              },
-              position: Date.now(),
-              metadata: {
-                command,
-                generatedAt: new Date().toISOString(),
-                wordCount: result.wordCount
-              }
+          // After generation, save the full content to the project
+          const { error: updateError } = await supabase
+            .from('research_projects')
+            .update({ 
+                content: fullContent,
+                status: 'complete',
+                completed_at: new Date().toISOString() 
             })
+            .eq('id', projectId)
 
-          controller.enqueue(
-            encoder.encode(JSON.stringify({ 
-              type: 'complete',
-              blockId,
-              message: 'Content generated successfully'
-            }) + '\n')
-          )
+          if (updateError) {
+              console.error('Failed to save full content:', updateError)
+              writer({ type: 'error', data: { message: `Failed to save content: ${updateError.message}` }})
+          }
+
+          writer({ type: 'progress', data: { stage: 'complete', progress: 100, message: 'Content saved successfully' }})
 
         } catch (error) {
           console.error('Generation error:', error)
-          controller.enqueue(
-            encoder.encode(JSON.stringify({ 
-              type: 'error', 
-              message: error instanceof Error ? error.message : 'Generation failed' 
-            }) + '\n')
-          )
+          writer({ type: 'error', data: { message: error instanceof Error ? error.message : 'Generation failed' }})
         } finally {
           controller.close()
         }
@@ -143,10 +127,7 @@ export async function POST(request: NextRequest) {
       headers: {
         'Content-Type': 'application/x-ndjson',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST',
-        'Access-Control-Allow-Headers': 'Content-Type',
+        'Connection': 'keep-alive'
       },
     })
 
@@ -156,10 +137,7 @@ export async function POST(request: NextRequest) {
       JSON.stringify({ error: 'Internal server error' }), 
       { 
         status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          'Retry-After': '60' // Add retry header for rate limit cases
-        }
+        headers: { 'Content-Type': 'application/json' }
       }
     )
   }

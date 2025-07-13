@@ -409,15 +409,74 @@ export const clientLibraryOperations = {
 export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]> {
   const supabase = await getSB()
   
-  const { data, error } = await supabase
-    .from('library_papers')
-    .select(PAPER_WITH_AUTHORS_SELECT)
-    .in('paper_id', paperIds)
+  if (!paperIds || paperIds.length === 0) {
+    return []
+  }
 
-  if (error) throw error
-  if (!data) return []
+  // Separate UUIDs from deterministic IDs
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const uuids = paperIds.filter(id => uuidRegex.test(id));
+  const deterministicIds = paperIds.filter(id => !uuidRegex.test(id));
 
-  return (data || []).map(transformPaperWithAuthors)
+  const promises = [];
+
+  // Query for standard UUIDs directly
+  if (uuids.length > 0) {
+    const query = supabase
+      .from('library_papers')
+      .select(PAPER_WITH_AUTHORS_SELECT)
+      .in('paper_id', uuids);
+    promises.push(query);
+  }
+
+  // For deterministic IDs, first find their UUIDs, then query
+  if (deterministicIds.length > 0) {
+    const promise = (async () => {
+      const { data: mapping, error: mappingError } = await supabase
+        .from('papers')
+        .select('id')
+        .in('deterministic_id', deterministicIds);
+      
+      if (mappingError) {
+        console.error('Error fetching deterministic ID mappings:', mappingError);
+        return { data: [], error: mappingError };
+      }
+
+      const foundUuids = mapping.map(m => m.id);
+      if (foundUuids.length === 0) {
+        return { data: [], error: null };
+      }
+
+      return supabase
+        .from('library_papers')
+        .select(PAPER_WITH_AUTHORS_SELECT)
+        .in('paper_id', foundUuids);
+    })();
+    promises.push(promise);
+  }
+
+  const results = await Promise.all(promises);
+
+  const papers: LibraryPaper[] = [];
+  const seenIds = new Set<string>();
+
+  for (const result of results) {
+    if (result.error) {
+      console.error('Error fetching papers by ID:', result.error);
+      // Decide if you want to throw or just continue
+    }
+    if (result.data) {
+      for (const item of result.data) {
+        const transformed = transformPaperWithAuthors(item);
+        if (!seenIds.has(transformed.id)) {
+          papers.push(transformed);
+          seenIds.add(transformed.id);
+        }
+      }
+    }
+  }
+
+  return papers;
 }
 
 export async function getRecentActivity(userId: string, limit = 5) {

@@ -2,8 +2,8 @@ import 'server-only'
 import { streamText } from 'ai'
 import { ai } from '@/lib/ai/vercel-client'
 import { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
-import { calculateContentMetricsAsync } from './metrics-system'
-import { estimateTokenCount } from '@/lib/utils/text'
+import { calculateContentMetrics, storeMetrics } from './metrics-system'
+import { getTokenCount } from '@/lib/utils/text'
 import type { ReflectionResult } from './production-generator'
 import type { PaperWithAuthors } from '@/types/simplified'
 
@@ -219,7 +219,7 @@ export async function reviseContent(
 ): Promise<RevisedContent> {
   
   // Token-based stop criteria
-  const originalTokens = estimateTokenCount(originalContent)
+  const originalTokens = await getTokenCount(originalContent)
   const maxTokenDiff = Math.min(originalTokens * 0.5, 1000) // Max 50% change or 1000 tokens
   
   // Focus on high-severity issues first
@@ -273,7 +273,7 @@ Provide the revised content that addresses these issues while maintaining academ
     }
 
     // Check token difference as stop criteria
-    const revisedTokens = estimateTokenCount(revisedContent)
+    const revisedTokens = await getTokenCount(revisedContent)
     const tokenDiff = Math.abs(revisedTokens - originalTokens)
     
     if (tokenDiff > maxTokenDiff) {
@@ -635,4 +635,35 @@ async function generateImprovements(
     quality_score: 85,
     changes_made: 0
   }
+}
+
+/**
+ * Placeholder for the adaptive reflection entry point
+ * This would integrate with the production generator
+ */
+export async function runAdaptiveReflection(
+  _content: string,
+  _paperType: PaperTypeKey,
+  _section: SectionKey,
+  _topic: string,
+  _availablePapers: PaperWithAuthors[],
+  _contextChunks: string[],
+  _maxCycles: number = 2
+): Promise<ReflectionResult> {
+  // TODO: Implement full adaptive reflection pipeline
+  // For now, return the original content with minimal changes
+  return {
+    final_content: _content,
+    revisions_made: 0,
+    final_quality_score: 75,
+    improvement_log: ['Adaptive reflection not yet implemented']
+  }
+}
+
+/**
+ * Placeholder for issue extraction
+ */
+function extractIssues(_content: string, _issues: ContentCritique): string[] {
+  // TODO: Extract specific issues from content
+  return ['Issue extraction not implemented']
 } 

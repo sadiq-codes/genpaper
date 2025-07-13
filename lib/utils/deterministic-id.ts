@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto'
+import { v5 as uuidv5 } from 'uuid'
+
+// Define fixed namespaces for different types of entities
+const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
+const AUTHOR_NAMESPACE = '6ba7b811-9dad-11d1-80b4-00c04fd430c8'
+const CHUNK_NAMESPACE = '6ba7b812-9dad-11d1-80b4-00c04fd430c8'
 
 /**
- * Generate a deterministic ID for a paper to prevent duplicates
- * Uses DOI when available, otherwise creates a hash from title, author, and year
+ * Generate a deterministic UUID for a paper to prevent duplicates
+ * Uses DOI when available, otherwise creates a UUID from title, author, and year
  */
 export function generateDeterministicPaperId(paper: {
   doi?: string | null
@@ -13,9 +19,9 @@ export function generateDeterministicPaperId(paper: {
 }): string {
   // Prefer DOI as it's globally unique
   if (paper.doi) {
-    // Normalize DOI format and create a consistent ID
+    // Normalize DOI format and create a consistent UUID
     const normalizedDoi = paper.doi.toLowerCase().replace(/^doi:/, '').trim()
-    return `doi-${createHash('sha1').update(normalizedDoi).digest('hex').substring(0, 16)}`
+    return uuidv5(normalizedDoi, PAPER_NAMESPACE)
   }
   
   // Extract year from publication_date if year not provided
@@ -39,13 +45,12 @@ export function generateDeterministicPaperId(paper: {
     year ? year.toString() : ''
   ].filter(Boolean).join('|')
   
-  // Generate SHA1 hash and take first 16 characters for reasonable length
-  const hash = createHash('sha1').update(key).digest('hex').substring(0, 16)
-  return `paper-${hash}`
+  // Generate UUID v5 from the key
+  return uuidv5(key, PAPER_NAMESPACE)
 }
 
 /**
- * Generate a deterministic ID for an author
+ * Generate a deterministic UUID for an author
  * Uses only the author's name to consolidate all work under a single ID,
  * even when affiliations change over time or are represented differently
  */
@@ -57,16 +62,15 @@ export function generateDeterministicAuthorId(author: {
   // This consolidates authors even when affiliations change or are missing
   const key = author.name.toLowerCase().trim()
   
-  const hash = createHash('sha1').update(key).digest('hex').substring(0, 12)
-  return `author-${hash}`
+  return uuidv5(key, AUTHOR_NAMESPACE)
 }
 
 /**
- * Generate a deterministic ID for a content chunk
+ * Generate a deterministic UUID for a content chunk
  * @param paperId The ID of the parent paper
  * @param chunkContent The first 100 characters of the chunk's content
  * @param chunkIndex The index of the chunk within the paper
- * @returns A unique, deterministic ID for the chunk
+ * @returns A unique, deterministic UUID for the chunk
  */
 export function createDeterministicChunkId(
   paperId: string,
@@ -78,7 +82,6 @@ export function createDeterministicChunkId(
   const contentPrefix = chunkContent.substring(0, 100)
   
   const key = `${paperId}|${chunkIndex}|${contentPrefix}`
-  const hash = createHash('sha1').update(key).digest('hex').substring(0, 16)
   
-  return `chunk-${hash}`
-} 
+  return uuidv5(key, CHUNK_NAMESPACE)
+}

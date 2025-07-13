@@ -1,17 +1,59 @@
-import { getPapersByIds } from '@/lib/db/library'
-import type { PaperWithAuthors } from '@/types/simplified'
-import type { EnhancedGenerationOptions, PaperWithScores } from './types'
-import { isScoreAcceptable, hasUnacceptableScores } from './config'
-import type { PaperSource } from '@/types/simplified'
-import { unifiedSearch, type UnifiedSearchOptions } from '@/lib/search'
-import { estimateEmbeddingCost, formatCostEstimate } from '@/lib/ai/generation-defaults'
+import { getSB } from '@/lib/supabase/server'
+import { getPapersByIds as getLibraryPapersByIds } from '@/lib/db/library'
+import type { EnhancedGenerationOptions } from './types'
+
+// 🆕 OPTIMIZATION: Import structured logging
+import { logSearchMetrics, createTimer, type SearchMetrics } from '@/lib/utils/logger'
+
+// Helper function to check if URL is likely a direct PDF
+function isLikelyDirectPdfUrl(url: string): boolean {
+  if (!url) return false
+  
+  // Direct PDF patterns
+  const directPdfPatterns = [
+    /\.pdf$/i,
+    /arxiv\.org\/pdf\//i,
+    /biorxiv\.org\/content\/.*\.full\.pdf/i,
+    /medrxiv\.org\/content\/.*\.full\.pdf/i,
+    /core\.ac\.uk\/download\/pdf/i,
+    /europepmc\.org\/.*\.pdf/i,
+    /ncbi\.nlm\.nih\.gov\/pmc\/articles\/.*\/pdf/i,
+  ]
+  
+  // Publisher landing page patterns (NOT direct PDFs)
+  const landingPagePatterns = [
+    /doi\.org\//i,
+    /dx\.doi\.org\//i,
+    /link\.springer\.com\//i,
+    /ieeexplore\.ieee\.org\//i,
+    /acm\.org\/doi\//i,
+    /onlinelibrary\.wiley\.com\//i,
+    /sciencedirect\.com\/science\/article\//i,
+    /nature\.com\/articles\//i,
+    /tandfonline\.com\//i,
+    /jstor\.org\//i,
+    /sage.*\.com\//i
+  ]
+  
+  // Check if it's a known landing page
+  if (landingPagePatterns.some(pattern => pattern.test(url))) {
+    return false
+  }
+  
+  // Check if it's a direct PDF
+  return directPdfPatterns.some(pattern => pattern.test(url))
+}
+import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
+import type { UnifiedSearchOptions, UnifiedSearchResult } from '@/lib/search/orchestrator'
+import { unifiedSearch } from '@/lib/search/orchestrator'
+import { pdfQueue } from '@/lib/services/pdf-queue'
 import { decideIngest } from './policy'
-import { WordTokenizer } from 'natural'
 
-// Initialize NLP tools
-const tokenizer = new WordTokenizer()
+// Main entry ────────────────────────────────────────────────
+export async function collectPapers(
+  options: EnhancedGenerationOptions
+): Promise<PaperWithAuthors[]> {
 
-export async function collectPapers(options: EnhancedGenerationOptions): Promise<PaperWithAuthors[]> {
   const { topic, libraryPaperIds = [], useLibraryOnly, config, userId } = options
   
   console.log(`📋 Generation Request:`)
@@ -20,9 +62,9 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
   console.log(`   🔒 Library Only Mode: ${useLibraryOnly}`)
   console.log(`   ⚙️ Target Limit: ${config?.search_parameters?.limit || 10}`)
   
-  // Get pinned papers from library
-  const pinnedPapers = libraryPaperIds.length > 0 
-    ? await getPapersByIds(libraryPaperIds)
+  // 1. pinned papers
+  const pinnedPapers = libraryPaperIds.length
+    ? await getLibraryPapersByIds(libraryPaperIds)
     : []
   
   console.log(`📚 Pinned Papers Retrieved: ${pinnedPapers.length}`)
@@ -39,284 +81,570 @@ export async function collectPapers(options: EnhancedGenerationOptions): Promise
   
   console.log(`🔍 Search Parameters:`)
   console.log(`   📊 Target Total Papers: ${targetTotal}`)
-  console.log(`   📌 Pinned Papers: ${pinnedPapers.length}`)
-  console.log(`   🆕 Remaining Slots for Discovery: ${remainingSlots}`)
-  console.log(`   🚫 Excluded Paper IDs: [${pinnedIds.join(', ')}]`)
+  console.log(`   🎯 Remaining Search Slots: ${remainingSlots}`)
 
-  // Discover additional papers if not in library-only mode
+  // 🆕 OPTIMIZATION: Check library coverage before external APIs
   let discoveredPapers: PaperWithAuthors[] = []
-
-  console.log(`🔍 Library Only Check:`)
-  console.log(`   useLibraryOnly flag: ${useLibraryOnly}`)
-  console.log(`   remainingSlots: ${remainingSlots}`)
-  console.log(`   Condition (!useLibraryOnly && remainingSlots > 0): ${!useLibraryOnly && remainingSlots > 0}`)
-
+  
   if (!useLibraryOnly && remainingSlots > 0) {
-    console.log(`🎯 Starting unified search for fresh papers...`)
-    console.log(`⚠️ LIBRARY ONLY MODE IS DISABLED - SEARCHING FOR MORE PAPERS`)
+    console.log(`🔍 Checking library coverage before external search...`)
     
-    try {
-      // Use server-side policy for auto-ingest decisions
-      const autoIngest = decideIngest({
+    // Quick library relevance check first
+    const libraryCoverage = await checkLibraryCoverage(topic, userId, remainingSlots)
+    console.log(`📚 Library Coverage: ${libraryCoverage.papers.length} relevant papers, score: ${libraryCoverage.coverageScore.toFixed(2)}`)
+    
+    // If library coverage is sufficient (≥ 70%), skip external APIs
+    const COVERAGE_THRESHOLD = 0.7
+    if (libraryCoverage.coverageScore >= COVERAGE_THRESHOLD && libraryCoverage.papers.length >= remainingSlots) {
+      console.log(`✅ Library coverage sufficient (${libraryCoverage.coverageScore.toFixed(2)} ≥ ${COVERAGE_THRESHOLD}), using library papers only`)
+      discoveredPapers = libraryCoverage.papers.slice(0, remainingSlots)
+    } else {
+      console.log(`📡 Library coverage insufficient, proceeding with external search...`)
+      
+      try {
+        const searchOptions: UnifiedSearchOptions = {
+          maxResults: remainingSlots,
+          minResults: Math.min(5, remainingSlots),
+          excludePaperIds: [...pinnedIds, ...libraryCoverage.papers.map(p => p.id)],
+          fromYear: 2000,
+          localRegion: config?.paper_settings?.localRegion,
+          useHybridSearch: true,
+          useKeywordSearch: true,
+          useAcademicAPIs: true,
+          combineResults: true,
+          fastMode: false,
+          sources: (config?.search_parameters?.sources as PaperSource[])
+                    ?? ['openalex', 'crossref', 'semantic_scholar'],
+          semanticWeight: config?.search_parameters?.semanticWeight ?? 0.4,
+          authorityWeight: config?.search_parameters?.authorityWeight ?? 0.5,
+          recencyWeight: config?.search_parameters?.recencyWeight ?? 0.1
+        }
+        
+        const searchResult = await unifiedSearchWithRetry(topic, searchOptions)
+        
+        // Combine library papers with external search results
+        const externalPapers = searchResult.papers as PaperWithAuthors[]
+        const availableSlots = remainingSlots - libraryCoverage.papers.length
+        discoveredPapers = [
+          ...libraryCoverage.papers,
+          ...externalPapers.slice(0, Math.max(0, availableSlots))
+        ]
+        
+        console.log(`🎯 Combined search results: ${libraryCoverage.papers.length} from library + ${externalPapers.length} from external`)
+        
+        if (searchResult.metadata.errors.length > 0) {
+          console.warn(`⚠️ Search completed with warnings: ${searchResult.metadata.errors.join(', ')}`)
+        }
+
+      } catch (err) {
+        console.error('Unified search failed, falling back to library papers only:', err)
+        discoveredPapers = libraryCoverage.papers.slice(0, remainingSlots)
+      }
+    }
+
+    // Auto-ingest discovered papers if policy allows
+    if (discoveredPapers.length > 0) {
+      const shouldIngest = decideIngest({
         librarySize: pinnedPapers.length,
-        explicitForce: config?.search_parameters?.forceIngest,
         userId
       })
       
-      console.log(`🔧 ForceIngest Decision:`)
-      console.log(`   📚 Library papers: ${pinnedPapers.length}`)
-      console.log(`   ⚙️ Explicit setting: ${config?.search_parameters?.forceIngest ?? 'not set'}`)
-      console.log(`   🤖 Auto-ingest enabled by policy: ${autoIngest}`)
-      
-      if (autoIngest && !config?.search_parameters?.forceIngest) {
-        const estimatedCost = estimateEmbeddingCost(remainingSlots, false)
-        console.log(`   💰 Estimated embedding cost: ${formatCostEstimate(estimatedCost)} for ${remainingSlots} papers`)
+      if (shouldIngest) {
+        console.log(`📥 Auto-ingesting ${discoveredPapers.length} papers to database...`)
+        
+        try {
+          const { ingestPaper, getPapersByIds } = await import('@/lib/db/papers')
+          
+          const ingestResults = await Promise.allSettled(
+            discoveredPapers.map(async (paper) => {
+              try {
+                const result = await ingestPaper({
+                  title: paper.title,
+                  authors: paper.author_names || [],
+                  abstract: paper.abstract,
+                  publication_date: paper.publication_date,
+                  venue: paper.venue,
+                  doi: paper.doi,
+                  url: paper.url,
+                  pdf_url: (paper as { pdf_url?: string }).pdf_url,
+                  metadata: paper.metadata || {},
+                  source: 'search-api',
+                  citation_count: paper.citation_count || 0,
+                  impact_score: paper.impact_score || 0
+                })
+                
+                return { paperId: result.paperId, success: true, originalIndex: discoveredPapers.indexOf(paper) }
+              } catch (error) {
+                console.warn(`Failed to ingest paper "${paper.title}":`, error)
+                return { paperId: '', success: false, error: error instanceof Error ? error.message : 'Unknown error', originalIndex: discoveredPapers.indexOf(paper) }
+              }
+            })
+          )
+          
+          const successful = ingestResults.filter(r => r.status === 'fulfilled' && r.value.success)
+          const failed = ingestResults.length - successful.length
+          
+          console.log(`✅ Auto-ingestion completed: ${successful.length}/${discoveredPapers.length} papers ingested`)
+          if (failed > 0) {
+            console.warn(`⚠️ ${failed} papers failed to ingest`)
+          }
+          
+          // Now fetch the complete paper data from database using the returned IDs
+          if (successful.length > 0) {
+            const ingestedPaperIds = successful.map(r => (r as { value: { paperId: string } }).value.paperId)
+            console.log(`🔄 Fetching complete paper data for ${ingestedPaperIds.length} ingested papers...`)
+            
+            const ingestedPapers = await getPapersByIds(ingestedPaperIds)
+            console.log(`✅ Retrieved ${ingestedPapers.length} complete papers from database`)
+            
+            // Replace discoveredPapers with the properly ingested and fetched papers
+            discoveredPapers = ingestedPapers
+          } else {
+            // No papers were successfully ingested
+            console.warn(`❌ No papers were successfully ingested, proceeding with empty discovered papers`)
+            discoveredPapers = []
+          }
+        } catch (error) {
+          console.error('Auto-ingestion failed:', error)
+          // On ingestion failure, clear discovered papers to avoid using stale data
+          discoveredPapers = []
+        }
+      } else {
+        console.log(`🔒 Auto-ingestion policy: library size ${pinnedPapers.length} above threshold, skipping ingestion`)
       }
-      
-      const searchOptions: UnifiedSearchOptions = {
-        maxResults: remainingSlots,
-        minResults: Math.min(5, remainingSlots),
-        excludePaperIds: pinnedIds,
-        fromYear: 2000,
-        localRegion: config?.paper_settings?.localRegion,
-        useHybridSearch: true,
-        useKeywordSearch: true,
-        useAcademicAPIs: !useLibraryOnly, // Only use APIs if not library-only
-        combineResults: true,
-        forceIngest: autoIngest,
-        fastMode: false, // Default to false since not in config
-        sources: (config?.search_parameters?.sources as PaperSource[]) ?? ['openalex', 'crossref', 'semantic_scholar'],
-        semanticWeight: config?.search_parameters?.semanticWeight || 0.4,
-        authorityWeight: config?.search_parameters?.authorityWeight || 0.5,
-        recencyWeight: config?.search_parameters?.recencyWeight || 0.1
-      }
-      
-      const searchResult = await unifiedSearch(topic, searchOptions)
-      
-      // Extract papers from unified search result  
-      discoveredPapers = searchResult.papers.map(p => ({
-        ...p,
-        // Ensure proper typing
-        authors: p.authors || [],
-        author_names: p.author_names || []
-      })) as PaperWithAuthors[]
-      
-      console.log(`🎯 Unified search completed:`)
-      console.log(`   📊 Found: ${discoveredPapers.length} papers`)
-      console.log(`   🔍 Strategies: ${searchResult.metadata.searchStrategies.join(', ')}`)
-      console.log(`   ⏱️ Time: ${searchResult.metadata.searchTimeMs}ms`)
-      console.log(`   💾 Cache hits: ${searchResult.metadata.cacheHits}`)
-      console.log(`   🌍 Regional boost: ${searchResult.metadata.localRegionBoost ? `${searchResult.metadata.localPapersCount} local papers` : 'none'}`)
-      
-      // Apply domain filtering to prevent off-topic papers
-      const filteredPapers = filterOnTopicPapers(discoveredPapers, topic)
-      console.log(`🔧 Domain filtering: ${discoveredPapers.length} → ${filteredPapers.length} on-topic papers`)
-      discoveredPapers = filteredPapers
-      
-    } catch (error) {
-      console.error(`❌ Unified search failed:`, error)
-      discoveredPapers = []
     }
-  } else {
-    if (useLibraryOnly) {
-      console.log(`✅ LIBRARY ONLY MODE ENABLED - SKIPPING PAPER SEARCH`)
-      console.log(`   Only using ${pinnedPapers.length} papers from library`)
-    } else if (remainingSlots <= 0) {
-      console.log(`✅ No remaining slots for additional papers`)
-      console.log(`   Already have ${pinnedPapers.length} pinned papers (target: ${targetTotal})`)
-    }
-  }
-  
-  console.log(`🔍 Discovery Search Results: ${discoveredPapers.length} papers found`)
-  
-  // Remove forced academic ingestion - papers will be ingested when selected for generation
-  // Users should add papers to library first, then select them for generation
-  if (discoveredPapers.length < 5 && !useLibraryOnly) {
-    console.warn('⚠️ Less than 5 total papers found.')
-    console.warn('💡 Tip: Add more relevant papers to your library for better generation results.')
-    console.warn('🔍 Papers from academic search are available but not automatically ingested.')
   }
 
-  const finalPapers: PaperWithAuthors[] = [
-    ...pinnedPapers.map(lp => lp.paper as PaperWithAuthors),
-    ...discoveredPapers
-  ]
+  // Combine pinned and discovered papers
+  const pinnedPaperObjects = pinnedPapers.map(lp => lp.paper as PaperWithAuthors)
+  
+  // discoveredPapers now contains the complete ingested papers from database
+  // or is empty if ingestion failed - ensuring we only use properly stored papers
+  const allPapers = [...pinnedPaperObjects, ...discoveredPapers]
 
-  console.log(`📋 Final Paper Collection: ${finalPapers.length} papers total`)
-  console.log(`   📌 From Library: ${pinnedPapers.length}`)
-  console.log(`   🔍 From Discovery: ${discoveredPapers.length}`)
+  console.log(`📋 Total Papers Collected: ${allPapers.length}`)
+  console.log(`   📌 From Library: ${pinnedPaperObjects.length}`)
+  console.log(`   🔍 From Search (Ingested): ${discoveredPapers.length}`)
   
-  if (useLibraryOnly && discoveredPapers.length > 0) {
-    console.error(`❌ BUG DETECTED: Library-only mode enabled but ${discoveredPapers.length} papers were discovered!`)
-    console.error(`   This should not happen. Library-only should prevent any search.`)
-  }
-  
-  if (useLibraryOnly) {
-    console.log(`✅ Library-only mode verification: Using only ${pinnedPapers.length} library papers`)
-    finalPapers.forEach((paper, idx) => {
-      console.log(`   ${idx + 1}. "${paper.title}" (${paper.id})`)
+  // Debug: Show final papers that will be used for generation
+  if (discoveredPapers.length > 0) {
+    console.log(`🔍 FINAL INGESTED PAPERS FOR GENERATION:`)
+    discoveredPapers.forEach((paper, idx) => {
+      console.log(`   ${idx + 1}. "${paper.title}" (ID: ${paper.id})`)
+      console.log(`      📄 DOI: ${paper.doi || 'NONE'}`) 
+      console.log(`      👥 Authors: ${paper.author_names?.join(', ') || 'Unknown'}`)
+      console.log(`      📅 Year: ${paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'Unknown'}`)
     })
   }
 
-  if (finalPapers.length === 0) {
-    console.error(`❌ No papers found for topic: "${topic}"`)
-    console.error(`❌ Search parameters:`, { 
-      limit: remainingSlots, 
-      excludeIds: pinnedIds.length,
-      useLibraryOnly 
-    })
+  // Filter papers and log results
+  const finalPapers = allPapers
+
+  console.log(`📊 Quality Filtering Results:`)
+  console.log(`   ✅ Acceptable Papers: ${finalPapers.length}`)
+
+  if (!finalPapers.length) {
     throw new Error(`No papers found for topic "${topic}". Please add relevant papers to your library.`)
+  }
+
+  // 3. background full-text extraction ──────────────────────
+  if (userId) {
+    await autoQueueFullTextExtraction(finalPapers, userId)
+    
+    // 4. chunk coverage gating ─────────────────────────────
+    if (finalPapers.length > 0) {
+      console.log(`🚪 Checking if we should wait for better chunk coverage...`)
+      
+      const initialCoverage = await getCoverage(finalPapers.map(p => p.id))
+      console.log(`   📊 Initial coverage: ${(initialCoverage * 100).toFixed(1)}%`)
+      
+      // Check if any papers have PDF URLs that could be processed
+      const papersWithPdfs = finalPapers.filter(p => p.pdf_url && isLikelyDirectPdfUrl(p.pdf_url))
+      
+      if (initialCoverage < 0.7 && papersWithPdfs.length > 0) {
+        console.log(`   ⏳ Coverage below 70%, waiting for content processing to complete...`)
+        console.log(`   💡 This includes PDF extraction, abstract processing, and chunk generation`)
+        
+        // Calculate dynamic wait time based on papers that actually need processing
+        const chunkCounts = await Promise.all(
+          papersWithPdfs.map(async p => ({ id: p.id, count: await getChunkCount(p.id) }))
+        )
+        
+        const papersNeedingProcessing = papersWithPdfs.filter(p => {
+          const chunkCount = chunkCounts.find(c => c.id === p.id)?.count ?? 0
+          return chunkCount < 10 // Papers with less than 10 chunks need processing
+        }).length
+        
+        // Allow 90 seconds per paper, with minimum 2 minutes and maximum 10 minutes
+        const dynamicWaitMs = Math.min(Math.max(papersNeedingProcessing * 90_000, 120_000), 600_000)
+        console.log(`   ⏱️  Dynamic wait time: ${dynamicWaitMs/1000}s for ${papersNeedingProcessing} papers`)
+        
+        const targetReached = await waitForChunkCoverage(
+          finalPapers.map(p => p.id),
+          0.9, // 70% coverage target
+          dynamicWaitMs, // Dynamic wait time
+          3_000 // Poll every 3 seconds
+        )
+        
+        if (!targetReached) {
+          console.warn(`⚠️ PDF processing timeout reached - proceeding with partial coverage`)
+          console.log(`   💡 Some papers may not have full-text content yet`)
+          console.log(`   🔄 Processing continues in background - future generations will have better coverage`)
+        } else {
+          console.log(`   ✅ PDF processing completed successfully - full coverage achieved`)
+        }
+      } else if (initialCoverage < 0.7 && papersWithPdfs.length === 0) {
+        console.warn(`⚠️ Low coverage but no PDFs available to process - skipping wait.`)
+        console.log(`   💡 Coverage: ${(initialCoverage * 100).toFixed(1)}% | Papers with PDFs: ${papersWithPdfs.length}`)
+      } else {
+        console.log(`   ✅ Coverage sufficient (${(initialCoverage * 100).toFixed(1)}%) or no waiting needed`)
+      }
+    }
   }
 
   return finalPapers
 }
 
-/**
- * Extract significant terms using enhanced tokenization and frequency analysis
- * Replaces the flawed TF-IDF implementation that used only a single document
- */
-function extractSignificantTerms(text: string, minLength: number = 3): string[] {
-  // Enhanced tokenization with preprocessing
-  const preprocessed = text
-    .replace(/([a-z])([A-Z])/g, '$1 $2') // camelCase -> camel Case
-    .replace(/[-_]/g, ' ') // hyphens and underscores to spaces
-    .toLowerCase()
-  
-  const tokens = tokenizer.tokenize(preprocessed) || []
-  
-  // Filter out very common English words (minimal stop word list)
-  const commonWords = new Set([
-    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
-    'from', 'up', 'about', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
-    'between', 'among', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
-    'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can',
-    'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him',
-    'her', 'us', 'them', 'my', 'your', 'his', 'her', 'its', 'our', 'their'
-  ])
-  
-  // Filter and score tokens
-  const filteredTokens = tokens.filter(token => {
-    // Always include long technical terms (likely domain-specific)
-    if (token.length >= 6) return /^[a-zA-Z]/.test(token)
+// ────────────────────────────────────────────────────────────
+// Auto-queue helper
+// ────────────────────────────────────────────────────────────
+async function autoQueueFullTextExtraction(
+  papers: PaperWithAuthors[],
+  userId: string
+) {
+  try {
+    // 1. fetch chunk counts in parallel
+    const chunkCounts = await Promise.all(
+      papers.map(async p => ({ id: p.id, count: await getChunkCount(p.id) }))
+    )
+
+    // 2. Debug: Show detailed analysis of each paper
+    console.log(`🔍 DETAILED PAPER ANALYSIS:`)
+    papers.forEach((paper, idx) => {
+      const chunkCount = chunkCounts.find(c => c.id === paper.id)?.count ?? 0
+      const hasPdf = !!paper.pdf_url
+      const isDirectPdf = hasPdf && isLikelyDirectPdfUrl(paper.pdf_url!)
+      const needsQueuing = chunkCount < 10 && isDirectPdf
+      
+      console.log(`   ${idx + 1}. "${paper.title}"`)
+      console.log(`      📄 Full-text Chunks: ${chunkCount}`)
+      console.log(`      🔗 PDF URL: ${hasPdf ? 'YES' : 'NO'}`)
+      if (hasPdf && !isDirectPdf) {
+        console.log(`      ⚠️  PDF URL is likely a landing page, not direct PDF`)
+      }
+      console.log(`      ⚡ Needs Queuing: ${needsQueuing ? 'YES' : 'NO'}`)
+      if (!hasPdf && chunkCount === 0) {
+        console.log(`      ⚠️  PROBLEM: No PDF URL and no full-text chunks!`)
+      }
+    })
+
+    // SURGICAL FIX: Queue everything that has < MIN_CHUNKS_OK and has a valid PDF URL
+    const MIN_CHUNKS_OK = 10
+    const papersNeeding = papers.filter(p => {
+      const fullTextChunks = chunkCounts.find(c => c.id === p.id)?.count ?? 0
+      return fullTextChunks < MIN_CHUNKS_OK && p.pdf_url && isLikelyDirectPdfUrl(p.pdf_url)
+    })
+
+    // Calculate coverage based on papers with at least MIN_CHUNKS_OK full-text chunks
+    const ratio = chunkCounts.filter(c => c.count >= MIN_CHUNKS_OK).length / papers.length
+
+    console.log(`📊 Content coverage ${(ratio * 100).toFixed(1)}% — queueing ${papersNeeding.length} PDFs`)
+
+    if (ratio < 0.7) {
+      console.warn(`⚠️ WARNING: Content coverage is low (${(ratio * 100).toFixed(1)}% < 70%). This may impact RAG quality.`)
+    }
+
+    for (const paper of papersNeeding) {
+      await pdfQueue.addJob(
+        paper.id,
+        paper.pdf_url!,
+        paper.title ?? 'Unknown title',
+        userId,
+        'high' // Use high priority for generation-critical PDFs
+      )
+      console.log(`   ↳ queued "${paper.title}" (high priority)`)
+    }
     
-    // For shorter terms, filter out common words and ensure minimum length
-    return token.length >= minLength && 
-           /^[a-zA-Z]/.test(token) && 
-           !commonWords.has(token)
-  })
-  
-  // Calculate term frequencies
-  const termFrequencies = new Map<string, number>()
-  filteredTokens.forEach(token => {
-    termFrequencies.set(token, (termFrequencies.get(token) || 0) + 1)
-  })
-  
-  // Score terms based on frequency and length
-  const scoredTerms = Array.from(termFrequencies.entries()).map(([term, freq]) => ({
-    term,
-    score: freq * Math.log(term.length) // Favor longer, more frequent terms
-  }))
-  
-  // Sort by score and return top terms
-  const significantTerms = scoredTerms
-    .sort((a, b) => b.score - a.score)
-    .slice(0, Math.max(5, Math.ceil(scoredTerms.length * 0.4))) // Top 40% or at least 5 terms
-    .map(item => item.term)
-  
-  // Fallback to most frequent terms if scoring doesn't yield good results
-  if (significantTerms.length === 0) {
-    return Array.from(termFrequencies.keys()).slice(0, 10)
+    if (papersNeeding.length > 0) {
+      console.log(`✅ Queued ${papersNeeding.length} PDFs for high-priority extraction`)
+      console.log(`   🚀 Processing started immediately with high priority`)
+      console.log(`   ⏳ Will wait for completion before starting generation`)
+    } else {
+      console.log(`✅ No PDFs need queuing - papers have sufficient content chunks`)
+    }
+  } catch (err) {
+    console.error('autoQueueFullTextExtraction failed:', err)
   }
-  
-  return significantTerms
 }
 
-export function filterOnTopicPapers(
-  papers: PaperWithAuthors[],
+/** Count full-text chunks for a paper (excluding abstracts) */
+async function getChunkCount(paperId: string): Promise<number> {
+  try {
+    const sb = await getSB()
+    
+    // First check if the paper exists in the database at all
+    const { data: paperExists, error: paperError } = await sb
+      .from('papers')
+      .select('id')
+      .eq('id', paperId)
+      .single()
+
+    if (paperError || !paperExists) {
+      // Paper doesn't exist in database yet - this is expected for newly discovered papers
+      return 0
+    }
+    
+    // Get all chunks for this paper and filter by length in JavaScript
+    // This avoids the char_length() PostgreSQL function that doesn't work in PostgREST
+    const { data: chunks, error } = await sb
+      .from('paper_chunks')
+      .select('content')
+      .eq('paper_id', paperId)
+
+    if (error) {
+      console.error(`❌ Database error getting chunk count for ${paperId}:`, {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      })
+      return 0
+    }
+
+    // Filter chunks by content length (>= 500 chars for substantial content)
+    const fullTextChunks = (chunks || []).filter(chunk => 
+      chunk.content && chunk.content.length >= 500
+    ).length
+    
+    return fullTextChunks
+    
+  } catch (err) {
+    console.error(`💥 Critical error getting chunk count for ${paperId}:`, {
+      error: err,
+      message: err instanceof Error ? err.message : 'Unknown error',
+      stack: err instanceof Error ? err.stack : undefined
+    })
+    return 0
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// Chunk coverage gating system
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Get chunk coverage ratio for a set of papers using proper full-text chunk counting
+ * @param paperIds Array of paper IDs to check
+ * @returns Coverage ratio (0.0 to 1.0)
+ */
+async function getCoverage(paperIds: string[]): Promise<number> {
+  if (paperIds.length === 0) return 1.0 // Nothing to wait for
+
+  try {
+    // Count full-text chunks for each paper
+    const MIN_CHUNKS_OK = 10 // Require at least 10 full-text chunks
+    
+    const fullTextChecks = await Promise.all(
+      paperIds.map(async (paperId) => {
+        const chunkCount = await getChunkCount(paperId)
+        return chunkCount >= MIN_CHUNKS_OK
+      })
+    )
+    
+    const papersWithFullText = fullTextChecks.filter(Boolean).length
+    const coverage = papersWithFullText / paperIds.length
+    
+    console.log(`📊 Coverage analysis: ${papersWithFullText}/${paperIds.length} papers have ≥${MIN_CHUNKS_OK} full-text chunks`)
+    
+    return coverage
+  } catch (err) {
+    console.error('getCoverage query failed:', err)
+    return 0
+  }
+}
+
+/**
+ * Wait for chunk coverage to reach target ratio, with timeout
+ * @param paperIds Papers to monitor
+ * @param targetRatio Target coverage ratio (0.7 = 70%)
+ * @param maxWaitMs Maximum wait time in milliseconds
+ * @param pollEveryMs Polling interval
+ * @returns true if target reached, false if timed out
+ */
+async function waitForChunkCoverage(
+  paperIds: string[],
+  targetRatio = 0.7,
+  maxWaitMs = 30_000,
+  pollEveryMs = 2_000
+): Promise<boolean> {
+  const started = Date.now()
+  let attempts = 0
+  
+  console.log(`⏳ Waiting for PDF processing to complete (target: ${(targetRatio * 100).toFixed(0)}%, max wait: ${maxWaitMs/1000}s)`)
+  console.log(`   🔄 This ensures papers have full-text content before generation begins`)
+  
+  while (Date.now() - started < maxWaitMs) {
+    attempts++
+    const currentCoverage = await getCoverage(paperIds)
+    const elapsedSeconds = ((Date.now() - started)/1000).toFixed(0)
+    const remainingSeconds = Math.max(0, (maxWaitMs - (Date.now() - started))/1000).toFixed(0)
+    
+    console.log(`   📊 Check ${attempts}: ${(currentCoverage * 100).toFixed(1)}% coverage (${elapsedSeconds}s elapsed, ${remainingSeconds}s remaining)`)
+    
+    if (currentCoverage >= targetRatio) {
+      console.log(`✅ Target coverage reached in ${((Date.now() - started)/1000).toFixed(1)}s - proceeding with generation`)
+      return true
+    }
+    
+    // Don't sleep on the last iteration
+    if (Date.now() - started + pollEveryMs < maxWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, pollEveryMs))
+    }
+  }
+  
+  const finalCoverage = await getCoverage(paperIds)
+  console.warn(`⏰ PDF processing timeout: ${(finalCoverage * 100).toFixed(1)}% coverage after ${maxWaitMs/1000}s`)
+  console.log(`   🔄 Background processing will continue - papers will be ready for future generations`)
+  return false
+}
+
+// 🆕 OPTIMIZATION: Library coverage checker
+async function checkLibraryCoverage(
+  topic: string, 
+  userId: string, 
+  maxResults: number = 10
+): Promise<{ papers: PaperWithAuthors[]; coverageScore: number }> {
+  try {
+    const { getUserLibraryPapers } = await import('@/lib/db/library')
+    
+    // Get user's library papers with basic search
+    const libraryPapers = await getUserLibraryPapers(userId, {
+      search: topic
+    }, maxResults * 2) // Get extra to calculate coverage
+    
+    if (libraryPapers.length === 0) {
+      return { papers: [], coverageScore: 0 }
+    }
+    
+    // Calculate basic coverage score based on keyword matching and recency
+    const topicKeywords = topic.toLowerCase().split(' ')
+    const scoredPapers = libraryPapers.map(lp => {
+      const paper = lp.paper as PaperWithAuthors
+      const title = paper.title.toLowerCase()
+      const abstract = paper.abstract?.toLowerCase() || ''
+      
+      // Simple keyword matching score
+      const titleMatches = topicKeywords.filter(keyword => title.includes(keyword)).length
+      const abstractMatches = topicKeywords.filter(keyword => abstract.includes(keyword)).length
+      const relevanceScore = (titleMatches * 2 + abstractMatches) / topicKeywords.length
+      
+      return { ...lp, relevance_score: relevanceScore }
+    })
+    
+    // Filter papers with some relevance
+    const relevantPapers = scoredPapers.filter(p => p.relevance_score > 0.1)
+    
+    if (relevantPapers.length === 0) {
+      return { papers: [], coverageScore: 0 }
+    }
+    
+    // Calculate coverage score based on relevance and recency
+    type ScoredLibraryPaper = typeof libraryPapers[0] & { relevance_score: number }
+    
+    const avgScore = relevantPapers.reduce((sum: number, p: ScoredLibraryPaper) => sum + (p.relevance_score || 0), 0) / relevantPapers.length
+    const recentPapers = relevantPapers.filter((p: ScoredLibraryPaper) => {
+      const year = p.paper.publication_date ? new Date(p.paper.publication_date).getFullYear() : 0
+      return year >= 2018 // Papers from last 6 years
+    })
+    
+    const recencyBonus = recentPapers.length / relevantPapers.length * 0.2
+    const coverageScore = Math.min(1.0, avgScore + recencyBonus)
+    
+    // Return top papers with their full data
+    const papers = relevantPapers
+      .sort((a: ScoredLibraryPaper, b: ScoredLibraryPaper) => (b.relevance_score || 0) - (a.relevance_score || 0))
+      .slice(0, maxResults)
+      .map((lp: ScoredLibraryPaper) => lp.paper as PaperWithAuthors)
+    
+    return { papers, coverageScore }
+    
+  } catch (error) {
+    console.error('Library coverage check failed:', error)
+    return { papers: [], coverageScore: 0 }
+  }
+}
+
+// 🆕 OPTIMIZATION: Unified search with retry and better error handling
+async function unifiedSearchWithRetry(
   topic: string,
-  options?: { permissive?: boolean; minScore?: number }
-): PaperWithAuthors[] {
-  const permissive = !!options?.permissive;
-  const minScore = options?.minScore ?? 0.05; // Stricter default min score
-
-  // Titles that are definitely not research papers
-  const junkTitles = new Set(['acknowledgments', 'copyright', 'index', 'table of contents', 'front matter', 'back matter']);
-
-  // Use more flexible term extraction instead of hardcoded stop words
-  const topicTerms = extractSignificantTerms(topic)
+  options: UnifiedSearchOptions,
+  maxRetries: number = 2
+): Promise<UnifiedSearchResult> {
+  let lastError: Error | null = null
+  const searchTimer = createTimer()
+  const searchMetrics: Omit<SearchMetrics, 'duration_ms' | 'results_count'> = {
+    query: topic,
+    providers: options.sources || [],
+    cache_hit: false,
+    errors: [],
+    retry_count: 0
+  }
   
-  if (topicTerms.length === 0) return papers
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔍 Search attempt ${attempt}/${maxRetries}`)
+      const result = await unifiedSearch(topic, options)
+      
+      // Log search performance metrics
+      const duration = searchTimer.end()
+      console.log(`📊 Search Performance:`)
+      console.log(`   ⏱️  Duration: ${result.metadata.searchTimeMs}ms`)
+      console.log(`   📈 Strategies: ${result.metadata.searchStrategies.join(', ')}`)
+      console.log(`   🎯 Results: ${result.papers.length}/${options.maxResults}`)
+      console.log(`   ⚠️  Errors: ${result.metadata.errors.length}`)
+      
+      // 🆕 Log structured search metrics
+      logSearchMetrics({
+        query: searchMetrics.query,
+        providers: searchMetrics.providers,
+        cache_hit: searchMetrics.cache_hit,
+        errors: result.metadata.errors,
+        retry_count: attempt - 1,
+        duration_ms: duration,
+        results_count: result.papers.length
+      })
+      
+      return result
+      
+    } catch (error) {
+      lastError = error as Error
+      searchMetrics.errors!.push(lastError.message)
+      searchMetrics.retry_count = attempt
+      
+      console.warn(`⚠️ Search attempt ${attempt} failed:`, error)
+      
+      if (attempt < maxRetries) {
+        const backoffMs = attempt * 1000 // Linear backoff
+        console.log(`🔄 Retrying in ${backoffMs}ms...`)
+        await new Promise(resolve => setTimeout(resolve, backoffMs))
+      }
+    }
+  }
   
-  // Create regex patterns for whole-word matching
-  const termRegexes = topicTerms.map(
-    term => new RegExp(`\\b${term}\\b`, 'i')
-  );
+  // Log failed search metrics
+  const duration = searchTimer.end()
+  logSearchMetrics({
+    query: searchMetrics.query,
+    providers: searchMetrics.providers,
+    cache_hit: searchMetrics.cache_hit,
+    errors: searchMetrics.errors,
+    retry_count: searchMetrics.retry_count,
+    duration_ms: duration,
+    results_count: 0
+  })
+  
+  throw new Error(`All search attempts failed. Last error: ${lastError?.message}`)
+}
 
-  return (papers as PaperWithScores[]).filter(paper => {
-    const titleLower = paper.title?.toLowerCase() || '';
-
-    // 1. Filter out junk titles
-    if (junkTitles.has(titleLower)) {
-      console.debug(`🚫 Filtered out junk title: "${paper.title}"`);
-      return false;
-    }
-
-    const abstractLower = paper.abstract?.toLowerCase() || '';
-    const combinedText = titleLower + ' ' + abstractLower;
-
-    // 2. Count matches with the significant terms
-    const matches = termRegexes.filter(rx => rx.test(combinedText));
-    const matchRatio = matches.length / topicTerms.length
-    
-    // More flexible matching: require at least 30% term overlap for short topics,
-    // or at least 2 matches for longer topics
-    const hasGoodMatch = topicTerms.length <= 3 
-      ? matchRatio >= 0.3
-      : matches.length >= 2
-
-    // 3. Check semantic/keyword scores using helper functions
-    const { semantic_score: semanticScore, keyword_score: keywordScore } = paper;
-    const scoresAreAcceptable = isScoreAcceptable(semanticScore, keywordScore, permissive);
-    const scoresAreUnacceptable = hasUnacceptableScores(semanticScore, keywordScore, permissive);
-    
-    // 4. Stricter score check
-    const combinedScore = (semanticScore || 0) + (keywordScore || 0);
-    if (combinedScore < minScore && !hasGoodMatch) {
-       if (process.env.NODE_ENV === 'development') {
-        console.debug(
-          `🚫 Filtered out low score: "${paper.title}" ` +
-            `(combined score: ${combinedScore.toFixed(2)} < ${minScore})`
-        );
-      }
-      return false;
-    }
-
-    // Decision logic: Include if EITHER good term match OR acceptable scores
-    // Drop only if NO good match AND scores are unacceptable
-    if (!hasGoodMatch && scoresAreUnacceptable) {
-      if (process.env.NODE_ENV === 'development') {
-        const scoreInfo = typeof semanticScore === 'number' || typeof keywordScore === 'number'
-          ? `semantic: ${semanticScore ?? 'N/A'}, keyword: ${keywordScore ?? 'N/A'}`
-          : 'no scores available';
-
-        console.debug(
-          `🚫 Filtered out: "${paper.title}" ` +
-            `(match ratio: ${matchRatio.toFixed(2)}, ${scoreInfo}, mode: ${permissive ? 'permissive' : 'standard'})`
-        );
-      }
-      return false;
-    }
-
-    // Log inclusion reasoning in debug mode
-    if (process.env.NODE_ENV === 'development') {
-      const reason = hasGoodMatch
-        ? `term match (${matchRatio.toFixed(2)})`
-        : scoresAreAcceptable
-          ? 'acceptable scores'
-          : 'default inclusion';
-      console.debug(`✅ Including: "${paper.title}" (${reason}, mode: ${permissive ? 'permissive' : 'standard'})`);
-    }
-
-    return true;
-  });
-} 
+// Export helper functions for potential reuse
+export { getCoverage, waitForChunkCoverage }

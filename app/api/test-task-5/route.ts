@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
         }
       }
       
-      const streamUrl = `/api/generate/stream?${params.toString()}`
+      const streamUrl = `/api/generate?${params.toString()}`
 
       return NextResponse.json({
         message: 'Task 5 EventSource URL building test',

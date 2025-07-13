@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     const { 
       topic, 
       paperType = 'researchArticle',
-      selectedPapers = [], 
+
       localRegion,
       pageLength = 'medium'
     } = body
@@ -47,9 +47,7 @@ export async function POST(request: NextRequest) {
     // Generate outline using the backend function
     const outline = await generateOutline(
       paperType as PaperTypeKey,
-      topic,
-      selectedPapers,
-      config
+      topic
     )
 
     return NextResponse.json({

@@ -51,6 +51,9 @@ export interface BuildPromptOptions {
   targetWords?: number
   forceRewrite?: boolean
   sentenceMode?: boolean // For sentence-level edits
+  model?: string
+  temperature?: number
+  maxTokens?: number
 }
 
 // Cache for loaded skeleton
@@ -121,18 +124,36 @@ async function generatePromptData(
     Math.ceil(availablePapers.length * GENERATION_DEFAULTS.MIN_CITATION_COVERAGE)
   )
   
-  // Format evidence snippets as JSON
-  const evidenceSnippets = JSON.stringify(
-    contextChunks.map(chunk => ({
-      paper_id: chunk.paper_id,
-      title: chunk.title || 'Unknown Title',
-      doi: chunk.doi || null,
-      content: chunk.content.substring(0, 300) + '...',
-      relevance_note: 'Cited as supporting evidence'
-    })),
-    null,
-    2
-  )
+  // Format evidence snippets with clear paper_id tagging for citation tool
+  // Filter out irrelevant context to prevent topic drift
+  const relevantChunks = contextChunks.filter(chunk => {
+    const content = chunk.content.toLowerCase()
+    const title = (chunk.title || '').toLowerCase()
+    
+    // Basic relevance check - ensure content is somewhat related to the project
+    if (projectData.title) {
+      const titleWords = projectData.title.toLowerCase().split(' ')
+      const hasRelevantWords = titleWords.some((word: string) => 
+        word.length > 3 && (content.includes(word) || title.includes(word))
+      )
+      if (!hasRelevantWords) {
+        console.log(`⚠️ Filtering out irrelevant chunk: ${chunk.title}`)
+        return false
+      }
+    }
+    
+    return true
+  })
+  
+  const evidenceSnippets = relevantChunks.slice(0, 10).map(chunk => { // Limit to top 10 most relevant
+    const content = chunk.content.substring(0, 300)
+    return `[CONTEXT FROM: ${chunk.paper_id}]
+Title: ${chunk.title || 'Unknown Title'}
+DOI: ${chunk.doi || 'N/A'}
+Content: ${content}${chunk.content.length > 300 ? '...' : ''}
+
+`
+  }).join('')
   
   return {
     paperTitle: projectData.title,
@@ -450,4 +471,16 @@ function calculateSimpleTextSimilarity(text1: string, text2: string): number {
  */
 export function clearTemplateCache(): void {
   skeletonTemplate = null
+}
+
+async function getProjectSummaryForDrift(projectId: string): Promise<{ previousSummary: string }> {
+  // TODO: Implement actual project summary fetching from database
+  // This would fetch the rolling summary of approved sections
+  if (process.env.NODE_ENV === 'development') {
+    console.debug('TODO: Drift detection not fully implemented - getProjectSummaryForDrift is a placeholder')
+  }
+  
+  return {
+    previousSummary: 'Project summary for drift detection not yet implemented. All similarity checks will return 1.0 (no drift detected).'
+  }
 } 

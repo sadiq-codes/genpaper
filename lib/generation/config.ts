@@ -1,7 +1,6 @@
 import type { PaperLength } from '@/lib/ai/generation-defaults'
 import { 
   GENERATION_DEFAULTS, 
-  buildLiteratureSectionRegex,
   getMinCitationCoverage,
   getMinCitationFloor,
   getEvidenceSnippetLength
@@ -11,7 +10,6 @@ import { mergeWithDefaults } from '@/lib/ai/generation-config-schema'
 // Re-export configuration utilities
 export { 
   GENERATION_DEFAULTS,
-  buildLiteratureSectionRegex,
   getMinCitationCoverage, 
   getMinCitationFloor,
   getEvidenceSnippetLength,

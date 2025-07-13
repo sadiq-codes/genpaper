@@ -507,3 +507,135 @@ pre code .hljs-emphasis {
 .prose::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* Citation Styling */
+.inline-citation {
+  @apply inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-blue-50 border border-blue-200 rounded text-blue-700 cursor-pointer transition-colors;
+}
+
+.inline-citation:hover {
+  @apply bg-blue-100 border-blue-300;
+}
+
+.inline-citation-wrapper {
+  @apply inline;
+}
+
+/* TipTap Editor Styling */
+.ProseMirror {
+  outline: none;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #adb5bd;
+  pointer-events: none;
+  height: 0;
+}
+
+/* Bubble Menu Styling */
+.tippy-box[data-theme~='light'] {
+  @apply bg-white border border-gray-200 rounded-lg shadow-lg;
+}
+
+.tippy-content {
+  @apply p-0;
+}
+
+/* Reference List Styling */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Library Drawer and Command Palette Styles */
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.fade-in-0 {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.zoom-in-95 {
+  animation: zoomIn95 0.2s ease-out;
+}
+
+.slide-in-from-right {
+  animation: slideInFromRight 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes zoomIn95 {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes slideInFromRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Command Palette specific styles */
+.command-palette-overlay {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* Library Drawer specific styles */
+.library-drawer {
+  box-shadow: -4px 0 6px -1px rgba(0, 0, 0, 0.1), -2px 0 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* Smooth scrolling for search results */
+.library-results {
+  scroll-behavior: smooth;
+}
+
+/* Enhanced focus states for accessibility */
+.command-palette-item:focus-visible,
+.library-paper-card:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Text truncation utilities */
+.line-clamp-1 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.line-clamp-2 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Keyboard shortcut styling */
+kbd {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}

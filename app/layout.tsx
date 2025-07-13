@@ -2,6 +2,7 @@ import type React from "react"
 import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
+import GlobalLibraryProvider from "@/components/GlobalLibraryProvider"
 
 // import AuthButton from "./components/AuthButton"
 // import { QueryProvider } from '@/lib/tanstack-query/provider'
@@ -35,7 +36,9 @@ export default function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`} suppressHydrationWarning={true}>
         {/* <ErrorBoundary> */}
         {/* <QueryProvider> */}
-        <main>{children}</main>
+        <GlobalLibraryProvider>
+          <main>{children}</main>
+        </GlobalLibraryProvider>
         {/* </QueryProvider> */}
         {/* </ErrorBoundary> */}
       </body>

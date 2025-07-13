@@ -35,16 +35,23 @@ export async function generateDraftWithRAG(
 ): Promise<GenerationResult> {
   const { projectId, userId, topic: rawTopic, config: rawConfig, onProgress } = options;
 
-  return runWithCitationContext({ projectId, userId }, async () => {
+  const mergedConfig = mergeWithDefaults(rawConfig);
+  
+  return runWithCitationContext({ 
+    projectId, 
+    userId,
+    citationStyle: 'apa' // Default citation style - can be made configurable later
+  }, async () => {
     const topic = sanitizeForLogs(rawTopic);
+    
     try {
-      const config = mergeWithDefaults(rawConfig);
+      const config = mergedConfig;
       const log = (stage: 'searching' | 'analyzing' | 'writing' | 'citations' | 'complete' | 'failed', progress: number, message: string) => {
         onProgress?.({ stage, progress, message });
-        debug.log(`${stage}: ${message}`);
+        debug(`${stage}: ${message}`);
       };
 
-      debug.info('Starting enhanced paper generation', {
+      debug('Starting enhanced paper generation', {
         projectId,
         topic: topic.substring(0, 100),
         libraryPaperCount: options.libraryPaperIds?.length || 0,
@@ -70,16 +77,22 @@ export async function generateDraftWithRAG(
 
       // Step 3: Get relevant content chunks for RAG
       try {
+        // SURGICAL FIX: Increase chunk limits for better content availability
+        const CHUNKS_PER_PAPER = 10 // Increased from default 5
+        const baseChunkLimit = Math.max(
+          CHUNKS_PER_PAPER * allPapers.length, // Allow more chunks per paper
+          getChunkLimit(
+            config?.paper_settings?.length,
+            config?.paper_settings?.paperType || 'researchArticle'
+          )
+        )
+        
+        console.log(`📊 Chunk retrieval: targeting ${baseChunkLimit} chunks (${CHUNKS_PER_PAPER} per paper × ${allPapers.length} papers)`)
+        
         await getRelevantChunks(
           topic,
           allPapers.map(p => p.id),
-          Math.max(
-            50,
-            getChunkLimit(
-              config?.paper_settings?.length,
-              config?.paper_settings?.paperType || 'researchArticle'
-            )
-          ),
+          baseChunkLimit,
           allPapers
         );
       } catch (error) {
@@ -122,8 +135,16 @@ export async function generateDraftWithRAG(
       console.log(`📋 Generated outline with ${outline.sections.length} sections:`, 
         outline.sections.map(s => `${s.sectionKey}: ${s.title} (${s.expectedWords} words)`))
 
+      // SURGICAL FIX: Assign all discovered papers to each section since AI outline doesn't do paper assignment
+      const allPaperIds = allPapers.map(p => p.id)
+      console.log(`📋 Assigning ${allPaperIds.length} papers to all sections for content retrieval`)
+      
+      completeOutline.sections.forEach(section => {
+        section.candidatePaperIds = allPaperIds // Assign all papers to each section
+      })
+
       // Build section contexts for generation
-      const sectionContexts = await buildSectionContexts(completeOutline, topic)
+      const sectionContexts = await buildSectionContexts(completeOutline, topic, allPapers)
 
       log('writing', 50, `🏭 PRODUCTION MODE: Drafting ${sectionContexts.length} sections with 4-stage quality pipeline...`)
 
@@ -178,22 +199,75 @@ export async function generateDraftWithRAG(
         const content = result.content ?? result.writingResult?.content ?? 
                        (typeof result.writingResult === 'string' ? result.writingResult : null)
 
-        if (!content) {
-          throw new GenerationError(`Failed to generate content for section: ${sectionKey}`)
-        }
-
-        // Validate minimum content length
-        if (content.split(/\s+/).length < 50) {
+        // 🚨 ENHANCED ERROR HANDLING FOR EMPTY CONTENT
+        if (!content || content.trim().length === 0) {
+          console.error(`🚨 Empty content detected for section: ${sectionKey}`)
+          console.error(`📊 Section Context:`, {
+            sectionKey,
+            expectedWords: sectionContexts[index].expectedWords,
+            contextChunks: sectionContexts[index].contextChunks?.length || 0,
+            candidatePapers: sectionContexts[index].candidatePaperIds?.length || 0
+          })
+          
+          // Check if this is a tool-call interference issue
+          const isToolCallIssue = result.content === '' && result.writingResult === null
+          
+          if (isToolCallIssue) {
+            console.error(`💡 This appears to be a tool-call interference issue. The AI tried to use citation tools but failed to generate base content.`)
+            console.error(`🔧 The unified generator includes retry logic without tools to handle this case.`)
+          }
+          
           throw new GenerationError(
-            `Generated content too short for section: ${sectionKey}`,
-            { wordCount: content.split(/\s+/).length }
+            `Failed to generate content for section: ${sectionKey}. ` +
+            `${isToolCallIssue ? 'Tool-call interference detected. ' : ''}` +
+            `This may indicate content filtering, API issues, or insufficient context. ` +
+            `Available context: ${sectionContexts[index].contextChunks?.length || 0} chunks from ` +
+            `${sectionContexts[index].candidatePaperIds?.length || 0} papers. ` +
+            `Please check your API key, review the source material, and try again.`
           )
         }
 
-        return content
+        // Validate content quality - reject very short content
+        const wordCount = content.trim().split(/\s+/).length
+        if (wordCount < 50) {
+          console.error(`🚨 Content too short for section: ${sectionKey} (${wordCount} words)`)
+          throw new GenerationError(
+            `Generated content for section ${sectionKey} is too short (${wordCount} words). ` +
+            `This indicates poor content quality. Please ensure sufficient source material and try again.`
+          )
+        }
+
+        return {
+          sectionKey,
+          content: content.trim(),
+          wordCount
+        }
       })
 
-      const content = sectionContents.join('\n\n')
+      let content = sectionContents.map(sc => sc.content).join('\n\n')
+
+      log('citations', 82, 'Generating bibliography...')
+
+      // 🚀 IMMEDIATE BIBLIOGRAPHY GENERATION - no hydration needed!
+      try {
+        const { generateBibliography } = await import('@/lib/citations/immediate-bibliography')
+        const bibliographyResult = await generateBibliography(
+          projectId, 
+          'apa' // Default citation style - can be made configurable later
+        )
+        
+        // Append bibliography if citations exist
+        if (bibliographyResult.count > 0) {
+          content += '\n\n' + bibliographyResult.bibliography
+          console.log(`✅ Bibliography generated: ${bibliographyResult.count} citations`)
+        } else {
+          console.log(`📝 No citations found - skipping bibliography`)
+        }
+        
+      } catch (error) {
+        console.error('⚠️ Bibliography generation failed, continuing without bibliography:', error)
+        // Don't fail the entire generation if bibliography fails
+      }
 
       // Convert production results to captured tool calls format
       const capturedToolCalls: CapturedToolCall[] = []

@@ -71,7 +71,7 @@ function buildStreamUrl(request: GenerateRequest): string {
     }
   }
   
-  return `/api/generate/stream?${params.toString()}`
+  return `/api/generate?${params.toString()}`
 }
 
 // SWR fetcher for EventSource/SSE

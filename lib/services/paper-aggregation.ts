@@ -6,7 +6,7 @@ import {
   searchSemanticScholar,
   searchArxiv,
   searchCore,
-  getOpenAccessPdf,
+  enhancePdfUrls,
   getPaperReferences
 } from './academic-apis'
 import { ingestPaper } from '@/lib/db/papers'
@@ -459,25 +459,13 @@ export async function searchAndIngestPapers(
     return { papers: [], ingestedIds: [] }
   }
   
-  // Enhance with PDF URLs where possible
-  const enhancedPapers = await Promise.all(
-    rankedPapers.map(async (paper) => {
-      if (paper.doi && !paper.pdf_url) {
-        try {
-          const pdfUrl = await getOpenAccessPdf(paper.doi)
-          if (pdfUrl) {
-            return { ...paper, pdf_url: pdfUrl }
-          }
-        } catch (error) {
-          console.error(`Failed to get PDF for DOI ${paper.doi}:`, error)
-        }
-      }
-      return paper
-    })
-  )
+  // Enhance with PDF URLs using comprehensive strategies
+  console.log(`🔍 Enhancing PDF URLs using multiple strategies...`)
+  const enhancedPapers = (await enhancePdfUrls(rankedPapers)) as RankedPaper[]
   
   // Convert to PaperDTO format and ingest with chunks
   const ingestedIds: string[] = []
+  const ingestedPapers: RankedPaper[] = []
   
   for (const paper of enhancedPapers) {
     try {
@@ -538,7 +526,22 @@ export async function searchAndIngestPapers(
       })
       const paperId = result.paperId
       ingestedIds.push(paperId)
-      console.log(`Ingested paper with ${contentChunks.length} chunks: ${paper.title} (ID: ${paperId})`)
+      console.log(`✅ Ingested paper with ${contentChunks.length} chunks: ${paper.title} (ID: ${paperId})`)
+
+      // Create ingested paper object with database ID and enhanced PDF URLs
+      const ingestedPaper: RankedPaper = {
+        ...paper, // This includes the enhanced PDF URLs from enhancePdfUrls()
+        canonical_id: paperId, // Use database ID as canonical ID
+        // Keep all the ranking scores from the original paper
+        relevanceScore: paper.relevanceScore,
+        combinedScore: paper.combinedScore,
+        bm25Score: paper.bm25Score,
+        authorityScore: paper.authorityScore,
+        recencyScore: paper.recencyScore,
+        // Ensure PDF URL is preserved at top level
+        pdf_url: paper.pdf_url
+      }
+      ingestedPapers.push(ingestedPaper)
 
       // Fetch and store references for the paper (using canonical_id as fallback)
       await fetchAndStoreReferencesForPaper(paper, paperId)
@@ -550,7 +553,7 @@ export async function searchAndIngestPapers(
   console.log(`Successfully ingested ${ingestedIds.length} of ${enhancedPapers.length} papers with content chunks`)
   
   return {
-    papers: enhancedPapers,
+    papers: ingestedPapers, // Return ingested papers with database IDs
     ingestedIds
   }
 }

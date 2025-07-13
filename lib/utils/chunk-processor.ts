@@ -167,11 +167,16 @@ export async function processAndSaveChunks(
   contentChunks: string[],
   options: ChunkProcessingOptions = {}
 ): Promise<ChunkBatchResult> {
-  // Convert content to chunk format
+  // Convert content to chunk format with robust index tracking
   const chunks = contentChunks.map((content, index) => ({
     id: `chunk-${index}`,
     content,
-    metadata: { chunkIndex: index, paperId }
+    metadata: { 
+      chunkIndex: index, 
+      paperId,
+      totalChunks: contentChunks.length,
+      originalLength: content.length
+    }
   }))
   
   return await processChunkBatchInternal(chunks, options)
@@ -329,7 +334,14 @@ export function splitIntoChunks(
     return [{
       id: `chunk-0`,
       content,
-      metadata: { chunkIndex: 0, totalChunks: 1, originalLength: content.length }
+      metadata: { 
+        chunkIndex: 0, 
+        totalChunks: 1, 
+        originalLength: content.length,
+        chunkLength: content.length,
+        startPosition: 0,
+        endPosition: content.length
+      }
     }]
   }
 
@@ -353,25 +365,27 @@ export function splitIntoChunks(
       }
     }
 
+    const finalChunkContent = chunkContent.trim()
+    
     chunks.push({
       id: `chunk-${chunkIndex}`,
-      content: chunkContent.trim(),
+      content: finalChunkContent,
       metadata: {
-        chunkIndex,
+        chunkIndex, // Ensure this is always set correctly
         totalChunks: 0, // Will be updated after all chunks are created
         originalLength: content.length,
-        chunkLength: chunkContent.length,
+        chunkLength: finalChunkContent.length,
         startPosition: currentPosition,
-        endPosition: currentPosition + chunkContent.length
+        endPosition: currentPosition + finalChunkContent.length
       }
     })
 
     // Move to next position with overlap consideration
-    currentPosition += chunkContent.length - opts.overlapSize
+    currentPosition += finalChunkContent.length - opts.overlapSize
     chunkIndex++
   }
 
-  // Update total chunks count
+  // Update total chunks count for all chunks
   chunks.forEach(chunk => {
     chunk.metadata.totalChunks = chunks.length
   })
@@ -419,20 +433,56 @@ export async function saveChunksToDatabase(
 ): Promise<void> {
   const supabase = await getSB()
   
-  // Prepare chunk records for database
-  const chunkRecords = processedChunks.map((chunk, index) => ({
-    paper_id: paperId,
-    chunk_index: (chunk.metadata.chunkIndex as number) ?? index, // Use metadata chunkIndex directly
-    content: chunk.content,
-    embedding: chunk.embedding,
-    processing_status: 'completed' as const,
-    error_count: 0
-  }))
+  // Prepare chunk records for database with robust index handling and comprehensive metadata
+  const chunkRecords = processedChunks.map((chunk, fallbackIndex) => {
+    // Ensure we always have a valid chunk index with multiple fallback strategies
+    let chunkIndex: number
+    
+    if (typeof chunk.metadata.chunkIndex === 'number' && !isNaN(chunk.metadata.chunkIndex)) {
+      chunkIndex = chunk.metadata.chunkIndex
+    } else if (typeof chunk.metadata.index === 'number' && !isNaN(chunk.metadata.index)) {
+      chunkIndex = chunk.metadata.index
+    } else {
+      // Parse from chunk ID as last resort
+      const idMatch = chunk.id.match(/chunk-(\d+)/)
+      chunkIndex = idMatch ? parseInt(idMatch[1], 10) : fallbackIndex
+    }
+    
+    // Comprehensive metadata for better chunk management
+    const enhancedMetadata = {
+      ...chunk.metadata,
+      chunkIndex,
+      processingMethod: 'unified-processor',
+      processingVersion: '2.0',
+      contentHash: chunk.content.substring(0, 100), // For deduplication
+      wordCount: chunk.content.split(/\s+/).length,
+      characterCount: chunk.content.length,
+      processedAt: new Date().toISOString(),
+      embeddingDimensions: chunk.embedding ? chunk.embedding.length : 0,
+      qualityScore: calculateChunkQualityScore(chunk.content)
+    }
+      
+    return {
+      paper_id: paperId,
+      chunk_index: chunkIndex,
+      content: chunk.content,
+      embedding: chunk.embedding,
+      processing_status: 'completed' as const,
+      error_count: 0,
+      metadata: enhancedMetadata
+    }
+  })
   
   // Insert chunks with error handling
   const { error } = await supabase
     .from('paper_chunks')
-    .upsert(chunkRecords, {
+    .upsert(chunkRecords.map(record => ({
+      paper_id: record.paper_id,
+      chunk_index: record.chunk_index,
+      content: record.content,
+      embedding: record.embedding
+      // Note: metadata is not stored in database, kept for processing only
+    })), {
       onConflict: 'paper_id,chunk_index',
       ignoreDuplicates: false
     })
@@ -440,6 +490,36 @@ export async function saveChunksToDatabase(
   if (error) {
     throw new Error(`Failed to save chunks to database: ${error.message}`)
   }
+  
+  console.log(`✅ Saved ${chunkRecords.length} chunks to database for paper ${paperId}`)
+}
+
+/**
+ * Calculate a quality score for a chunk based on content characteristics
+ */
+function calculateChunkQualityScore(content: string): number {
+  let score = 0.5 // Base score
+  
+  // Length factors
+  const length = content.length
+  if (length > 200) score += 0.1
+  if (length > 500) score += 0.1
+  if (length > 1000) score += 0.1
+  
+  // Word count factors
+  const wordCount = content.split(/\s+/).length
+  if (wordCount > 50) score += 0.1
+  if (wordCount > 100) score += 0.1
+  
+  // Content quality indicators
+  const sentences = content.split(/[.!?]+/).length
+  if (sentences > 3) score += 0.1
+  
+  // Penalize low-quality content
+  if (/^[\d\s.,-]+$/.test(content)) score -= 0.3 // Just numbers and punctuation
+  if (content.toLowerCase().includes('lorem ipsum')) score -= 0.5
+  
+  return Math.max(0, Math.min(1, score))
 }
 
 /**
@@ -451,14 +531,21 @@ export async function saveFailedChunks(
 ): Promise<void> {
   const supabase = await getSB()
   
-  const failedRecords = failedChunks.map(failed => ({
-    paper_id: paperId,
-    chunk_index: (failed.chunk.metadata?.chunkIndex as number) ?? 0,
-    content: failed.chunk.content,
-    error_message: failed.error,
-    error_count: 1,
-    last_attempt_at: new Date().toISOString()
-  }))
+  const failedRecords = failedChunks.map((failed, fallbackIndex) => {
+    // Ensure we always have a valid chunk index
+    const chunkIndex = typeof failed.chunk.metadata?.chunkIndex === 'number'
+      ? failed.chunk.metadata.chunkIndex
+      : fallbackIndex
+      
+    return {
+      paper_id: paperId,
+      chunk_index: chunkIndex,
+      content: failed.chunk.content,
+      error_message: failed.error,
+      error_count: 1,
+      last_attempt_at: new Date().toISOString()
+    }
+  })
   
   const { error } = await supabase
     .from('failed_chunks')

@@ -58,7 +58,7 @@ export default function LandingPage() {
                 <>
                   <span className="text-sm text-muted-foreground">Welcome back, {user.email}</span>
                   <Button asChild>
-                    <Link href="/generate">Continue Writing</Link>
+                    <Link href="/dashboard">Go to Dashboard</Link>
                   </Button>
                 </>
               ) : (
@@ -119,15 +119,15 @@ export default function LandingPage() {
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
                 {user ? (
                   <>
-                    <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
-                      <Link href="/generate">
-                        Continue Your Research
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Link>
-                    </Button>
-                    <Button size="lg" variant="outline" className="px-8 py-3" asChild>
-                      <Link href="/library">View Library</Link>
-                    </Button>
+                                      <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
+                    <Link href="/dashboard">
+                      Continue Your Research
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Link>
+                  </Button>
+                  <Button size="lg" variant="outline" className="px-8 py-3" asChild>
+                    <Link href="/generate">Start New Paper</Link>
+                  </Button>
                   </>
                 ) : (
                   <>
@@ -351,7 +351,7 @@ export default function LandingPage() {
                   </Link>
                 </Button>
                 <Button size="lg" variant="outline" className="px-8 py-3" asChild>
-                  <Link href="/history">View Past Projects</Link>
+                  <Link href="/dashboard">View Projects</Link>
                 </Button>
               </>
             ) : (

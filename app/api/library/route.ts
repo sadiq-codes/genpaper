@@ -5,135 +5,45 @@ import {
   updateLibraryPaperNotes,
 } from '@/lib/db/library'
 
-interface PaperAuthorRelation {
-  ordinal: number
-  authors: {
-    id: string
-    name: string
-  }
-}
 
-interface PaperData {
-  id: string
-  title: string
-  abstract: string | null
-  publication_date: string | null
-  venue: string | null
-  doi: string | null
-  url: string | null
-  pdf_url: string | null
-  metadata: Record<string, unknown> | null
-  source: string | null
-  citation_count: number | null
-  impact_score: number | null
-  created_at: string
-  paper_authors?: PaperAuthorRelation[]
-}
 
-// GET - Retrieve user's library papers
+
+
+// GET - Deprecated: Redirect to unified papers API
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const { searchParams } = new URL(request.url)
-    const search = searchParams.get('search')
-    const collection = searchParams.get('collection')
-    const source = searchParams.get('source')
-    const sortBy = searchParams.get('sortBy') || 'added_at'
-    const sortOrder = searchParams.get('sortOrder') || 'desc'
+    
+    // Build unified API URL
+    const params = new URLSearchParams({ library: 'me' })
+    
+    if (searchParams.get('search')) params.set('search', searchParams.get('search')!)
+    if (searchParams.get('collection')) params.set('collection', searchParams.get('collection')!)
+    if (searchParams.get('sortBy')) params.set('sortBy', searchParams.get('sortBy')!)
+    if (searchParams.get('sortOrder')) params.set('sortOrder', searchParams.get('sortOrder')!)
 
-    let query = supabase
-      .from('library_papers')
-      .select(`
-        id,
-        paper_id,
-        notes,
-        added_at,
-        papers:paper_id (
-          id,
-          title,
-          abstract,
-          publication_date,
-          venue,
-          doi,
-          url,
-          pdf_url,
-          metadata,
-          source,
-          citation_count,
-          impact_score,
-          created_at,
-          paper_authors (
-            ordinal,
-            authors (
-              id,
-              name
-            )
-          )
-        )
-      `)
-      .eq('user_id', user.id)
-
-    if (search) {
-      // Simplified search approach to avoid parsing errors
-      // Search in local notes OR in paper title/abstract
-      query = query.or(`notes.ilike.%${search}%,papers.title.ilike.%${search}%`)
-    }
-
-    if (collection) {
-      // Filter by collection if specified
-      query = query.eq('collection_id', collection)
-    }
-
-    if (source) {
-      query = query.eq('papers.source', source)
-    }
-
-    // Sort
-    if (sortBy === 'title') {
-      query = query.order('title', { foreignTable: 'papers', ascending: sortOrder === 'asc' })
-    } else if (sortBy === 'publication_date') {
-      query = query.order('publication_date', { foreignTable: 'papers', ascending: sortOrder === 'asc' })
-    } else if (sortBy === 'citation_count') {
-      query = query.order('citation_count', { foreignTable: 'papers', ascending: sortOrder === 'asc' })
-    } else {
-      // Default to added_at
-      query = query.order('added_at', { ascending: sortOrder === 'asc' })
-    }
-
-    const { data: papers, error } = await query
-
-    if (error) throw error
-
-    // Transform the data to include author names
-    const transformedPapers = (papers || []).map((item) => {
-      const paperData = item.papers as unknown as PaperData
-      return {
-        ...item,
-        paper: {
-          ...paperData,
-          authors: paperData.paper_authors?.sort((a: PaperAuthorRelation, b: PaperAuthorRelation) => a.ordinal - b.ordinal).map((pa: PaperAuthorRelation) => pa.authors) || [],
-          author_names: paperData.paper_authors?.sort((a: PaperAuthorRelation, b: PaperAuthorRelation) => a.ordinal - b.ordinal).map((pa: PaperAuthorRelation) => pa.authors.name) || []
-        }
+    const unifiedUrl = `/api/papers?${params.toString()}`
+    
+    return NextResponse.json({
+      message: 'This endpoint has been deprecated. Please use the unified papers API.',
+      redirectTo: unifiedUrl,
+      migration: {
+        old: 'GET /api/library',
+        new: `GET ${unifiedUrl}`,
+        note: 'Use library=me parameter with unified papers API'
       }
-    })
-
-    return NextResponse.json({ papers: transformedPapers }, {
+    }, { 
+      status: 301,
       headers: {
-        'Cache-Control': 'no-store, max-age=0, must-revalidate',
-        'Pragma': 'no-cache'
+        'Location': unifiedUrl,
+        'X-Deprecated': 'true',
+        'X-Migration-Guide': 'Use GET /api/papers?library=me'
       }
-    })
+         })
 
   } catch (error) {
-    console.error('Library fetch error:', error)
-    return NextResponse.json({ error: 'Failed to load library' }, { status: 500 })
+    console.error('Error in legacy library endpoint:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 

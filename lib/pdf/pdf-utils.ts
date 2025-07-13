@@ -12,6 +12,46 @@ export const PDF_BUCKET = 'papers-pdfs'
 export const MAX_PDF_SIZE = 50 * 1024 * 1024 // 50MB limit
 export const DOWNLOAD_TIMEOUT = 30000 // 30 seconds
 
+// Academic-friendly user agents to rotate through
+const USER_AGENTS = [
+  'Mozilla/5.0 (compatible; GenPaper Academic Research Tool; +mailto:research@example.com)',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+  'Mozilla/5.0 (compatible; Academic Research Bot 1.0; +mailto:research@genpaperapp.com)'
+]
+
+function getRandomUserAgent(): string {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
+}
+
+function getAcademicHeaders(url: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    'User-Agent': getRandomUserAgent(),
+    'Accept': 'application/pdf,application/octet-stream,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'cross-site'
+  }
+  
+  // Add referer for certain domains to look more legitimate
+  if (url.includes('researchgate.net') || url.includes('academia.edu')) {
+    headers['Referer'] = 'https://www.google.com/'
+  }
+  
+  // Add specific headers for arXiv
+  if (url.includes('arxiv.org')) {
+    headers['Accept'] = 'application/pdf'
+    headers['Cache-Control'] = 'no-cache'
+  }
+  
+  return headers
+}
+
 /**
  * Downloads PDF from URL with size and timeout limits
  */
@@ -20,15 +60,27 @@ export async function downloadPdfBuffer(url: string): Promise<Buffer> {
   const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT)
 
   try {
+    // Add random delay to avoid rate limiting
+    const delay = Math.random() * 2000 + 1000 // 1-3 seconds
+    await new Promise(resolve => setTimeout(resolve, delay))
+    
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: {
-        'User-Agent': 'GenPaper/2.0 Academic Research Tool'
-      }
+      headers: getAcademicHeaders(url)
     })
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+
+    // Verify content type is PDF or acceptable
+    const contentType = response.headers.get('content-type')
+    if (contentType && !contentType.includes('pdf') && !contentType.includes('octet-stream') && !contentType.includes('application/')) {
+      // If we get HTML content, this is likely a landing page, not a direct PDF
+      if (contentType.includes('text/html')) {
+        throw new Error(`URL points to HTML page, not PDF: ${contentType}`)
+      }
+      console.warn(`Unexpected content type: ${contentType} for URL: ${url}`)
     }
 
     // Check content length
@@ -74,12 +126,28 @@ export async function downloadPdfBuffer(url: string): Promise<Buffer> {
       offset += chunk.length
     }
 
-    return Buffer.from(buffer)
+    const finalBuffer = Buffer.from(buffer)
+    
+    // Verify PDF header
+    if (finalBuffer.length < 4 || !finalBuffer.toString('ascii', 0, 4).startsWith('%PDF')) {
+      const header = finalBuffer.toString('ascii', 0, Math.min(50, finalBuffer.length))
+      
+      // Check if this looks like HTML content
+      if (header.includes('<!DOCTYPE') || header.includes('<html')) {
+        throw new Error(`URL returned HTML page instead of PDF. This is likely a publisher landing page requiring subscription access.`)
+      }
+      
+      throw new Error(`Invalid PDF header: ${header}`)
+    }
+
+    console.log(`✅ Successfully downloaded PDF: ${totalSize} bytes from ${url}`)
+    return finalBuffer
 
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`Download timeout after ${DOWNLOAD_TIMEOUT}ms`)
     }
+    console.error(`❌ PDF download failed for ${url}:`, error)
     throw error
   } finally {
     clearTimeout(timeoutId)

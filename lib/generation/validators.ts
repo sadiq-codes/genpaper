@@ -1,22 +1,10 @@
 import { z } from 'zod'
 
-// Citation validation schema
+// Simplified citation validation schema - matches the new addCitation tool
 export const citationSchema = z.object({
-  doi: z.string().optional(),
-  title: z.string().min(1, 'Title is required'),
-  authors: z.array(z.string()).min(1, 'At least one author is required'),
-  year: z.number().int().min(1800).max(2030).optional(),
-  journal: z.string().optional(),
-  pages: z.string().optional(),
-  volume: z.string().optional(),
-  issue: z.string().optional(),
-  url: z.string().url().optional(),
-  abstract: z.string().optional(),
-  reason: z.string().min(1, 'Reason for citation is required'),
-  section: z.string().min(1, 'Section name is required'),
-  start_pos: z.number().int().min(0).optional(),
-  end_pos: z.number().int().min(0).optional(),
-  context: z.string().optional()
+  paper_id: z.string().uuid('Must provide a valid paper ID from the provided context'),
+  reason: z.string().min(1, 'Must explain why this source supports your claim'),
+  quote: z.string().optional() // Optional: exact quote for verification
 })
 
 // Validation function for citation tool calls

@@ -25,15 +25,7 @@ export const GENERATION_DEFAULTS = {
   TOKEN_FUDGE_FACTOR: 2.2, // Safety multiplier for token estimation
   MODEL_COMPLETION_TOKEN_LIMIT: 16000, // Safe limit below 16384
   
-  // Section headings to search for citation insertion
-  LITERATURE_SECTION_HEADINGS: [
-    'Literature Review',
-    'Related Work', 
-    'Literature',
-    'Background',
-    'Prior Work',
-    'State of the Art'
-  ],
+
   
   // (Deprecated) guidance strings removed – prompt library now owns this
 } as const
@@ -41,12 +33,6 @@ export const GENERATION_DEFAULTS = {
 export type PaperLength = 'short' | 'medium' | 'long'
 // Citation style removed - system is now citation-agnostic
 
-// Helper to build regex for literature section headings with safety limits
-export function buildLiteratureSectionRegex(): RegExp {
-  const headings = GENERATION_DEFAULTS.LITERATURE_SECTION_HEADINGS.join('|')
-  // Limit greedy match to prevent catastrophic backtracking on large documents
-  return new RegExp(`^(#+\\s*(?:${headings})\\s*$[\\s\\S]{0,20000}?)(?=\\n#+\\s|\\n##|\\n$|$)`, 'mi')
-}
 
 // Helper to get configurable values with fallbacks
 export function getMinCitationCoverage(config?: { minCitationCoverage?: number }): number {
@@ -89,7 +75,7 @@ function calculateAutoIngestThreshold(librarySize: number): number {
   return Math.floor(dynamicThreshold)
 }
 
-// Helper to determine if forceIngest should be enabled automatically
+// Helper to determine if auto-ingestion should be enabled automatically
 export function shouldAutoIngest(userLibraryCount: number, explicitSetting?: boolean): boolean {
   // If user explicitly set it, respect that
   if (typeof explicitSetting === 'boolean') {

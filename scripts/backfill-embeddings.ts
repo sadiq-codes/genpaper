@@ -1,24 +1,5 @@
 import { getSB } from '@/lib/supabase/server'
-import { embedMany } from 'ai'
-import { ai } from '@/lib/ai/vercel-client'
-
-const EMBEDDING_CONFIG = {
-  model: 'text-embedding-3-small' as const,
-  dimensions: 384,
-  maxTokens: 8192
-} as const
-
-async function generateEmbeddings(inputs: string[]): Promise<number[][]> {
-  const { embeddings } = await embedMany({
-    model: ai.embedding(EMBEDDING_CONFIG.model, {
-      dimensions: EMBEDDING_CONFIG.dimensions
-    }),
-    values: inputs,
-    maxRetries: 3
-  })
-  
-  return embeddings
-}
+import { generateEmbeddings } from '@/lib/utils/embedding'
 
 async function backfillEmbeddings() {
   console.log('🚀 Starting embedding backfill process...')
@@ -63,7 +44,7 @@ async function backfillEmbeddings() {
         continue
       }
       
-      // Generate embeddings
+      // Generate embeddings using centralized function
       const embeddings = await generateEmbeddings(texts)
       
       // Update papers with embeddings

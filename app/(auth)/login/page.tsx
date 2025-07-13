@@ -51,7 +51,7 @@ function LoginPageContent() {
         setError(loginError.message)
       } else {
         console.log("Login successful:", data)
-        router.replace("/generate")
+        router.replace("/dashboard")
       }
     } catch (error) {
       console.error("Unexpected error:", error)

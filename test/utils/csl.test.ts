@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { paperToCSL, validateCSL, fixCSL } from '@/lib/utils/csl'
+import { buildCSLFromPaper, validateCSL } from '@/lib/utils/csl'
 import type { PaperWithAuthors } from '@/types/simplified'
 
 describe('CSL Utilities', () => {
@@ -12,8 +12,8 @@ describe('CSL Utilities', () => {
     doi: '10.1000/test',
     url: 'https://example.com/paper',
     authors: [
-      { id: 'author1', name: 'John Doe' }, 
-      { id: 'author2', name: 'Jane Smith' }
+      { ordinal: 0, author: { id: 'author1', name: 'John Doe' } }, 
+      { ordinal: 1, author: { id: 'author2', name: 'Jane Smith' } }
     ],
     author_names: ['John Doe', 'Jane Smith'],
     source: 'test',
@@ -22,9 +22,9 @@ describe('CSL Utilities', () => {
     created_at: '2023-01-01T00:00:00Z'
   }
 
-  describe('paperToCSL', () => {
+  describe('buildCSLFromPaper', () => {
     it('should convert paper to valid CSL format', () => {
-      const csl = paperToCSL(mockPaper)
+      const csl = buildCSLFromPaper(mockPaper)
       
       expect(csl).toHaveProperty('id', mockPaper.id)
       expect(csl).toHaveProperty('title', mockPaper.title)
@@ -38,14 +38,14 @@ describe('CSL Utilities', () => {
 
     it('should handle papers without authors', () => {
       const paperWithoutAuthors = { ...mockPaper, authors: [], author_names: [] }
-      const csl = paperToCSL(paperWithoutAuthors)
+      const csl = buildCSLFromPaper(paperWithoutAuthors)
       
       expect(csl.author).toEqual([])
     })
 
     it('should handle papers without publication date', () => {
       const paperWithoutDate = { ...mockPaper, publication_date: undefined }
-      const csl = paperToCSL(paperWithoutDate)
+      const csl = buildCSLFromPaper(paperWithoutDate)
       
       expect(csl.issued).toBeUndefined()
     })
@@ -53,7 +53,7 @@ describe('CSL Utilities', () => {
 
   describe('validateCSL', () => {
     it('should validate correct CSL items', () => {
-      const validCSL = paperToCSL(mockPaper)
+      const validCSL = buildCSLFromPaper(mockPaper)
       expect(validateCSL(validCSL)).toBe(true)
     })
 
@@ -63,17 +63,5 @@ describe('CSL Utilities', () => {
     })
   })
 
-  describe('fixCSL', () => {
-    it('should fix common CSL issues', () => {
-      const brokenCSL = {
-        title: 'Test Title',
-        author: 'John Doe', // Should be array
-        issued: '2023' // Should be object
-      }
-      
-      const fixed = fixCSL(brokenCSL)
-      expect(Array.isArray(fixed.author)).toBe(true)
-      expect(typeof fixed.issued).toBe('object')
-    })
-  })
+
 }) 

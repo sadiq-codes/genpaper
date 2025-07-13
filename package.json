@@ -87,6 +87,7 @@
     "p-limit": "^6.2.0",
     "parse-author": "^2.0.0",
     "pdf-parse": "^1.1.1",
+    "pino": "^9.7.0",
     "quick-lru": "^7.0.1",
     "react": "^19.0.0",
     "react-day-picker": "^9.7.0",

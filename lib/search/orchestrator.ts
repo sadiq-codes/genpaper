@@ -1,12 +1,12 @@
 import { hybridSearchPapers } from '@/lib/db/papers'
-import { parallelSearch } from '@/lib/services/paper-aggregation'
+import { getSB } from '@/lib/supabase/client'
 import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
 import type { AggregatedSearchOptions } from '@/lib/services/paper-aggregation'
-import { getSB } from '@/lib/supabase/server'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import pLimit from 'p-limit'
 import { WordTokenizer, PorterStemmer } from 'natural'
 import { generateDeterministicAuthorId, generateDeterministicPaperId } from '@/lib/utils/deterministic-id'
+import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
 
 const tokenizer = new WordTokenizer()
 
@@ -27,7 +27,6 @@ export interface UnifiedSearchOptions {
   useKeywordSearch?: boolean
   useAcademicAPIs?: boolean
   combineResults?: boolean
-  forceIngest?: boolean
   fastMode?: boolean
   
   // Sources and weights
@@ -216,7 +215,6 @@ export async function unifiedSearch(
     useHybridSearch = true,
     useKeywordSearch = true,
     useAcademicAPIs = true,
-    forceIngest = false,
     fastMode = false,
     sources = ['openalex', 'crossref', 'semantic_scholar'],
     semanticWeight = 0.7,
@@ -303,13 +301,16 @@ export async function unifiedSearch(
         recencyWeight
       }
 
-      const rankedPapers = await withTimeout(
-        parallelSearch(query, academicOptions),
+      const { papers: rankedPapers } = await withTimeout(
+        searchAndIngestPapers(query, academicOptions),
         timeoutMs,
-        []
+        { papers: [], ingestedIds: [] }
       )
       
+      debugLog(`🔍 Academic API search returned ${rankedPapers.length} papers`)
+      
       if (rankedPapers.length === 0) {
+        debugLog(`⚠️ No papers returned from academic API search`)
         return { papers: [], strategy: 'academic_apis' }
       }
 
@@ -334,8 +335,9 @@ export async function unifiedSearch(
           }, null, 2))
         }
 
-        // Always generate a proper deterministic ID for paper.id
-        const paperId = generateDeterministicPaperId({
+        // Use the canonical_id from ingested paper (this is the database ID)
+        // If canonical_id is not available, generate deterministic ID as fallback
+        const paperId = paper.canonical_id || generateDeterministicPaperId({
           doi: paper.doi,
           title: paper.title,
           authors: paper.authors,
@@ -511,119 +513,6 @@ export async function unifiedSearch(
       localPapersCount = localPapers.length
       localRegionBoost = true
       debugLog(`✅ Regional boost: ${localPapers.length} local papers moved to front`)
-    }
-  }
-
-  // Auto-ingest papers if forceIngest is enabled
-  if (forceIngest && allPapers.length > 0) {
-    debugLog(`📥 Auto-ingesting ${allPapers.length} papers to database...`)
-    
-    // Cost validation before ingestion
-    const { validateIngestCost } = await import('@/lib/generation/policy')
-    const costCheck = validateIngestCost(allPapers.length)
-    
-    if (!costCheck.allowed) {
-      const errorMsg = `Auto-ingest blocked: ${costCheck.reason}`
-      debugLog(`🚫 ${errorMsg}`)
-      errors.push(errorMsg)
-    } else {
-      debugLog(`💰 Cost validation passed: $${costCheck.estimatedCost.toFixed(4)} for ${allPapers.length} papers`)
-      
-      try {
-        // 🎯 Step 1: Basic ingestion to get papers into database using unified ingestPaper
-        const { ingestPaper } = await import('@/lib/db/papers')
-        
-        const ingestResults = await Promise.allSettled(
-          allPapers.map(async (paper) => {
-            try {
-              const result = await ingestPaper({
-                title: paper.title,
-                authors: paper.author_names || [],
-                abstract: paper.abstract,
-                publication_date: paper.publication_date,
-                venue: paper.venue,
-                doi: paper.doi,
-                url: paper.url,
-                metadata: paper.metadata || {},
-                source: 'search-api',
-                citation_count: paper.citation_count || 0,
-                impact_score: paper.impact_score || 0
-              }, {
-                // No options needed for metadata-only ingestion
-              })
-              
-              return {
-                paperId: result.paperId,
-                success: true
-              }
-            } catch (error) {
-              return {
-                paperId: '',
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error'
-              }
-            }
-          })
-        )
-        
-        // Convert to legacy format for compatibility
-        const legacyResults = {
-          summary: {
-            total: ingestResults.length,
-            successful: ingestResults.filter(r => r.status === 'fulfilled' && r.value.success).length,
-            failed: ingestResults.filter(r => r.status === 'rejected' || !r.value.success).length
-          }
-        }
-        
-        debugLog(`✅ Basic paper ingestion completed: ${legacyResults.summary.successful}/${allPapers.length}`)
-        
-        // 🎯 Step 2: Queue PDF processing for papers with PDF URLs
-        const { pdfQueue } = await import('@/lib/services/pdf-queue')
-        const queuedJobs: string[] = []
-        
-        debugLog(`📊 Checking ${allPapers.length} papers for PDF URLs...`)
-        
-        for (const paper of allPapers) {
-          // Check both top-level and metadata for PDF URL
-          const pdfUrl = (paper as { pdf_url?: string }).pdf_url || 
-                        (paper.metadata as { pdf_url?: string })?.pdf_url ||
-                        ''
-          
-          if (pdfUrl && pdfUrl.trim() !== '') {
-            debugLog(`📄 Found PDF URL for "${paper.title}": ${pdfUrl}`)
-            try {
-              const jobId = await pdfQueue.addJob(
-                paper.id,
-                pdfUrl,
-                paper.title,
-                'system', // System user for batch operations
-                'low'     // Low priority for background ingestion
-              )
-              queuedJobs.push(jobId)
-            } catch (error) {
-              debugLog(`⚠️ PDF queue failed for ${paper.title}:`, error)
-            }
-          } else {
-            debugLog(`📄 No PDF URL found for: ${paper.title}`)
-          }
-        }
-        
-        if (queuedJobs.length > 0) {
-          debugLog(`✅ PDF processing queued: ${queuedJobs.length} jobs`)
-        }
-        
-        debugLog(`✅ Enhanced auto-ingestion completed:`)
-        debugLog(`   📊 Papers ingested: ${legacyResults.summary.successful}`)
-        debugLog(`   📄 PDFs queued: ${queuedJobs.length}`)
-        
-        if (legacyResults.summary.failed > 0) {
-          errors.push(`Auto-ingestion: ${legacyResults.summary.failed} papers failed basic ingestion`)
-        }
-      } catch (error) {
-        const errorMsg = `Auto-ingestion failed: ${error instanceof Error ? error.message : String(error)}`
-        debugLog(`❌ ${errorMsg}`)
-        errors.push(errorMsg)
-      }
     }
   }
 

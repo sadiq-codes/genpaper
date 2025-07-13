@@ -168,16 +168,27 @@ export default function FetchSourcesReview({
     try {
       console.log('🔍 Searching for papers:', searchTopic)
       
-      const response = await fetch('/api/fetch-sources', {
-        method: 'POST',
+      // Build query parameters for the unified papers API
+      const params = new URLSearchParams({
+        search: searchTopic,
+        ingest: 'true',
+        maxResults: (searchOptions.maxResults || 25).toString()
+      })
+      
+      if (searchOptions.fromYear) params.set('fromYear', searchOptions.fromYear.toString())
+      if (searchOptions.toYear) params.set('toYear', searchOptions.toYear.toString())
+      if (searchOptions.openAccessOnly) params.set('openAccessOnly', 'true')
+      if (searchOptions.includePreprints !== undefined) params.set('includePreprints', searchOptions.includePreprints.toString())
+      if (searchOptions.sources && searchOptions.sources.length > 0) {
+        params.set('sources', searchOptions.sources.join(','))
+      }
+
+      const response = await fetch(`/api/papers?${params.toString()}`, {
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
-        body: JSON.stringify({
-          topic: searchTopic,
-          options: searchOptions
-        })
+        credentials: 'include'
       })
 
       if (!response.ok) {

@@ -10,15 +10,11 @@ export const GenerationConfigSchema = z.object({
   
   search_parameters: z.object({
     sources: z.array(z.string()).optional(),
-    limit: z.number().positive().optional(),
-    maxResults: z.number().positive().optional(),
-    fromYear: z.number().min(1900).max(new Date().getFullYear()).optional(),
-    toYear: z.number().min(1900).max(new Date().getFullYear()).optional(),
-    includePreprints: z.boolean().optional(),
+    limit: z.number().optional(),
     useSemanticSearch: z.boolean().optional(),
-    fallbackToKeyword: z.boolean().optional(),
-    fallbackToAcademic: z.boolean().optional(),
-    forceIngest: z.boolean().optional(),
+    semanticWeight: z.number().optional(),
+    authorityWeight: z.number().optional(),
+    recencyWeight: z.number().optional()
   }).optional(),
   
   paper_settings: z.object({

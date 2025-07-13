@@ -494,8 +494,6 @@ export class PDFProcessingQueue {
       .eq('user_id', userId)
   }
 
-
-
   /**
    * Store extraction result in database with direct chunking (no recursive calls)
    */
@@ -534,12 +532,12 @@ export class PDFProcessingQueue {
       })
       
       try {
-        // Import chunking utilities directly
-        const { processAndSaveChunks } = await import('@/lib/utils/chunk-processor')
+        // Import the new content ingestion system
+        const { createChunksForPaper } = await import('@/lib/content/ingestion')
         
-                 // Process text with 1MB safety cap
-         const text = result.fullText.slice(0, 1_000_000)
-         await processAndSaveChunks(paperId, [text])
+        // Process text with 1MB safety cap
+        const text = result.fullText.slice(0, 1_000_000)
+        await createChunksForPaper(paperId, text)
         
         debug.info(`PDF text processing completed for ${paperId}`, {
           extractionMethod: result.extractionMethod,

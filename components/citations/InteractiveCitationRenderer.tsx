@@ -6,12 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { Loader2, BookOpen, RefreshCw } from 'lucide-react'
 import { 
-  citationEngine, 
-  type DocumentCitationContext, 
-  type CitationRenderOptions,
-  type CitationStyleInfo,
-  type InteractiveCitation
-} from '@/lib/citations/engine'
+  generateBibliography,
+  type BibliographyResult,
+  type CitationBibliographyEntry,
+  type BibliographyStyle
+} from '@/lib/citations/immediate-bibliography'
 import type { CSLItem } from '@/lib/utils/csl'
 import { CitationEditor } from './CitationEditor'
 

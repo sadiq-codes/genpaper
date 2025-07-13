@@ -146,71 +146,19 @@ export async function addEvidenceBasedCitations(
     
     console.log(`📋 Uncited papers with evidence available: ${uncitedWithEvidence.length}`)
     
-    // Add evidence-based citations by directly creating [CITE:paper.id] tokens
-    for (const { paper, chunk } of uncitedWithEvidence) {
-      try {
-        // Allow up to 3 citations per paper across the document
-        const existingMatches = enhancedContent.match(new RegExp(`\\[CITE:\\s*${paper.id}\\]`, 'ig')) || []
-        if (existingMatches.length >= 3) {
-          console.log(`⚠️ Citation limit reached for paper ${paper.id} (3)`)
-          continue
-        }
-        
-        // Improve evidence summary quality - clean and truncate properly  
-        const rawContent = chunk!.content || ''
-        const cleanedContent = rawContent
-          .replace(/\s+/g, ' ') // Normalize whitespace
-          .replace(/[<>]/g, '') // Remove HTML-like tags
-          .trim()
-        
-        const maxLength = getEvidenceSnippetLength(config?.paper_settings)
-        let evidenceSummary = cleanedContent.slice(0, maxLength)
-        
-        // Avoid cutting mid-word
-        if (cleanedContent.length > maxLength) {
-          const lastSpace = evidenceSummary.lastIndexOf(' ')
-          const wordBoundaryThreshold = maxLength * GENERATION_DEFAULTS.EVIDENCE_WORD_BOUNDARY_THRESHOLD
-          if (lastSpace > wordBoundaryThreshold) { // Only truncate at word boundary if reasonable
-            evidenceSummary = evidenceSummary.slice(0, lastSpace)
-          }
-          evidenceSummary += '…'
-        }
-        
-        // Create evidence-based sentence with direct paper citation
-        const evidenceText = `\n\n${evidenceSummary} [CITE:${paper.id}].`
-        
-        // Use the exact section title from the outline to find the insertion point
-        const litReviewSection = outline.sections.find((s: OutlineSection) => s.sectionKey === 'literatureReview');
-        const litReviewHeading = litReviewSection ? litReviewSection.title : "Literature Review";
-        const litReviewRegex = new RegExp(`(#+\\s*${litReviewHeading}\\s*[\\r\\n]+)([\\s\\S]*?)(?=\\n#+|$)`, 'i');
-        
-        const match = enhancedContent.match(litReviewRegex)
-        
-        if (match && match[2]) {
-          const sectionContent = match[2];
-          const insertionPoint = match.index! + match[1].length + sectionContent.length;
-          enhancedContent = enhancedContent.slice(0, insertionPoint) + 
-                           evidenceText + 
-                           enhancedContent.slice(insertionPoint)
-        } else {
-          // Fallback: append to end with a clear heading
-          enhancedContent += `\n\n## Literature Review\n${evidenceText}`
-        }
-        
-        // Update cited papers set for subsequent duplicate checks
-        citedPaperIds.add(paper.id)
-        addedEvidenceCitations++
-        
-        const title = paper.title.length > 50 ? paper.title.substring(0, 50) + "..." : paper.title
-        const scoreText = typeof chunk?.score === 'number' ? chunk.score.toFixed(3) : 'n/a'
-        debug.log(`📌 Added evidence-based citation: "${title}" (score: ${scoreText})`)
-        
-      } catch (error) {
-        console.error(`Error adding evidence-based citation for ${paper.id}:`, error)
-      }
-    }
+    // NOTE: Evidence-based citation injection disabled - citations should come from addCitation tool
+    // The addCitation tool in the prompt system handles all citation placement
+    console.log(`📋 Skipping evidence-based citation injection - relying on addCitation tool`)
+    console.log(`📋 Available papers for AI citation tool: ${uncitedWithEvidence.length}`)
     
-    console.log(`✅ Added ${addedEvidenceCitations} evidence-based citations`)
+    // Log available evidence for debugging
+    uncitedWithEvidence.slice(0, 5).forEach(({ paper, chunk }, index) => {
+      const title = paper.title.length > 50 ? paper.title.substring(0, 50) + "..." : paper.title
+      const scoreText = typeof chunk?.score === 'number' ? chunk.score.toFixed(3) : 'n/a'
+           console.log(`   ${index + 1}. "${title}" (score: ${scoreText})`)
+    })
+    
+    console.log(`✅ Skipped evidence-based citation injection (${addedEvidenceCitations} citations added)`)
     
     // Warn about papers without evidence
     const papersWithoutEvidence = uncitedPapers.filter(paper => 

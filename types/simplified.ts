@@ -29,27 +29,15 @@ export interface GenerationConfig {
   search_parameters?: {
     sources?: string[]
     limit?: number
-    maxResults?: number
-    fromYear?: number
-    toYear?: number
-    includePreprints?: boolean
     useSemanticSearch?: boolean
-    fallbackToKeyword?: boolean
-    fallbackToAcademic?: boolean
-    forceIngest?: boolean
-    // Optional ranking/weight tuning for power users
     semanticWeight?: number
     authorityWeight?: number
     recencyWeight?: number
-    vectorWeight?: number
-    academicWeight?: number
   }
   paper_settings?: {
     length?: 'short' | 'medium' | 'long'
     paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
-    citationStyle?: 'apa' | 'mla' | 'chicago' | 'ieee'
     localRegion?: string // TASK 6: Regional boosting support
-    includeMethodology?: boolean
     includeFuture?: boolean
     minCitationCoverage?: number
     minCitationFloor?: number
@@ -150,8 +138,6 @@ export interface GenerateRequest {
   config?: {
     length?: 'short' | 'medium' | 'long'
     paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
-    citationStyle?: 'apa' | 'mla' | 'chicago' | 'ieee'
-    includeMethodology?: boolean
   }
 }
 
@@ -223,5 +209,5 @@ export interface PaperWithAuthors extends Paper {
 }
 
 // Paper source types
-export type PaperSource = 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core'
+export type PaperSource = 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core' | 'google_scholar'
 export type PaperSources = PaperSource[]

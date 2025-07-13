@@ -1,18 +1,21 @@
 import type { SectionContext } from '@/lib/prompts/types'
 import type { GeneratedOutline } from '@/lib/prompts/types'
 import type { PaperChunk } from './types'
-import { getRelevantChunks } from './chunks'
+import { getRelevantChunks } from './rag-retrieval'
+import type { PaperWithAuthors } from '@/types/simplified'
 
 /**
  * Builds the context for each section of the paper, including retrieving relevant
  * chunks of text from source documents.
  * @param outline - The generated outline of the paper.
  * @param topic - The main topic of the paper.
+ * @param allPapers - All discovered papers for the project.
  * @returns An array of section contexts, ready for the generation pipeline.
  */
 export async function buildSectionContexts(
   outline: GeneratedOutline,
-  topic: string
+  topic: string,
+  allPapers: PaperWithAuthors[] = []
 ): Promise<SectionContext[]> {
   const sectionContexts: SectionContext[] = []
   const chunkCache = new Map<string, PaperChunk[]>()
@@ -28,7 +31,7 @@ export async function buildSectionContexts(
           topic,
           ids,
           Math.min(20, ids.length * 3),
-          []
+          allPapers
         )
         chunkCache.set(cacheKey, contextChunks)
         console.log(`📄 Cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)

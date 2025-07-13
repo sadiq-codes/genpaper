@@ -96,199 +96,67 @@ function sanitizeForLogging(options: CacheableOptions) {
 let healthCheckCache: { result: Record<string, unknown>, timestamp: number } | null = null
 const HEALTH_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
+// Legacy endpoint - redirect to unified papers API
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const validationResult = FetchSourcesRequestSchema.safeParse(body)
-    
-    if (!validationResult.success) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Invalid request parameters',
-          details: validationResult.error.errors.map(e => ({
-            path: e.path.join('.'),
-            message: e.message
-          }))
-        },
-        { status: 400 }
-      )
+    const { topic, options = {} } = body
+
+    if (!topic) {
+      return NextResponse.json({ error: 'Topic is required' }, { status: 400 })
     }
 
-    const { topic, options } = validationResult.data
-
-    console.log(`API: Searching for papers, topic length: ${topic.length} chars`)
-    console.log(`API: Options:`, sanitizeForLogging(options))
-
-    const cacheKey = generateCacheKey(topic, options)
+    // Build query parameters for the unified API
+    const params = new URLSearchParams({
+      search: topic,
+      ingest: 'true',
+      maxResults: (options.maxResults || 25).toString()
+    })
     
-    const supabase = await createClient()
-    
-    // Check for recent cached results (last 24 hours)
-    const { data: cachedResults, error: cacheError } = await supabase
-      .from('papers_api_cache')
-      .select('response, fetched_at')
-      .eq('id', cacheKey)
-      .gte('fetched_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-      .single()
-
-    if (cacheError && cacheError.code !== 'PGRST116') {
-      console.error('Cache lookup error:', cacheError)
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Cache lookup failed',
-          topic: '',
-          papers: [],
-          count: 0
-        },
-        { status: 500 }
-      )
+    if (options.fromYear) params.set('fromYear', options.fromYear.toString())
+    if (options.toYear) params.set('toYear', options.toYear.toString())
+    if (options.openAccessOnly) params.set('openAccessOnly', 'true')
+    if (options.includePreprints !== undefined) params.set('includePreprints', options.includePreprints.toString())
+    if (options.sources && options.sources.length > 0) {
+      params.set('sources', options.sources.join(','))
     }
 
-    if (!cacheError && cachedResults) {
-      console.log('API: Returning cached results')
-      const cachedResponse = cachedResults.response as FetchSourcesResponse
-      return NextResponse.json({
-        ...cachedResponse,
-        cached: true
-      })
-    }
-
-    // Perform the search and ingestion
-    const result = await searchAndIngestPapers(topic, {
-      maxResults: options.maxResults,
-      sources: options.sources,
-      includePreprints: options.includePreprints,
-      fromYear: options.fromYear,
-      toYear: options.toYear,
-      openAccessOnly: options.openAccessOnly,
-      semanticWeight: options.semanticWeight,
-      authorityWeight: options.authorityWeight,
-      recencyWeight: options.recencyWeight
+    // Redirect to unified papers API
+    const unifiedUrl = `/api/papers?${params.toString()}`
+    
+    return NextResponse.json({
+      message: 'This endpoint has been deprecated. Please use the unified papers API.',
+      redirectTo: unifiedUrl,
+      migration: {
+        old: 'POST /api/fetch-sources',
+        new: `GET ${unifiedUrl}`,
+        note: 'Use GET request with query parameters instead of POST with body'
+      }
+    }, { 
+      status: 301,
+      headers: {
+        'Location': unifiedUrl,
+        'X-Deprecated': 'true',
+        'X-Migration-Guide': 'Use GET /api/papers with search parameter'
+      }
     })
 
-    const optimizedResponse: FetchSourcesResponse = {
-      success: true,
-      topic,
-      papers: result.papers.map(paper => ({
-        canonical_id: paper.canonical_id,
-        title: paper.title,
-        abstract: paper.abstract?.substring(0, 500),
-        year: paper.year,
-        venue: paper.venue,
-        doi: paper.doi,
-        url: paper.url,
-        citationCount: paper.citationCount,
-        relevanceScore: paper.relevanceScore,
-        source: paper.source
-      })),
-      count: result.papers.length,
-      cached: false
-    }
-
-    if (options.ingestPapers) {
-      optimizedResponse.ingestedIds = result.ingestedIds
-    }
-
-    // Cache successful response
-    if (result.papers.length > 0) {
-      try {
-        await supabase
-          .from('papers_api_cache')
-          .upsert({
-            id: cacheKey,
-            response: optimizedResponse,
-            fetched_at: new Date().toISOString(),
-            expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
-            request_hash: cacheKey
-          })
-      } catch (cacheUpsertError) {
-        console.error('Cache storage error:', cacheUpsertError)
-      }
-    }
-
-    console.log(`API: Successfully found ${result.papers.length} papers`)
-    if (options.ingestPapers) {
-      console.log(`API: Successfully ingested ${result.ingestedIds.length} papers`)
-    }
-
-    const fullResponse: FetchSourcesResponse = {
-      success: true,
-      topic,
-      papers: result.papers,
-      count: result.papers.length,
-      cached: false
-    }
-
-    if (options.ingestPapers) {
-      fullResponse.ingestedIds = result.ingestedIds
-    }
-
-    return NextResponse.json(fullResponse)
-
   } catch (error) {
-    console.error('API: fetchSources error:', error)
-    
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-        topic: '',
-        papers: [],
-        count: 0
-      },
-      { status: 500 }
-    )
+    console.error('Error in legacy fetch-sources endpoint:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
+// Also handle GET requests with deprecation notice
 export async function GET() {
-  try {
-    const now = Date.now()
-    if (healthCheckCache && (now - healthCheckCache.timestamp) < HEALTH_CACHE_TTL) {
-      console.log('Health check: Returning cached result')
-      return NextResponse.json({
-        ...healthCheckCache.result,
-        cached: true
-      })
+  return NextResponse.json({
+    message: 'This endpoint has been deprecated. Please use GET /api/papers with search parameter.',
+    example: '/api/papers?search=your-topic&ingest=true&maxResults=25'
+  }, { 
+    status: 410, // Gone
+    headers: {
+      'X-Deprecated': 'true',
+      'X-Migration-Guide': 'Use GET /api/papers with search parameter'
     }
-
-    const supabase = await createClient()
-    
-    const { error } = await supabase.from('papers').select('id').limit(1)
-    
-    if (error) {
-      throw new Error(`Database connection failed: ${error.message}`)
-    }
-
-    const healthResult = {
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      apis: {
-        openalex: 'available',
-        crossref: 'available', 
-        semantic_scholar: 'available',
-        arxiv: 'available',
-        core: process.env.CORE_API_KEY ? 'available' : 'api_key_required'
-      },
-      cached: false
-    }
-
-    healthCheckCache = {
-      result: healthResult,
-      timestamp: now
-    }
-
-    return NextResponse.json(healthResult)
-  } catch (error) {
-    const errorResult = {
-      status: 'unhealthy',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
-      cached: false
-    }
-
-    return NextResponse.json(errorResult, { status: 500 })
-  }
+  })
 }

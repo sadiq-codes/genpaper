@@ -241,8 +241,57 @@ export async function getRelevantChunks(
     )
   }
 
-  // Balance chunks across papers
-  const perPaperCap = Math.max(2, Math.ceil(chunkLimit / Math.max(1, papersWithContent.length)))
+  // SURGICAL FIX: Fallback booster - split abstracts into bite-sized chunks when < 30 chunks
+  if (allChunks.length < 30) {
+    console.warn('⚠️ Too few chunks; falling back to abstracts for additional context.')
+    
+    const abstractChunks: PaperChunk[] = []
+    
+    for (const paper of allPapers) {
+      if (!paper.abstract || paper.abstract.trim().length < 100) continue
+      
+      // Split long abstracts into paragraphs/sentences for better vector retrieval
+      const abstract = paper.abstract.trim()
+      
+      if (abstract.length > 800) {
+        // Split very long abstracts by sentences
+        const sentences = abstract.split(/[.!?]+/).filter(s => s.trim().length > 50)
+        sentences.forEach((sentence, idx) => {
+          if (sentence.trim().length > 50) {
+            abstractChunks.push({
+              id: `abstract-split-${paper.id}-${idx}`,
+              paper_id: paper.id,
+              content: `Title: ${paper.title}\n\nAbstract (Part ${idx + 1}): ${sentence.trim()}.`,
+              metadata: { source: 'abstract-split', part: idx + 1 },
+              score: 0.4,
+              paper
+            })
+          }
+        })
+      } else {
+        // Regular abstract chunk
+        abstractChunks.push({
+          id: `abstract-fallback-${paper.id}`,
+          paper_id: paper.id,
+          content: `Title: ${paper.title}\n\nAbstract: ${abstract}`,
+          metadata: { source: 'abstract-fallback' },
+          score: 0.4,
+          paper
+        })
+      }
+    }
+    
+    // Add abstracts for papers not already represented in chunks
+    const existingPaperIds = new Set(allChunks.map(c => c.paper_id))
+    const newAbstractChunks = abstractChunks.filter(c => !existingPaperIds.has(c.paper_id))
+    
+    allChunks.push(...newAbstractChunks)
+    console.log(`📄 Added ${newAbstractChunks.length} abstract chunks for additional context`)
+  }
+
+  // Balance chunks across papers with higher limits
+  const CHUNKS_PER_PAPER = 10 // Increased from 5 to allow more content per paper
+  const perPaperCap = Math.max(CHUNKS_PER_PAPER, Math.ceil(chunkLimit / Math.max(1, papersWithContent.length)))
   const balanced = balanceChunks(allChunks, perPaperCap, chunkLimit)
   
   // Final validation of balanced chunks

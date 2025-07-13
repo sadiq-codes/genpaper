@@ -202,19 +202,20 @@ export async function createChunksForPaper(
       return 0
     }
 
-    // Insert chunks into database
+    // Generate embeddings for all chunks
+    const { generateEmbeddings } = await import('@/lib/utils/embedding')
+    const chunkTexts = chunks.map(chunk => chunk.content)
+    const embeddings = await generateEmbeddings(chunkTexts)
+
+    // Insert chunks into database with embeddings
     const { error } = await supabase
       .from('paper_chunks')
-      .insert(chunks.map(chunk => ({
+      .insert(chunks.map((chunk, index) => ({
         id: chunk.id,
         paper_id: paperId,
+        chunk_index: index,
         content: chunk.content,
-        position: chunk.position,
-        metadata: {
-          word_count: chunk.metadata?.wordCount || 0,
-          char_count: chunk.metadata?.charCount || 0,
-          is_overlap: chunk.metadata?.isOverlap || false
-        }
+        embedding: embeddings[index]
       })))
 
     if (error) {

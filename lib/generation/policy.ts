@@ -5,42 +5,6 @@
  * cost-control, and consistent behavior.
  */
 
-export interface IngestPolicyContext {
-  userId?: string;
-  librarySize: number;
-  explicitForce?: boolean;
-}
-
-/**
- * Decides whether to auto-ingest papers based on a server-side policy.
- * This prevents frontend manipulation while allowing explicit admin overrides.
- * 
- * @param ctx - The context for the policy decision.
- * @returns `true` if papers should be ingested, `false` otherwise.
- */
-export function decideIngest(ctx: IngestPolicyContext): boolean {
-  // Always respect an explicit flag when provided (for admin/testing)
-  if (ctx.explicitForce !== undefined) {
-    console.log(
-      `🔒 Ingest policy override: ${ctx.explicitForce} (user: ${
-        ctx.userId?.substring(0, 8) || 'unknown'
-      }, library: ${ctx.librarySize})`
-    );
-    return ctx.explicitForce;
-  }
-
-  // Server-side threshold from environment (default: 5)
-  // For content acquisition, we're more aggressive since we need full-text content
-  const threshold = Number(process.env.AUTO_INGEST_THRESHOLD ?? '20'); // Increased from 5 to 20
-  const shouldIngest = ctx.librarySize < threshold;
-
-  if (shouldIngest) {
-    console.log(`🤖 Auto-ingest policy triggered: library size ${ctx.librarySize} is less than threshold ${threshold}.`);
-  }
-
-  return shouldIngest;
-}
-
 /**
  * Estimates the cost of embedding papers and validates it against a configurable limit.
  * 
@@ -177,4 +141,42 @@ export function estimateReflectionSavings(
   })
 
   return { totalSaved, reflectionSections, skipSections }
+}
+
+export interface IngestPolicyContext {
+  userId?: string;
+  librarySize: number;
+  explicitForce?: boolean;
+}
+
+/**
+ * Decides whether to auto-ingest papers based on a server-side policy.
+ * This prevents frontend manipulation while allowing explicit admin overrides.
+ * 
+ * @param ctx - The context for the policy decision.
+ * @returns `true` if papers should be ingested, `false` otherwise.
+ */
+export function decideIngest(ctx: IngestPolicyContext): boolean {
+  // Always respect an explicit flag when provided (for admin/testing)
+  if (ctx.explicitForce !== undefined) {
+    console.log(
+      `🔒 Ingest policy override: ${ctx.explicitForce} (user: ${
+        ctx.userId?.substring(0, 8) || 'unknown'
+      }, library: ${ctx.librarySize})`
+    );
+    return ctx.explicitForce;
+  }
+
+  // Server-side threshold from environment (default: 20)
+  // For content acquisition, we're more aggressive since we need full-text content
+  const threshold = Number(process.env.AUTO_INGEST_THRESHOLD ?? '20');
+  const shouldIngest = ctx.librarySize < threshold;
+
+  if (shouldIngest) {
+    console.log(`🤖 Auto-ingest policy triggered: library size ${ctx.librarySize} is less than threshold ${threshold}.`);
+  } else {
+    console.log(`🔒 Auto-ingest policy: library size ${ctx.librarySize} above threshold ${threshold}, skipping ingestion`);
+  }
+
+  return shouldIngest;
 } 
