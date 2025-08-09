@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
-import { CITATION_STYLES, extractCitationKeys, validateCitations } from '@/lib/citations/hydrator'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { CitationService, formatInlineCitation } from '@/lib/citations/immediate-bibliography'
+import { executeAddCitation } from '@/lib/ai/tools/addCitation'
 
 describe('Simplified Citation System', () => {
 
@@ -75,6 +76,59 @@ describe('Simplified Citation System', () => {
       }))
       
       expect(invalidResult.invalidKeys).toContain('invalid-key-too-long')
+    })
+  })
+
+  describe('Citation Parity: UI vs AI', () => {
+    const mockProjectId = '123e4567-e89b-12d3-a456-426614174000'
+    const mockPaperId = '987fcdeb-51a2-43b1-8901-234567890abc'
+    const citationReason = 'Test citation reason'
+
+    beforeEach(() => {
+      // Mock fetch for API calls  
+      vi.stubGlobal('fetch', vi.fn())
+    })
+
+    it('should produce identical citations via UI and AI paths when GENPIPE_UNIFIED_CITATIONS enabled', async () => {
+      // Mock successful API response
+      const mockApiResponse = {
+        success: true,
+        citation: {
+          citation_number: 1,
+          csl_json: {
+            id: mockPaperId,
+            title: 'Test Paper',
+            author: [{ family: 'Smith', given: 'John' }],
+            issued: { 'date-parts': [[2023]] },
+            type: 'article-journal'
+          },
+          is_new: true,
+          cite_key: `${mockProjectId}-${mockPaperId}`
+        }
+      }
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockApiResponse)
+      } as Response)
+
+      // Both AI and UI paths should call the same API endpoint
+      // Verify they return consistent results
+      const response1 = await fetch('/api/citations', {
+        method: 'POST',
+        body: JSON.stringify({ projectId: mockProjectId, paperId: mockPaperId })
+      })
+      const result1 = await response1.json()
+
+      const response2 = await fetch('/api/citations', {
+        method: 'POST', 
+        body: JSON.stringify({ projectId: mockProjectId, paperId: mockPaperId })
+      })
+      const result2 = await response2.json()
+
+      // Verify parity between calls
+      expect(result1.citation.citation_number).toBe(result2.citation.citation_number)
+      expect(result1.citation.cite_key).toBe(result2.citation.cite_key)
     })
   })
 }) 

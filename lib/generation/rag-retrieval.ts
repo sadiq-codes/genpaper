@@ -121,11 +121,13 @@ export async function getRelevantChunks(
     try {
       console.log(`📄 Chunk search attempt (${attempt.label}) with minScore=${attempt.minScore}`)
       
-      const searchResults = (await searchPaperChunks(topic, {
+      const searchResultsRaw = await searchPaperChunks(topic, {
         paperIds: attempt.paperIds,
         limit: chunkLimit * 2,
         minScore: attempt.minScore
-      })).map(result => ({
+      })
+
+      const searchResults = searchResultsRaw.map(result => ({
         id: createDeterministicChunkId(result.paper_id, result.content),
         paper_id: result.paper_id,
         content: result.content,

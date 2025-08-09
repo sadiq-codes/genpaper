@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { parallelSearch } from '@/lib/services/paper-aggregation'
+import { unifiedSearch } from '@/lib/search'
 import { z } from 'zod'
 
 // Lightweight search schema for Library Manager
@@ -62,17 +62,20 @@ export async function POST(request: NextRequest) {
 
     const { query, options } = validationResult.data
 
-    console.log(`📚 Fast Library Search: "${query}" (${options.sources?.join(', ')})`)
+    console.log(`📚 Fast Library Search (unified): "${query}" (${options.sources?.join(', ')})`)
 
-    // **PERFORMANCE OPTIMIZATION**: Use fast mode with timeout
-    const searchPromise = parallelSearch(query, {
+    // Route through unified orchestrator only
+    const searchPromise = unifiedSearch(query, {
       maxResults: options.maxResults,
-      sources: options.sources,
-      includePreprints: options.includePreprints,
+      minResults: Math.min(5, options.maxResults || 20),
+      sources: options.sources as any,
+      useHybridSearch: true,
+      useKeywordSearch: true,
+      useAcademicAPIs: true,
+      combineResults: true,
+      fastMode: options.fastMode,
       fromYear: options.fromYear,
-      toYear: options.toYear,
-      openAccessOnly: options.openAccessOnly,
-      fastMode: options.fastMode // Pass fast mode to aggregation
+      toYear: options.toYear
     })
 
     // **TIMEOUT CONTROL**: Maximum 10 seconds for library search
@@ -87,19 +90,19 @@ export async function POST(request: NextRequest) {
     const response: LibrarySearchResponse = {
       success: true,
       query,
-      papers: searchResults.map(paper => ({
-        canonical_id: paper.canonical_id,
+      papers: searchResults.papers.map(paper => ({
+        canonical_id: (paper as any).canonical_id || paper.id || paper.doi || paper.url || paper.title,
         title: paper.title,
-        abstract: paper.abstract?.substring(0, 250), // Reduced for faster response
-        year: paper.year,
-        venue: paper.venue,
-        doi: paper.doi,
+        abstract: paper.abstract?.substring(0, 250),
+        year: (paper as any).year || (paper as any).publication_year || new Date(paper.publication_date || '').getFullYear(),
+        venue: (paper as any).venue || (paper as any)['container-title'],
+        doi: (paper as any).doi || (paper as any).DOI,
         url: paper.url,
-        citationCount: paper.citationCount,
-        relevanceScore: paper.relevanceScore,
-        source: paper.source
+        citationCount: (paper as any).citation_count || (paper as any).citationCount || 0,
+        relevanceScore: (paper as any).relevanceScore,
+        source: (paper as any).source || 'mixed'
       })),
-      count: searchResults.length,
+      count: searchResults.papers.length,
       searchTimeMs
     }
 

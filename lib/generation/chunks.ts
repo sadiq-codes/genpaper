@@ -98,11 +98,12 @@ export async function addEvidenceBasedCitations(
     if (chunks.length === 0) {
       try {
         console.log('🔄 No RAG chunks available – performing blind chunk search for evidence')
-        const fallbackChunks = (await searchPaperChunks(papers[0]?.title ?? '', {
+        const fallbackRaw = await searchPaperChunks(papers[0]?.title ?? '', {
           paperIds: papers.map(p => p.id),
           limit: 40,
           minScore: GENERATION_DEFAULTS.CHUNK_MIN_SCORE_FALLBACK
-        })).map(result => ({
+        })
+        const fallbackChunks = fallbackRaw.map(result => ({
           id: createDeterministicChunkId(result.paper_id, result.content),
           paper_id: result.paper_id,
           content: result.content,

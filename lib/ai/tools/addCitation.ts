@@ -1,8 +1,9 @@
-import { z } from 'zod'
+import z from 'zod'
 import { tool } from 'ai'
 import { AsyncLocalStorage } from 'async_hooks'
-import { getSB } from '@/lib/supabase/server'
-import { buildCSLFromPaper, CSLItem, PaperWithAuthors } from '@/lib/utils/csl'
+import { CSLItem } from '@/lib/utils/csl'
+import { formatInlineCitation } from '@/lib/citations/immediate-bibliography'
+import { isUnifiedCitationsEnabled } from '@/lib/config/feature-flags'
 
 // Simplified citation schema - only require paper_id and reason
 const citationSchema = z.object({
@@ -42,49 +43,12 @@ export function runWithCitationContext<T>(
   return citationContextStore.run(fullContext, fn)
 }
 
-// 🎯 UNIFIED CITATION FORMATTING - no more placeholders!
-function formatCitation(cslJson: CSLItem, style: string = 'apa', number: number): string {
-  const authors = cslJson.author || []
-  const year = cslJson.issued?.['date-parts']?.[0]?.[0] || 'n.d.'
-  
-  switch (style.toLowerCase()) {
-    case 'apa':
-      if (authors.length === 0) return `(Anonymous, ${year})`
-      if (authors.length === 1) {
-        const lastName = authors[0].family || authors[0].literal || 'Unknown'
-        return `(${lastName}, ${year})`
-      }
-      if (authors.length === 2) {
-        const first = authors[0].family || authors[0].literal || 'Unknown'
-        const second = authors[1].family || authors[1].literal || 'Unknown'
-        return `(${first} & ${second}, ${year})`
-      }
-      const firstAuthor = authors[0].family || authors[0].literal || 'Unknown'
-      return `(${firstAuthor} et al., ${year})`
-      
-    case 'mla':
-      if (authors.length === 0) return '(Anonymous)'
-      const lastName = authors[0].family || authors[0].literal || 'Unknown'
-      return authors.length === 1 ? `(${lastName})` : `(${lastName} et al.)`
-      
-    case 'chicago':
-      if (authors.length === 0) return `(Anonymous ${year})`
-      const chicagoName = authors[0].family || authors[0].literal || 'Unknown'
-      return authors.length === 1 ? `(${chicagoName} ${year})` : `(${chicagoName} et al. ${year})`
-      
-    case 'ieee':
-      return `[${number}]`
-      
-    default:
-      return `(${authors[0]?.family || 'Unknown'}, ${year})` // Fallback to APA-style
-  }
-}
+// 🎯 UNIFIED CITATION FORMATTING moved to shared service
 
 // 🎯 The core logic for the addCitation tool
 export async function executeAddCitation(payload: CitationPayload) {
   const citationContext = getCitationContext()
   const { projectId, citationStyle, draftStore } = citationContext
-  const supabase = await getSB()
 
   try {
     // Check if we already have a citation for this paper in this request
@@ -99,57 +63,46 @@ export async function executeAddCitation(payload: CitationPayload) {
       }
     }
 
-    // Validate that the paper_id exists and fetch paper data including authors
-    const { data: paper, error: paperError } = await supabase
-      .from('papers')
-      .select(`
-        id, title, doi, url, venue, volume, issue, pages, publication_date, created_at,
-        paper_authors(
-          ordinal,
-          authors(id, name)
-        )
-      `)
-      .eq('id', payload.paper_id)
-      .single()
+    // Always call the API to ensure single write path (no direct DB access)
+    let citationNumber: number
+    let cslJson: CSLItem
+    let isNew: boolean
 
-    if (paperError || !paper) {
-      console.error(`Invalid paper_id: ${payload.paper_id}`, paperError)
-      return {
-        success: false,
-        error: `Paper ID ${payload.paper_id} not found in database`,
-        formatted_citation: '[ERROR]'
-      }
-    }
-
-    // Build CSL JSON from paper data - store immediately!
-    const cslJson = buildCSLFromPaper(paper as unknown as PaperWithAuthors)
-
-    // 🚀 UNIFIED CITATION SERVICE - immediate CSL storage + numbering
-    const { data: result, error: citationError } = await supabase
-      .rpc('add_citation_unified', {
-        p_project_id: projectId,
-        p_paper_id: payload.paper_id,
-        p_csl_json: cslJson,
-        p_reason: payload.reason,
-        p_quote: payload.quote || null
+    try {
+      const res = await fetch('/api/citations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          key: `cite-${payload.paper_id}`, // Generate consistent key
+          paperId: payload.paper_id,
+          citation_text: payload.reason,
+          context: payload.quote || null
+        }),
+        // Server runtime should handle authentication via cookies
       })
-      .single()
-
-    if (citationError || !result) {
-      console.error('Error adding citation:', citationError)
-      return {
-        success: false,
-        error: 'Failed to add citation',
-        formatted_citation: '[ERROR]'
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(`API error ${res.status}: ${errorData.error || 'Unknown error'}`)
       }
+      
+      const data = await res.json()
+      citationNumber = data?.citation?.citation_number || 0
+      cslJson = data?.citation?.csl_json
+      isNew = data?.citation?.is_new ?? true
+      
+      if (!citationNumber || !cslJson) {
+        throw new Error('API response missing required fields (citation_number, csl_json)')
+      }
+      
+    } catch (error) {
+      console.error('AI tool citation API call failed:', error)
+      throw new Error(`Citation failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-
-    // Type the result from the database function
-    const citationResult = result as { citation_number: number; is_new: boolean }
-    const citationNumber = citationResult.citation_number
     
     // 🎯 FORMAT FINAL CITATION - no placeholders!
-    const formattedCitation = formatCitation(cslJson, citationStyle, citationNumber)
+    const formattedCitation = formatInlineCitation(cslJson as CSLItem, citationStyle, citationNumber)
     
     // Cache the citation for this request
     draftStore.set(payload.paper_id, {
@@ -162,8 +115,8 @@ export async function executeAddCitation(payload: CitationPayload) {
       paper_id: payload.paper_id,
       citation_number: citationNumber,
       formatted_citation: formattedCitation, // 🎯 FINAL FORMAT - no hydration needed!
-      is_new: citationResult.is_new,
-      message: `Citation ${citationResult.is_new ? 'added' : 'reused'} for "${paper.title}" (${citationNumber})`
+      is_new: isNew,
+      message: `Citation ${isNew ? 'added' : 'reused'} (${citationNumber})`
     }
 
   } catch (error) {

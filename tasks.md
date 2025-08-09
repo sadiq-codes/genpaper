@@ -1,165 +1,351 @@
-Here's a consolidated, "best‐of‐all" **GenPaper V3 Roadmap**—12 atomic, testable tasks grouped into four epics, each drawing on the strongest ideas from every proposal:
+# tasks.md
+VERY IMPORTANT: The user prefers that the assistant not create new files unnecessarily, instead update existing ones or merge files when necessary and delete files that are no longer needed or duplicate, to avoid redundancy and complexity.
+
+
+# tasks.md
+
+Atomic, testable micro-tasks to implement the review’s recommendations (unify citations, centralize search, introduce a service layer, and make PromptBuilder pure). Ordered for safe rollout; each task has clear value, boundaries, and tests.
 
 ---
 
-## 🧰 Epic 1: Prompt Library & Modular Pipeline
+## Epic A — Feature Flags & Guardrails
 
-**TASK 1: Prompt Schema & Loader**
+1. **Add architecture feature flags**
 
-* **What:** Define a JSON schema (`promptSchema.json`) for all paper-type & section prompts; build a `loadPrompts()` util that reads, validates, and types them.
-* **Why:** Guarantees consistent, maintainable prompt templates.
-* **Done When:**
+* **Purpose:** Gate risky changes.
+* **Steps:** Add `CITATIONS_UNIFIED`, `SEARCH_ORCH_ONLY`, `SERVICE_LAYER_ONLY`, `PROJECT_SERVICE_API`.
+* **Acceptance:**
 
-  * Schema validates sample "researchArticle" & "literatureReview."
-  * `loadPrompts()` returns typed templates or throws clear errors.
+  * Flags load from typed config (server & client when needed).
+  * Unit test toggles a dummy code path.
 * **Effort:** S
+* **Deps:** —
 
-* **Status:** ✅ **COMPLETED** - JSON schema and loader infrastructure integrated with main generation pipeline
+2. **Enforce module boundaries (ESLint + dep-cruiser)**
 
-**TASK 2: Section-Specific Prompt Templates**
+* **Purpose:** Prevent direct DB access from UI/tools.
+* **Steps:** Rules: apps can import `@services/*` only; no `db/*` outside services.
+* **Acceptance:**
 
-* **What:** Implement real templates in code for each `paperType` + `sectionKey` (e.g. introduction, literatureReview, methodology), embedding explicit depth cues ("critique," "compare," "gaps," "statistics").
-* **Why:** Drives critical analysis rather than shallow summarization.
-* **Done When:**
-
-  * Unit tests confirm each template contains its required depth keywords.
+  * Violations fail CI on sample forbidden import.
 * **Effort:** S
-
-* **Status:** ✅ **COMPLETED** - Section-specific prompt templates integrated with enhanced-generation.ts workflow
-
-**TASK 3: Outline Generation Module**
-
-* **What:** Build `generateOutline(paperType, topic, sourceIds, config)` that uses the outline prompt to return a structured array of `{ sectionKey, title, candidatePaperIds[] }`.
-* **Why:** Puts structure in users' hands before any drafting.
-* **Done When:**
-
-  * Pipeline emits an outline stage with JSON‐parsable sections.
-  * E2E mock verifies correct workflow.
-* **Effort:** M
-
-* **Status:** ✅ **COMPLETED** - Full outline generation module implemented in `lib/prompts/generators.ts` with API route and pipeline integration
-
-**TASK 4: Section Drafting Module**
-
-* **What:** Build `generateSection(sectionKey, contextChunks, promptTemplate)` to call the AI SDK per section and return `{ content, citations[] }`.
-* **Why:** Encapsulates section‐by‐section generation with its own focused RAG context.
-* **Done When:**
-
-  * Integration test with dummy chunks verifies extraction of inline citations.
-* **Effort:** M
-
-* **Status:** ✅ **COMPLETED** - Section drafting module fully implemented with quality checking, citation extraction, and integration tests
+* **Deps:** 1
 
 ---
 
-## 🔍 Epic 2: Smart RAG & Regional Boost
+## Epic B — Unified Citation Service (single write path)
 
-**TASK 5: Paper Ingestion → Region Tagging**
+3. **Scaffold `@services/citations`**
 
-* **What:** Extend your ingestion RPC to detect (or stub) `metadata.region` from venue/affiliation.
-* **Why:** Enables truly localized search & context for every user.
-* **Done When:**
+* **Purpose:** Single citation entry point.
+* **Steps:** Export typed stubs: `add`, `suggest`, `renderInline`, `renderBibliography`, `resolveSourceRef`.
+* **Acceptance:**
 
-  * Unit test ensures sample venues like "Univ. Lagos" yield `region='Nigeria'`.
+  * Package builds; functions exist with TODOs and tests pass.
 * **Effort:** S
+* **Deps:** 1
 
-* **Status:** ✅ **COMPLETED** - Comprehensive region detection system implemented with multi-source detection, confidence levels, and database integration
+4. **Implement `resolveSourceRef` (DOI/title→paper)**
 
-### TASK-6: Boost Local Papers in enhancedSearch (universal)
+* **Purpose:** One resolver for UI & AI.
+* **Steps:** Normalize DOI; fallback title+year fuzzy match; prefer user library on tie.
+* **Acceptance:**
 
-**Purpose:**  
-Reorder `enhancedSearch()` results so country-tagged papers matching the user's `localRegion` appear first.
-
-**Steps/Subtasks:**  
-1. In your RAG pipeline, after fetching and filtering papers, read each paper's `metadata.region`.  
-2. Partition the result array into those where `region === localRegion` and the rest.  
-3. Concatenate back together: `[localPapers…, otherPapers…]`.  
-4. Add a unit test: mock three papers with regions `['Brazil','USA','Brazil']`, call with `localRegion='Brazil'`, and assert the two Brazil papers come first in output.
-
-**Acceptance Criteria:**  
-- Calling `enhancedSearch(topic, { localRegion: 'Japan' })` yields all `metadata.region === 'Japan'` entries at the front.  
-- If no papers match that region, original order is unchanged.
-
-**Effort:** S  
-**Dependencies:** TASK-5 (global region detection)
-
-* **Status:** ✅ **COMPLETED** - Full enhancedSearch function implemented in `lib/services/enhanced-search.ts` with regional boosting, fallback strategies, comprehensive test coverage, AND automatic user location detection from IP address with user profile storage for seamless regional boosting
-
----
-
-## 🔄 Epic 3: Depth, Quality & QA
-
-**TASK 7: Citation‐Density & Depth Checker**
-
-* **What:** After each section draft, run `checkCitationDensity(content, minPerPara)` and regex‐scan for your depth cues ("compare," "critique," etc.). If either fails, emit a `review` progress event (and optionally auto-retry with a stronger prompt).
-* **Why:** Guarantees both scholarly rigor (citations) and critical depth in every paragraph.
-* **Done When:**
-
-  * Unit test: sample text lacking citations or "compare" triggers a review event.
+  * Given DOI variants → same `paper_id`.
+  * Title±punctuation within Levenshtein≤2 matches in tests.
 * **Effort:** M
+* **Deps:** 3
 
-* **Status:** ✅ **COMPLETED** - Citation density checker and depth cue scanner implemented with review event emission
+5. **Implement `citations.add` (idempotent UPSERT)**
 
-**TASK 8: Few-Shot Examples & Final Polish**
+* **Purpose:** Stop duplicate project citations.
+* **Steps:** UPSERT on `(project_id, paper_id)`; generate stable `citeKey`; set `first_seen_order`.
+* **Acceptance:**
 
-* **What:** For high-stakes paper types (e.g. thesis/dissertation), prepend 1–2 gold-standard few-shot examples to the section prompt; then after all sections, run a "stitch & polish" prompt to ensure transitions & overall flow.
-* **Why:** Leverages real exemplars to elevate style and coherence.
-* **Done When:**
-
-  * Prompt loader includes examples when `options.fewShot=true`.
-  * Final polish pass merges sections into a fluid narrative.
+  * 10 parallel adds ⇒ 1 row, 9 “existing” responses (test).
 * **Effort:** M
+* **Deps:** 4
 
-* **Status:** ✅ **COMPLETED** - Few-shot examples and final polish functionality implemented for high-stakes paper types with comprehensive testing
+6. **Normalize CSL JSON**
 
----
+* **Purpose:** Consistent formatting downstream.
+* **Steps:** Zod schema; normalize authors, issued date, container-title; ensure DOI/URL.
+* **Acceptance:**
 
-## 🎨 Epic 4: UI, Workflow & Testing
+  * Invalid CSL rejected; golden output stable across runs.
+* **Effort:** M
+* **Deps:** 3
 
-**TASK 9: Paper-Type Selector & Outline Review UI**
+7. **Implement `renderInline` & `renderBibliography`**
 
-* **What:** In your `PaperGenerator` form add a "Paper Type" dropdown (Research Article, Lit Review, Thesis, etc.) and a step where users review/adjust the AI-generated outline before drafting.
-* **Why:** Gives users structural control and tailors the backend pipeline accordingly.
-* **Done When:**
+* **Purpose:** One renderer for all styles.
+* **Steps:** Style plug-ins (APA/MLA/Chicago); numeric uses computed order.
+* **Acceptance:**
 
-  * UI dropdown passes `paperType` downstream; outline review step appears.
+  * Snapshot tests pass per style.
 * **Effort:** S
+* **Deps:** 5, 6
 
-**TASK 10: Section-Level Progress Bar & Controls**
+8. **Refactor CitationsAPI to call service**
 
-* **What:** Extend your streaming hook and `<Progress>` UI to show distinct stages: "Outline → Introduction → Lit Review → … → Finalizing." Allow "Regenerate Section" per block.
-* **Why:** Improves transparency and user control.
-* **Done When:**
+* **Purpose:** Make manual path use same logic.
+* **Steps:** Replace DB calls in `/api/citations/*` with service calls; guard by `CITATIONS_UNIFIED`.
+* **Acceptance:**
 
-  * Frontend displays labeled progress for each outline section.
-  * "Regenerate" button triggers only that section.
+  * Existing UI adds/reads citations unchanged with flag ON.
 * **Effort:** M
+* **Deps:** 5–7
 
-**TASK 11: Unit & Prompt-Library Tests**
+9. **Make AI `addCitation` tool call CitationsAPI**
 
-* **What:** Write Jest tests covering: prompt‐schema validation, presence of depth cues, outline structure, section invocation stubbing, citation‐density checker.
-* **Why:** Ensures regressions can't silently break your core pipeline.
-* **Done When:**
+* **Purpose:** Remove second write path.
+* **Steps:** Tool posts to `/api/citations/add`; remove direct DB import.
+* **Acceptance:**
 
-  * 100% coverage on `src/prompts` and core generation utilities.
-* **Effort:** M
-
-**TASK 12: E2E "Smoke" & Quality Gate**
-
-* **What:** Create a Playwright (or Cypress) script to run `/generate`, select "Lit Review," verify: outline appears, each section returns with ≥1 citation/para, final markdown contains all headings and a bibliography. Hook this into CI as a quality gate.
-* **Why:** Catches integration issues and validates the full, multi-stage flow automatically.
-* **Done When:**
-
-  * CI pipeline runs E2E without errors and asserts structure & citation regex.
-* **Effort:** L
+  * Contract test: UI vs AI produce identical `citeKey` for same paper.
+* **Effort:** S
+* **Deps:** 8
 
 ---
 
-### **Next Steps**
+## Epic C — Search Centralization (SearchOrch only)
 
-1. **Triage & Prioritize**: Move these 12 tasks into your backlog and rank by immediate user impact.
-2. **Sprint 1**: Kick off with TASK-1 → TASK-4 to get your prompt library and modular pipeline wired.
-3. **Sprints 2–3**: Layer in localization (TASK-5/6), depth checks (TASK-7), and UI enhancements (TASK-9/10).
-4. **Sprint 4**: Harden with few-shot (TASK-8) and comprehensive tests (TASK-11/12).
+10. **Extract `@services/search-orchestrator`**
 
-By following this roadmap, you'll transform GenPaper into a **flexible, multi-stage "Paper Factory"** that produces reviewer-ready literature reviews, research articles, theses, and beyond—grounded in local context, deep critical analysis, and rock-solid quality controls.
+* **Purpose:** Single hub for Library/Hybrid/Academic.
+* **Steps:** API: `search({query, projectId})` returning unified results + provenance.
+* **Acceptance:**
+
+  * Library & API searches callable via one function in tests.
+* **Effort:** M
+* **Deps:** 1
+
+11. **Refactor SearchAPI to use orchestrator**
+
+* **Purpose:** Thin API; no duplicate logic.
+* **Steps:** Replace internals with orchestrator call.
+* **Acceptance:**
+
+  * Output parity ±5% ordering; latency within ±10% baseline.
+* **Effort:** S
+* **Deps:** 10
+
+12. **Refactor LibraryAPI to call orchestrator**
+
+* **Purpose:** Remove parallel search code.
+* **Steps:** Route library queries through orchestrator; enable `SEARCH_ORCH_ONLY`.
+* **Acceptance:**
+
+  * Grep shows no LibraryAPI direct DB search.
+* **Effort:** S
+* **Deps:** 10
+
+13. **Introduce per-request retrieval cache**
+
+* **Purpose:** Avoid duplicate hits in same request.
+* **Steps:** In-memory cache keyed by normalized query+projectId.
+* **Acceptance:**
+
+  * > 90% hit rate in repeated-call unit test.
+* **Effort:** S
+* **Deps:** 10
+
+---
+
+## Epic D — Service Layer for DB Access
+
+14. **Create `@services/db` repositories**
+
+* **Purpose:** Single DB gateway.
+* **Steps:** Repos: `PapersRepo`, `ProjectsRepo`, `CitationsRepo`, `AuthorsRepo`, `ChunksRepo`.
+* **Acceptance:**
+
+  * Services import repos; apps/tools don’t import DB client (lint rule passes).
+* **Effort:** M
+* **Deps:** 2
+
+15. **Migrate AI tools off direct DB**
+
+* **Purpose:** Respect service boundaries.
+* **Steps:** Replace DB imports in tools with repos/services.
+* **Acceptance:**
+
+  * Lint: no forbidden imports; tests green.
+* **Effort:** S
+* **Deps:** 14
+
+---
+
+## Epic E — PromptBuilder Purification
+
+16. **Extract `@core/prompt-builder` (pure)**
+
+* **Purpose:** Reuse without side effects.
+* **Steps:** Move templates; remove any I/O; accept context as arg.
+* **Acceptance:**
+
+  * No network/DB imports; snapshots pass.
+* **Effort:** S
+* **Deps:** —
+
+17. **Wire PromptBuilder to SearchOrch via Context service**
+
+* **Purpose:** Remove duplicate retrieval logic.
+* **Steps:** New `ContextRetrieval` wrapper that calls orchestrator; PromptBuilder receives its output (DI).
+* **Acceptance:**
+
+  * Prompts unchanged on same inputs (snapshot).
+* **Effort:** S
+* **Deps:** 10, 16
+
+---
+
+## Epic F — Project Service API (aggregated endpoint)
+
+18. **Add `/api/project/:id/write` (SSE)**
+
+* **Purpose:** One endpoint for writing + citations stream.
+* **Steps:** Compose PromptBuilder + AI stream + Citations service; emit SSE with text & inline renders.
+* **Acceptance:**
+
+  * End-to-end stream works; editor displays text + citations without extra calls.
+* **Effort:** M
+* **Deps:** 7, 17
+
+19. **Route editor to Project Service API**
+
+* **Purpose:** Simplify frontend wiring.
+* **Steps:** Replace direct GenerateAPI/CitationsAPI calls during writing with single endpoint behind `PROJECT_SERVICE_API`.
+* **Acceptance:**
+
+  * Network shows one SSE; output matches old flow in manual test.
+* **Effort:** S
+* **Deps:** 18
+
+---
+
+## Epic G — Data Flow Corrections
+
+20. **Ensure UnifiedGen uses Chunks via orchestrator**
+
+* **Purpose:** Make implicit dependency explicit.
+* **Steps:** Retrieval requests include chunk IDs/scores; use `ChunksRepo`.
+* **Acceptance:**
+
+  * Generator unit test asserts chunk usage in context payload.
+* **Effort:** S
+* **Deps:** 10, 14
+
+21. **Expose Authors to citation formatting**
+
+* **Purpose:** Accurate inline/bibliography rendering.
+* **Steps:** `AuthorsRepo` join in Citations service; enrich CSL authors.
+* **Acceptance:**
+
+  * Inline `(Author, Year)` correct for multi-author cases (tests).
+* **Effort:** S
+* **Deps:** 6, 14
+
+---
+
+## Epic H — Auth Consolidation
+
+22. **Make SupabaseAuth the sole auth source**
+
+* **Purpose:** Avoid double maintenance.
+* **Steps:** Remove direct writes to `users`; use auth webhooks/functions to mirror metadata.
+* **Acceptance:**
+
+  * Creating/updating a user flows through Supabase; no direct `users` mutations found via grep.
+* **Effort:** M
+* **Deps:** 1
+
+23. **Harden API auth helper**
+
+* **Purpose:** Consistent protection.
+* **Steps:** Single server helper to validate user/session; apply in Search, Citations, Project Service routes.
+* **Acceptance:**
+
+  * Unauthed calls 401; authed paths green (Supertest).
+* **Effort:** S
+* **Deps:** 22
+
+---
+
+## Epic I — Observability & Tests
+
+24. **Add structured logs & timings**
+
+* **Purpose:** See where time goes.
+* **Steps:** Log spans: `resolver`, `renderInline`, `search`, `writeSSE`; include requestId/projectId.
+* **Acceptance:**
+
+  * Logs show p95 per span in local run.
+* **Effort:** S
+* **Deps:** 8, 11, 18
+
+25. **Contract test: UI vs AI citation parity**
+
+* **Purpose:** Prevent drift forever.
+* **Steps:** Add same paper via UI and AI; compare `citeKey` & CSL.
+* **Acceptance:**
+
+  * Test passes with `CITATIONS_UNIFIED=on`.
+* **Effort:** S
+* **Deps:** 9
+
+26. **End-to-end write flow test (SSE)**
+
+* **Purpose:** Validate aggregated endpoint.
+* **Steps:** Simulate prompt → receive stream → verify citations rendered inline.
+* **Acceptance:**
+
+  * Single SSE stream; no per-citation API calls; text & citations appear in order.
+* **Effort:** M
+* **Deps:** 18, 19
+
+---
+
+## Epic J — Cleanup & Docs
+
+27. **Remove legacy search paths**
+
+* **Purpose:** Eliminate duplication.
+* **Steps:** Delete LibraryAPI direct queries; mark deprecated modules removed.
+* **Acceptance:**
+
+  * CI/lint sees no references; tests pass.
+* **Effort:** S
+* **Deps:** 12
+
+28. **Remove direct DB writes from tools**
+
+* **Purpose:** Enforce service layer.
+* **Steps:** Delete leftover imports; replace with services.
+* **Acceptance:**
+
+  * Boundary lints clean; grep shows no `db.*` in tools.
+* **Effort:** S
+* **Deps:** 15
+
+29. **Author ADRs & Architecture.md update**
+
+* **Purpose:** Keep team & LLMs aligned.
+* **Steps:** ADRs: “Unified Citation Service”, “SearchOrchestrator”, “Project Service API”; update diagrams.
+* **Acceptance:**
+
+  * Docs merged; links in README; contributors can implement a new citation style from docs alone.
+* **Effort:** S
+* **Deps:** 7, 11, 18
+
+---
+
+### Kanban Snapshot
+
+* **Ready:** 1, 2, 3, 10, 16
+* **Next:** 4–7, 11–12, 14
+* **Then:** 8–9, 13, 17–19, 20–21
+* **Hardening:** 22–26
+* **Cleanup:** 27–29
+
+> Executing this sequence unifies citations, makes search single-sourced, introduces a clean service layer, and simplifies the frontend to one Project Service stream—removing the duplication and drift highlighted in your review.

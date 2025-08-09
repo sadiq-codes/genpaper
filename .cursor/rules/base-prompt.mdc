@@ -1,93 +1,74 @@
----
-description: 
-globs: 
-alwaysApply: true
----
-````markdown
-# 🚀 UNIVERSAL SOFTWARE BUILD PROMPT — v2.0
 
-> **Precedence Rule:** If two directions conflict, follow the lower-numbered rule.
+
+# ⚡️ SOFTWARE BUILD PROMPT — v1.0
+
+> **Precedence Rule** If two directions conflict, follow the lower‑numbered rule.
 
 ---
 
-## 1 — Deliverables & Workflow
-1.1 **Echo & Plan** – Start by restating my request in your own words and outlining a step-by-step plan.  
-1.2 **Executive Summary** – Before code, list what changed, why, and any files removed/added.  
-1.3 **Complete Code** – Supply fully functional code for every task you tackle. Partial solutions are not acceptable.  
-1.4 **Unit & Integration Tests** – Add or update tests that cover success, edge, and failure cases.  
-1.5 **No Hard-Coded Secrets or Stub Data** – Wire to real configs / APIs; if unavailable, ask me.
-
----
-
-## 2 — Code Quality Standards
-2.1 **Update > Duplicate** – Improve existing logic when possible; remove the deprecated version.  
-2.2 **Delete Unused / Dead Code** – Point it out in the summary and purge it.  
-2.3 **Readable & Typed** – Follow language conventions (e.g., PEP-8 + type hints, or TypeScript strict).  
-2.4 **Self-Documenting** – Keep comments & doc-strings current; never leave stale docs.  
-2.5 **Library Policy** – Prefer existing dependencies; add new ones only if they are well-maintained and save significant effort.
-
----
-
-## 3 — Security & Performance
-3.1 **Security Baseline** – Conform to OWASP Top-10 (2021) and sanitize all external input.  
-3.2 **Performance Targets** – Modified endpoints should achieve ≤ 200 ms p95 latency under 100 rps unless stated otherwise.  
-3.3 **Resource Limits** – Watch memory/CPU footprints; avoid N+1 queries and blocking I/O.  
-3.4 **Static Analysis** – Ensure lint, type, and security scanners pass (ESLint/TSLint, Bandit, etc.).
-
----
-
-## 4 — Front-End Guidelines
-4.1 **Styling Consistency** – Match the existing design system; change styles only when required.  
-4.2 **Responsive by Default** – Use fluid layouts & dynamic units for mobile ↔ desktop parity.  
-4.3 **Modularity** – Extract reusable logic into hooks/components; keep presentation, state, and API calls separated.  
-4.4 **UX Principles** – Fast loads, optimistic updates, & clear visual feedback for async states.
-
----
-
-## 5 — Git & Change Management
-5.1 **Atomic Commits** – Group related edits in one commit; orthogonal fixes in separate commits.  
-5.2 **Commit Message Format** – `<scope>: <imperative message> (JIRA-123)` with a short body if needed.  
-5.3 **Changelog** – If the repo uses one, append a concise entry detailing new features, fixes, or breaking changes.  
-5.4 **Rollback Safety** – Avoid irreversible migrations unless approved; provide down-migrations where relevant.
-
----
-
-## 6 — Testing & Validation
-6.1 **Coverage Goal** – Maintain or raise current coverage; never introduce untested critical paths.  
-6.2 **E2E / UI Tests** – Use Cypress/Playwright for user-critical flows when front-end is affected.  
-6.3 **Sample API Calls** – Document example curl/Postman requests for each new endpoint.
-
----
-
-## 7 — When Unsure, Ask
-7.1 If any file is missing, unclear, or conflicting, request clarification *before* proceeding.  
-7.2 Never assume hidden code exists; base your work on what you see or what I provide.
-
----
-
-## 8 — Forbidden Practices
-- Hard-coded secrets, credentials, or topic-specific keywords  
-- Replacing mature library code with brittle home-grown logic  
-- Committing commented-out blocks or console/print debug statements  
-- Leaving TODOs unresolved in merged code
-
----
-
-## 9 — Response Format (per request)
+## 1 · Deliverables
 ```text
 1. Rephrased requirements
-2. Step-by-step implementation plan
-3. Executive summary of changes
-4. Full, self-contained code blocks
-5. Updated / new test code
-6. Notes on deleted code or libraries (if any)
-7. Verification instructions (how to run, test, or view)
+2. Step‑by‑step implementation plan
+3. Verification instructions
+4. Notes on deleted code or libraries (if any)
 ````
+---
+
+## 2 · Code Quality & Maintenance
+2.1 **Update > Duplicate** Improve existing logic; delete deprecated versions.  
+2.2 **No Dead Code** Call it out in the summary and remove it.  
+2.3 **Readable & Typed** Respect language conventions (PEP‑8 + type hints, TS strict, etc.).  
+2.4 **Self‑Documenting** Keep comments/doc‑strings current; remove stale docs.  
+2.5 **Library Policy** Prefer current deps; add new ones only if well‑maintained *and* truly needed.  
+
+---
+
+## 3 · Security, Performance & Coverage
+3.1 **Security Baseline** Meet OWASP Top‑10 (2021); sanitize all external input.  
+3.2 **Performance Target** Endpoints you alter should hit ≤ 200 ms p95 under 100 rps *when relevant*.  
+3.3 **Coverage Floor** Maintain or raise existing coverage for changed areas.  
+3.4 **Static Analysis** Lint, type, and security scanners must pass (ESLint, mypy, Bandit, etc.).  
+
+> *Skip §3.2–3.3 only if they clearly do not apply (e.g., docs‑only change) and note the omission in your summary.*
+
+---
+
+## 4 · Front‑End Guidelines
+4.1 **Styling Consistency** Match the existing design system; avoid unnecessary visual changes.  
+4.2 **Responsive by Default** Use fluid layouts & dynamic units.  
+4.3 **Modularity** Extract reusable hooks/components; separate presentation, state, and API logic.  
+4.4 **UX Principles** Fast loads, optimistic updates, clear async feedback.  
+
+---
+
+## 5 · Git & Change Management
+5.1 **Atomic Commits** Group related edits; unrelated fixes get separate commits.  
+5.2 **Commit Message Format** `<scope>: <imperative message> (ISSUE‑123)`; add a short body if helpful.  
+5.3 **Rollback Safety** Avoid irreversible migrations unless approved; supply down‑migrations when applicable.  
+
+---
+
+## 6 · Critical Notes
+6.1 **No Hard‑Coded Secrets or Stub Data** Wire to real configs/APIs or ask me.  
+6.2 **Implement Only What I Ask** Before adding features, verify they don’t already exist.  
+6.3 **Seek Simplicity** Favor the simplest complete solution; avoid over‑engineering.  
+6.4 **When Unsure, Ask** Request clarification *before* proceeding if anything is missing or unclear.  
+
+---
+
+## 7 · Forbidden Practices
+- Hard‑coded secrets or credentials  
+- Commented‑out blocks, console/print debugging left in code  
+- Unresolved TODOs in merged code  
+- Replacing proven library code with custom, brittle logic  
+
+---
+
+
 
 ---
 
 ### Remember
 
-You are my expert partner in shipping **complete, secure, maintainable, and performant** software. Follow these rules meticulously, keep solutions as simple as possible, and always deliver production-ready work.
-
-```
+You are my expert partner in shipping **complete, secure, maintainable, and performant** software. Follow these rules diligently, but stay lean—omit sections that truly don’t apply *and* call that out in your summary.

@@ -1,3 +1,5 @@
+import 'server-only'
+
 import { hybridSearchPapers } from '@/lib/db/papers'
 import { getSB } from '@/lib/supabase/client'
 import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
@@ -7,6 +9,14 @@ import pLimit from 'p-limit'
 import { WordTokenizer, PorterStemmer } from 'natural'
 import { generateDeterministicAuthorId, generateDeterministicPaperId } from '@/lib/utils/deterministic-id'
 import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
+import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
+
+/**
+ * @services/search-orchestrator
+ * 
+ * Single hub for Library/Hybrid/Academic search with unified results + provenance.
+ * Provides clean API: search({query, projectId}) returning unified results.
+ */
 
 const tokenizer = new WordTokenizer()
 
@@ -652,4 +662,73 @@ export function clearSearchCache(): void {
   if (cache) {
     cache.clear()
   }
-} 
+}
+
+/**
+ * SearchOrchestrator Service Interface
+ * 
+ * Clean API for unified search operations
+ */
+export class SearchOrchestrator {
+  private constructor() {}
+
+  /**
+   * Main search method - unified Library/Hybrid/Academic search
+   */
+  static async search(params: {
+    query: string
+    projectId?: string
+    maxResults?: number
+    includeLibraryOnly?: boolean
+  }): Promise<UnifiedSearchResult> {
+    const { query, projectId, maxResults = 20, includeLibraryOnly = false } = params
+
+    // Use unifiedSearch as the implementation
+    const options: UnifiedSearchOptions = {
+      maxResults,
+      useAcademicAPIs: !includeLibraryOnly,
+      useHybridSearch: true,
+      useKeywordSearch: true
+    }
+
+    // Ensure per-request cache is active for this call
+    return withSearchCache(() => unifiedSearch(query, options))
+  }
+
+  /**
+   * Library-only search for project context
+   */
+  static async searchLibrary(params: {
+    query: string
+    projectId: string
+    maxResults?: number
+  }): Promise<UnifiedSearchResult> {
+    return this.search({
+      ...params,
+      includeLibraryOnly: true
+    })
+  }
+
+  /**
+   * Get search capabilities info
+   */
+  static getCapabilities() {
+    return {
+      sources: ['hybrid', 'academic_apis', 'library'],
+      maxResults: 100,
+      supportsFiltering: true,
+      supportsCaching: true
+    }
+  }
+
+  /**
+   * Expose chunk retrieval via ContextRetrievalService for unified primitives
+   */
+  static async retrieveChunks(params: { query: string; projectId?: string; k?: number }) {
+    const { query, projectId, k = 20 } = params
+    return ContextRetrievalService.retrieve({ query, projectId, k })
+  }
+}
+
+// Default export for convenience
+export default SearchOrchestrator 

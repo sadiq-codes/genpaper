@@ -1,4 +1,5 @@
 import type { Database } from '@/types/supabase'
+import z from 'zod'
 
 export interface CSLAuthor {
   family: string
@@ -222,6 +223,56 @@ export function buildCSLFromPaper(paper: PaperWithAuthors): CSLItem {
   return csl
 }
 
+// --------------------
+// Zod-backed validation schema for CSL-JSON
+// --------------------
+
+export const CSLAuthorSchema = z.object({
+  family: z.string().optional(),
+  given: z.string().optional(),
+  literal: z.string().optional()
+})
+
+export const CSLItemSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum([
+    'article-journal',
+    'article',
+    'book',
+    'chapter',
+    'paper-conference',
+    'thesis',
+    'report',
+    'webpage',
+    'manuscript'
+  ]),
+  title: z.string().min(1),
+  author: z.array(CSLAuthorSchema).default([]),
+  'container-title': z.string().optional(),
+  issued: z
+    .object({ 'date-parts': z.array(z.array(z.number().int().finite())) })
+    .optional(),
+  DOI: z.string().optional(),
+  URL: z.string().url().optional(),
+  abstract: z.string().optional(),
+  page: z.string().optional(),
+  volume: z.string().optional(),
+  issue: z.string().optional(),
+  publisher: z.string().optional(),
+  'publisher-place': z.string().optional(),
+  ISBN: z.string().optional(),
+  ISSN: z.string().optional(),
+  keyword: z.string().optional(),
+  note: z.string().optional()
+})
+
+/**
+ * Validate CSL using Zod first for structure, then citation-js for strictness
+ */
+export function validateCSLWithSchema(csl: unknown): boolean {
+  return CSLItemSchema.safeParse(csl).success
+}
+
 /**
  * Validate CSL-JSON with citation-js (cached import) + fallback
  */
@@ -229,7 +280,12 @@ export function buildCSLFromPaper(paper: PaperWithAuthors): CSLItem {
 let citationJsCache: any = null
 
 export async function validateCSL(csl: unknown): Promise<boolean> {
-  // Try citation-js validation first (most reliable)
+  // First ensure basic structure via Zod
+  if (!validateCSLWithSchema(csl)) {
+    return false
+  }
+
+  // Then try citation-js validation (most reliable)
   try {
     if (!citationJsCache) {
     const citationJsModule = await import('citation-js')
@@ -240,13 +296,13 @@ export async function validateCSL(csl: unknown): Promise<boolean> {
     return true
   } catch {
     // Fall back to basic structure check
-  return (
-    typeof csl === 'object' &&
-    csl !== null &&
-    typeof (csl as Record<string, unknown>).id === 'string' &&
-    typeof (csl as Record<string, unknown>).title === 'string' &&
-    Array.isArray((csl as Record<string, unknown>).author)
-  )
+    return (
+      typeof csl === 'object' &&
+      csl !== null &&
+      typeof (csl as Record<string, unknown>).id === 'string' &&
+      typeof (csl as Record<string, unknown>).title === 'string' &&
+      Array.isArray((csl as Record<string, unknown>).author)
+    )
   }
 }
 

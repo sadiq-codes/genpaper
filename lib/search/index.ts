@@ -10,4 +10,4 @@ export {
   clearSearchCache,
   type UnifiedSearchOptions,
   type UnifiedSearchResult
-} from './orchestrator' 
+} from '@/lib/services/search-orchestrator' 

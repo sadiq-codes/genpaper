@@ -1,5 +1,7 @@
 import 'server-only'
 import { createClient } from '@/lib/supabase/server'
+import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
+import { isRetrievalServiceEnabled } from '@/lib/config/feature-flags'
 import { PaperTypeKey, SectionKey } from '../types'
 import { GENERATION_DEFAULTS } from '@/lib/ai/generation-defaults'
 import yaml from 'js-yaml'
@@ -124,9 +126,30 @@ async function generatePromptData(
     Math.ceil(availablePapers.length * GENERATION_DEFAULTS.MIN_CITATION_COVERAGE)
   )
   
+  // If no context provided and retrieval service is enabled, fetch relevant chunks
+  let workingChunks = contextChunks
+  if ((!workingChunks || workingChunks.length === 0) && isRetrievalServiceEnabled()) {
+    try {
+      const retrieval = await ContextRetrievalService.retrieve({
+        query: projectData.title || '',
+        projectId,
+        k: 20
+      })
+      workingChunks = retrieval.chunks.map(chunk => ({
+        paper_id: chunk.paper_id,
+        content: chunk.content,
+        title: (chunk as any).metadata?.title || 'Source',
+        doi: undefined
+      }))
+    } catch (e) {
+      console.warn('Retrieval service failed, continuing without fetched context:', e)
+      workingChunks = []
+    }
+  }
+
   // Format evidence snippets with clear paper_id tagging for citation tool
   // Filter out irrelevant context to prevent topic drift
-  const relevantChunks = contextChunks.filter(chunk => {
+  const relevantChunks = (workingChunks || []).filter(chunk => {
     const content = chunk.content.toLowerCase()
     const title = (chunk.title || '').toLowerCase()
     

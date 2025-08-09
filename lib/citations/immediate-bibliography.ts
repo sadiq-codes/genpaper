@@ -1,11 +1,13 @@
 /**
- * Immediate Bibliography Service
+ * CitationService - Unified Citation Management
  * 
- * Replaces the complex hydration system with direct bibliography generation
- * from the unified citations table. No post-processing needed!
+ * Centralized service for validation, CSL normalization, and persistence.
+ * Replaces scattered citation logic with a single write path.
  */
 
+import 'server-only'
 import { getSB } from '@/lib/supabase/server'
+import { buildCSLFromPaper, validateCSL, type CSLItem, type PaperWithAuthors } from '@/lib/utils/csl'
 
 // Simple CSL-JSON type for bibliography formatting
 interface CSLAuthor {
@@ -263,3 +265,284 @@ export async function streamBibliographyBlock(
 
 // Export types
 export type BibliographyStyle = keyof typeof BIBLIOGRAPHY_STYLES 
+
+/**
+ * CitationService - Core Methods
+ * Centralized validation, CSL normalization, and persistence
+ */
+
+export interface AddCitationParams {
+  projectId: string
+  paperId: string
+  reason: string
+  quote?: string | null
+}
+
+export interface AddCitationResult {
+  citationNumber: number
+  cslJson: CSLItem
+  isNew: boolean
+  citeKey: string
+}
+
+export class CitationService {
+  private constructor() {}
+  
+  static async add(params: AddCitationParams): Promise<AddCitationResult> {
+    const supabase = await getSB()
+
+    // Validate and fetch paper with authors
+    const { data: paper, error: paperError } = await supabase
+      .from('papers')
+      .select(`
+        id, title, doi, url, venue, volume, issue, pages, publication_date, created_at,
+        paper_authors(
+          ordinal,
+          authors(id, name)
+        )
+      `)
+      .eq('id', params.paperId)
+      .single()
+
+    if (paperError || !paper) {
+      throw new Error(`Paper not found: ${params.paperId}`)
+    }
+
+    // Build and validate CSL JSON from paper
+    const cslJson = buildCSLFromPaper(paper as unknown as PaperWithAuthors)
+    const isValid = await validateCSL(cslJson)
+    if (!isValid) {
+      throw new Error('Generated CSL JSON is invalid')
+    }
+
+    // Persist via unified RPC with idempotency (handles uniqueness constraint and numbering)
+    // The UNIQUE(project_id, paper_id) constraint ensures race-safe deduplication
+    const { data: result, error: citationError } = await supabase
+      .rpc('add_citation_unified', {
+        p_project_id: params.projectId,
+        p_paper_id: params.paperId,
+        p_csl_json: cslJson,
+        p_reason: params.reason,
+        p_quote: params.quote || null
+      })
+      .single()
+
+    if (citationError) {
+      // Check if error is due to constraint violation (concurrent add)
+      if (citationError.code === '23505' || citationError.message?.includes('duplicate')) {
+        // Race condition detected, fetch existing citation
+        const { data: existing, error: fetchError } = await supabase
+          .from('project_citations')
+          .select('number, csl_json')
+          .eq('project_id', params.projectId)
+          .eq('paper_id', params.paperId)
+          .single()
+
+        if (fetchError || !existing) {
+          throw new Error(`Citation constraint violation but unable to fetch existing: ${fetchError?.message}`)
+        }
+
+        const citeKey = `${params.projectId}-${params.paperId}`
+        return {
+          citationNumber: existing.number,
+          cslJson: existing.csl_json as CSLItem,
+          isNew: false,
+          citeKey
+        }
+      }
+      
+      throw new Error(`Failed to add citation: ${citationError.message}`)
+    }
+
+    if (!result) {
+      throw new Error('Citation RPC returned no result')
+    }
+
+    const { citation_number, is_new, cite_key } = result as { 
+      citation_number: number; 
+      is_new: boolean;
+      cite_key?: string;
+    }
+    
+    // Use returned cite_key or generate fallback
+    const citeKey = cite_key || `${params.projectId}-${params.paperId}`
+    
+    return { 
+      citationNumber: citation_number, 
+      cslJson, 
+      isNew: is_new,
+      citeKey
+    }
+  }
+
+  static async renderInline(cslJson: CSLItem, style: string, number: number): Promise<string> {
+    return formatInlineCitation(cslJson, style, number)
+  }
+
+  static async renderBibliography(projectId: string, style: keyof typeof BIBLIOGRAPHY_STYLES = 'apa'): Promise<BibliographyResult> {
+    return generateBibliography(projectId, style)
+  }
+
+  static async suggest(projectId: string, context: string): Promise<string[]> {
+    // TODO: Implement citation suggestions based on context
+    return []
+  }
+
+  static async resolveSourceRef(sourceRef: { doi?: string; title?: string; year?: number }, projectId?: string): Promise<string | null> {
+    const supabase = await getSB()
+    
+    // Normalize DOI if provided
+    if (sourceRef.doi) {
+      const normalizedDoi = sourceRef.doi.toLowerCase()
+        .replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
+        .replace(/^doi:/, '')
+        .trim()
+      
+      // Try exact DOI match first
+      const { data: doiPaper } = await supabase
+        .from('papers')
+        .select('id')
+        .eq('doi', normalizedDoi)
+        .single()
+      
+      if (doiPaper) return doiPaper.id
+      
+      // Try variations
+      for (const variant of [`10.${normalizedDoi}`, `doi:${normalizedDoi}`, `https://doi.org/${normalizedDoi}`]) {
+        const { data: variantPaper } = await supabase
+          .from('papers')
+          .select('id')
+          .eq('doi', variant)
+          .single()
+        
+        if (variantPaper) return variantPaper.id
+      }
+    }
+    
+    // Fallback to title + year fuzzy match
+    if (sourceRef.title) {
+      const { data: papers } = await supabase
+        .from('papers')
+        .select('id, title, publication_date')
+        .ilike('title', `%${sourceRef.title}%`)
+        .limit(10)
+      
+      if (papers && papers.length > 0) {
+        // Compute distances and year preference
+        const candidates = papers.map(paper => {
+          const distance = this.levenshteinDistance(
+            (sourceRef.title || '').toLowerCase(),
+            (paper.title || '').toLowerCase()
+          )
+          const pubYear = new Date(paper.publication_date || '').getFullYear()
+          const yearMatch = sourceRef.year ? pubYear === sourceRef.year : false
+          return { paper, distance, yearMatch }
+        })
+
+        // Filter by threshold (≤ 2 edits) or exact year match loosens distance by 1
+        const threshold = 2
+        let acceptable = candidates.filter(c => c.distance <= threshold || (c.yearMatch && c.distance <= threshold + 1))
+        if (acceptable.length === 0) acceptable = candidates
+
+        // If projectId provided, prefer papers already cited in the project on ties
+        let preferredIds = new Set<string>()
+        if (projectId) {
+          const { data: citedRows } = await supabase
+            .from('project_citations')
+            .select('paper_id')
+            .eq('project_id', projectId)
+          preferredIds = new Set((citedRows || []).map(r => r.paper_id))
+        }
+
+        // Sort by (distance asc, yearMatch desc, preferred desc)
+        acceptable.sort((a, b) => {
+          if (a.distance !== b.distance) return a.distance - b.distance
+          if (a.yearMatch !== b.yearMatch) return (b.yearMatch ? 1 : 0) - (a.yearMatch ? 1 : 0)
+          const aPref = preferredIds.has(a.paper.id)
+          const bPref = preferredIds.has(b.paper.id)
+          if (aPref !== bPref) return aPref ? -1 : 1
+          return 0
+        })
+
+        const best = acceptable[0]
+        if (best && best.distance <= threshold + (best.yearMatch ? 1 : 0)) {
+          return best.paper.id
+        }
+      }
+    }
+    
+    return null
+  }
+
+  private static levenshteinDistance(str1: string, str2: string): number {
+    const matrix = []
+    
+    for (let i = 0; i <= str2.length; i++) {
+      matrix[i] = [i]
+    }
+    
+    for (let j = 0; j <= str1.length; j++) {
+      matrix[0][j] = j
+    }
+    
+    for (let i = 1; i <= str2.length; i++) {
+      for (let j = 1; j <= str1.length; j++) {
+        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1]
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1, // substitution
+            matrix[i][j - 1] + 1,     // insertion
+            matrix[i - 1][j] + 1      // deletion
+          )
+        }
+      }
+    }
+    
+    return matrix[str2.length][str1.length]
+  }
+}
+
+// Legacy export for backward compatibility
+export async function addCitationUnified(params: AddCitationParams): Promise<{ citationNumber: number; cslJson: CSLItem; isNew: boolean }> {
+  const result = await CitationService.add(params)
+  return {
+    citationNumber: result.citationNumber,
+    cslJson: result.cslJson,
+    isNew: result.isNew
+  }
+}
+
+export function formatInlineCitation(cslJson: CSLItem, style: string, number: number): string {
+  const authors = cslJson.author || []
+  const year = cslJson.issued?.['date-parts']?.[0]?.[0] || 'n.d.'
+
+  switch ((style || 'apa').toLowerCase()) {
+    case 'apa':
+      if (authors.length === 0) return `(Anonymous, ${year})`
+      if (authors.length === 1) {
+        const lastName = authors[0].family || authors[0].literal || 'Unknown'
+        return `(${lastName}, ${year})`
+      }
+      if (authors.length === 2) {
+        const first = authors[0].family || authors[0].literal || 'Unknown'
+        const second = authors[1].family || authors[1].literal || 'Unknown'
+        return `(${first} & ${second}, ${year})`
+      }
+      return `(${authors[0]?.family || 'Unknown'} et al., ${year})`
+    case 'mla':
+      if (authors.length === 0) return '(Anonymous)'
+      return authors.length === 1
+        ? `(${authors[0]?.family || authors[0]?.literal || 'Unknown'})`
+        : `(${authors[0]?.family || authors[0]?.literal || 'Unknown'} et al.)`
+    case 'chicago':
+      if (authors.length === 0) return `(Anonymous ${year})`
+      return authors.length === 1
+        ? `(${authors[0]?.family || authors[0]?.literal || 'Unknown'} ${year})`
+        : `(${authors[0]?.family || authors[0]?.literal || 'Unknown'} et al. ${year})`
+    case 'ieee':
+      return `[${number}]`
+    default:
+      return `(${authors[0]?.family || 'Unknown'}, ${year})`
+  }
+}
