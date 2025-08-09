@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
           if (resolvedPaperId) {
             const result = await CitationService.add({
               projectId,
-              paperId: resolvedPaperId,
+              sourceRef: { paperId: resolvedPaperId },
               reason: ref.context || 'batch citation',
               quote: null
             })
@@ -371,11 +371,18 @@ export async function POST(request: NextRequest) {
       try {
         const result = await CitationService.add({
           projectId,
-          paperId,
+          sourceRef: { paperId },
           reason: citation_text || 'manual',
           quote: context || null
         })
         
+        // Get first_seen_order for backwards compatibility
+        const { data: citation } = await supabase
+          .from('project_citations')
+          .select('first_seen_order')
+          .eq('id', result.projectCitationId)
+          .single()
+
         return NextResponse.json({ 
           success: true, 
           citation: {
@@ -386,7 +393,7 @@ export async function POST(request: NextRequest) {
             csl_json: result.cslJson,
             citation_text,
             context,
-            citation_number: result.citationNumber,
+            citation_number: citation?.first_seen_order || 1, // Use first_seen_order
             is_new: result.isNew,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()

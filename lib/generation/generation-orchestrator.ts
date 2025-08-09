@@ -6,6 +6,7 @@ import { isUnifiedCitationsEnabled, isBatchedCitationsEnabled } from '@/lib/conf
 import { parseCitationPlaceholders, replacePlaceholders, type PlaceholderCitation } from '@/lib/citations/placeholder-schema'
 import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
 import type { PaperWithAuthors } from '@/types/simplified'
+import { getSB } from '@/lib/supabase/server'
 
 /**
  * GenerationOrchestrator
@@ -180,7 +181,7 @@ export class GenerationOrchestrator {
           const citation = event.data
           citations.push({
             paperId: citation.args?.paper_id || '',
-            citationNumber: citation.result?.citation_number || citations.length + 1,
+            citationNumber: citations.length + 1, // Use sequential numbering for generation
             formatted: citation.result?.formatted_citation || ''
           })
           
@@ -357,20 +358,30 @@ export class GenerationOrchestrator {
         try {
           const result = await CitationService.add({
             projectId,
-            paperId: args.paper_id,
+            sourceRef: { paperId: args.paper_id },
             reason: args.reason,
             quote: args.quote || null
           })
 
+          // Get the actual render number from first_seen_order
+          const supabase = await getSB()
+          const { data: citation } = await supabase
+            .from('project_citations')
+            .select('first_seen_order')
+            .eq('id', result.projectCitationId)
+            .single()
+          
+          const renderNumber = citation?.first_seen_order || 1
+
           const formatted = await CitationService.renderInline(
             result.cslJson,
             citationStyle,
-            result.citationNumber
+            renderNumber
           )
 
           return {
             success: true,
-            citation_number: result.citationNumber,
+            citation_number: renderNumber, // Use first_seen_order for rendering
             formatted_citation: formatted,
             is_new: result.isNew
           }

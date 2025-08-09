@@ -688,6 +688,10 @@ export async function findSimilarPapers(
 }
 
 // Search paper chunks for RAG with adaptive scoring
+/**
+ * @deprecated Use ContextRetrievalService.retrieve() instead
+ * This legacy function will be removed in the next version.
+ */
 export async function searchPaperChunks(
   query: string,
   options: {

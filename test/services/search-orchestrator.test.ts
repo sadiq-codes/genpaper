@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { unifiedSearch, clearSearchCache, type UnifiedSearchOptions } from '@/lib/search'
+import { unifiedSearch, clearSearchCache, withSearchCache, type UnifiedSearchOptions } from '@/lib/search'
 import type { PaperWithAuthors } from '@/types/simplified'
 import type { RankedPaper } from '@/lib/services/paper-aggregation'
 
@@ -96,13 +96,13 @@ describe('Search Orchestrator', () => {
       useAcademicAPIs: false
     }
 
-    // First call
-    const result1 = await unifiedSearch('cache test', options)
+    // First call (wrap in request-scoped cache)
+    const result1 = await withSearchCache(() => unifiedSearch('cache test', options))
     expect(result1.metadata.cacheHits).toBe(0)
     expect(hybridSearchPapers).toHaveBeenCalledTimes(1)
 
-    // Second call with same parameters should use cache
-    const result2 = await unifiedSearch('cache test', options)
+    // Second call with same parameters should use cache (same scope)
+    const result2 = await withSearchCache(() => unifiedSearch('cache test', options))
     expect(result2.metadata.cacheHits).toBe(1)
     expect(hybridSearchPapers).toHaveBeenCalledTimes(1) // No additional call
 

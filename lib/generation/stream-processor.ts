@@ -1,444 +1,308 @@
 import 'server-only'
-import { parseCitationPlaceholders, replacePlaceholders, type PlaceholderCitation } from '@/lib/citations/placeholder-schema'
-import { isBatchedCitationsEnabled } from '@/lib/config/feature-flags'
+import { 
+  parseCitationPlaceholders, 
+  replacePlaceholders, 
+  extractUniquePlaceholders,
+  type PlaceholderCitation 
+} from '@/lib/citations/placeholder-schema'
 
 /**
- * Stream Post-Processor
+ * Stream Post-Processor for Citation Placeholders
  * 
- * Buffers sentence chunks and replaces placeholders in streamed text using batch map.
- * Reduces visible latency vs per-citation calls by batching resolution.
+ * Buffers sentences, collects tokens, calls batch API, and replaces inline
+ * to reduce per-citation RTT during generation streaming.
  */
 
-export interface StreamChunk {
-  type: 'text' | 'citation' | 'placeholder' | 'error' | 'warning' | 'fallback'
-  content: string
-  metadata?: Record<string, any>
+interface StreamProcessorOptions {
+  projectId: string
+  batchSize?: number // Number of placeholders to batch together
+  sentenceBufferSize?: number // Number of sentences to buffer before processing
+  flushTimeoutMs?: number // Max time to wait before flushing buffer
 }
 
-export interface ProcessorState {
-  pendingText: string
-  bufferedSentences: string[]
-  placeholders: PlaceholderCitation[]
-  totalSentences: number
-  isFinalized: boolean
-}
-
-export interface BatchResolutionResult {
-  citeKeyMap: Record<string, string>
-  resolvedCount: number
+interface ProcessedChunk {
+  text: string
+  hasPlaceholders: boolean
   unresolvedCount: number
 }
 
-export class StreamProcessor {
-  private state: ProcessorState
+export class CitationStreamProcessor {
   private projectId: string
-  private sentenceEndPattern = /([.!?])\s+(?=[A-Z])/g
-  private errorCount = 0
-  private maxErrors = 5
-  private retryAttempts = 0
-  private maxRetries = 2
+  private batchSize: number
+  private sentenceBufferSize: number
+  private flushTimeoutMs: number
   
-  constructor(projectId: string, options?: { maxErrors?: number; maxRetries?: number }) {
-    this.projectId = projectId
-    this.maxErrors = options?.maxErrors || 5
-    this.maxRetries = options?.maxRetries || 2
-    this.state = {
-      pendingText: '',
-      bufferedSentences: [],
-      placeholders: [],
-      totalSentences: 0,
-      isFinalized: false
-    }
+  private buffer: string = ''
+  private pendingPlaceholders: Set<string> = new Set()
+  private resolvedCitations: Record<string, string> = {}
+  private flushTimeout: any | null = null
+  
+  constructor(options: StreamProcessorOptions) {
+    this.projectId = options.projectId
+    this.batchSize = options.batchSize || 10
+    this.sentenceBufferSize = options.sentenceBufferSize || 3
+    this.flushTimeoutMs = options.flushTimeoutMs || 2000
   }
 
   /**
-   * Process incoming text delta and extract sentences with error handling
+   * Process incoming text chunk from stream
+   * Returns processed text with resolved citations
    */
-  processTextDelta(textDelta: string): StreamChunk[] {
-    if (this.state.isFinalized) {
+  async processChunk(chunk: string): Promise<ProcessedChunk> {
+    // Add chunk to buffer
+    this.buffer += chunk
+    
+    // Extract sentences from buffer
+    const sentences = this.extractCompleteSentences()
+    
+    if (sentences.length === 0) {
+      // No complete sentences yet, just return empty
+      return { text: '', hasPlaceholders: false, unresolvedCount: 0 }
+    }
+    
+    // Check if we have enough sentences to process or if timeout reached
+    const shouldFlush = sentences.length >= this.sentenceBufferSize || 
+                       this.shouldForceFlush()
+    
+    if (!shouldFlush) {
+      // Not ready to flush yet
+      this.scheduleFlush()
+      return { text: '', hasPlaceholders: false, unresolvedCount: 0 }
+    }
+    
+    // Process the sentences
+    return await this.processSentences(sentences)
+  }
+
+  /**
+   * Force flush all remaining content (call at stream end)
+   */
+  async flush(): Promise<ProcessedChunk> {
+    if (this.flushTimeout) {
+      clearTimeout(this.flushTimeout)
+      this.flushTimeout = null
+    }
+    
+    if (this.buffer.length === 0) {
+      return { text: '', hasPlaceholders: false, unresolvedCount: 0 }
+    }
+    
+    // Process any remaining content
+    const remainingText = this.buffer
+    this.buffer = ''
+    
+    return await this.processText(remainingText)
+  }
+
+  /**
+   * Extract complete sentences from buffer
+   */
+  private extractCompleteSentences(): string[] {
+    const sentenceEnders = /[.!?]+\s+/g
+    const matches = Array.from(this.buffer.matchAll(sentenceEnders))
+    
+    if (matches.length === 0) {
       return []
     }
-
-    try {
-      this.state.pendingText += textDelta
-      const chunks: StreamChunk[] = []
-
-      // Check for excessive buffer size (backpressure protection)
-      if (this.state.pendingText.length > 10000) {
-        chunks.push({
-          type: 'warning',
-          content: '',
-          metadata: { 
-            message: 'Large buffer detected, processing partial content',
-            bufferSize: this.state.pendingText.length 
-          }
-        })
-        // Force process what we have
-        this.state.bufferedSentences.push(this.state.pendingText.trim())
-        this.state.pendingText = ''
-        this.state.totalSentences++
-      }
-
-      // Extract complete sentences with safety limits
-      let match
-      let safetyCounter = 0
-      const maxIterations = 100
-      
-      while ((match = this.sentenceEndPattern.exec(this.state.pendingText)) && safetyCounter < maxIterations) {
-        safetyCounter++
-        const sentence = this.state.pendingText.slice(0, match.index + 1).trim()
-        this.state.pendingText = this.state.pendingText.slice(match.index + 1).trim()
-        
-        if (sentence.length > 0) {
-          this.state.bufferedSentences.push(sentence)
-          this.state.totalSentences++
-          
-          // Check if batch processing is enabled
-          if (isBatchedCitationsEnabled()) {
-            try {
-              // Buffer sentences with placeholders for batch processing
-              const sentencePlaceholders = parseCitationPlaceholders(sentence)
-              if (sentencePlaceholders.length > 0) {
-                this.state.placeholders.push(...sentencePlaceholders)
-                chunks.push({
-                  type: 'placeholder',
-                  content: sentence,
-                  metadata: { placeholders: sentencePlaceholders.length }
-                })
-              } else {
-                chunks.push({
-                  type: 'text',
-                  content: sentence
-                })
-              }
-            } catch (parseError) {
-              this.errorCount++
-              chunks.push({
-                type: 'warning',
-                content: sentence, // Still emit the content
-                metadata: { 
-                  message: 'Placeholder parsing failed',
-                  error: parseError instanceof Error ? parseError.message : 'Parse error'
-                }
-              })
-            }
-          } else {
-            // Immediate streaming for non-batched mode
-            chunks.push({
-              type: 'text',
-              content: sentence
-            })
-          }
-        }
-        
-        // Reset regex lastIndex to avoid infinite loops
-        this.sentenceEndPattern.lastIndex = 0
-      }
-
-      // Check if we hit safety limits
-      if (safetyCounter >= maxIterations) {
-        chunks.push({
-          type: 'warning',
-          content: '',
-          metadata: { 
-            message: 'Sentence parsing safety limit reached',
-            processedSentences: safetyCounter 
-          }
-        })
-      }
-
-      return chunks
-
-    } catch (error) {
-      this.errorCount++
-      console.error('Stream processing error:', error)
-      
-      return [{
-        type: 'error',
-        content: '',
-        metadata: {
-          message: 'Stream processing failed',
-          error: error instanceof Error ? error.message : 'Unknown error',
-          errorCount: this.errorCount
-        }
-      }]
-    }
+    
+    // Get text up to the last sentence boundary
+    const lastMatch = matches[matches.length - 1]
+    const cutPoint = lastMatch.index! + lastMatch[0].length
+    
+    const sentences = this.buffer.slice(0, cutPoint)
+    this.buffer = this.buffer.slice(cutPoint)
+    
+    return sentences.split(sentenceEnders).filter(s => s.trim().length > 0)
   }
 
   /**
-   * Process citation tool calls (immediate mode)
+   * Process a batch of sentences
    */
-  processCitationTool(toolCall: any): StreamChunk {
-    return {
-      type: 'citation',
-      content: '',
-      metadata: {
-        paperId: toolCall.args?.paper_id,
-        formatted: toolCall.result?.formatted_citation,
-        citationNumber: toolCall.result?.citation_number
-      }
-    }
+  private async processSentences(sentences: string[]): Promise<ProcessedChunk> {
+    const text = sentences.join(' ')
+    return await this.processText(text)
   }
 
   /**
-   * Finalize stream and process any remaining content
+   * Process text and resolve citations
    */
-  async finalize(): Promise<StreamChunk[]> {
-    if (this.state.isFinalized) {
-      return []
+  private async processText(text: string): Promise<ProcessedChunk> {
+    // Find all citation placeholders in the text
+    const placeholders = extractUniquePlaceholders(text)
+    
+    if (placeholders.length === 0) {
+      // No placeholders, return text as-is
+      return { text, hasPlaceholders: false, unresolvedCount: 0 }
     }
-
-    this.state.isFinalized = true
-    const chunks: StreamChunk[] = []
-
-    // Add any remaining pending text as final sentence
-    if (this.state.pendingText.trim().length > 0) {
-      this.state.bufferedSentences.push(this.state.pendingText.trim())
-      this.state.totalSentences++
+    
+    // Separate new placeholders from already resolved ones
+    const newPlaceholders = placeholders.filter(p => {
+      const key = `${p.type}:${p.value}`
+      return !this.resolvedCitations[key] && !this.pendingPlaceholders.has(key)
+    })
+    
+    // Mark new placeholders as pending
+    newPlaceholders.forEach(p => {
+      const key = `${p.type}:${p.value}`
+      this.pendingPlaceholders.add(key)
+    })
+    
+    // Batch resolve new placeholders if we have enough or if forced
+    if (newPlaceholders.length >= this.batchSize || this.shouldForceFlush()) {
+      await this.batchResolvePlaceholders(newPlaceholders)
     }
-
-    // Process batch citations if enabled
-    if (isBatchedCitationsEnabled() && this.state.placeholders.length > 0) {
-      try {
-        const batchResult = await this.resolvePlaceholdersBatch()
-        
-        // Rewrite all buffered sentences with resolved citations
-        const processedSentences = this.state.bufferedSentences.map(sentence => {
-          const result = replacePlaceholders(sentence, batchResult.citeKeyMap)
-          return result.text
-        })
-
-        // Emit processed content
-        for (const sentence of processedSentences) {
-          chunks.push({
-            type: 'text',
-            content: sentence,
-            metadata: { processed: true }
-          })
-        }
-
-        // Emit batch resolution summary
-        chunks.push({
-          type: 'citation',
-          content: '',
-          metadata: {
-            batchResolution: true,
-            resolved: batchResult.resolvedCount,
-            unresolved: batchResult.unresolvedCount,
-            total: this.state.placeholders.length
-          }
-        })
-
-      } catch (error) {
-        console.error('Batch resolution failed during finalization:', error)
-        this.errorCount++
-        
-        // Emit warning event first
-        chunks.push({
-          type: 'warning',
-          content: '',
-          metadata: {
-            message: 'Citation batch resolution failed, using fallbacks',
-            error: error instanceof Error ? error.message : 'Unknown error',
-            placeholderCount: this.state.placeholders.length
-          }
-        })
-        
-        // Emit content with graceful fallback citations
-        const fallbackSentences = this.state.bufferedSentences.map(sentence => {
-          // Extract author/year info from placeholders when possible
-          return sentence.replace(/\[\[CITE:([^:]+):([^\]]+)\]\]/g, (match, type, value) => {
-            if (type === 'paperId') {
-              return '(Source, n.d.)'
-            } else if (type === 'doi') {
-              return `(DOI: ${value.slice(0, 20)}...)`
-            } else {
-              return `(${value.slice(0, 30)}...)`
-            }
-          })
-        })
-
-        for (const sentence of fallbackSentences) {
-          chunks.push({
-            type: 'fallback',
-            content: sentence,
-            metadata: { 
-              fallback: true,
-              originalPlaceholders: this.state.placeholders.length 
-            }
-          })
-        }
-
-        // Only emit error if we've exceeded max errors
-        if (this.errorCount >= this.maxErrors) {
-          chunks.push({
-            type: 'error',
-            content: '',
-            metadata: {
-              message: 'Maximum errors exceeded, stream may be unstable',
-              errorCount: this.errorCount,
-              maxErrors: this.maxErrors
-            }
-          })
-        }
-      }
-    } else {
-      // No batch processing needed, emit buffered content as-is
-      for (const sentence of this.state.bufferedSentences) {
-        chunks.push({
-          type: 'text',
-          content: sentence
-        })
-      }
-    }
-
-    return chunks
-  }
-
-  /**
-   * Get current processing state
-   */
-  getState(): Readonly<ProcessorState> {
-    return { ...this.state }
-  }
-
-  /**
-   * Get processing metrics
-   */
-  getMetrics() {
-    return {
-      totalSentences: this.state.totalSentences,
-      bufferedSentences: this.state.bufferedSentences.length,
-      pendingCharacters: this.state.pendingText.length,
-      placeholderCount: this.state.placeholders.length,
-      isFinalized: this.state.isFinalized
-    }
-  }
-
-  /**
-   * Resolve placeholders via batch API with retry logic
-   */
-  private async resolvePlaceholdersBatch(): Promise<BatchResolutionResult> {
-    if (this.state.placeholders.length === 0) {
-      return { citeKeyMap: {}, resolvedCount: 0, unresolvedCount: 0 }
-    }
-
-    // Deduplicate placeholders
-    const uniquePlaceholders = this.deduplicatePlaceholders(this.state.placeholders)
-
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-      try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10s timeout
-
-        const response = await fetch('/api/citations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            projectId: this.projectId,
-            refs: uniquePlaceholders
-          }),
-          signal: controller.signal
-        })
-
-        clearTimeout(timeoutId)
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'Unknown error')
-          throw new Error(`Batch API failed: ${response.status} - ${errorText}`)
-        }
-
-        const data = await response.json()
-        const citeKeyMap = data.citeKeyMap || {}
-        
-        const resolvedCount = Object.keys(citeKeyMap).length
-        const unresolvedCount = uniquePlaceholders.length - resolvedCount
-
-        return { citeKeyMap, resolvedCount, unresolvedCount }
-
-      } catch (error) {
-        console.error(`Batch citation resolution attempt ${attempt + 1} failed:`, error)
-        this.retryAttempts = attempt
-        
-        if (attempt === this.maxRetries) {
-          // Final attempt failed, create fallback map
-          const fallbackMap: Record<string, string> = {}
-          for (const placeholder of uniquePlaceholders) {
-            const key = `${placeholder.type}:${placeholder.value}`
-            fallbackMap[key] = placeholder.fallbackText || this.generateFallbackCitation(placeholder)
-          }
-          
-          return {
-            citeKeyMap: fallbackMap,
-            resolvedCount: 0,
-            unresolvedCount: uniquePlaceholders.length
-          }
-        }
-        
-        // Wait before retry with exponential backoff
-        const backoffMs = Math.min(1000 * Math.pow(2, attempt), 5000)
-        await new Promise(resolve => setTimeout(resolve, backoffMs))
-      }
-    }
-
-    // This should never be reached, but TypeScript requires it
-    throw new Error('Batch resolution retry logic failed unexpectedly')
-  }
-
-  /**
-   * Generate a fallback citation when resolution fails
-   */
-  private generateFallbackCitation(placeholder: PlaceholderCitation): string {
-    switch (placeholder.type) {
-      case 'paperId':
-        return '(Source, n.d.)'
-      case 'doi':
-        return `(DOI: ${placeholder.value.slice(0, 20)}...)`
-      case 'title':
-        return `(${placeholder.value.slice(0, 30)}...)`
-      case 'url':
-        return '(Web source)'
-      default:
-        return '(Citation unavailable)'
-    }
-  }
-
-  /**
-   * Remove duplicate placeholders based on type:value combination
-   */
-  private deduplicatePlaceholders(placeholders: PlaceholderCitation[]): PlaceholderCitation[] {
-    const seen = new Set<string>()
-    const unique: PlaceholderCitation[] = []
-
-    for (const placeholder of placeholders) {
-      const key = `${placeholder.type}:${placeholder.value}`
-      if (!seen.has(key)) {
-        seen.add(key)
-        unique.push(placeholder)
-      }
-    }
-
-    return unique
-  }
-
-  /**
-   * Create a simple stream processor for immediate use
-   */
-  static createSimple(projectId: string): {
-    process: (textDelta: string) => string[]
-    finalize: () => Promise<string[]>
-  } {
-    const processor = new StreamProcessor(projectId)
+    
+    // Replace resolved placeholders in text
+    const { text: processedText, unresolvedCount } = replacePlaceholders(
+      text, 
+      this.resolvedCitations
+    )
     
     return {
-      process: (textDelta: string) => {
-        const chunks = processor.processTextDelta(textDelta)
-        return chunks.filter(chunk => chunk.type === 'text').map(chunk => chunk.content)
-      },
-      finalize: async () => {
-        const chunks = await processor.finalize()
-        return chunks.filter(chunk => chunk.type === 'text').map(chunk => chunk.content)
-      }
+      text: processedText,
+      hasPlaceholders: placeholders.length > 0,
+      unresolvedCount
     }
+  }
+
+  /**
+   * Batch resolve placeholders using CitationService directly
+   */
+  private async batchResolvePlaceholders(placeholders: PlaceholderCitation[]): Promise<void> {
+    if (placeholders.length === 0) return
+    
+    try {
+      // Use CitationService directly instead of API call (server-side)
+      const { CitationService } = await import('@/lib/citations/immediate-bibliography')
+      
+      // Process all placeholders in parallel
+      const results = await Promise.allSettled(
+        placeholders.map(async (placeholder) => {
+          const sourceRef = {
+            ...(placeholder.type === 'doi' && { doi: placeholder.value }),
+            ...(placeholder.type === 'paperId' && { paperId: placeholder.value }),
+            ...(placeholder.type === 'title' && { title: placeholder.value }),
+            ...(placeholder.type === 'url' && { url: placeholder.value })
+          }
+
+          const result = await CitationService.add({
+            projectId: this.projectId,
+            sourceRef,
+            reason: placeholder.context || 'stream generation',
+            quote: null
+          })
+
+          return {
+            key: `${placeholder.type}:${placeholder.value}`,
+            citeKey: result.citeKey
+          }
+        })
+      )
+
+      // Update resolved citations map
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          this.resolvedCitations[result.value.key] = result.value.citeKey
+          this.pendingPlaceholders.delete(result.value.key)
+        }
+      })
+
+      // Remove failed ones from pending
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          const placeholder = placeholders[index]
+          const key = `${placeholder.type}:${placeholder.value}`
+          this.pendingPlaceholders.delete(key)
+        }
+      })
+      
+    } catch (error) {
+      console.error('Batch citation resolution failed:', error)
+      
+      // Remove from pending on error so we don't block indefinitely
+      placeholders.forEach(p => {
+        const key = `${p.type}:${p.value}`
+        this.pendingPlaceholders.delete(key)
+      })
+    }
+  }
+
+  /**
+   * Schedule flush timeout
+   */
+  private scheduleFlush(): void {
+    if (this.flushTimeout) return
+    
+    this.flushTimeout = setTimeout(() => {
+      this.flushTimeout = null
+      // This would trigger a flush in a real streaming scenario
+      // For now, we just clear the timeout
+    }, this.flushTimeoutMs)
+  }
+
+  /**
+   * Check if we should force flush due to timeout or other conditions
+   */
+  private shouldForceFlush(): boolean {
+    // Force flush if we have too many pending placeholders
+    return this.pendingPlaceholders.size >= this.batchSize * 2
+  }
+
+  /**
+   * Get current buffer state (for debugging)
+   */
+  getState() {
+    return {
+      bufferLength: this.buffer.length,
+      pendingPlaceholders: this.pendingPlaceholders.size,
+      resolvedCitations: Object.keys(this.resolvedCitations).length,
+      hasFlushTimeout: !!this.flushTimeout
+    }
+  }
+
+  /**
+   * Clear all state (for cleanup)
+   */
+  clear(): void {
+    this.buffer = ''
+    this.pendingPlaceholders.clear()
+    this.resolvedCitations = {}
+    if (this.flushTimeout) {
+      clearTimeout(this.flushTimeout)
+      this.flushTimeout = null
+    }
+  }
+}
+
+/**
+ * Factory function to create stream processor
+ */
+export function createCitationStreamProcessor(options: StreamProcessorOptions): CitationStreamProcessor {
+  return new CitationStreamProcessor(options)
+}
+
+/**
+ * Helper function to process a complete text with citations
+ * (for non-streaming scenarios)
+ */
+export async function processCitationsInText(
+  text: string, 
+  projectId: string
+): Promise<{ processedText: string; citationCount: number; unresolvedCount: number }> {
+  const processor = createCitationStreamProcessor({ projectId })
+  
+  // Process the entire text
+  const result = await processor.processChunk(text)
+  const finalResult = await processor.flush()
+  
+  const processedText = result.text + finalResult.text
+  const placeholders = extractUniquePlaceholders(text)
+  
+  processor.clear()
+  
+  return {
+    processedText,
+    citationCount: placeholders.length,
+    unresolvedCount: finalResult.unresolvedCount
   }
 }

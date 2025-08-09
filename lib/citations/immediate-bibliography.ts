@@ -8,6 +8,8 @@
 import 'server-only'
 import { getSB } from '@/lib/supabase/server'
 import { buildCSLFromPaper, validateCSL, type CSLItem, type PaperWithAuthors } from '@/lib/utils/csl'
+import { findBestTitleMatch, type PaperCandidate } from '@/lib/utils/fuzzy-matching'
+import { citationLogger } from '@/lib/utils/citation-logger'
 
 // Simple CSL-JSON type for bibliography formatting
 interface CSLAuthor {
@@ -265,6 +267,7 @@ export async function streamBibliographyBlock(
 
 // Export types
 export type BibliographyStyle = keyof typeof BIBLIOGRAPHY_STYLES 
+export { BIBLIOGRAPHY_STYLES } 
 
 /**
  * CitationService - Core Methods
@@ -273,59 +276,93 @@ export type BibliographyStyle = keyof typeof BIBLIOGRAPHY_STYLES
 
 export interface AddCitationParams {
   projectId: string
-  paperId: string
+  sourceRef: {
+    doi?: string
+    title?: string
+    year?: number
+    url?: string
+    paperId?: string // Direct paper ID if already known
+  }
   reason: string
+  anchorId?: string
   quote?: string | null
 }
 
 export interface AddCitationResult {
-  citationNumber: number
-  cslJson: CSLItem
-  isNew: boolean
   citeKey: string
+  projectCitationId: string
+  isNew: boolean
+  citationNumber?: number // Kept for backward compatibility
+  cslJson?: CSLItem // Kept for backward compatibility
 }
 
 export class CitationService {
   private constructor() {}
   
-  static async add(params: AddCitationParams): Promise<AddCitationResult> {
-    const supabase = await getSB()
+  // Realtime channel for citation events (singleton)
+  private static realtimeChannel: any = null
+  
+      static async add(params: AddCitationParams): Promise<AddCitationResult> {
+    const requestId = citationLogger.generateRequestId()
+    const timer = citationLogger.startTimer()
+  const supabase = await getSB()
 
-    // Validate and fetch paper with authors
-    const { data: paper, error: paperError } = await supabase
-      .from('papers')
-      .select(`
-        id, title, doi, url, venue, volume, issue, pages, publication_date, created_at,
-        paper_authors(
-          ordinal,
-          authors(id, name)
-        )
-      `)
-      .eq('id', params.paperId)
-      .single()
-
-    if (paperError || !paper) {
-      throw new Error(`Paper not found: ${params.paperId}`)
+    // Step 1: Resolve sourceRef to paperId
+    let paperId: string | null = null
+    
+    if (params.sourceRef.paperId) {
+      // Direct paperId provided
+      paperId = params.sourceRef.paperId
+    } else {
+      // Resolve DOI/title/URL to paperId
+      paperId = await this.resolveSourceRef(params.sourceRef, params.projectId)
     }
 
-    // Build and validate CSL JSON from paper
-    const cslJson = buildCSLFromPaper(paper as unknown as PaperWithAuthors)
-    const isValid = await validateCSL(cslJson)
-    if (!isValid) {
-      throw new Error('Generated CSL JSON is invalid')
+    if (!paperId) {
+      throw new Error(`Could not resolve source reference: ${JSON.stringify(params.sourceRef)}`)
     }
 
-    // Persist via unified RPC with idempotency (handles uniqueness constraint and numbering)
-    // The UNIQUE(project_id, paper_id) constraint ensures race-safe deduplication
-    const { data: result, error: citationError } = await supabase
-      .rpc('add_citation_unified', {
-        p_project_id: params.projectId,
-        p_paper_id: params.paperId,
-        p_csl_json: cslJson,
-        p_reason: params.reason,
-        p_quote: params.quote || null
-      })
-      .single()
+    // Step 2: Validate and fetch paper with authors
+  const { data: paper, error: paperError } = await supabase
+    .from('papers')
+    .select(`
+      id, title, doi, url, venue, volume, issue, pages, publication_date, created_at,
+      paper_authors(
+        ordinal,
+        authors(id, name)
+      )
+    `)
+      .eq('id', paperId)
+    .single()
+
+  if (paperError || !paper) {
+      throw new Error(`Paper not found: ${paperId}`)
+    }
+
+        // Step 3: Build and validate CSL JSON from paper
+    const rawCSL = buildCSLFromPaper(paper as unknown as PaperWithAuthors)
+    
+    // Apply normalization pipeline
+    const { validateAndNormalizeCSL } = await import('@/lib/utils/csl')
+    const validation = await validateAndNormalizeCSL(rawCSL)
+    
+    if (!validation.isValid) {
+      throw new Error(`CSL validation failed: ${validation.errors?.join(', ')}`)
+    }
+    
+    const cslJson = validation.normalized!
+
+        // Step 3: Persist via unified RPC with idempotency (handles uniqueness constraint and numbering)
+        // The UNIQUE(project_id, paper_id) constraint ensures race-safe deduplication
+    const { data: rpcResult, error: citationError } = await supabase
+    .rpc('add_citation_unified', {
+      p_project_id: params.projectId,
+        p_paper_id: paperId,
+      p_csl_json: cslJson,
+      p_reason: params.reason,
+      p_quote: params.quote || null
+    })
+    .single()
 
     if (citationError) {
       // Check if error is due to constraint violation (concurrent add)
@@ -333,50 +370,142 @@ export class CitationService {
         // Race condition detected, fetch existing citation
         const { data: existing, error: fetchError } = await supabase
           .from('project_citations')
-          .select('number, csl_json')
+          .select('id, csl_json, cite_key')
           .eq('project_id', params.projectId)
-          .eq('paper_id', params.paperId)
+          .eq('paper_id', paperId)
           .single()
 
         if (fetchError || !existing) {
           throw new Error(`Citation constraint violation but unable to fetch existing: ${fetchError?.message}`)
         }
 
-        const citeKey = `${params.projectId}-${params.paperId}`
-        return {
-          citationNumber: existing.number,
-          cslJson: existing.csl_json as CSLItem,
+        const citeKey = existing.cite_key || `${params.projectId}-${paperId}`
+        const result = {
+          citeKey,
+          projectCitationId: existing.id,
           isNew: false,
-          citeKey
+          citationNumber: undefined, // Legacy field removed
+          cslJson: existing.csl_json as CSLItem // Backward compatibility
         }
+        
+        // Emit realtime event even for existing citations (client might need refresh)
+        await this.emitCitationChangedEvent(params.projectId, citeKey, false)
+        
+        return result
       }
       
       throw new Error(`Failed to add citation: ${citationError.message}`)
     }
 
-    if (!result) {
+    if (!rpcResult) {
       throw new Error('Citation RPC returned no result')
     }
 
-    const { citation_number, is_new, cite_key } = result as { 
-      citation_number: number; 
+    const { is_new, cite_key } = rpcResult as { 
       is_new: boolean;
       cite_key?: string;
     }
     
     // Use returned cite_key or generate fallback
-    const citeKey = cite_key || `${params.projectId}-${params.paperId}`
+    const citeKey = cite_key || `${params.projectId}-${paperId}`
     
-    return { 
-      citationNumber: citation_number, 
-      cslJson, 
-      isNew: is_new,
-      citeKey
+    // Get the project citation ID from the inserted row
+    const { data: insertedCitation, error: fetchError } = await supabase
+      .from('project_citations')
+      .select('id')
+      .eq('project_id', params.projectId)
+      .eq('paper_id', paperId)
+      .single()
+    
+    if (fetchError || !insertedCitation) {
+      throw new Error('Failed to fetch inserted citation ID')
     }
+    
+    const finalResult = { 
+      citeKey,
+      projectCitationId: insertedCitation.id,
+      isNew: is_new,
+      citationNumber: undefined, // Legacy field removed
+      cslJson // Backward compatibility
+    }
+    
+    // Log successful citation addition
+    const metrics = timer.end()
+    citationLogger.logCitationAdded({
+      operation: 'citation_added',
+      projectId: params.projectId,
+      citeKey,
+      requestId,
+      metrics,
+      isNew: finalResult.isNew
+    })
+    
+    // Emit realtime event for citation changes
+    await this.emitCitationChangedEvent(params.projectId, citeKey, finalResult.isNew)
+    
+    return finalResult
   }
 
+  // Legacy method for backward compatibility
   static async renderInline(cslJson: CSLItem, style: string, number: number): Promise<string> {
     return formatInlineCitation(cslJson, style, number)
+  }
+
+  // New method matching the task requirements
+  static async renderInlineMultiple(params: {
+    projectId: string
+    citeKeys: string[]
+    style: 'apa' | 'mla' | 'chicago' | 'ieee'
+  }): Promise<string[]> {
+    const supabase = await getSB()
+    
+    if (params.citeKeys.length === 0) {
+      return []
+    }
+    
+    // Fetch citations for the given citeKeys in this project
+    const { data: citations, error } = await supabase
+      .from('project_citations')
+      .select('cite_key, csl_json, first_seen_order')
+      .eq('project_id', params.projectId)
+      .in('cite_key', params.citeKeys)
+      .order('first_seen_order')
+    
+    if (error) {
+      throw new Error(`Failed to fetch citations: ${error.message}`)
+    }
+    
+    if (!citations || citations.length === 0) {
+      // Return empty strings for missing citations
+      return params.citeKeys.map(() => '')
+    }
+    
+    // Create a map for quick lookup
+    const citationMap = new Map(citations.map((c: any) => [c.cite_key, c]))
+    
+    // Render each citation in the requested order
+    const rendered: string[] = []
+    for (const citeKey of params.citeKeys) {
+      const citation = citationMap.get(citeKey)
+      if (!citation) {
+        rendered.push('') // Missing citation
+        continue
+      }
+      
+      try {
+        const formatted = formatInlineCitation(
+          (citation as any).csl_json as CSLItem,
+          params.style,
+          (citation as any).first_seen_order
+        )
+        rendered.push(formatted)
+      } catch (error) {
+        console.error(`Failed to format citation ${citeKey}:`, error)
+        rendered.push(`[Error: ${citeKey}]`)
+      }
+    }
+    
+    return rendered
   }
 
   static async renderBibliography(projectId: string, style: keyof typeof BIBLIOGRAPHY_STYLES = 'apa'): Promise<BibliographyResult> {
@@ -388,8 +517,60 @@ export class CitationService {
     return []
   }
 
+  /**
+   * Emit realtime event for citation changes
+   * Purpose: Notify clients to refresh bibliography/inline disambiguation
+   */
+  private static async emitCitationChangedEvent(
+    projectId: string, 
+    citeKey: string, 
+    isNew: boolean
+  ): Promise<void> {
+    try {
+      const supabase = await getSB()
+      
+      // Initialize channel on first use to prevent socket leaks
+      if (!this.realtimeChannel) {
+        this.realtimeChannel = supabase.channel('citations-changes')
+      }
+      
+      // Publish realtime payload {projectId, citeKey}
+      const payload = {
+        projectId,
+        citeKey,
+        isNew,
+        timestamp: new Date().toISOString()
+      }
+      
+      if (this.realtimeChannel && typeof this.realtimeChannel === 'object') {
+        const channel = this.realtimeChannel as { send: (data: unknown) => Promise<unknown> }
+        await channel.send({
+          type: 'broadcast',
+          event: 'citation-changed',
+          payload
+        })
+      }
+      
+    } catch (error) {
+      // Don't throw on realtime errors - citation success is more important
+      console.warn('Failed to emit citation changed event:', error)
+    }
+  }
+
   static async resolveSourceRef(sourceRef: { doi?: string; title?: string; year?: number }, projectId?: string): Promise<string | null> {
+    const timer = citationLogger.startTimer()
     const supabase = await getSB()
+    
+    // Get user ID from project for library preference
+    let userId: string | null = null
+    if (projectId) {
+      const { data: project } = await supabase
+        .from('research_projects')
+        .select('user_id')
+        .eq('id', projectId)
+        .single()
+      userId = project?.user_id || null
+    }
     
     // Normalize DOI if provided
     if (sourceRef.doi) {
@@ -419,96 +600,123 @@ export class CitationService {
       }
     }
     
-    // Fallback to title + year fuzzy match
+    // Fallback to title + year fuzzy match using reusable library
     if (sourceRef.title) {
       const { data: papers } = await supabase
         .from('papers')
         .select('id, title, publication_date')
         .ilike('title', `%${sourceRef.title}%`)
-        .limit(10)
+        .limit(20) // Increased limit for better matching
       
       if (papers && papers.length > 0) {
-        // Compute distances and year preference
-        const candidates = papers.map(paper => {
-          const distance = this.levenshteinDistance(
-            (sourceRef.title || '').toLowerCase(),
-            (paper.title || '').toLowerCase()
-          )
-          const pubYear = new Date(paper.publication_date || '').getFullYear()
-          const yearMatch = sourceRef.year ? pubYear === sourceRef.year : false
-          return { paper, distance, yearMatch }
-        })
+        // Convert to candidates format
+        const candidates: PaperCandidate[] = papers.map((paper: any) => ({
+          id: paper.id,
+          title: paper.title || '',
+          year: paper.publication_date ? new Date(paper.publication_date).getFullYear() : undefined
+        }))
 
-        // Filter by threshold (≤ 2 edits) or exact year match loosens distance by 1
-        const threshold = 2
-        let acceptable = candidates.filter(c => c.distance <= threshold || (c.yearMatch && c.distance <= threshold + 1))
-        if (acceptable.length === 0) acceptable = candidates
-
-        // If projectId provided, prefer papers already cited in the project on ties
+        // Get preferred paper IDs (user library + already cited papers)
         let preferredIds = new Set<string>()
+        
+        // Add papers from user's library (primary preference)
+        if (userId) {
+          const { data: libraryPapers } = await supabase
+            .from('library_papers')
+            .select('paper_id')
+            .eq('user_id', userId)
+          
+          if (libraryPapers) {
+            libraryPapers.forEach((lp: any) => preferredIds.add(lp.paper_id))
+          }
+        }
+        
+        // Add papers already cited in this project (secondary preference)
         if (projectId) {
           const { data: citedRows } = await supabase
             .from('project_citations')
             .select('paper_id')
             .eq('project_id', projectId)
-          preferredIds = new Set((citedRows || []).map(r => r.paper_id))
+          
+          if (citedRows) {
+            citedRows.forEach((r: any) => preferredIds.add(r.paper_id))
+          }
         }
 
-        // Sort by (distance asc, yearMatch desc, preferred desc)
-        acceptable.sort((a, b) => {
-          if (a.distance !== b.distance) return a.distance - b.distance
-          if (a.yearMatch !== b.yearMatch) return (b.yearMatch ? 1 : 0) - (a.yearMatch ? 1 : 0)
-          const aPref = preferredIds.has(a.paper.id)
-          const bPref = preferredIds.has(b.paper.id)
-          if (aPref !== bPref) return aPref ? -1 : 1
-          return 0
-        })
+        // Use fuzzy matching library
+        const match = findBestTitleMatch(
+          sourceRef.title,
+          sourceRef.year,
+          candidates,
+          {
+            threshold: 2,
+            minSimilarity: 0.8,
+            yearBonus: 1,
+            preferredIds
+          }
+        )
 
-        const best = acceptable[0]
-        if (best && best.distance <= threshold + (best.yearMatch ? 1 : 0)) {
-          return best.paper.id
+        if (match) {
+          const metrics = timer.end()
+          citationLogger.logResolverPerformance({
+            operation: 'resolver',
+            projectId,
+            userId,
+            metrics,
+            sourceRef,
+            resolved: true,
+            resolvedPaperId: match.paper.id
+          })
+          return match.paper.id
         }
       }
     }
+    
+    // Log failed resolution
+    const metrics = timer.end()
+    citationLogger.logResolverPerformance({
+      operation: 'resolver',
+      projectId,
+      userId,
+      metrics,
+      sourceRef,
+      resolved: false
+    })
     
     return null
   }
 
-  private static levenshteinDistance(str1: string, str2: string): number {
-    const matrix = []
-    
-    for (let i = 0; i <= str2.length; i++) {
-      matrix[i] = [i]
-    }
-    
-    for (let j = 0; j <= str1.length; j++) {
-      matrix[0][j] = j
-    }
-    
-    for (let i = 1; i <= str2.length; i++) {
-      for (let j = 1; j <= str1.length; j++) {
-        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1]
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1, // substitution
-            matrix[i][j - 1] + 1,     // insertion
-            matrix[i - 1][j] + 1      // deletion
-          )
-        }
-      }
-    }
-    
-    return matrix[str2.length][str1.length]
-  }
+
 }
 
 // Legacy export for backward compatibility
-export async function addCitationUnified(params: AddCitationParams): Promise<{ citationNumber: number; cslJson: CSLItem; isNew: boolean }> {
-  const result = await CitationService.add(params)
+interface LegacyAddCitationParams {
+  projectId: string
+  paperId: string
+  reason: string
+  quote?: string | null
+}
+
+export async function addCitationUnified(params: LegacyAddCitationParams): Promise<{ citationNumber: number; cslJson: CSLItem; isNew: boolean }> {
+  const result = await CitationService.add({
+    projectId: params.projectId,
+    sourceRef: { paperId: params.paperId },
+    reason: params.reason,
+    quote: params.quote
+  })
+  
+  // For legacy compatibility, we'll compute citation number from first_seen_order
+  // This is a temporary bridge until all callers are updated
+  const supabase = await getSB()
+  const { data: citation } = await supabase
+    .from('project_citations')
+    .select('first_seen_order')
+    .eq('id', result.projectCitationId)
+    .single()
+  
   return {
-    citationNumber: result.citationNumber,
-    cslJson: result.cslJson,
+    citationNumber: citation?.first_seen_order || 1,
+    cslJson: result.cslJson!,
     isNew: result.isNew
   }
 }
@@ -544,5 +752,6 @@ export function formatInlineCitation(cslJson: CSLItem, style: string, number: nu
       return `[${number}]`
     default:
       return `(${authors[0]?.family || 'Unknown'}, ${year})`
+  }
   }
 }

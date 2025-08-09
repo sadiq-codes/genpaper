@@ -13,6 +13,7 @@ GenPaper uses a modular, service-oriented architecture for AI-powered content ge
 - Methods: `add()`, `renderInline()`, `renderBibliography()`, `suggest()`
 - Race-safe uniqueness with `UNIQUE(project_id, paper_id)` constraint
 - Idempotent operations with graceful fallbacks
+- Source resolution: `resolveSourceRef({ doi|title|year })` with DOI normalization, fuzzy matching, and project-cited preference
 
 **ContextRetrievalService** (`lib/generation/context-retrieval-service.ts`)
 - Unified embeddings + keyword search with per-request caching
@@ -28,6 +29,7 @@ GenPaper uses a modular, service-oriented architecture for AI-powered content ge
 - Pure prompt construction with no network/DB calls
 - Template caching, Mustache rendering, utility methods
 - `buildUnified()`, `buildPlanningPrompt()`, `buildCritiquePrompt()`
+- Delegates to pure `PromptBuilder` (`lib/core/prompt-builder.ts`) for rendering
 
 #### Generation Orchestrator
 
@@ -68,6 +70,9 @@ const result = await GenerationOrchestrator.generateSection({
 GENPIPE_UNIFIED_CITATIONS=true   # Use CitationService for all paths
 GENPIPE_BATCHED_CITES=true       # Enable placeholder workflow  
 GENPIPE_RETRIEVAL_SVC=true       # Use ContextRetrievalService
+SEARCH_ORCH_ONLY=true            # Route search via SearchOrchestrator
+CITATIONS_UNIFIED=true           # Force unified citation path everywhere
+SERVICE_LAYER_ONLY=true          # Enforce services boundary for DB access
 ```
 
 #### Performance & Observability

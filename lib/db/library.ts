@@ -1,6 +1,6 @@
 import { Paper, LibraryPaper, LibraryCollection, Tag, LibraryFilters, PaperMetadata, Author } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
-import { createClient as createBrowserSupabaseClient } from '@/lib/supabase/client'
+// Legacy browser client import removed - use API endpoints for client operations
 import type { CSLItem } from '@/lib/utils/csl'
 import { 
   transformPaperWithAuthors, 
@@ -332,79 +332,7 @@ export async function removeTagFromLibraryPaper(
   if (error) throw error
 }
 
-// Browser client functions for client components
-export const clientLibraryOperations = {
-  async getUserLibrary(filters: LibraryFilters = {}, limit = 20, offset = 0): Promise<LibraryPaper[]> {
-    const supabase = createBrowserSupabaseClient()
-    
-    let query = supabase
-      .from('library_papers')
-      .select(PAPER_WITH_AUTHORS_SELECT)
-
-    // Apply filters and sorting using shared utilities
-    query = applyFilters(query, filters)
-    query = applySorting(query, filters.sortBy || 'added_at', filters.sortOrder || 'desc')
-
-    const { data, error } = await query.range(offset, offset + limit - 1)
-
-    if (error) throw error
-
-    // Transform using shared utility
-    return (data || []).map(transformPaperWithAuthors)
-  },
-
-  async addToLibrary(paperId: string, notes?: string) {
-    const supabase = createBrowserSupabaseClient()
-    
-    const { data, error } = await supabase
-      .from('library_papers')
-      .insert({
-        paper_id: paperId,
-        notes
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-    return data
-  },
-
-  async removeFromLibrary(paperId: string) {
-    const supabase = createBrowserSupabaseClient()
-    
-    const { error } = await supabase
-      .from('library_papers')
-      .delete()
-      .eq('paper_id', paperId)
-
-    if (error) throw error
-  },
-
-  async isInLibrary(paperId: string) {
-    const supabase = createBrowserSupabaseClient()
-    
-    const { data, error } = await supabase
-      .from('library_papers')
-      .select('id')
-      .eq('paper_id', paperId)
-      .single()
-
-    if (error && error.code !== 'PGRST116') throw error
-    return !!data
-  },
-
-  async getCollections(): Promise<LibraryCollection[]> {
-    const supabase = createBrowserSupabaseClient()
-    
-    const { data, error } = await supabase
-      .from('library_collections')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    if (error) throw error
-    return data || []
-  }
-}
+// Legacy clientLibraryOperations removed - use API endpoints instead
 
 export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]> {
   const supabase = await getSB()

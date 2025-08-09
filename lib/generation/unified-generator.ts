@@ -4,6 +4,7 @@ import { ai } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, checkTopicDrift, type SectionContext, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
 import { addCitation } from '@/lib/ai/tools/addCitation'
 import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
+import { createCitationStreamProcessor } from '@/lib/generation/stream-processor'
 
 // 🆕 OPTIMIZATION: Context caching system
 interface CachedSectionContext {
@@ -186,6 +187,14 @@ export async function generateWithUnifiedTemplate(
     maxTokens: options.maxTokens
   })
 
+  // Initialize citation stream processor for better batching
+  const citationProcessor = createCitationStreamProcessor({
+    projectId: context.projectId,
+    batchSize: 5,
+    sentenceBufferSize: 2,
+    flushTimeoutMs: 1500
+  })
+
   const sentenceEnd = /([.!?])\s+(?=[A-Z])/;
   let pendingText = '';
 
@@ -196,25 +205,46 @@ export async function generateWithUnifiedTemplate(
       while ((match = sentenceEnd.exec(pendingText))) {
         const sentence = pendingText.slice(0, match.index + 1)
         pendingText = pendingText.slice(match.index + 1)
-        fullContent += sentence
-        onStreamEvent?.({ type: 'sentence', data: { text: sentence }})
+        
+        // Process sentence through citation stream processor
+        const processed = await citationProcessor.processChunk(sentence)
+        if (processed.text) {
+          fullContent += processed.text
+          onStreamEvent?.({ type: 'sentence', data: { text: processed.text }})
+        }
       }
     } else if (delta.type === 'tool-call' && delta.toolName === 'addCitation') {
         // flush any remaining text before citation
         if (pendingText) {
-            fullContent += pendingText
-            onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})
+            const processed = await citationProcessor.processChunk(pendingText)
+            if (processed.text) {
+              fullContent += processed.text
+              onStreamEvent?.({ type: 'sentence', data: { text: processed.text }})
+            }
             pendingText = ''
         }
         onStreamEvent?.({ type: 'citation', data: delta })
     }
   }
 
-  // flush any final text
+  // flush any final text and remaining citations
   if (pendingText) {
-      fullContent += pendingText
-      onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})
+      const processed = await citationProcessor.processChunk(pendingText)
+      if (processed.text) {
+        fullContent += processed.text
+        onStreamEvent?.({ type: 'sentence', data: { text: processed.text }})
+      }
   }
+
+  // Final flush to resolve any remaining placeholders
+  const finalFlush = await citationProcessor.flush()
+  if (finalFlush.text) {
+    fullContent += finalFlush.text
+    onStreamEvent?.({ type: 'sentence', data: { text: finalFlush.text }})
+  }
+
+  // Clean up processor
+  citationProcessor.clear()
 
   try {
     const usage = await result.usage
@@ -286,35 +316,7 @@ export async function generateFullSection(
   })
 }
 
-// Block-level rewrite
-export async function rewriteBlock(
-  context: SectionContext & { blockId: string },
-  onProgress?: UnifiedGenerationConfig['onStreamEvent']
-): Promise<UnifiedGenerationResult> {
-  return generateWithUnifiedTemplate({
-    context,
-    options: {
-      forceRewrite: true,
-      targetWords: context.contextChunks.reduce((acc, c) => acc + c.content.split(' ').length, 0)
-    },
-    onStreamEvent: onProgress
-  })
-}
-
-// Sentence-level edit
-export async function editSentence(
-  context: SectionContext & { blockId: string },
-  onProgress?: UnifiedGenerationConfig['onStreamEvent']
-): Promise<UnifiedGenerationResult> {
-  return generateWithUnifiedTemplate({
-    context,
-    options: {
-      sentenceMode: true,
-      targetWords: 30
-    },
-    onStreamEvent: onProgress
-  })
-}
+// Block-specific helpers removed during migration to document-level diff edits
 
 /**
  * Batch processing - process multiple sections with unified approach

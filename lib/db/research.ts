@@ -209,7 +209,7 @@ export async function addProjectCitation(
   positionStart?: number,
   positionEnd?: number,
   pageRange?: string,
-  blockId?: string
+  // blockId removed
 ): Promise<ProjectCitation> {
   const supabase = await getSB()
   const { data, error } = await supabase
@@ -222,7 +222,7 @@ export async function addProjectCitation(
       position_start: positionStart,
       position_end: positionEnd,
       page_range: pageRange,
-      block_id: blockId
+  // block_id removed
     })
     .select()
     .single()

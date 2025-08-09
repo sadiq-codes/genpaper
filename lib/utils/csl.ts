@@ -307,6 +307,159 @@ export async function validateCSL(csl: unknown): Promise<boolean> {
 }
 
 /**
+ * CSL Normalization Pipeline
+ * Ensures consistent CSL JSON formatting and validation
+ */
+
+export function normalizeCSLAuthor(author: Partial<CSLAuthor>): CSLAuthor {
+  // Handle various author formats and normalize
+  if (author.literal) {
+    return { 
+      family: author.literal, 
+      given: '', 
+      literal: author.literal 
+    }
+  }
+  
+  const family = (author.family || '').trim()
+  const given = (author.given || '').trim()
+  
+  if (!family && !given) {
+    return { family: 'Unknown', given: '', literal: 'Unknown' }
+  }
+  
+  return {
+    family: family || 'Unknown',
+    given: given || '',
+    ...(author.literal && { literal: author.literal })
+  }
+}
+
+export function normalizeCSLDate(date: unknown): { 'date-parts': number[][] } | undefined {
+  if (!date) return undefined
+  
+  if (typeof date === 'object' && date !== null && 'date-parts' in date) {
+    const dateParts = (date as any)['date-parts']
+    if (Array.isArray(dateParts) && Array.isArray(dateParts[0])) {
+      return { 'date-parts': dateParts }
+    }
+  }
+  
+  // Try to parse string dates
+  if (typeof date === 'string') {
+    const parsed = new Date(date)
+    if (!isNaN(parsed.getTime())) {
+      return { 'date-parts': [[parsed.getFullYear()]] }
+    }
+  }
+  
+  // Try to parse number (year)
+  if (typeof date === 'number' && date > 1000 && date < 3000) {
+    return { 'date-parts': [[date]] }
+  }
+  
+  return undefined
+}
+
+export function normalizeCSL(csl: Partial<CSLItem>): CSLItem {
+  // Ensure required fields
+  const id = csl.id || `temp_${Date.now()}`
+  const title = (csl.title || '').trim() || 'Untitled'
+  const type = csl.type || 'article'
+  
+  // Normalize authors
+  const authors = Array.isArray(csl.author) 
+    ? csl.author.map(normalizeCSLAuthor)
+    : []
+  
+  // Normalize dates
+  const issued = normalizeCSLDate(csl.issued)
+  
+  // Normalize container title
+  const containerTitle = csl['container-title']?.trim() || undefined
+  
+  // Normalize DOI (remove URL prefixes)
+  let doi = csl.DOI?.trim()
+  if (doi) {
+    doi = doi
+      .replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
+      .replace(/^doi:/, '')
+      .toLowerCase()
+  }
+  
+  // Normalize URL
+  let url = csl.URL?.trim()
+  if (url && !url.match(/^https?:\/\//)) {
+    url = `https://${url}`
+  }
+  
+  // Build normalized CSL
+  const normalized: CSLItem = {
+    id,
+    type: type as CSLItem['type'],
+    title,
+    author: authors,
+    ...(containerTitle && { 'container-title': containerTitle }),
+    ...(issued && { issued }),
+    ...(doi && { DOI: doi }),
+    ...(url && { URL: url }),
+    ...(csl.abstract?.trim() && { abstract: csl.abstract.trim() }),
+    ...(csl.page?.trim() && { page: csl.page.trim() }),
+    ...(csl.volume?.trim() && { volume: csl.volume.trim() }),
+    ...(csl.issue?.trim() && { issue: csl.issue.trim() }),
+    ...(csl.publisher?.trim() && { publisher: csl.publisher.trim() }),
+    ...(csl['publisher-place']?.trim() && { 'publisher-place': csl['publisher-place'].trim() }),
+    ...(csl.ISBN?.trim() && { ISBN: csl.ISBN.trim() }),
+    ...(csl.ISSN?.trim() && { ISSN: csl.ISSN.trim() }),
+    ...(csl.keyword?.trim() && { keyword: csl.keyword.trim() }),
+    ...(csl.note?.trim() && { note: csl.note.trim() })
+  }
+  
+  return normalized
+}
+
+/**
+ * Validate and normalize CSL JSON
+ * Ensures consistent format and validates against schema
+ */
+export async function validateAndNormalizeCSL(csl: unknown): Promise<{ isValid: boolean; normalized?: CSLItem; errors?: string[] }> {
+  const errors: string[] = []
+  
+  // Basic type check
+  if (!csl || typeof csl !== 'object') {
+    return { isValid: false, errors: ['CSL must be an object'] }
+  }
+  
+  try {
+    // Normalize the CSL data
+    const normalized = normalizeCSL(csl as Partial<CSLItem>)
+    
+    // Validate against Zod schema
+    const schemaResult = CSLItemSchema.safeParse(normalized)
+    if (!schemaResult.success) {
+      errors.push(...schemaResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`))
+    }
+    
+    // Validate with citation-js
+    const citationJsValid = await validateCSL(normalized)
+    if (!citationJsValid) {
+      errors.push('CSL data failed citation-js validation')
+    }
+    
+    if (errors.length > 0) {
+      return { isValid: false, normalized, errors }
+    }
+    
+    return { isValid: true, normalized }
+  } catch (error) {
+    return { 
+      isValid: false, 
+      errors: [`Normalization failed: ${error instanceof Error ? error.message : 'Unknown error'}`] 
+    }
+  }
+}
+
+/**
  * Create a proper hash of CSL data for memoization
  */
 export function hashCSLData(cslData: CSLItem[]): string {

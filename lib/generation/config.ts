@@ -102,27 +102,4 @@ export function hasUnacceptableScores(
   return !permissive;
 } 
 
-/**
- * Block generation configuration constants
- * Extracted from hardcoded values for better maintainability
- */
-export const BLOCK_GENERATION_CONFIG = {
-  maxSteps: 5,
-  temperature: 0.2,
-  bufferSizeLimit: 800,
-  progressReportInterval: 20,
-  defaultModel: 'gpt-4o',
-  sentenceBreakPoints: /[.!?]\s+/g,
-  wordBoundaryThreshold: 2, // Minimum words before force-breaking
-} as const
-
-/**
- * Block detection thresholds and patterns
- */
-export const BLOCK_DETECTION_CONFIG = {
-  minParagraphLength: 50,
-  maxBufferSize: 800,
-  forceBreakAtSentence: true,
-  headingLevels: [1, 2, 3, 4, 5, 6] as const,
-  codeBlockLanguages: ['javascript', 'typescript', 'python', 'sql', 'bash', 'json', 'yaml'] as const
-} as const
+// Block-specific configs removed during migration to single-document diff editor.

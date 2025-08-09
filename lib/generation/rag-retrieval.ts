@@ -1,4 +1,6 @@
 import { searchPaperChunks } from '@/lib/db/papers'
+import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
+import { isRetrievalServiceEnabled } from '@/lib/config/feature-flags'
 import { getPapersByIds } from '@/lib/db/library'
 import type { PaperWithAuthors } from '@/types/simplified'
 import { getContentStatus, ensureBulkContentIngestion } from '@/lib/content'
@@ -121,11 +123,9 @@ export async function getRelevantChunks(
     try {
       console.log(`📄 Chunk search attempt (${attempt.label}) with minScore=${attempt.minScore}`)
       
-      const searchResultsRaw = await searchPaperChunks(topic, {
-        paperIds: attempt.paperIds,
-        limit: chunkLimit * 2,
-        minScore: attempt.minScore
-      })
+      const searchResultsRaw = isRetrievalServiceEnabled()
+        ? (await ContextRetrievalService.retrieve({ query: topic, paperIds: attempt.paperIds, k: chunkLimit * 2, minScore: attempt.minScore })).chunks
+        : await searchPaperChunks(topic, { paperIds: attempt.paperIds, limit: chunkLimit * 2, minScore: attempt.minScore })
 
       const searchResults = searchResultsRaw.map(result => ({
         id: createDeterministicChunkId(result.paper_id, result.content),

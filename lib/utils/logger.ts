@@ -36,7 +36,7 @@ interface CitationMetrics {
   tool_duration_ms: number
   success: boolean
   error?: string
-  citation_number?: number
+  // citation_number removed - using first_seen_order for rendering
 }
 
 interface PDFMetrics {

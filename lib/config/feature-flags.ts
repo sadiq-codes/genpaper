@@ -28,6 +28,13 @@ export interface ArchitectureFlags {
   projectServiceApi: boolean
 }
 
+// Editor/Edits feature flags
+export interface EditorFlags {
+  editorDiffMode: boolean
+  editsApiEnabled: boolean
+  citationOffsetMode: boolean
+}
+
 export function getGenerationPipelineFlags(): GenerationPipelineFlags {
   return {
     unifiedCitations: readBooleanFlag('GENPIPE_UNIFIED_CITATIONS'),
@@ -42,6 +49,14 @@ export function getArchitectureFlags(): ArchitectureFlags {
     searchOrchOnly: readBooleanFlag('SEARCH_ORCH_ONLY'),
     serviceLayerOnly: readBooleanFlag('SERVICE_LAYER_ONLY'),
     projectServiceApi: readBooleanFlag('PROJECT_SERVICE_API'),
+  }
+}
+
+export function getEditorFlags(): EditorFlags {
+  return {
+    editorDiffMode: readBooleanFlag('EDITOR_DIFF_MODE'),
+    editsApiEnabled: readBooleanFlag('EDITS_API_ENABLED'),
+    citationOffsetMode: readBooleanFlag('CITATION_OFFSET_MODE'),
   }
 }
 
@@ -72,6 +87,19 @@ export function isServiceLayerOnlyEnabled(): boolean {
 
 export function isProjectServiceApiEnabled(): boolean {
   return readBooleanFlag('PROJECT_SERVICE_API')
+}
+
+// Editor flag accessors
+export function isEditorDiffModeEnabled(): boolean {
+  return readBooleanFlag('EDITOR_DIFF_MODE')
+}
+
+export function isEditsApiEnabled(): boolean {
+  return readBooleanFlag('EDITS_API_ENABLED')
+}
+
+export function isCitationOffsetModeEnabled(): boolean {
+  return readBooleanFlag('CITATION_OFFSET_MODE')
 }
 
 // Dummy code path for testing

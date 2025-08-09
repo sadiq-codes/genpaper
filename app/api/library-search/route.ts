@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { unifiedSearch } from '@/lib/search'
+import { SearchOrchestrator } from '@/lib/services/search-orchestrator'
 import { z } from 'zod'
 
 // Lightweight search schema for Library Manager
@@ -64,18 +64,11 @@ export async function POST(request: NextRequest) {
 
     console.log(`📚 Fast Library Search (unified): "${query}" (${options.sources?.join(', ')})`)
 
-    // Route through unified orchestrator only
-    const searchPromise = unifiedSearch(query, {
+    // Route through SearchOrchestrator for unified library search
+    const searchPromise = SearchOrchestrator.search({
+      query,
       maxResults: options.maxResults,
-      minResults: Math.min(5, options.maxResults || 20),
-      sources: options.sources as any,
-      useHybridSearch: true,
-      useKeywordSearch: true,
-      useAcademicAPIs: true,
-      combineResults: true,
-      fastMode: options.fastMode,
-      fromYear: options.fromYear,
-      toYear: options.toYear
+      includeLibraryOnly: true // Library search only
     })
 
     // **TIMEOUT CONTROL**: Maximum 10 seconds for library search

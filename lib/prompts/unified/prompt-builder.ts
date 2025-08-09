@@ -37,7 +37,7 @@ export interface UnifiedPromptData {
 export interface SectionContext {
   projectId: string
   sectionId: string
-  blockId?: string // For block-level edits
+  // blockId removed in migration to document-level diffs
   paperType: PaperTypeKey
   sectionKey: SectionKey
   availablePapers: string[]
@@ -97,7 +97,6 @@ async function generatePromptData(
   const {
     projectId,
     sectionId,
-    blockId,
     availablePapers,
     contextChunks
   } = context
@@ -112,10 +111,10 @@ async function generatePromptData(
   const previousSummary = await buildPreviousSectionsSummary(projectId, sectionId)
   
   // Build section path (e.g., "Methods → Data Collection")
-  const sectionPath = await buildSectionPath(projectId, sectionId, blockId)
+  const sectionPath = await buildSectionPath(projectId, sectionId)
   
   // Get current text if this is a rewrite
-  const currentText = await getCurrentText(sectionId, blockId)
+  const currentText = await getCurrentText(sectionId)
   
   // Calculate target parameters
   const targetWords = options.targetWords || 
@@ -323,7 +322,7 @@ async function buildPreviousSectionsSummary(projectId: string, _currentSectionId
 /**
  * Build section path (e.g., "Methods → Data Collection → Survey Design")
  */
-async function buildSectionPath(projectId: string, sectionId: string, blockId?: string): Promise<string> {
+async function buildSectionPath(projectId: string, sectionId: string): Promise<string> {
   const supabase = await createClient()
   
   // Get section hierarchy
@@ -357,48 +356,22 @@ async function buildSectionPath(projectId: string, sectionId: string, blockId?: 
     }
   }
   
-  // Add block title if editing specific block
-  if (blockId) {
-    const blockSupabase = await createClient()
-    const { data: block } = await blockSupabase
-      .from('section_blocks')
-      .select('title')
-      .eq('id', blockId)
-      .single()
-    
-    if (block?.title) {
-      path.push(block.title)
-    }
-  }
-  
   return path.join(' → ')
 }
 
 /**
  * Get current text for rewrite operations
  */
-async function getCurrentText(sectionId: string, blockId?: string): Promise<string | null> {
+async function getCurrentText(sectionId: string): Promise<string | null> {
   const supabase = await createClient()
+  // Get full section content
+  const { data: section } = await supabase
+    .from('project_sections')
+    .select('content')
+    .eq('id', sectionId)
+    .single()
   
-  if (blockId) {
-    // Get specific block content
-    const { data: block } = await supabase
-      .from('section_blocks')
-      .select('content')
-      .eq('id', blockId)
-      .single()
-    
-    return block?.content || null
-  } else {
-    // Get full section content
-    const { data: section } = await supabase
-      .from('project_sections')
-      .select('content')
-      .eq('id', sectionId)
-      .single()
-    
-    return section?.content || null
-  }
+  return section?.content || null
 }
 
 /**

@@ -15,6 +15,8 @@ export {
 
 // Keep citation-specific functionality in this file
 import { searchPaperChunks } from '@/lib/db/papers'
+import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
+import { isRetrievalServiceEnabled } from '@/lib/config/feature-flags'
 import type { PaperWithAuthors, GenerationConfig } from '@/types/simplified'
 import type { PaperWithEvidence } from './types'
 import { 
@@ -98,11 +100,18 @@ export async function addEvidenceBasedCitations(
     if (chunks.length === 0) {
       try {
         console.log('🔄 No RAG chunks available – performing blind chunk search for evidence')
-        const fallbackRaw = await searchPaperChunks(papers[0]?.title ?? '', {
-          paperIds: papers.map(p => p.id),
-          limit: 40,
-          minScore: GENERATION_DEFAULTS.CHUNK_MIN_SCORE_FALLBACK
-        })
+        const fallbackRaw = isRetrievalServiceEnabled()
+          ? (await ContextRetrievalService.retrieve({
+              query: papers[0]?.title ?? '',
+              paperIds: papers.map(p => p.id),
+              k: 40,
+              minScore: GENERATION_DEFAULTS.CHUNK_MIN_SCORE_FALLBACK
+            })).chunks
+          : await searchPaperChunks(papers[0]?.title ?? '', {
+              paperIds: papers.map(p => p.id),
+              limit: 40,
+              minScore: GENERATION_DEFAULTS.CHUNK_MIN_SCORE_FALLBACK
+            })
         const fallbackChunks = fallbackRaw.map(result => ({
           id: createDeterministicChunkId(result.paper_id, result.content),
           paper_id: result.paper_id,

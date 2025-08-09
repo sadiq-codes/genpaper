@@ -50,6 +50,7 @@ export const CITATION_PLACEHOLDER_PATTERNS = {
 
 /**
  * Parse citation placeholders from text
+ * Returns {kind, value} for valid tokens; rejects invalid ones
  */
 export function parseCitationPlaceholders(text: string): PlaceholderCitation[] {
   const placeholders: PlaceholderCitation[] = []
@@ -86,6 +87,39 @@ export function parseCitationPlaceholders(text: string): PlaceholderCitation[] {
   }
   
   return placeholders
+}
+
+/**
+ * Parse a single placeholder token and return {kind, value}
+ * Acceptance criteria: Parser returns {kind, value} for valid tokens; rejects invalid.
+ */
+export function parseToken(token: string): { kind: ReferenceType; value: string } | null {
+  // Remove whitespace and validate format
+  const trimmed = token.trim()
+  
+  // Check if it matches the basic placeholder pattern
+  const match = trimmed.match(/^\[\[CITE:([^:]+):([^\]|]+)(?:\|[^\]]+)?\]\]$/)
+  if (!match) {
+    return null // Invalid format
+  }
+  
+  const [, type, value] = match
+  
+  // Validate reference type
+  if (!isValidReferenceType(type)) {
+    return null // Invalid reference type
+  }
+  
+  // Validate value is not empty
+  const cleanValue = value.trim()
+  if (!cleanValue) {
+    return null // Empty value
+  }
+  
+  return {
+    kind: type as ReferenceType,
+    value: cleanValue
+  }
 }
 
 /**

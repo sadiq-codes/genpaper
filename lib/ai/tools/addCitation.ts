@@ -93,7 +93,7 @@ export async function executeAddCitation(payload: CitationPayload) {
       isNew = data?.citation?.is_new ?? true
       
       if (!citationNumber || !cslJson) {
-        throw new Error('API response missing required fields (citation_number, csl_json)')
+        throw new Error('API response missing required fields (citation data)')
       }
       
     } catch (error) {
