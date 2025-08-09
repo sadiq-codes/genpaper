@@ -103,10 +103,7 @@ export async function getUserResearchProjects(
   const supabase = await getSB()
   const { data, error } = await supabase
     .from('research_projects')
-    .select(`
-      *,
-      latest_version:research_project_versions(*)
-    `)
+    .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit)
@@ -114,54 +111,30 @@ export async function getUserResearchProjects(
 
   if (error) throw error
 
-  // Get the latest version for each project
-  const projectsWithVersions = await Promise.all(
+  // Get citation counts for each project
+  const projectsWithCitations = await Promise.all(
     data.map(async (project) => {
-      const { data: latestVersion } = await supabase
-        .from('research_project_versions')
-        .select('*')
-        .eq('project_id', project.id)
-        .order('version', { ascending: false })
-        .limit(1)
-        .single()
-
       return {
         ...project,
-        latest_version: latestVersion,
+        latest_version: null, // No longer using versions
         citation_count: await getProjectCitationCount(project.id)
       }
     })
   )
 
-  return projectsWithVersions
+  return projectsWithCitations
 }
 
-export async function addProjectVersion(
+export async function updateProjectContent(
   projectId: string,
-  content: string,
-  version?: number
-): Promise<ResearchProjectVersion> {
+  content: string
+): Promise<ResearchProject> {
   const supabase = await getSB()
-  // If no version specified, get the next version number
-  if (!version) {
-    const { data: latestVersion } = await supabase
-      .from('research_project_versions')
-      .select('version')
-      .eq('project_id', projectId)
-      .order('version', { ascending: false })
-      .limit(1)
-      .single()
-
-    version = (latestVersion?.version || 0) + 1
-  }
-
+  
   const { data, error } = await supabase
-    .from('research_project_versions')
-    .insert({
-      project_id: projectId,
-      version,
-      content
-    })
+    .from('research_projects')
+    .update({ content })
+    .eq('id', projectId)
     .select()
     .single()
 
@@ -169,32 +142,28 @@ export async function addProjectVersion(
   return data
 }
 
-export async function getProjectVersions(
-  projectId: string,
-  limit = 10
-): Promise<ResearchProjectVersion[]> {
+export async function getProjectContent(
+  projectId: string
+): Promise<string | null> {
   const supabase = await getSB()
   const { data, error } = await supabase
-    .from('research_project_versions')
-    .select('*')
-    .eq('project_id', projectId)
-    .order('version', { ascending: false })
-    .limit(limit)
+    .from('research_projects')
+    .select('content')
+    .eq('id', projectId)
+    .single()
 
-  if (error) throw error
-  return data || []
+  if (error && error.code !== 'PGRST116') throw error
+  return data?.content || null
 }
 
-export async function getLatestProjectVersion(
+export async function getProjectWithContent(
   projectId: string
-): Promise<ResearchProjectVersion | null> {
+): Promise<ResearchProject | null> {
   const supabase = await getSB()
   const { data, error } = await supabase
-    .from('research_project_versions')
+    .from('research_projects')
     .select('*')
-    .eq('project_id', projectId)
-    .order('version', { ascending: false })
-    .limit(1)
+    .eq('id', projectId)
     .single()
 
   if (error && error.code !== 'PGRST116') throw error
@@ -203,26 +172,23 @@ export async function getLatestProjectVersion(
 
 export async function addProjectCitation(
   projectId: string,
-  version: number,
   paperId: string,
   citationText: string,
   positionStart?: number,
   positionEnd?: number,
-  pageRange?: string,
-  // blockId removed
+  pageRange?: string
 ): Promise<ProjectCitation> {
   const supabase = await getSB()
   const { data, error } = await supabase
     .from('project_citations')
     .insert({
       project_id: projectId,
-      version,
+      version: 1, // Default version since we're not using versioning anymore
       paper_id: paperId,
       citation_text: citationText,
       position_start: positionStart,
       position_end: positionEnd,
-      page_range: pageRange,
-  // block_id removed
+      page_range: pageRange
     })
     .select()
     .single()
@@ -360,19 +326,17 @@ export const clientResearchOperations = {
     return data
   },
 
-  async getLatestVersion(projectId: string) {
+  async getProjectContent(projectId: string) {
     const supabase = createBrowserSupabaseClient()
     
     const { data, error } = await supabase
-      .from('research_project_versions')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('version', { ascending: false })
-      .limit(1)
+      .from('research_projects')
+      .select('content')
+      .eq('id', projectId)
       .single()
 
     if (error && error.code !== 'PGRST116') throw error
-    return data
+    return data?.content || null
   },
 
   async getCitations(projectId: string, version?: number) {

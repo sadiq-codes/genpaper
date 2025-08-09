@@ -82,7 +82,9 @@ const fetchSSE = async (url: string): Promise<EventSource | null> => {
   console.log('📡 Creating EventSource for:', url)
   
   return new Promise((resolve, reject) => {
-    const eventSource = new EventSource(url, { 
+    // Always use a relative URL to respect current origin/port
+    const relativeUrl = url.startsWith('http') ? new URL(url).pathname + new URL(url).search : url
+    const eventSource = new EventSource(relativeUrl, { 
       withCredentials: true 
     })
     
@@ -90,7 +92,7 @@ const fetchSSE = async (url: string): Promise<EventSource | null> => {
     const timeout = setTimeout(() => {
       console.error('⏰ EventSource connection timeout after 10s')
       console.error('⏰ EventSource readyState:', eventSource.readyState)
-      console.error('⏰ EventSource url:', eventSource.url)
+      console.error('⏰ EventSource url:', relativeUrl)
       eventSource.close()
       reject(new Error('EventSource connection timeout'))
     }, 10000) // 10 second timeout
@@ -106,7 +108,7 @@ const fetchSSE = async (url: string): Promise<EventSource | null> => {
       clearTimeout(timeout)
       console.error('❌ EventSource connection error:', error)
       console.error('❌ EventSource readyState:', eventSource.readyState)
-      console.error('❌ EventSource url:', eventSource.url)
+      console.error('❌ EventSource url:', relativeUrl)
       
       // Check if it's a network error or server error
       if (eventSource.readyState === EventSource.CLOSED) {

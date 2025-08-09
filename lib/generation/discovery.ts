@@ -44,8 +44,8 @@ function isLikelyDirectPdfUrl(url: string): boolean {
   return directPdfPatterns.some(pattern => pattern.test(url))
 }
 import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
-import type { UnifiedSearchOptions, UnifiedSearchResult } from '@/lib/search/orchestrator'
-import { unifiedSearch } from '@/lib/search/orchestrator'
+import type { UnifiedSearchOptions, UnifiedSearchResult } from '@/lib/services/search-orchestrator'
+import { unifiedSearch } from '@/lib/services/search-orchestrator'
 import { pdfQueue } from '@/lib/services/pdf-queue'
 import { decideIngest } from './policy'
 

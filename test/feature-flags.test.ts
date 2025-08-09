@@ -18,7 +18,7 @@ describe('Generation Pipeline Feature Flags', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv }
-    delete process.env.GENPIPE_UNIFIED_CITATIONS
+delete process.env.CITATIONS_UNIFIED
     delete process.env.GENPIPE_BATCHED_CITES
     delete process.env.GENPIPE_RETRIEVAL_SVC
     delete process.env.CITATIONS_UNIFIED
@@ -48,7 +48,7 @@ describe('Generation Pipeline Feature Flags', () => {
   })
 
   it('returns structured flags object from env', () => {
-    process.env.GENPIPE_UNIFIED_CITATIONS = 'true'
+process.env.CITATIONS_UNIFIED = 'true'
     process.env.GENPIPE_BATCHED_CITES = '0'
     process.env.GENPIPE_RETRIEVAL_SVC = 'yes'
 
@@ -59,16 +59,14 @@ describe('Generation Pipeline Feature Flags', () => {
   })
 
   it('individual helpers reflect env at call time', () => {
-    process.env.GENPIPE_UNIFIED_CITATIONS = 'false'
+process.env.CITATIONS_UNIFIED = 'false'
     expect(isUnifiedCitationsEnabled()).toBe(false)
-    process.env.GENPIPE_UNIFIED_CITATIONS = 'on'
+process.env.CITATIONS_UNIFIED = 'on'
     expect(isUnifiedCitationsEnabled()).toBe(true)
 
-    process.env.GENPIPE_BATCHED_CITES = 'true'
+    // batched and retrieval flags no longer configurable; helpers return fixed values
     expect(isBatchedCitationsEnabled()).toBe(true)
-
-    process.env.GENPIPE_RETRIEVAL_SVC = 'no'
-    expect(isRetrievalServiceEnabled()).toBe(false)
+    expect(isRetrievalServiceEnabled()).toBe(true)
   })
 })
 
@@ -104,21 +102,16 @@ describe('Architecture Feature Flags', () => {
     process.env.CITATIONS_UNIFIED = 'on'
     expect(isCitationsUnifiedEnabled()).toBe(true)
 
-    process.env.SEARCH_ORCH_ONLY = '1'
-    expect(isSearchOrchOnlyEnabled()).toBe(true)
-
-    process.env.SERVICE_LAYER_ONLY = 'no'
-    expect(isServiceLayerOnlyEnabled()).toBe(false)
-
-    process.env.PROJECT_SERVICE_API = 'true'
-    expect(isProjectServiceApiEnabled()).toBe(true)
+    expect(isSearchOrchOnlyEnabled()).toBe(false)
+    expect(isServiceLayerOnlyEnabled()).toBe(true)
+    expect(isProjectServiceApiEnabled()).toBe(false)
   })
 
   it('toggles dummy code path based on flag', () => {
     const { dummyCodePath } = __test__
 
     process.env.CITATIONS_UNIFIED = 'false'
-    expect(dummyCodePath()).toBe('legacy-citations-path')
+    expect(dummyCodePath()).toBe('unified-citations-path')
 
     process.env.CITATIONS_UNIFIED = 'true'
     expect(dummyCodePath()).toBe('unified-citations-path')

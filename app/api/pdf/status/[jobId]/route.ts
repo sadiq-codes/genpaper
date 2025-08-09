@@ -7,7 +7,7 @@ import { pdfQueue } from '@/lib/services/pdf-queue'
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { jobId: string } }
+  { params }: { params: Promise<{ jobId: string }> }
 ) {
   try {
     const supabase = await createClient()
@@ -17,7 +17,8 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { jobId } = params
+    const resolvedParams = await params
+    const { jobId } = resolvedParams
 
     if (!jobId) {
       return NextResponse.json({ 

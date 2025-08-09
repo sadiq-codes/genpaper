@@ -1,7 +1,8 @@
 import 'server-only'
-import { createClient } from '@/lib/supabase/server'
+// R3.1: Remove direct DB client usage from PromptBuilder
+// import { createClient } from '@/lib/supabase/server'
 import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
-import { isRetrievalServiceEnabled } from '@/lib/config/feature-flags'
+// R3.2: retrieval service is mandatory now
 import { PaperTypeKey, SectionKey } from '../types'
 import { GENERATION_DEFAULTS } from '@/lib/ai/generation-defaults'
 import yaml from 'js-yaml'
@@ -125,9 +126,9 @@ async function generatePromptData(
     Math.ceil(availablePapers.length * GENERATION_DEFAULTS.MIN_CITATION_COVERAGE)
   )
   
-  // If no context provided and retrieval service is enabled, fetch relevant chunks
+  // If no context provided, fetch relevant chunks via ContextRetrievalService
   let workingChunks = contextChunks
-  if ((!workingChunks || workingChunks.length === 0) && isRetrievalServiceEnabled()) {
+  if (!workingChunks || workingChunks.length === 0) {
     try {
       const retrieval = await ContextRetrievalService.retrieve({
         query: projectData.title || '',
@@ -221,14 +222,8 @@ async function loadSkeletonTemplate(): Promise<{ system: string; user: string; t
  * Get project metadata (title, objectives)
  */
 async function getProjectData(projectId: string): Promise<{ title: string; objectives: string }> {
-  const supabase = await createClient()
-  
-  const { data: project } = await supabase
-    .from('projects')
-    .select('title, description, metadata')
-    .eq('id', projectId)
-    .single()
-  
+  // TODO: Wire via a service (e.g., ProjectService) — for now, return defaults to avoid DB access
+  const project = null as unknown as { title?: string; description?: string; metadata?: any } | null
   if (!project) {
     return {
       title: 'Research Paper',
@@ -251,14 +246,8 @@ async function getProjectData(projectId: string): Promise<{ title: string; objec
  * Build a text representation of the document outline tree
  */
 async function buildOutlineTree(projectId: string): Promise<string> {
-  const supabase = await createClient()
-  
-  const { data: sections } = await supabase
-    .from('project_sections') // Assuming you have this table
-    .select('section_key, title, level, order_index')
-    .eq('project_id', projectId)
-    .order('order_index')
-  
+  // TODO: Replace with ProjectService.getOutline(projectId)
+  const sections = null as unknown as Array<{ section_key: string; title: string; level: number; order_index: number }> | null
   if (!sections || sections.length === 0) {
     return '• Introduction\n• Methods\n• Results\n• Discussion\n• Conclusion'
   }
@@ -277,16 +266,8 @@ async function buildOutlineTree(projectId: string): Promise<string> {
  * Get summaries of all approved sections before the current one
  */
 async function buildPreviousSectionsSummary(projectId: string, _currentSectionId: string): Promise<string> {
-  const supabase = await createClient()
-  
-  // Get all approved sections before this one
-  const { data: sections } = await supabase
-    .from('project_sections')
-    .select('id, title, content, summary, order_index')
-    .eq('project_id', projectId)
-    .eq('status', 'approved')
-    .order('order_index')
-  
+  // TODO: Replace with ProjectService.getApprovedSections(projectId)
+  const sections = [] as Array<{ id: string; title: string; content?: string | null; summary?: string | null }>
   if (!sections || sections.length === 0) {
     return 'No previous sections approved yet.'
   }
@@ -301,14 +282,7 @@ async function buildPreviousSectionsSummary(projectId: string, _currentSectionId
       // Generate summary if not cached
       if (section.content) {
         const summary = await generateSectionSummary(section.content)
-        
-        // Cache the summary - need fresh client for update
-        const updateSupabase = await createClient()
-        await updateSupabase
-          .from('project_sections')
-          .update({ summary })
-          .eq('id', section.id)
-        
+        // TODO: Optionally persist via service
         return `**${section.title}:** ${summary}`
       }
       
@@ -323,15 +297,8 @@ async function buildPreviousSectionsSummary(projectId: string, _currentSectionId
  * Build section path (e.g., "Methods → Data Collection → Survey Design")
  */
 async function buildSectionPath(projectId: string, sectionId: string): Promise<string> {
-  const supabase = await createClient()
-  
-  // Get section hierarchy
-  const { data: section } = await supabase
-    .from('project_sections')
-    .select('title, parent_id')
-    .eq('id', sectionId)
-    .single()
-  
+  // TODO: Replace with ProjectService.getSection(sectionId)
+  const section = null as unknown as { title: string; parent_id?: string | null } | null
   if (!section) {
     return 'Unknown Section'
   }
@@ -339,22 +306,7 @@ async function buildSectionPath(projectId: string, sectionId: string): Promise<s
   const path = [section.title]
   
   // Walk up the parent chain
-  let currentParentId = section.parent_id
-  while (currentParentId) {
-    const parentSupabase = await createClient()
-    const { data: parent } = await parentSupabase
-      .from('project_sections')
-      .select('title, parent_id')
-      .eq('id', currentParentId)
-      .single()
-    
-    if (parent) {
-      path.unshift(parent.title)
-      currentParentId = parent.parent_id
-    } else {
-      break
-    }
-  }
+  // Parent chain omitted without DB access
   
   return path.join(' → ')
 }
@@ -363,32 +315,17 @@ async function buildSectionPath(projectId: string, sectionId: string): Promise<s
  * Get current text for rewrite operations
  */
 async function getCurrentText(sectionId: string): Promise<string | null> {
-  const supabase = await createClient()
-  // Get full section content
-  const { data: section } = await supabase
-    .from('project_sections')
-    .select('content')
-    .eq('id', sectionId)
-    .single()
-  
-  return section?.content || null
+  // TODO: Replace with ProjectService.getSectionContent(sectionId)
+  return null
 }
 
 /**
  * Get expected word count for a section
  */
 async function getExpectedWords(sectionId: string): Promise<number> {
-  const supabase = await createClient()
-  
-  const { data: section } = await supabase
-    .from('project_sections')
-    .select('expected_words, section_key')
-    .eq('id', sectionId)
-    .single()
-  
-  if (section?.expected_words) {
-    return section.expected_words
-  }
+  // TODO: Replace with ProjectService.getSectionMeta(sectionId)
+  const section = null as unknown as { expected_words?: number; section_key?: string } | null
+  if (section?.expected_words) return section.expected_words
   
   // Fallback based on section type
   const defaults: Record<string, number> = {

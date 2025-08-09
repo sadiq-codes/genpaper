@@ -89,7 +89,7 @@ ADD CONSTRAINT unique_project_cite_key UNIQUE(project_id, cite_key);
 - Author normalization and date standardization
 
 ### Feature Flags
-- `GENPIPE_UNIFIED_CITATIONS`: Enable service for new citations
+- `CITATIONS_UNIFIED`: Enable service for new citations (legacy `GENPIPE_UNIFIED_CITATIONS` merged)
 - `CITATIONS_UNIFIED`: Force all citations through service
 
 ## Verification

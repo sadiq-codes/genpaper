@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { EditProposalZ } from '@/lib/schemas/edits'
 import { VersionStore } from '@/lib/core/editor-versions'
 import { applyOps } from '@/lib/core/apply-ops'
-import { isEditsApiEnabled } from '@/lib/config/feature-flags'
+// Edits API is always enabled
 import { createHash } from 'crypto'
 import { getSB } from '@/lib/supabase/server'
 
@@ -11,10 +11,8 @@ const ApplyBodyZ = EditProposalZ.extend({
   documentId: z.string().uuid(),
 })
 
-default export async function handler(request: NextRequest) {
-  if (!isEditsApiEnabled()) {
-    return NextResponse.json({ error: 'EDITS_API_DISABLED' }, { status: 403 })
-  }
+export async function POST(request: NextRequest) {
+  // Always enabled
 
   let body: unknown
   try {
@@ -86,5 +84,3 @@ default export async function handler(request: NextRequest) {
 
   return NextResponse.json({ newVersionId: inserted.id, newSha })
 }
-
-export const POST = handler

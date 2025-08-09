@@ -2,7 +2,6 @@ import 'server-only'
 import { PromptService, type PromptData } from '@/lib/prompts/prompt-service'
 import { AIService, type StreamEvent } from '@/lib/ai/ai-service'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
-import { isUnifiedCitationsEnabled, isBatchedCitationsEnabled } from '@/lib/config/feature-flags'
 import { parseCitationPlaceholders, replacePlaceholders, type PlaceholderCitation } from '@/lib/citations/placeholder-schema'
 import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
 import type { PaperWithAuthors } from '@/types/simplified'
@@ -141,12 +140,12 @@ export class GenerationOrchestrator {
       // Step 2: Stream content using AIService
       const streamSpan = createSpan('llm_streaming', {
         model,
-        usePlaceholders: isBatchedCitationsEnabled(),
+        usePlaceholders: true,
         temperature,
         maxTokens
       })
       
-      const usePlaceholders = isBatchedCitationsEnabled()
+      const usePlaceholders = true
       const streamResult = await AIService.streamText({
         model,
         system: prompt.system,
@@ -374,7 +373,7 @@ export class GenerationOrchestrator {
           const renderNumber = citation?.first_seen_order || 1
 
           const formatted = await CitationService.renderInline(
-            result.cslJson,
+            result.cslJson as any,
             citationStyle,
             renderNumber
           )

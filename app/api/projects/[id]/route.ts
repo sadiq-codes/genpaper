@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { 
   getResearchProject, 
-  getLatestProjectVersion, 
-  getProjectVersions,
+  getProjectWithContent,
   getProjectPapersWithCSL
 } from '@/lib/db/research'
 
@@ -38,17 +37,22 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Get latest version
-    const latestVersion = await getLatestProjectVersion(projectId)
+    // Get project with content
+    const projectWithContent = await getProjectWithContent(projectId)
 
     let versions = undefined
     let citations = undefined
     let papers = undefined
 
-    // Get versions if requested
-    if (includeVersions) {
-      const limit = versionLimit ? parseInt(versionLimit) : 10
-      versions = await getProjectVersions(projectId, limit)
+    // Create version object if requested (simplified - just one version)
+    if (includeVersions && projectWithContent) {
+      versions = [{
+        id: projectWithContent.id,
+        project_id: projectWithContent.id,
+        version: 1,
+        content: projectWithContent.content,
+        created_at: projectWithContent.created_at
+      }]
     }
 
     // Get citations if requested
@@ -72,12 +76,18 @@ export async function GET(
 
     // Get papers with CSL data if requested
     if (includePapers) {
-      papers = await getProjectPapersWithCSL(projectId, latestVersion?.version)
+      papers = await getProjectPapersWithCSL(projectId, 1) // Use version 1 as default
     }
 
     return NextResponse.json({
       ...project,
-      latest_version: latestVersion,
+      latest_version: projectWithContent ? {
+        id: projectWithContent.id,
+        project_id: projectWithContent.id,
+        version: 1,
+        content: projectWithContent.content,
+        created_at: projectWithContent.created_at
+      } : null,
       versions,
       citations,
       papers

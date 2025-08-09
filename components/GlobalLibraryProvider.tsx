@@ -28,6 +28,16 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        // Ignore if user is in an input, textarea, or contenteditable
+        const target = e.target as HTMLElement
+        if (
+          target.tagName === 'INPUT' || 
+          target.tagName === 'TEXTAREA' || 
+          target.contentEditable === 'true'
+        ) {
+          return
+        }
+        
         e.preventDefault()
         setShowCommandPalette(true)
       }
@@ -115,8 +125,9 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
 
   // Handle project search from command palette
   const handleProjectSearch = useCallback((query: string) => {
-    // For now, just navigate to dashboard with search
-    // You could implement a project search drawer similar to library
+    // Use Next.js router for SPA navigation instead of window.location
+    // Note: This would require importing useRouter and passing it down
+    // For now, we'll use window.location for simplicity
     window.location.href = `/dashboard?search=${encodeURIComponent(query)}`
   }, [])
 

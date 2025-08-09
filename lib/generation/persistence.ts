@@ -1,5 +1,5 @@
 import { 
-  addProjectVersion, 
+  updateProjectContent, 
   updateResearchProjectStatus 
 } from '@/lib/db/research'
 import type { CSLItem } from '@/lib/utils/csl'
@@ -29,9 +29,9 @@ export async function persistGenerationResults(
   
   console.log(`💾 Saving generation results to database...`)
   
-  // Step 1: Persist content version to database
-  const version = await addProjectVersion(projectId, content, 1)
-  console.log(`✅ Project version saved: ${version.version}`)
+  // Step 1: Persist content to database
+  const project = await updateProjectContent(projectId, content)
+  console.log(`✅ Project content saved for project: ${project.id}`)
   
   // Step 2: Fetch all CSL-JSON citations that were written by addCitation tool
   const supabase = await getSB()

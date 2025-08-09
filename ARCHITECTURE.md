@@ -166,15 +166,9 @@ Runtime toggles for safe rollout of new pipeline features:
 
 ```typescript
 // Generation Pipeline Flags
-GENPIPE_UNIFIED_CITATIONS=true   // Use CitationService for all paths
-GENPIPE_BATCHED_CITES=true       // Enable placeholder workflow
-GENPIPE_RETRIEVAL_SVC=true       // Use ContextRetrievalService
 
 // Architecture Flags  
-CITATIONS_UNIFIED=true           // Force unified citation path everywhere
-SEARCH_ORCH_ONLY=true           // Route search via SearchOrchestrator only
-SERVICE_LAYER_ONLY=true         // Enforce services boundary for DB access
-PROJECT_SERVICE_API=true        // Use unified project SSE endpoint
+Flags retired: unified citations, batched placeholders, orchestrator-only search, service-layer-only, diff editor, edits API, and citation offsets are permanent.
 ```
 
 ## API Design

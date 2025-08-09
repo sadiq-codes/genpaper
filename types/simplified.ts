@@ -79,6 +79,7 @@ export interface ResearchProject {
   topic: string
   status: PaperStatus
   generation_config?: GenerationConfig
+  content?: string
   created_at: string
   completed_at?: string
 }

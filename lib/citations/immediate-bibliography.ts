@@ -753,5 +753,4 @@ export function formatInlineCitation(cslJson: CSLItem, style: string, number: nu
     default:
       return `(${authors[0]?.family || 'Unknown'}, ${year})`
   }
-  }
 }

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { EditOpZ, EditProposalZ, type EditProposal } from '@/lib/schemas/edits'
-import { isEditsApiEnabled } from '@/lib/config/feature-flags'
+// Edits API is always enabled
 import { editsProposeLimiter } from '@/lib/utils/rate-limiter'
 import { ai } from '@/lib/ai/vercel-client'
+import { generateText } from 'ai'
 import { SYSTEM_EDITS, userEditsPrompt, validateEditProposal } from '@/lib/prompts/edits'
 
 const ProposeBodyZ = z.object({
@@ -14,10 +15,8 @@ const ProposeBodyZ = z.object({
   model: z.string().optional()
 })
 
-default async function handler(request: NextRequest) {
-  if (!isEditsApiEnabled()) {
-    return NextResponse.json({ error: 'EDITS_API_DISABLED' }, { status: 403 })
-  }
+export async function POST(request: NextRequest) {
+  // Always enabled
 
   let body: unknown
   try {
@@ -49,17 +48,13 @@ default async function handler(request: NextRequest) {
   // Model-backed path
   try {
     const input = userEditsPrompt({ baseText: '', selection, instruction: prompt })
-    const completion = await ai.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: SYSTEM_EDITS },
-        { role: 'user', content: input }
-      ],
+    const { text } = await generateText({
+      model: ai(model),
+      system: SYSTEM_EDITS,
+      prompt: input,
       temperature: 0.2,
-      max_tokens: 800
+      maxTokens: 800
     })
-
-    const text = completion.choices?.[0]?.message?.content ?? ''
     const result = validateEditProposal(text)
     if (!result.ok) {
       return NextResponse.json({ error: 'LLM_SCHEMA_FAILED', details: result }, { status: 422 })
@@ -72,5 +67,3 @@ default async function handler(request: NextRequest) {
     return NextResponse.json({ error: 'LLM_ERROR', details: e?.message ?? String(e) }, { status: 502 })
   }
 }
-
-export const POST = handler

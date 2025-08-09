@@ -18,6 +18,16 @@ const eslintConfig = [
         "error",
         {
           patterns: [
+            // R0.2: CI check to prevent zombie flag usage
+            {
+              group: [
+                // Removed/merged flags. Any reference should fail lint.
+                "**/GENPIPE_UNIFIED_CITATIONS**",
+                "**/Genpipe_Unified_Citations**",
+                "**/genpipe_unified_citations**"
+              ],
+              message: "GENPIPE_UNIFIED_CITATIONS has been removed. Use CITATIONS_UNIFIED (now default path)"
+            },
             {
               group: ["@/lib/db/*"],
               message: "Direct database imports are not allowed. Use @/services/* instead."
@@ -49,6 +59,15 @@ const eslintConfig = [
         "error",
         {
           patterns: [
+            // R0.2 in app directory, too
+            {
+              group: [
+                "**/GENPIPE_UNIFIED_CITATIONS**",
+                "**/Genpipe_Unified_Citations**",
+                "**/genpipe_unified_citations**"
+              ],
+              message: "GENPIPE_UNIFIED_CITATIONS has been removed. Use CITATIONS_UNIFIED (now default path)"
+            },
             {
               group: ["@/lib/db/*", "@/lib/supabase/*"],
               message: "App components should only import from @/services/* for data access"
@@ -66,6 +85,15 @@ const eslintConfig = [
         "error", 
         {
           patterns: [
+            // R0.2 in components, too
+            {
+              group: [
+                "**/GENPIPE_UNIFIED_CITATIONS**",
+                "**/Genpipe_Unified_Citations**",
+                "**/genpipe_unified_citations**"
+              ],
+              message: "GENPIPE_UNIFIED_CITATIONS has been removed. Use CITATIONS_UNIFIED (now default path)"
+            },
             {
               group: ["@/lib/db/*", "@/lib/supabase/*"],
               message: "Components should only import from @/services/* for data access"

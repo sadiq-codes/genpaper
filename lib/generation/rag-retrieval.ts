@@ -1,6 +1,5 @@
 import { searchPaperChunks } from '@/lib/db/papers'
 import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
-import { isRetrievalServiceEnabled } from '@/lib/config/feature-flags'
 import { getPapersByIds } from '@/lib/db/library'
 import type { PaperWithAuthors } from '@/types/simplified'
 import { getContentStatus, ensureBulkContentIngestion } from '@/lib/content'
@@ -123,9 +122,12 @@ export async function getRelevantChunks(
     try {
       console.log(`📄 Chunk search attempt (${attempt.label}) with minScore=${attempt.minScore}`)
       
-      const searchResultsRaw = isRetrievalServiceEnabled()
-        ? (await ContextRetrievalService.retrieve({ query: topic, paperIds: attempt.paperIds, k: chunkLimit * 2, minScore: attempt.minScore })).chunks
-        : await searchPaperChunks(topic, { paperIds: attempt.paperIds, limit: chunkLimit * 2, minScore: attempt.minScore })
+      const searchResultsRaw = (await ContextRetrievalService.retrieve({ 
+        query: topic, 
+        paperIds: attempt.paperIds, 
+        k: chunkLimit * 2, 
+        minScore: attempt.minScore 
+      })).chunks
 
       const searchResults = searchResultsRaw.map(result => ({
         id: createDeterministicChunkId(result.paper_id, result.content),
@@ -133,17 +135,17 @@ export async function getRelevantChunks(
         content: result.content,
         metadata: { 
           source: 'chunk_search', 
-          score: result.score,
+          score: typeof result.score === 'number' ? result.score : 0,
           searchStage: attempt.label
         },
-        score: result.score,
+        score: typeof result.score === 'number' ? result.score : 0,
         paper: allPapers.find(p => p.id === result.paper_id)
       }))
       
       if (searchResults.length > 0) {
         // Validate content quality
-        const scores = searchResults.map(r => r.score)
-        const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length
+        const scores: number[] = searchResults.map(r => r.score)
+        const avgScore = scores.reduce((a: number, b: number) => a + b, 0) / scores.length
         const minScore = Math.min(...scores)
         const maxScore = Math.max(...scores)
         

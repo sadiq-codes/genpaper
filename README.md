@@ -67,12 +67,7 @@ const result = await GenerationOrchestrator.generateSection({
 #### Feature Flags
 
 ```bash
-GENPIPE_UNIFIED_CITATIONS=true   # Use CitationService for all paths
-GENPIPE_BATCHED_CITES=true       # Enable placeholder workflow  
-GENPIPE_RETRIEVAL_SVC=true       # Use ContextRetrievalService
-SEARCH_ORCH_ONLY=true            # Route search via SearchOrchestrator
-CITATIONS_UNIFIED=true           # Force unified citation path everywhere
-SERVICE_LAYER_ONLY=true          # Enforce services boundary for DB access
+All feature flags have been retired. Unified citations, batched placeholders, service-layer access, orchestrator search, diff editor, edits API, and citation offsets are always on.
 ```
 
 #### Performance & Observability

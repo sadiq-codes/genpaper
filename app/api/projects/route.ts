@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getUserResearchProjects, deleteResearchProject } from '@/lib/db/research'
+import { getUserResearchProjects, deleteResearchProject, createResearchProject } from '@/lib/db/research'
 
 // GET - Retrieve user's research projects
 export async function GET(request: NextRequest) {
@@ -31,6 +31,56 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('Error in projects GET API:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' }, 
+      { status: 500 }
+    )
+  }
+}
+
+// POST - Create a new research project
+export async function POST(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+    
+    // Check authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const body = await request.json()
+    const { topic, paperType, selectedPapers } = body
+
+    if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
+      return NextResponse.json({ error: 'Topic is required' }, { status: 400 })
+    }
+
+    // Create generation config
+    const generationConfig: Record<string, unknown> = {
+      paper_settings: {
+        paperType: paperType || 'researchArticle'
+      }
+    }
+
+    // Add selected papers if provided
+    if (selectedPapers && Array.isArray(selectedPapers) && selectedPapers.length > 0) {
+      generationConfig.library_papers_used = selectedPapers
+    }
+
+    const project = await createResearchProject(
+      user.id,
+      topic.trim(),
+      generationConfig
+    )
+
+    return NextResponse.json({
+      project,
+      message: 'Project created successfully'
+    })
+
+  } catch (error) {
+    console.error('Error in projects POST API:', error)
     return NextResponse.json(
       { error: 'Internal server error' }, 
       { status: 500 }

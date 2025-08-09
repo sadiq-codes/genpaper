@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
-import { isUnifiedCitationsEnabled, isBatchedCitationsEnabled } from '@/lib/config/feature-flags'
+import { isBatchedCitationsEnabled } from '@/lib/config/feature-flags'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 import { validateCSL } from '@/lib/utils/csl'
 import { BatchCitationRefSchema, type PlaceholderCitation } from '@/lib/citations/placeholder-schema'
@@ -161,12 +161,7 @@ export async function POST(request: NextRequest) {
 
     // Handle batch resolution (placeholder-based citations)
     if (body.refs && Array.isArray(body.refs)) {
-      const batchEnabled = isBatchedCitationsEnabled()
-      if (!batchEnabled) {
-        return NextResponse.json({ 
-          error: 'Batch citations feature not enabled' 
-        }, { status: 403 })
-      }
+      // Batch resolution is always enabled (unified path)
 
       const validationResult = BatchResolveSchema.safeParse(body)
       
@@ -228,9 +223,9 @@ export async function POST(request: NextRequest) {
 
             const citeKey = `${ref.type}:${ref.value}`
             const inlineText = await CitationService.renderInline(
-              result.cslJson,
+              result.cslJson as any,
               'apa',
-              result.citationNumber
+              (result as any).citationNumber ?? 1
             )
 
             citeKeyMap[citeKey] = inlineText
@@ -364,10 +359,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Citation with this key already exists for this project' }, { status: 409 })
     }
 
-    // Use CitationService when unified citations are enabled
-    const useUnified = isUnifiedCitationsEnabled()
-    
-    if (useUnified && paperId) {
+    // Unified path: always use CitationService when paperId provided
+    if (paperId) {
       try {
         const result = await CitationService.add({
           projectId,
@@ -376,7 +369,7 @@ export async function POST(request: NextRequest) {
           quote: context || null
         })
         
-        // Get first_seen_order for backwards compatibility
+        // Fetch first_seen_order for render numbering
         const { data: citation } = await supabase
           .from('project_citations')
           .select('first_seen_order')
@@ -406,37 +399,8 @@ export async function POST(request: NextRequest) {
         }, { status: 400 })
       }
     }
-
-    // Fallback: direct insert for manual citations without paperId or when flag is off
-    const effectiveCSL = csl_json || {}
-    const isValid = await validateCSL(effectiveCSL)
-    if (!isValid) {
-      return NextResponse.json({ error: 'Invalid CSL JSON' }, { status: 400 })
-    }
-
-    const { data, error } = await supabase
-      .from('citations')
-      .insert({
-        project_id: projectId,
-        key,
-        paper_id: paperId || null,
-        csl_json: effectiveCSL,
-        citation_text,
-        context
-      })
-      .select()
-      .single()
-
-    if (error) {
-      if ((error as any).code === '23505') {
-        return NextResponse.json({ 
-          error: 'Citation with this key already exists for this project' 
-        }, { status: 409 })
-      }
-      throw error
-    }
-
-    return NextResponse.json({ success: true, citation: data }, { status: 201 })
+    // Manual creation without paperId is not supported in the unified path
+    return NextResponse.json({ error: 'paperId is required' }, { status: 400 })
 
   } catch (error) {
     console.error('Error in citations POST:', error)

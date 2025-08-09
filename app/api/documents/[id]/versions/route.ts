@@ -10,8 +10,9 @@ const CreateVersionSchema = z.object({
   model: z.string().optional()
 })
 
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
-  const documentId = params.id
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = await params
+  const documentId = resolvedParams.id
   if (!documentId) {
     return NextResponse.json({ error: 'MISSING_ID' }, { status: 400 })
   }

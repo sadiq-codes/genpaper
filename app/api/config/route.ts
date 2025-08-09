@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isCitationsUnifiedEnabled, getEditorFlags } from '@/lib/config/feature-flags'
+import { getEditorFlags } from '@/lib/config/feature-flags'
 
 /**
  * Configuration API endpoint
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     const editor = getEditorFlags()
     const config = {
       features: {
-        citationsUnified: isCitationsUnifiedEnabled(),
+        citationsUnified: true,
         editorDiffMode: editor.editorDiffMode,
         editsApiEnabled: editor.editsApiEnabled,
         citationOffsetMode: editor.citationOffsetMode,

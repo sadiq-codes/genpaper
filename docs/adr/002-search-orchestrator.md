@@ -86,7 +86,7 @@ export function withSearchCache<T>(fn: () => Promise<T>): Promise<T> {
 - **Risk**: Single point of failure for all search functionality
 
 ### Mitigations
-- **Feature Flags**: `SEARCH_ORCH_ONLY` for gradual rollout
+- Rollout: Orchestrator is now the only search path; legacy flags removed
 - **Timeout Handling**: Per-strategy timeouts prevent cascading failures
 - **Fallback Strategies**: Graceful degradation when sources fail
 - **Memory Limits**: LRU eviction and configurable cache sizes

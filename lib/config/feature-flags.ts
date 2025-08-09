@@ -37,70 +37,49 @@ export interface EditorFlags {
 
 export function getGenerationPipelineFlags(): GenerationPipelineFlags {
   return {
-    unifiedCitations: readBooleanFlag('GENPIPE_UNIFIED_CITATIONS'),
-    batchedCitations: readBooleanFlag('GENPIPE_BATCHED_CITES'),
-    retrievalService: readBooleanFlag('GENPIPE_RETRIEVAL_SVC'),
+    // unified citations always on
+    unifiedCitations: true,
+    batchedCitations: true,
+    retrievalService: true,
   }
 }
 
 export function getArchitectureFlags(): ArchitectureFlags {
   return {
     citationsUnified: readBooleanFlag('CITATIONS_UNIFIED'),
-    searchOrchOnly: readBooleanFlag('SEARCH_ORCH_ONLY'),
-    serviceLayerOnly: readBooleanFlag('SERVICE_LAYER_ONLY'),
-    projectServiceApi: readBooleanFlag('PROJECT_SERVICE_API'),
+    searchOrchOnly: false,
+    serviceLayerOnly: true,
+    projectServiceApi: false,
   }
 }
 
 export function getEditorFlags(): EditorFlags {
   return {
-    editorDiffMode: readBooleanFlag('EDITOR_DIFF_MODE'),
-    editsApiEnabled: readBooleanFlag('EDITS_API_ENABLED'),
-    citationOffsetMode: readBooleanFlag('CITATION_OFFSET_MODE'),
+    editorDiffMode: true,
+    editsApiEnabled: true,
+    citationOffsetMode: true,
   }
 }
 
-export function isUnifiedCitationsEnabled(): boolean {
-  return readBooleanFlag('GENPIPE_UNIFIED_CITATIONS')
-}
+export function isUnifiedCitationsEnabled(): boolean { return true }
 
-export function isBatchedCitationsEnabled(): boolean {
-  return readBooleanFlag('GENPIPE_BATCHED_CITES')
-}
+export function isBatchedCitationsEnabled(): boolean { return true }
 
-export function isRetrievalServiceEnabled(): boolean {
-  return readBooleanFlag('GENPIPE_RETRIEVAL_SVC')
-}
+export function isRetrievalServiceEnabled(): boolean { return true }
 
 // Architecture flag accessors
 export function isCitationsUnifiedEnabled(): boolean {
   return readBooleanFlag('CITATIONS_UNIFIED')
 }
 
-export function isSearchOrchOnlyEnabled(): boolean {
-  return readBooleanFlag('SEARCH_ORCH_ONLY')
-}
-
-export function isServiceLayerOnlyEnabled(): boolean {
-  return readBooleanFlag('SERVICE_LAYER_ONLY')
-}
-
-export function isProjectServiceApiEnabled(): boolean {
-  return readBooleanFlag('PROJECT_SERVICE_API')
-}
+export function isSearchOrchOnlyEnabled(): boolean { return false }
+export function isServiceLayerOnlyEnabled(): boolean { return true }
+export function isProjectServiceApiEnabled(): boolean { return false }
 
 // Editor flag accessors
-export function isEditorDiffModeEnabled(): boolean {
-  return readBooleanFlag('EDITOR_DIFF_MODE')
-}
-
-export function isEditsApiEnabled(): boolean {
-  return readBooleanFlag('EDITS_API_ENABLED')
-}
-
-export function isCitationOffsetModeEnabled(): boolean {
-  return readBooleanFlag('CITATION_OFFSET_MODE')
-}
+export function isEditorDiffModeEnabled(): boolean { return true }
+export function isEditsApiEnabled(): boolean { return true }
+export function isCitationOffsetModeEnabled(): boolean { return true }
 
 // Dummy code path for testing
 export function dummyCodePath(): string {
