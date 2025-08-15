@@ -4,20 +4,9 @@ import { ai } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, checkTopicDrift, type SectionContext, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
 import { addCitation } from '@/lib/ai/tools/addCitation'
 import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
-import { createCitationStreamProcessor } from '@/lib/generation/stream-processor'
+// Removed stream processor - using direct citation tools instead
 
-// 🆕 OPTIMIZATION: Context caching system
-interface CachedSectionContext {
-  key: string
-  context: string
-  paperSetHash: string
-  timestamp: number
-  ttl: number
-}
-
-// Simple in-memory cache for section contexts
-const contextCache = new Map<string, CachedSectionContext>()
-const CONTEXT_CACHE_TTL = 30 * 60 * 1000 // 30 minutes
+// Caching removed - direct prompt building only
 
 /**
  * Unified content generator using single skeleton template with contextual data
@@ -98,56 +87,12 @@ function calculateUnifiedQualityScore(params: {
   return Math.round((lengthScore + citationScore + driftScore) / 3)
 }
 
-/**
- * 🆕 Generate cache key for section context - can be removed or simplified if not used
- */
-function generateContextCacheKey(context: SectionContext, options: BuildPromptOptions): string {
-  const paperSetHash = context.availablePapers.sort().join('-')
-  const optionsHash = JSON.stringify(options)
-  return `${context.paperType}-${context.sectionKey}-${paperSetHash}-${optionsHash}`
-}
-
-/**
- * 🆕 Get cached context or build new one - can be removed or simplified if not used
- */
-async function getCachedOrBuildContext(
+// Direct prompt building - no caching complexity
+async function buildPromptData(
   context: SectionContext, 
-  options: BuildPromptOptions,
-  enableCaching: boolean = true
-): Promise<{ promptData: { system: string, user: string }; cacheHit: boolean; cacheKey?: string }> {
-  
-  if (!enableCaching) {
-    const { system, user } = await buildUnifiedPrompt(context, options)
-    return { promptData: { system, user }, cacheHit: false }
-  }
-  
-  const cacheKey = generateContextCacheKey(context, options)
-  const cached = contextCache.get(cacheKey)
-  
-  // Check if cached context is still valid
-  if (cached && (Date.now() - cached.timestamp) < cached.ttl) {
-    console.log(`🎯 Context cache hit for key: ${cacheKey}`)
-    return { 
-      promptData: { system: cached.context, user: cached.context }, 
-      cacheHit: true, 
-      cacheKey 
-    }
-  }
-  
-  // Build new context and cache it
-  console.log(`🔄 Building new context for key: ${cacheKey}`)
-  const { system, user } = await buildUnifiedPrompt(context, options)
-  
-  // Cache the built context
-  contextCache.set(cacheKey, {
-    key: cacheKey,
-    context: system + '\n---\n' + user,
-    paperSetHash: context.availablePapers.join('-'),
-    timestamp: Date.now(),
-    ttl: CONTEXT_CACHE_TTL
-  })
-  
-  return { promptData: { system, user }, cacheHit: false, cacheKey }
+  options: BuildPromptOptions
+): Promise<{ system: string, user: string }> {
+  return await buildUnifiedPrompt(context, options)
 }
 
 /**
@@ -174,7 +119,7 @@ export async function generateWithUnifiedTemplate(
 
   progress('context', 10, 'Building generation context...')
   
-  const { promptData } = await getCachedOrBuildContext(context, options, false) // Caching disabled for now
+  const promptData = await buildPromptData(context, options)
   
   progress('generation', 20, 'Starting content generation...')
   
@@ -187,14 +132,7 @@ export async function generateWithUnifiedTemplate(
     maxTokens: options.maxTokens
   })
 
-  // Initialize citation stream processor for better batching
-  const citationProcessor = createCitationStreamProcessor({
-    projectId: context.projectId,
-    batchSize: 5,
-    sentenceBufferSize: 2,
-    flushTimeoutMs: 1500
-  })
-
+  // Simple streaming without complex citation processing
   const sentenceEnd = /([.!?])\s+(?=[A-Z])/;
   let pendingText = '';
 
@@ -206,45 +144,26 @@ export async function generateWithUnifiedTemplate(
         const sentence = pendingText.slice(0, match.index + 1)
         pendingText = pendingText.slice(match.index + 1)
         
-        // Process sentence through citation stream processor
-        const processed = await citationProcessor.processChunk(sentence)
-        if (processed.text) {
-          fullContent += processed.text
-          onStreamEvent?.({ type: 'sentence', data: { text: processed.text }})
-        }
+        // Stream sentence immediately
+        fullContent += sentence
+        onStreamEvent?.({ type: 'sentence', data: { text: sentence }})
       }
     } else if (delta.type === 'tool-call' && delta.toolName === 'addCitation') {
-        // flush any remaining text before citation
+        // Flush any remaining text before citation
         if (pendingText) {
-            const processed = await citationProcessor.processChunk(pendingText)
-            if (processed.text) {
-              fullContent += processed.text
-              onStreamEvent?.({ type: 'sentence', data: { text: processed.text }})
-            }
+            fullContent += pendingText
+            onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})
             pendingText = ''
         }
         onStreamEvent?.({ type: 'citation', data: delta })
     }
   }
 
-  // flush any final text and remaining citations
+  // Flush any final text
   if (pendingText) {
-      const processed = await citationProcessor.processChunk(pendingText)
-      if (processed.text) {
-        fullContent += processed.text
-        onStreamEvent?.({ type: 'sentence', data: { text: processed.text }})
-      }
+      fullContent += pendingText
+      onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})
   }
-
-  // Final flush to resolve any remaining placeholders
-  const finalFlush = await citationProcessor.flush()
-  if (finalFlush.text) {
-    fullContent += finalFlush.text
-    onStreamEvent?.({ type: 'sentence', data: { text: finalFlush.text }})
-  }
-
-  // Clean up processor
-  citationProcessor.clear()
 
   try {
     const usage = await result.usage

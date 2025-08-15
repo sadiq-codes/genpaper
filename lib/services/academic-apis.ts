@@ -639,53 +639,33 @@ async function fetchJSON<T>(
   }
 }
 
-// Rate limit handling for retry logic
-interface RetryOptions {
-  retries: number
-  factor: number
-  minTimeout: number
-  maxTimeout: number
-  fastMode?: boolean
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-// Enhanced retry with proper error handling
-async function retryWithBackoff<T>(
+// Simple retry with basic delay
+async function simpleRetry<T>(
   fn: () => Promise<T>,
-  options: RetryOptions = { retries: 3, factor: 2, minTimeout: 1000, maxTimeout: 10000, fastMode: false }
+  maxAttempts: number = 2,
+  delayMs: number = 1000
 ): Promise<T> {
-  const { retries, factor, minTimeout, maxTimeout, fastMode = false } = options
-  
-  const actualRetries = retries
-  const actualMinTimeout = fastMode ? 200 : minTimeout
-  const actualMaxTimeout = fastMode ? 2000 : maxTimeout
-  
   let lastError: Error | undefined
   
-  for (let attempt = 0; attempt <= actualRetries; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       if (attempt > 0) {
-        const timeout = Math.min(actualMinTimeout * Math.pow(factor, attempt - 1), actualMaxTimeout)
-        console.log(`Retry attempt ${attempt}/${actualRetries} after ${timeout}ms`)
-        await sleep(timeout)
+        console.log(`Retry attempt ${attempt}/${maxAttempts - 1} after ${delayMs}ms`)
+        await new Promise(resolve => setTimeout(resolve, delayMs))
       }
       
       return await fn()
     } catch (err) {
-      // Normalize error to Error instance
       const error = err instanceof Error ? err : new Error(String(err))
       lastError = error
       
-      // Handle rate limit errors with encoded wait time
+      // Handle rate limits with simple delay
       if (error.message.startsWith('429-')) {
-        const waitTime = parseInt(error.message.split('-')[1]) || (fastMode ? 1000 : 5000)
-        console.warn(`Rate limit hit, attempt ${attempt + 1}/${actualRetries + 1}`)
+        const waitTime = parseInt(error.message.split('-')[1]) || 2000
+        console.warn(`Rate limit hit, attempt ${attempt + 1}/${maxAttempts}`)
         
-        if (attempt < actualRetries) {
-          await sleep(waitTime)
+        if (attempt < maxAttempts - 1) {
+          await new Promise(resolve => setTimeout(resolve, waitTime))
         }
         continue
       }
@@ -697,7 +677,8 @@ async function retryWithBackoff<T>(
         throw error
       }
       
-      if (attempt === actualRetries) {
+      // On last attempt, throw the error
+      if (attempt === maxAttempts - 1) {
         break
       }
     }
@@ -775,7 +756,7 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
   
   const { limit = 50, fastMode = false } = options
   
-  return retryWithBackoff(async () => {
+  return simpleRetry(async () => {
     const perPage = Math.min(limit, 200) // OpenAlex limit
     const filters = buildOpenAlexFilter(options)
     const base = 'https://api.openalex.org/works'
@@ -806,14 +787,14 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
       authors: work.authorships?.map((a) => a.author?.display_name).filter((name): name is string => Boolean(name)) || [],
       source: 'openalex' as const
     })) || []
-  }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
+  })
 }
 
 // Crossref API integration with better error handling
 export async function searchCrossref(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
   const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
-  return retryWithBackoff(async () => {
+  return simpleRetry(async () => {
     let url = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(query)}&rows=${limit}&sort=score&order=desc`
     
     if (fromYear || toYear) {
@@ -852,7 +833,7 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
         source: 'crossref' as const
       }
     }) || []
-  }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
+  })
 }
 
 // Semantic Scholar API integration with API key guard
@@ -865,7 +846,7 @@ export async function searchSemanticScholar(query: string, options: SearchOption
   
   const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
-  return retryWithBackoff(async () => {
+  return simpleRetry(async () => {
     let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${limit}&fields=paperId,title,abstract,year,venue,doi,url,citationCount,authors`
     
     if (fromYear) {
@@ -899,14 +880,14 @@ export async function searchSemanticScholar(query: string, options: SearchOption
       authors: paper.authors?.map(a => a.name) || [],
       source: 'semantic_scholar' as const
     })) || []
-  }, { retries: 1, factor: 2, minTimeout: 300, maxTimeout: 3000, fastMode })
+  })
 }
 
 // Enhanced arXiv search with proper date filtering
 export async function searchArxiv(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
   const { limit = 50, fromYear, toYear, fastMode = false } = options
   
-  return retryWithBackoff(async () => {
+  return simpleRetry(async () => {
     let searchQuery = `all:"${query}"`
     
     // Use proper arXiv date format: YYYYMMDDHHMM
@@ -971,7 +952,7 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
     } finally {
       clearTimeout(timeoutId)
     }
-  }, { retries: 1, factor: 2, minTimeout: 300, maxTimeout: 3000, fastMode })
+  })
 }
 
 // CORE API integration with API key guard
@@ -984,7 +965,7 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
   
   const { limit = 50, fromYear, toYear, fastMode = false } = options
   
-  return retryWithBackoff(async () => {
+  return simpleRetry(async () => {
     let searchQuery = `title:"${query}" OR abstract:"${query}"`
     
     if (fromYear || toYear) {
@@ -1022,14 +1003,14 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
       authors: work.authors?.map((a) => a.name).filter(Boolean) || [],
       source: 'core' as const
     })) || []
-  }, { retries: 1, factor: 2, minTimeout: 200, maxTimeout: 2000, fastMode })
+  })
 }
 
 // Enhanced Unpaywall integration with proper OA checking
 export async function getOpenAccessPdf(doi: string): Promise<string | null> {
   if (!doi) return null
   
-  return retryWithBackoff(async () => {
+  return simpleRetry(async () => {
     const url = `https://api.unpaywall.org/v2/${doi}?email=${process.env.CONTACT_EMAIL || 'research@example.com'}`
     
     const controller = new AbortController()

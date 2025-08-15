@@ -47,7 +47,7 @@ import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
 import type { UnifiedSearchOptions, UnifiedSearchResult } from '@/lib/services/search-orchestrator'
 import { unifiedSearch } from '@/lib/services/search-orchestrator'
 import { pdfQueue } from '@/lib/services/pdf-queue'
-import { decideIngest } from './policy'
+// Removed policy dependency - simplified ingestion logic
 
 // Main entry ────────────────────────────────────────────────
 export async function collectPapers(
@@ -83,80 +83,60 @@ export async function collectPapers(
   console.log(`   📊 Target Total Papers: ${targetTotal}`)
   console.log(`   🎯 Remaining Search Slots: ${remainingSlots}`)
 
-  // 🆕 OPTIMIZATION: Check library coverage before external APIs
+  // Search for papers using external APIs
   let discoveredPapers: PaperWithAuthors[] = []
   
   if (!useLibraryOnly && remainingSlots > 0) {
-    console.log(`🔍 Checking library coverage before external search...`)
+    console.log(`🔍 Searching for papers via external APIs...`)
     
-    // Quick library relevance check first
-    const libraryCoverage = await checkLibraryCoverage(topic, userId, remainingSlots)
-    console.log(`📚 Library Coverage: ${libraryCoverage.papers.length} relevant papers, score: ${libraryCoverage.coverageScore.toFixed(2)}`)
-    
-    // If library coverage is sufficient (≥ 70%), skip external APIs
-    const COVERAGE_THRESHOLD = 0.7
-    if (libraryCoverage.coverageScore >= COVERAGE_THRESHOLD && libraryCoverage.papers.length >= remainingSlots) {
-      console.log(`✅ Library coverage sufficient (${libraryCoverage.coverageScore.toFixed(2)} ≥ ${COVERAGE_THRESHOLD}), using library papers only`)
-      discoveredPapers = libraryCoverage.papers.slice(0, remainingSlots)
-    } else {
-      console.log(`📡 Library coverage insufficient, proceeding with external search...`)
-      
-      try {
-        const searchOptions: UnifiedSearchOptions = {
-          maxResults: remainingSlots,
-          minResults: Math.min(5, remainingSlots),
-          excludePaperIds: [...pinnedIds, ...libraryCoverage.papers.map(p => p.id)],
-          fromYear: 2000,
-          localRegion: config?.paper_settings?.localRegion,
-          useHybridSearch: true,
-          useKeywordSearch: true,
-          useAcademicAPIs: true,
-          combineResults: true,
-          fastMode: false,
-          sources: (config?.search_parameters?.sources as PaperSource[])
-                    ?? ['openalex', 'crossref', 'semantic_scholar'],
-          semanticWeight: config?.search_parameters?.semanticWeight ?? 0.4,
-          authorityWeight: config?.search_parameters?.authorityWeight ?? 0.5,
-          recencyWeight: config?.search_parameters?.recencyWeight ?? 0.1
-        }
-        
-        const searchResult = await unifiedSearchWithRetry(topic, searchOptions)
-        
-        // Combine library papers with external search results
-        const externalPapers = searchResult.papers as PaperWithAuthors[]
-        const availableSlots = remainingSlots - libraryCoverage.papers.length
-        discoveredPapers = [
-          ...libraryCoverage.papers,
-          ...externalPapers.slice(0, Math.max(0, availableSlots))
-        ]
-        
-        console.log(`🎯 Combined search results: ${libraryCoverage.papers.length} from library + ${externalPapers.length} from external`)
-        
-        if (searchResult.metadata.errors.length > 0) {
-          console.warn(`⚠️ Search completed with warnings: ${searchResult.metadata.errors.join(', ')}`)
-        }
-
-      } catch (err) {
-        console.error('Unified search failed, falling back to library papers only:', err)
-        discoveredPapers = libraryCoverage.papers.slice(0, remainingSlots)
+    try {
+      const searchOptions: UnifiedSearchOptions = {
+        maxResults: remainingSlots,
+        minResults: Math.min(5, remainingSlots),
+        excludePaperIds: pinnedIds,
+        fromYear: 2000,
+        localRegion: config?.paper_settings?.localRegion,
+        useHybridSearch: true,
+        useKeywordSearch: true,
+        useAcademicAPIs: true,
+        combineResults: true,
+        fastMode: false,
+        sources: (config?.search_parameters?.sources as PaperSource[])
+                  ?? ['openalex', 'crossref', 'semantic_scholar'],
+        semanticWeight: config?.search_parameters?.semanticWeight ?? 0.4,
+        authorityWeight: config?.search_parameters?.authorityWeight ?? 0.5,
+        recencyWeight: config?.search_parameters?.recencyWeight ?? 0.1
       }
+      
+      const searchResult = await simpleUnifiedSearch(topic, searchOptions)
+      discoveredPapers = searchResult.papers as PaperWithAuthors[]
+      
+      console.log(`🎯 External search results: ${discoveredPapers.length} papers found`)
+      
+      if (searchResult.metadata.errors.length > 0) {
+        console.warn(`⚠️ Search completed with warnings: ${searchResult.metadata.errors.join(', ')}`)
+      }
+
+    } catch (err) {
+      console.error('External search failed:', err)
+      discoveredPapers = []
     }
 
-    // Auto-ingest discovered papers if policy allows
+    // Auto-ingest discovered papers with PDF enhancement
     if (discoveredPapers.length > 0) {
-      const shouldIngest = decideIngest({
-        librarySize: pinnedPapers.length,
-        userId
-      })
-      
-      if (shouldIngest) {
         console.log(`📥 Auto-ingesting ${discoveredPapers.length} papers to database...`)
+        
+        // Enhance PDF URLs before ingestion
+        console.log(`🔍 Enhancing PDF URLs for ${discoveredPapers.length} papers...`)
+        const { enhancePdfUrls } = await import('@/lib/services/academic-apis')
+        const enhancedPapers = await enhancePdfUrls(discoveredPapers)
+        console.log(`✅ PDF enhancement completed`)
         
         try {
           const { ingestPaper, getPapersByIds } = await import('@/lib/db/papers')
           
           const ingestResults = await Promise.allSettled(
-            discoveredPapers.map(async (paper) => {
+            enhancedPapers.map(async (paper) => {
               try {
                 const result = await ingestPaper({
                   title: paper.title,
@@ -166,17 +146,20 @@ export async function collectPapers(
                   venue: paper.venue,
                   doi: paper.doi,
                   url: paper.url,
-                  pdf_url: (paper as { pdf_url?: string }).pdf_url,
+                  pdf_url: paper.pdf_url, // Now enhanced with actual PDF URLs!
                   metadata: paper.metadata || {},
                   source: 'search-api',
                   citation_count: paper.citation_count || 0,
                   impact_score: paper.impact_score || 0
+                }, {
+                  pdfUrl: paper.pdf_url, // Pass PDF URL for immediate processing
+                  priority: 'normal'
                 })
                 
-                return { paperId: result.paperId, success: true, originalIndex: discoveredPapers.indexOf(paper) }
+                return { paperId: result.paperId, success: true, originalIndex: enhancedPapers.indexOf(paper) }
               } catch (error) {
                 console.warn(`Failed to ingest paper "${paper.title}":`, error)
-                return { paperId: '', success: false, error: error instanceof Error ? error.message : 'Unknown error', originalIndex: discoveredPapers.indexOf(paper) }
+                return { paperId: '', success: false, error: error instanceof Error ? error.message : 'Unknown error', originalIndex: enhancedPapers.indexOf(paper) }
               }
             })
           )
@@ -184,7 +167,7 @@ export async function collectPapers(
           const successful = ingestResults.filter(r => r.status === 'fulfilled' && r.value.success)
           const failed = ingestResults.length - successful.length
           
-          console.log(`✅ Auto-ingestion completed: ${successful.length}/${discoveredPapers.length} papers ingested`)
+          console.log(`✅ Auto-ingestion completed: ${successful.length}/${enhancedPapers.length} papers ingested`)
           if (failed > 0) {
             console.warn(`⚠️ ${failed} papers failed to ingest`)
           }
@@ -209,9 +192,6 @@ export async function collectPapers(
           // On ingestion failure, clear discovered papers to avoid using stale data
           discoveredPapers = []
         }
-      } else {
-        console.log(`🔒 Auto-ingestion policy: library size ${pinnedPapers.length} above threshold, skipping ingestion`)
-      }
     }
   }
 
@@ -508,142 +488,22 @@ async function waitForChunkCoverage(
   return false
 }
 
-// 🆕 OPTIMIZATION: Library coverage checker
-async function checkLibraryCoverage(
-  topic: string, 
-  userId: string, 
-  maxResults: number = 10
-): Promise<{ papers: PaperWithAuthors[]; coverageScore: number }> {
-  try {
-    const { getUserLibraryPapers } = await import('@/lib/db/library')
-    
-    // Get user's library papers with basic search
-    const libraryPapers = await getUserLibraryPapers(userId, {
-      search: topic
-    }, maxResults * 2) // Get extra to calculate coverage
-    
-    if (libraryPapers.length === 0) {
-      return { papers: [], coverageScore: 0 }
-    }
-    
-    // Calculate basic coverage score based on keyword matching and recency
-    const topicKeywords = topic.toLowerCase().split(' ')
-    const scoredPapers = libraryPapers.map(lp => {
-      const paper = lp.paper as PaperWithAuthors
-      const title = paper.title.toLowerCase()
-      const abstract = paper.abstract?.toLowerCase() || ''
-      
-      // Simple keyword matching score
-      const titleMatches = topicKeywords.filter(keyword => title.includes(keyword)).length
-      const abstractMatches = topicKeywords.filter(keyword => abstract.includes(keyword)).length
-      const relevanceScore = (titleMatches * 2 + abstractMatches) / topicKeywords.length
-      
-      return { ...lp, relevance_score: relevanceScore }
-    })
-    
-    // Filter papers with some relevance
-    const relevantPapers = scoredPapers.filter(p => p.relevance_score > 0.1)
-    
-    if (relevantPapers.length === 0) {
-      return { papers: [], coverageScore: 0 }
-    }
-    
-    // Calculate coverage score based on relevance and recency
-    type ScoredLibraryPaper = typeof libraryPapers[0] & { relevance_score: number }
-    
-    const avgScore = relevantPapers.reduce((sum: number, p: ScoredLibraryPaper) => sum + (p.relevance_score || 0), 0) / relevantPapers.length
-    const recentPapers = relevantPapers.filter((p: ScoredLibraryPaper) => {
-      const year = p.paper.publication_date ? new Date(p.paper.publication_date).getFullYear() : 0
-      return year >= 2018 // Papers from last 6 years
-    })
-    
-    const recencyBonus = recentPapers.length / relevantPapers.length * 0.2
-    const coverageScore = Math.min(1.0, avgScore + recencyBonus)
-    
-    // Return top papers with their full data
-    const papers = relevantPapers
-      .sort((a: ScoredLibraryPaper, b: ScoredLibraryPaper) => (b.relevance_score || 0) - (a.relevance_score || 0))
-      .slice(0, maxResults)
-      .map((lp: ScoredLibraryPaper) => lp.paper as PaperWithAuthors)
-    
-    return { papers, coverageScore }
-    
-  } catch (error) {
-    console.error('Library coverage check failed:', error)
-    return { papers: [], coverageScore: 0 }
-  }
-}
+// Removed library coverage optimization - simplified to direct external search
 
-// 🆕 OPTIMIZATION: Unified search with retry and better error handling
-async function unifiedSearchWithRetry(
+// Simple search - direct call, no complex retry logic
+async function simpleUnifiedSearch(
   topic: string,
-  options: UnifiedSearchOptions,
-  maxRetries: number = 2
+  options: UnifiedSearchOptions
 ): Promise<UnifiedSearchResult> {
-  let lastError: Error | null = null
-  const searchTimer = createTimer()
-  const searchMetrics: Omit<SearchMetrics, 'duration_ms' | 'results_count'> = {
-    query: topic,
-    providers: options.sources || [],
-    cache_hit: false,
-    errors: [],
-    retry_count: 0
+  try {
+    console.log(`🔍 Searching for papers: ${topic}`)
+    const result = await unifiedSearch(topic, options)
+    console.log(`✅ Found ${result.papers.length} papers`)
+    return result
+  } catch (error) {
+    console.error(`❌ Search failed:`, error)
+    throw new Error(`Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`🔍 Search attempt ${attempt}/${maxRetries}`)
-      const result = await unifiedSearch(topic, options)
-      
-      // Log search performance metrics
-      const duration = searchTimer.end()
-      console.log(`📊 Search Performance:`)
-      console.log(`   ⏱️  Duration: ${result.metadata.searchTimeMs}ms`)
-      console.log(`   📈 Strategies: ${result.metadata.searchStrategies.join(', ')}`)
-      console.log(`   🎯 Results: ${result.papers.length}/${options.maxResults}`)
-      console.log(`   ⚠️  Errors: ${result.metadata.errors.length}`)
-      
-      // 🆕 Log structured search metrics
-      logSearchMetrics({
-        query: searchMetrics.query,
-        providers: searchMetrics.providers,
-        cache_hit: searchMetrics.cache_hit,
-        errors: result.metadata.errors,
-        retry_count: attempt - 1,
-        duration_ms: duration,
-        results_count: result.papers.length
-      })
-      
-      return result
-      
-    } catch (error) {
-      lastError = error as Error
-      searchMetrics.errors!.push(lastError.message)
-      searchMetrics.retry_count = attempt
-      
-      console.warn(`⚠️ Search attempt ${attempt} failed:`, error)
-      
-      if (attempt < maxRetries) {
-        const backoffMs = attempt * 1000 // Linear backoff
-        console.log(`🔄 Retrying in ${backoffMs}ms...`)
-        await new Promise(resolve => setTimeout(resolve, backoffMs))
-      }
-    }
-  }
-  
-  // Log failed search metrics
-  const duration = searchTimer.end()
-  logSearchMetrics({
-    query: searchMetrics.query,
-    providers: searchMetrics.providers,
-    cache_hit: searchMetrics.cache_hit,
-    errors: searchMetrics.errors,
-    retry_count: searchMetrics.retry_count,
-    duration_ms: duration,
-    results_count: 0
-  })
-  
-  throw new Error(`All search attempts failed. Last error: ${lastError?.message}`)
 }
 
 // Export helper functions for potential reuse

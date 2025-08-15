@@ -10,7 +10,7 @@
 ```text
 1. Rephrased requirements
 2. Step‑by‑step implementation plan
-3. Verification instructions
+3. Todo List
 4. Notes on deleted code or libraries (if any)
 ````
 ---
@@ -62,10 +62,6 @@
 - Commented‑out blocks, console/print debugging left in code  
 - Unresolved TODOs in merged code  
 - Replacing proven library code with custom, brittle logic  
-
----
-
-
 
 ---
 

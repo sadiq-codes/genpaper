@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { createResearchProject } from '@/lib/db/research'
-import { generateDraftWithRAG } from '@/lib/generation'
-import type { GenerationConfig } from '@/types/simplified'
-import type { PaperTypeKey } from '@/lib/prompts/types'
+import { authenticateUser, createProject } from '@/lib/services/project-service'
+import type { SectionContext } from '@/lib/prompts/types'
+import type { GeneratedOutline } from '@/lib/prompts/types'
+import type { PaperChunk } from '@/lib/generation/types'
+import type { PaperWithAuthors } from '@/types/simplified'
 
 // Use Node.js runtime for better DNS resolution and OpenAI SDK compatibility
 export const runtime = 'nodejs'
@@ -14,6 +14,56 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const isDev = process.env.NODE_ENV !== 'production'
+
+/**
+ * Builds the context for each section of the paper, including retrieving relevant
+ * chunks of text from source documents.
+ */
+async function buildSectionContexts(
+  outline: GeneratedOutline,
+  topic: string,
+  allPapers: PaperWithAuthors[] = []
+): Promise<SectionContext[]> {
+  const sectionContexts: SectionContext[] = []
+  const chunkCache = new Map<string, PaperChunk[]>()
+
+  for (const section of outline.sections) {
+    const ids = Array.isArray(section.candidatePaperIds) ? section.candidatePaperIds : []
+    const cacheKey = ids.slice().sort().join(',')
+    let contextChunks = chunkCache.get(cacheKey)
+
+    if (!contextChunks) {
+      try {
+        const { getRelevantChunks: getRagChunks } = await import('@/lib/generation/chunks')
+        contextChunks = await getRagChunks(
+          topic,
+          ids,
+          Math.min(20, ids.length * 3),
+          allPapers
+        )
+        chunkCache.set(cacheKey, contextChunks)
+        console.log(`📄 Cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
+      } catch (error) {
+        console.warn(`⚠️ No relevant chunks found for section "${section.title}": ${error}`)
+        console.warn(`⚠️ This section may have limited content quality due to lack of relevant source material`)
+        contextChunks = []
+        chunkCache.set(cacheKey, contextChunks)
+      }
+    } else {
+      console.log(`📄 Using cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
+    }
+
+    sectionContexts.push({
+      sectionKey: section.sectionKey,
+      title: section.title,
+      candidatePaperIds: ids,
+      contextChunks,
+      expectedWords: section.expectedWords,
+    })
+  }
+
+  return sectionContexts
+}
 
 export async function OPTIONS() {
   return new Response(null, {
@@ -31,33 +81,44 @@ export async function OPTIONS() {
 export async function GET(request: NextRequest) {
   if (isDev) console.log('🚀 Starting unified streaming generation')
   
-  let supabase
+  let user: { id: string }
   
   try {
-    // Create Supabase client that can read cookies
-    supabase = await createClient()
+    // Authenticate user using service layer
+    const authenticatedUser = await authenticateUser()
     
-    // Check authentication - EventSource sends cookies automatically
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      // For development, allow bypass with a test parameter
-      const url = new URL(request.url)
-      const isTest = url.searchParams.get('test') === 'true' && isDev
-      
-      if (!isTest) {
-        if (isDev) console.log('❌ Authentication failed:', authError?.message || 'No user')
-        return new Response('Unauthorized. Please log in to use this feature.', { 
-          status: 401,
-          headers: {
-            'Content-Type': 'text/plain',
-            'Access-Control-Allow-Origin': '*'
-          }
-        })
-      } else {
-        if (isDev) console.log('🧪 Test mode: bypassing authentication')
+    if (!authenticatedUser) {
+      if (isDev) {
+        console.log('❌ Authentication failed: No user found')
       }
+      
+      // For streaming endpoints, we need to return a proper event-stream response even for errors
+      const encoder = new TextEncoder()
+      const errorStream = new ReadableStream({
+        start(controller) {
+          const errorData = JSON.stringify({
+            type: 'error',
+            error: 'Authentication required. Please refresh the page and try again.',
+            timestamp: new Date().toISOString()
+          })
+          controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
+          controller.close()
+        }
+      })
+      
+      return new Response(errorStream, {
+        status: 200, // Return 200 for EventSource to receive the error message
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Cache-Control',
+          'X-Accel-Buffering': 'no'
+        }
+      })
     } else {
+      user = authenticatedUser
       if (isDev) console.log('✅ User authenticated:', user.id)
     }
 
@@ -67,7 +128,6 @@ export async function GET(request: NextRequest) {
     const useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
     const length = url.searchParams.get('length') || 'medium'
     const paperType = url.searchParams.get('paperType') || 'researchArticle'
-    const backgroundMode = url.searchParams.get('background') === 'true'
     const libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
 
     if (!topic) {
@@ -83,37 +143,29 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    if (isDev) console.log('🎯 Creating research project for unified streaming...')
-    console.log('📝 Creating research project for user:', user?.id || 'test')
+    if (isDev) console.log('🎯 Creating research project for streaming generation...')
+    console.log('📝 Creating research project for user:', user.id)
     console.log('📝 Topic:', topic)
-    console.log('📝 Background mode:', backgroundMode)
     
-    // Create generation config
-    const generationConfig: GenerationConfig = {
+    // Simple generation config - no complex validation or feature flags
+    const generationConfig = {
       temperature: 0.2,
       max_tokens: 16000,
-      stream: true,
-      search_parameters: {
-        sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
-        limit: 25,
-        useSemanticSearch: true,
-      },
+      sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+      limit: 25,
       library_papers_used: libraryPaperIds,
-      paper_settings: {
-        length: length as 'short' | 'medium' | 'long',
-        paperType: paperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation',
-      }
+      length: length as 'short' | 'medium' | 'long',
+      paperType: paperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation',
+      useLibraryOnly,
+      localRegion: undefined // Simple regional support
     }
 
     console.log('📝 Config:', generationConfig)
 
-    // Create research project (skip in test mode)
-    let project: { id: string } = { id: 'test-project' }
-    if (user) {
-      project = await createResearchProject(user.id, topic, generationConfig)
-      console.log('✅ Research project created successfully:', project.id)
-      if (isDev) console.log('✅ Research project created:', project.id)
-    }
+    // Create research project using service layer
+    const project = await createProject(user.id, topic, generationConfig)
+    console.log('✅ Research project created successfully:', project.id)
+    if (isDev) console.log('✅ Research project created:', project.id)
 
     // 🔧 FIX: Complete Discovery Pipeline BEFORE Streaming
     // Run Discovery → PDF extraction → Embedding → RAG context selection first
@@ -122,18 +174,18 @@ export async function GET(request: NextRequest) {
     try {
       // Step 1: Complete discovery pipeline
       const { collectPapers } = await import('@/lib/generation/discovery')
-      const { ensureBulkContentIngestion, getRelevantChunks } = await import('@/lib/generation/chunks')
+      const { getRelevantChunks } = await import('@/lib/generation/chunks')
       const { generateOutline } = await import('@/lib/prompts/generators')
-      const { buildSectionContexts } = await import('@/lib/generation/helpers')
       
+      const paperType = generationConfig.paperType || 'researchArticle'
       const discoveryOptions: import('@/lib/generation/types').EnhancedGenerationOptions = {
         projectId: project.id,
-        userId: user?.id || 'test-user',
+        userId: user.id,
         topic,
         paperType: paperType as import('@/lib/prompts/types').PaperTypeKey,
         libraryPaperIds,
         sourceIds: libraryPaperIds,
-        useLibraryOnly,
+        useLibraryOnly: generationConfig.useLibraryOnly || false,
         config: generationConfig
       }
 
@@ -146,8 +198,7 @@ export async function GET(request: NextRequest) {
       
       console.log(`✅ Discovery complete: ${allPapers.length} papers collected`)
 
-      console.log('📄 Step 2: Ensuring content ingestion...')
-      await ensureBulkContentIngestion(allPapers)
+      console.log('📄 Step 2: Content ingestion handled by discovery pipeline')
       console.log('✅ Content ingestion complete')
 
       console.log('🧠 Step 3: Building RAG context...')
@@ -165,23 +216,42 @@ export async function GET(request: NextRequest) {
       console.log('✅ RAG context selection complete')
 
       console.log('📋 Step 4: Generating outline...')
-      const outline = await generateOutline(
-        generationConfig.paper_settings?.paperType || 'researchArticle',
+      const rawOutline = await generateOutline(
+        paperType,
         topic
       )
       
+      // Build properly typed outline for buildSectionContexts
+      const typedOutline: import('@/lib/prompts/types').GeneratedOutline = {
+        paperType: paperType as import('@/lib/prompts/types').PaperTypeKey,
+        topic,
+        sections: rawOutline.sections as import('@/lib/prompts/types').OutlineSection[],
+        localRegion: generationConfig.localRegion
+      }
+      
       // Assign all papers to sections
       const allPaperIds = allPapers.map(p => p.id)
-      outline.sections.forEach((section: any) => {
+      typedOutline.sections.forEach((section: { candidatePaperIds?: string[] }) => {
         section.candidatePaperIds = allPaperIds
       })
       
       console.log('📋 Step 5: Building section contexts...')
-      const sectionContexts = await buildSectionContexts({
-        ...outline,
-        paperType: generationConfig.paper_settings?.paperType || 'researchArticle',
-        topic
-      }, topic, allPapers)
+      const rawSectionContexts = await buildSectionContexts(typedOutline, topic, allPapers)
+      
+      // Convert to unified generator format
+      const sectionContexts: import('@/lib/prompts/unified/prompt-builder').SectionContext[] = rawSectionContexts.map((ctx, index) => ({
+        projectId: project.id,
+        sectionId: `section-${index}`,
+        paperType: paperType as import('@/lib/prompts/types').PaperTypeKey,
+        sectionKey: ctx.sectionKey as import('@/lib/prompts/types').SectionKey,
+        availablePapers: ctx.candidatePaperIds,
+        contextChunks: ctx.contextChunks.map(chunk => ({
+          paper_id: chunk.paper_id,
+          content: chunk.content,
+          title: allPapers.find(p => p.id === chunk.paper_id)?.title,
+          doi: allPapers.find(p => p.id === chunk.paper_id)?.doi
+        }))
+      }))
       
       console.log('✅ Complete discovery pipeline finished - starting stream with prepared context')
       
@@ -256,64 +326,61 @@ export async function GET(request: NextRequest) {
               sectionsPlanned: sectionContexts.length
             })
 
-            if (backgroundMode) {
-              // Background mode: Start content generation with prepared context
-              sendStatus('queued', { 
-                projectId: project.id,
-                message: 'Context prepared - generation queued for background processing'
-              })
+            // Stream content generation with prepared context
+            sendProgress('generation', 30, 'Starting unified content generation...')
+            
+            try {
+              const { generateMultipleSectionsUnified } = await import('@/lib/generation/unified-generator')
               
-              // Start background processing with prepared context (don't await)
-              void generateDraftWithRAG({
-                projectId: project.id,
-                userId: user?.id || 'test-user',
-                topic,
-                paperType: paperType as import('@/lib/prompts/types').PaperTypeKey,
-                sourceIds: libraryPaperIds,
-                useLibraryOnly,
-                config: generationConfig,
-                onProgress: (progress: import('@/types/simplified').GenerationProgress) => {
-                  // In background mode, progress is stored in DB rather than streamed
-                  console.log(`Background progress [${project.id}]:`, progress.stage, progress.progress)
+              console.log(`🚀 Starting unified generation for ${sectionContexts.length} sections`)
+              
+              let completedSections = 0
+              let fullContent = ''
+              const allCitations: Array<{ paperId: string; citationText: string }> = []
+              
+              // Generate all sections using unified template
+              const results = await generateMultipleSectionsUnified(
+                sectionContexts,
+                {
+                  model: 'gpt-4o',
+                  temperature: generationConfig.temperature || 0.3,
+                  maxTokens: Math.floor((generationConfig.max_tokens || 8000) / sectionContexts.length)
+                },
+                (completed, total, currentSection) => {
+                  const progress = Math.round((completed / total) * 70) + 30 // 30-100%
+                  sendProgress('generation', progress, `Generating ${currentSection} (${completed}/${total})`)
                 }
-              }).catch((error: Error) => {
-                console.error('Background generation failed:', error)
-              })
+              )
               
-              // Close stream after sending jobId
-              sendStatus('background_started', {
-                projectId: project.id,
-                message: 'Check /api/projects/' + project.id + ' for status updates'
-              })
+              // Combine all section results
+              for (const result of results) {
+                fullContent += result.content + '\n\n'
+                allCitations.push(...result.citations)
+                completedSections++
+              }
               
-            } else {
-              // Real-time mode: Stream content generation with prepared context
-              const result = await generateDraftWithRAG({
-                projectId: project.id,
-                userId: user?.id || 'test-user',
-                topic,
-                paperType: paperType as import('@/lib/prompts/types').PaperTypeKey,
-                sourceIds: libraryPaperIds,
-                useLibraryOnly,
-                config: generationConfig,
-                onProgress: (progress: import('@/types/simplified').GenerationProgress) => {
-                  sendProgress(progress.stage, progress.progress, progress.message, progress.content)
-                }
-              })
-
+              console.log(`✅ Generated ${completedSections} sections, ${fullContent.length} chars total`)
+              
               // Send final completion with full content
               if (!isControllerClosed) {
-                const citationsMapObject = Object.fromEntries(result.citationsMap)
+                const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
+                allCitations.forEach((citation, index) => {
+                  citationsMap[`citation-${index}`] = citation
+                })
                 
                 const completionData = JSON.stringify({
                   type: 'complete',
                   projectId: project.id,
-                  content: result.content,
-                  citations: citationsMapObject,
+                  content: fullContent.trim(),
+                  citations: citationsMap,
                   timestamp: new Date().toISOString()
                 })
                 controller.enqueue(encoder.encode(`data: ${completionData}\n\n`))
               }
+              
+            } catch (generationError) {
+              console.error('Unified generation failed:', generationError)
+              sendError(`Generation failed: ${generationError instanceof Error ? generationError.message : 'Unknown error'}`)
             }
 
           } catch (error) {
@@ -389,49 +456,5 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Legacy support for non-streaming clients (redirects to streaming)
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const { topic, libraryPaperIds, useLibraryOnly, config } = body
-
-    if (!topic?.trim()) {
-      return new Response(JSON.stringify({ error: 'Topic is required' }), { 
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      })
-    }
-
-    // Build URL for streaming endpoint
-    const params = new URLSearchParams({
-      topic: topic.trim(),
-      background: 'true' // Force background mode for POST requests
-    })
-    
-    if (libraryPaperIds?.length) {
-      params.set('libraryPaperIds', libraryPaperIds.join(','))
-    }
-    
-    if (useLibraryOnly) params.set('useLibraryOnly', 'true')
-    if (config?.length) params.set('length', config.length)
-    if (config?.paperType) params.set('paperType', config.paperType)
-
-    const streamUrl = `/api/generate?${params.toString()}`
-    
-    return new Response(JSON.stringify({
-      message: 'Generation started in background mode',
-      streamUrl,
-      note: 'Connect to the streamUrl via EventSource for real-time updates'
-    }), {
-      status: 202, // Accepted
-      headers: { 'Content-Type': 'application/json' }
-    })
-
-  } catch (error) {
-    console.error('Error in generate POST API:', error)
-    return new Response(JSON.stringify({ error: 'Internal server error' }), { 
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    })
-  }
-} 
+// POST handler removed - only SSE streaming via GET is supported
+// All clients should use EventSource to connect to the GET endpoint 

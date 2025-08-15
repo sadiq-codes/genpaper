@@ -3,7 +3,7 @@ import { tool } from 'ai'
 import { AsyncLocalStorage } from 'async_hooks'
 import { CSLItem } from '@/lib/utils/csl'
 import { formatInlineCitation } from '@/lib/citations/immediate-bibliography'
-import { isUnifiedCitationsEnabled } from '@/lib/config/feature-flags'
+
 
 // Simplified citation schema - only require paper_id and reason
 const citationSchema = z.object({
@@ -68,8 +68,13 @@ export async function executeAddCitation(payload: CitationPayload) {
     let cslJson: CSLItem
     let isNew: boolean
 
-    try {
-      const res = await fetch('/api/citations', {
+      try {
+        // Use absolute URL on the server to avoid Invalid URL errors
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || ''
+        const absoluteUrl = baseUrl
+          ? `${baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`}/api/citations`
+          : '/api/citations'
+        const res = await fetch(absoluteUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

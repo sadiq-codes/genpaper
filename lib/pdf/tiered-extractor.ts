@@ -7,7 +7,7 @@
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { debug } from '@/lib/utils/logger'
+import { info, warn, error } from '@/lib/utils/logger'
 // Using native FormData instead of form-data package
 // import FormData from 'form-data'
 import { XMLParser } from 'fast-xml-parser'
@@ -56,7 +56,7 @@ export async function extractPdfMetadataTiered(
     // 0️⃣ Fast DOI lookup shortcut (if DOI found in first page)
     const doi = await findDoiInFirstPage(pdfBuffer)
     if (doi) {
-      debug.info('Found DOI in PDF, attempting Crossref lookup', { doi })
+      info('Found DOI in PDF, attempting Crossref lookup', { doi })
       try {
         const crossrefData = await fetchCrossrefMetadata(doi)
         if (crossrefData) {
@@ -75,7 +75,7 @@ export async function extractPdfMetadataTiered(
 
     // 1️⃣ Try GROBID first (best for scientific PDFs)
     try {
-      debug.info('Attempting GROBID extraction')
+      info('Attempting GROBID extraction')
       const grobidResult = await grobidParse(pdfBuffer, grobidUrl, maxTimeoutMs)
       if (grobidResult && grobidResult.title && grobidResult.fullText) {
         return {
@@ -92,14 +92,16 @@ export async function extractPdfMetadataTiered(
       notes.push('GROBID returned incomplete data')
     } catch (error) {
       notes.push(`GROBID failed: ${error}`)
-      debug.warn('GROBID extraction failed, falling back to text layer', { error })
+      warn('GROBID extraction failed, falling back to text layer', { error })
     }
 
     // 2️⃣ Fallback to pdf.js text layer
     const isScanned = await isScannedPDF(pdfBuffer)
+    info(`PDF scan check result: isScanned=${isScanned}`)
+    
     if (!isScanned) {
       try {
-        debug.info('Attempting text layer extraction')
+        info('Attempting text layer extraction')
         const textLayerResult = await withTimeout(() => parseTextLayer(pdfBuffer), maxTimeoutMs)
         if (textLayerResult && textLayerResult.fullText) {
           return {
@@ -114,18 +116,20 @@ export async function extractPdfMetadataTiered(
             }
           }
         }
+        warn('Text layer extraction returned no content')
       } catch (error) {
         notes.push(`Text layer extraction failed: ${error}`)
-        debug.warn('Text layer extraction failed', { error })
+        warn('Text layer extraction failed', { error })
       }
     } else {
+      info('PDF appears to be scanned (no text layer), skipping text extraction')
       notes.push('PDF appears to be scanned (no text layer)')
     }
 
     // 3️⃣ OCR fallback (only if enabled and needed)
     if (enableOcr) {
       try {
-        debug.info('Attempting OCR extraction')
+        info('Attempting OCR extraction')
         const ocrResult = await withTimeout(() => ocrParse(pdfBuffer, maxTimeoutMs), maxTimeoutMs)
         if (ocrResult && ocrResult.fullText) {
           return {
@@ -140,16 +144,16 @@ export async function extractPdfMetadataTiered(
             }
           }
         }
-      } catch (error) {
-        notes.push(`OCR extraction failed: ${error}`)
-        debug.error('OCR extraction failed', { error })
+      } catch (err) {
+        notes.push(`OCR extraction failed: ${err}`)
+        error('OCR extraction failed', { error: err })
       }
     } else {
       notes.push('OCR disabled, skipping scanned PDF processing')
     }
 
     // 4️⃣ Final fallback - minimal extraction
-    debug.warn('All extraction methods failed, using fallback')
+    warn('All extraction methods failed, using fallback')
     return {
       title: 'Extraction Failed',
       authors: ['Unknown'],
@@ -163,8 +167,8 @@ export async function extractPdfMetadataTiered(
       }
     }
 
-  } catch (error) {
-    debug.error('Tiered extraction completely failed', { error })
+  } catch (err) {
+    error('Tiered extraction completely failed', { error: err })
     return {
       title: 'Critical Extraction Error',
       authors: ['Unknown'],
@@ -266,7 +270,18 @@ async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtracti
   try {
     // Dynamic import to handle different environments
     const pdfParse = await import('pdf-parse').then(m => m.default || m)
-    const data = await pdfParse(pdfBuffer)
+    
+    // Ensure we're passing a proper Buffer
+    if (!Buffer.isBuffer(pdfBuffer)) {
+      throw new Error('Invalid PDF buffer provided to parseTextLayer')
+    }
+    
+    info(`Attempting pdf-parse with buffer size: ${pdfBuffer.length}`)
+    const data = await pdfParse(pdfBuffer, {
+      // Disable internal pdf.js worker to avoid file system access
+      normalizeWhitespace: true,
+      disableCombineTextItems: false
+    })
 
     if (!data.text || data.text.length < 50) {
       throw new Error('Text layer extraction returned minimal content')
@@ -291,8 +306,8 @@ async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtracti
       }
     }
 
-  } catch (error) {
-    debug.error('Text layer parsing failed', { error })
+  } catch (err) {
+    error('Text layer parsing failed', { error: err })
     return null
   }
 }
@@ -304,15 +319,34 @@ async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
   try {
     // Try to get text content from first page
     const pdfParse = await import('pdf-parse').then(m => m.default || m)
-    const data = await pdfParse(pdfBuffer, { max: 1 }) // Only first page
+    
+    // Ensure we're passing a proper Buffer
+    if (!Buffer.isBuffer(pdfBuffer)) {
+      info('Invalid PDF buffer provided to isScannedPDF, assuming scanned')
+      return true
+    }
+    
+    info(`Checking if PDF is scanned with buffer size: ${pdfBuffer.length}`)
+    const data = await pdfParse(pdfBuffer, { 
+      max: 1, // Only first page
+      normalizeWhitespace: true,
+      disableCombineTextItems: false
+    })
     
     const textLen = data.text ? data.text.trim().length : 0
     const avgCharsPerPage = textLen / (data.numpages || 1)
+    const pageCount = data.numpages ?? 0
+
+    info(`PDF scan detection: pages=${pageCount}, textLen=${textLen}, avgCharsPerPage=${avgCharsPerPage}`)
 
     // Consider scanned if multi-page PDF has very low text density
-    return (data.numpages ?? 0) >= 4 && avgCharsPerPage < 80
-  } catch {
-    return true // Assume scanned if can't parse
+    const isScanned = pageCount >= 4 && avgCharsPerPage < 80
+    info(`PDF scan result: isScanned=${isScanned} (threshold: >4 pages AND <80 chars/page)`)
+    
+    return isScanned
+  } catch (error) {
+    warn(`PDF scan detection failed, assuming NOT scanned to allow text layer attempt: ${error}`)
+    return false // Changed: assume NOT scanned so text layer is attempted
   }
 }
 
@@ -327,7 +361,7 @@ async function ocrParse(
   // Options: AWS Textract, Google Document AI, or Tesseract + LayoutParser
   void _pdfBuffer; // avoid unused-var lint
   void _timeoutMs;
-  debug.warn('OCR extraction not yet implemented')
+  warn('OCR extraction not yet implemented')
   return null
 }
 
@@ -414,12 +448,11 @@ async function parseTeiXml(xml: string): Promise<Partial<TieredExtractionResult>
     ignoreDeclaration: true
   })
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
   let teiJson: any
   try {
     teiJson = parser.parse(xml)
   } catch (e) {
-    debug.error('TEI XML parse error', { error: e })
+    error('TEI XML parse error', { error: e })
     return {}
   }
 
@@ -427,7 +460,6 @@ async function parseTeiXml(xml: string): Promise<Partial<TieredExtractionResult>
   const TEI: any = teiJson.TEI || teiJson.tei || teiJson
 
   const safeGet = (...paths: string[]): string | null | undefined => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let node: any = TEI
     for (const key of paths) {
       if (node && Object.prototype.hasOwnProperty.call(node, key)) {

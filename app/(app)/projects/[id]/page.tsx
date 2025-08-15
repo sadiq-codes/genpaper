@@ -1,7 +1,5 @@
-'use client'
-
-import { ProjectEditor } from '@/components/editor/ProjectEditor'
+import { Editor } from '@/components/editor/Editor'
 
 export default function ProjectPage() {
-  return <ProjectEditor />
+  return <Editor />
 } 

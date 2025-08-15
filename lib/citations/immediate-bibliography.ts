@@ -689,37 +689,7 @@ export class CitationService {
 
 }
 
-// Legacy export for backward compatibility
-interface LegacyAddCitationParams {
-  projectId: string
-  paperId: string
-  reason: string
-  quote?: string | null
-}
-
-export async function addCitationUnified(params: LegacyAddCitationParams): Promise<{ citationNumber: number; cslJson: CSLItem; isNew: boolean }> {
-  const result = await CitationService.add({
-    projectId: params.projectId,
-    sourceRef: { paperId: params.paperId },
-    reason: params.reason,
-    quote: params.quote
-  })
-  
-  // For legacy compatibility, we'll compute citation number from first_seen_order
-  // This is a temporary bridge until all callers are updated
-  const supabase = await getSB()
-  const { data: citation } = await supabase
-    .from('project_citations')
-    .select('first_seen_order')
-    .eq('id', result.projectCitationId)
-    .single()
-  
-  return {
-    citationNumber: citation?.first_seen_order || 1,
-    cslJson: result.cslJson!,
-    isNew: result.isNew
-  }
-}
+// Citations fully unified - no legacy compatibility needed
 
 export function formatInlineCitation(cslJson: CSLItem, style: string, number: number): string {
   const authors = cslJson.author || []

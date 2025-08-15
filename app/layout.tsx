@@ -7,8 +7,7 @@ import "./globals.css"
 // import { QueryProvider } from '@/lib/tanstack-query/provider'
 // import { ErrorBoundary } from "@/components/ErrorBoundary"
 
-// Initialize global error handler
-import "@/lib/error-handling/global-error-handler"
+// Global error handler removed - using unified API error handling
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
-import { isCitationsUnifiedEnabled } from '@/lib/config/feature-flags'
+
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 import { citationRateLimiter } from '@/lib/utils/rate-limiter'
 import { citationLogger } from '@/lib/utils/citation-logger'
@@ -116,49 +116,28 @@ export async function POST(request: NextRequest) {
       }, { status: result.isNew ? 201 : 200 })
 
     } catch (citationError) {
-      // Check for duplicate/conflict
-      if (citationError instanceof Error && citationError.message.includes('Could not resolve source reference')) {
-        return NextResponse.json({
-          error: 'Source reference could not be resolved',
-          message: citationError.message,
-          sourceRef
-        }, { status: 400 })
-      }
-
-      // Check for validation errors
-      if (citationError instanceof Error && citationError.message.includes('CSL validation failed')) {
-        return NextResponse.json({
-          error: 'Invalid citation data',
-          message: citationError.message
-        }, { status: 400 })
-      }
-
-      // Unexpected errors
-      console.error('Citation creation failed:', citationError)
-      return NextResponse.json({
-        error: 'Internal server error',
-        message: 'Failed to create citation'
-      }, { status: 500 })
+      const { createErrorResponse } = await import('@/lib/utils/api-errors')
+      return createErrorResponse(citationError, 'Failed to create citation')
     }
 
   } catch (error) {
-    console.error('Citations add API error:', error)
-    return NextResponse.json({
-      error: 'Internal server error',
-      message: 'An unexpected error occurred'
-    }, { status: 500 })
+    const { createErrorResponse } = await import('@/lib/utils/api-errors')
+    return createErrorResponse(error, 'Citation API error')
   }
 }
 
 // Method not allowed for other HTTP methods
 export async function GET() {
-  return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
+  const { ApiErrors } = await import('@/lib/utils/api-errors')
+  throw ApiErrors.methodNotAllowed('GET')
 }
 
 export async function PUT() {
-  return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
+  const { ApiErrors } = await import('@/lib/utils/api-errors')
+  throw ApiErrors.methodNotAllowed('PUT')
 }
 
 export async function DELETE() {
-  return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
+  const { ApiErrors } = await import('@/lib/utils/api-errors')
+  throw ApiErrors.methodNotAllowed('DELETE')
 }

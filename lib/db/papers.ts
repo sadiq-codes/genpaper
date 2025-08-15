@@ -1,5 +1,5 @@
 import { getSB } from '@/lib/supabase/server'
-import type { PaperWithAuthors, Author } from '@/types/simplified'
+import type { PaperWithAuthors } from '@/types/simplified'
 import { generateEmbeddings } from '@/lib/utils/embedding'
 import { PaperDTO } from '@/lib/schemas/paper'
 import { debug } from '@/lib/utils/logger' 
@@ -7,21 +7,12 @@ import { debug } from '@/lib/utils/logger'
 // Centralized embedding configuration to ensure consistency
 
 
-// Fix: Fallback token estimation without tiktoken dependency
-// Removed estimateTokenCount and getTokenEncoder - now handled by chunk-processor utility
-
-// Fix: Smart chunk validation with simplified tiktoken usage
-// Removed validateAndClampChunk - now handled by chunk-processor utility
+// Simplified text processing - using centralized text utilities
 
 // Import the unified chunk processor
 import { createChunksForPaper } from '@/lib/content/ingestion'
 
-// Type definitions for database query results
-interface PaperAuthorRelation {
-  ordinal: number
-  author: Author
-}
-
+// Type definitions for database query results  
 interface DatabasePaper {
   id: string
   title: string
@@ -36,20 +27,18 @@ interface DatabasePaper {
   citation_count: number
   impact_score?: number
   created_at: string
-  authors: PaperAuthorRelation[]
+  authors: string[]
 }
 
 
 // Helper function to transform database papers to app format
 function transformDatabasePaper(dbPaper: DatabasePaper): PaperWithAuthors {
-  const authors = dbPaper.authors
-    ?.sort((a: PaperAuthorRelation, b: PaperAuthorRelation) => a.ordinal - b.ordinal)
-    ?.map((pa: PaperAuthorRelation) => pa.author) || []
+  const authors = Array.isArray(dbPaper.authors) ? dbPaper.authors : []
 
   return {
     ...dbPaper,
-    authors,
-    author_names: authors.map((a: Author) => a.name)
+    authors: authors.map((name: string) => ({ id: '', name })), // Create minimal Author objects
+    author_names: authors
   }
 }
 
@@ -59,10 +48,7 @@ export async function getPaper(paperId: string): Promise<PaperWithAuthors | null
     .from('papers')
     .select(`
       *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
+      authors
     `)
     .eq('id', paperId)
     .single()
@@ -83,10 +69,7 @@ export async function getPapersByIds(paperIds: string[]): Promise<PaperWithAutho
     .from('papers')
     .select(`
       *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
+      authors
     `)
     .in('id', paperIds)
 
@@ -103,10 +86,7 @@ export async function getRecentPapers(
     .from('papers')
     .select(`
       *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
+      authors
     `)
     .order('publication_date', { ascending: false, nullsFirst: false })
     .limit(limit)
@@ -182,42 +162,7 @@ export async function semanticSearchPapers(
     return []
   }
   
-  // Get paper IDs for author fetching
-  const paperIds = searchResults.map((result: SearchResult) => result.paper_id)
-  
-  // Fetch authors for all papers in one query
-  const { data: authorsData, error: authorsError } = await supabase
-    .from('paper_authors')
-    .select(`
-      paper_id,
-        ordinal,
-      authors (
-        id,
-        name
-      )
-    `)
-    .in('paper_id', paperIds)
-    .order('ordinal')
-  
-  if (authorsError) {
-    console.error('Error fetching authors:', authorsError)
-  }
-  
-  // Group authors by paper ID
-  const authorsByPaper = new Map<string, PaperAuthorRelation[]>()
-  authorsData?.forEach(item => {
-    if (!authorsByPaper.has(item.paper_id)) {
-      authorsByPaper.set(item.paper_id, [])
-    }
-    const author = item.authors as unknown as { id: string; name: string }
-    authorsByPaper.get(item.paper_id)!.push({
-      ordinal: item.ordinal,
-      author: {
-        id: author.id,
-        name: author.name
-      }
-    })
-  })
+  // Authors are now stored directly in the JSONB array, no separate fetch needed
   
   // Transform results to include authors and search scores
   return searchResults.map((result: SearchResult) => ({
@@ -238,7 +183,8 @@ export async function semanticSearchPapers(
     citation_count: result.citation_count,
     impact_score: null,
     created_at: new Date().toISOString(),
-    authors: authorsByPaper.get(result.paper_id) || []
+    authors: [],
+    author_names: []
   }))
 }
 
@@ -518,10 +464,7 @@ export async function hybridSearchPapers(
     .from('papers')
     .select(`
       *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
+      authors
     `)
     .in('id', topResults.map((r: HybridSearchResult) => r.paper_id))
 
@@ -660,10 +603,7 @@ export async function findSimilarPapers(
     .from('papers')
     .select(`
       *,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
+      authors
     `)
     .in('id', (matches as SimilarPapersResult[]).map(m => m.paper_id))
   
@@ -857,12 +797,13 @@ async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
   const text = `${paperData.title}\n${paperData.abstract || ''}`
   const [embedding] = await generateEmbeddings([text])
   
-  // Insert paper metadata with embedding
+  // Insert paper metadata with embedding and authors
   const { data, error } = await supabase
     .from('papers')
     .insert({
       title: paperData.title,
       abstract: paperData.abstract,
+      authors: paperData.authors || [], // Store authors as JSONB array
       publication_date: paperData.publication_date,
       venue: paperData.venue,
       doi: paperData.doi,
@@ -882,10 +823,8 @@ async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
   
   const paperId = data.id
   
-  // Handle authors
-  if (paperData.authors && paperData.authors.length > 0) {
-    await upsertPaperAuthors(paperId, paperData.authors)
-  }
+  // Authors are now stored directly in the JSONB column during insert
+  // No separate author handling needed
   
   return paperId
 }
@@ -903,114 +842,19 @@ async function processContentImmediately(paperId: string, fullText: string): Pro
  * Queue PDF processing
  */
 async function queuePdfProcessing(paperId: string, pdfUrl: string, title: string, priority: 'low' | 'normal' | 'high'): Promise<void> {
-  const { PDFProcessingQueue } = await import('@/lib/services/pdf-queue')
-  const queue = PDFProcessingQueue.getInstance()
+  const { pdfQueue } = await import('@/lib/services/pdf-queue')
   
   // Get user ID from context (for quota tracking)  
   const supabase = await getSB()
   const { data: { user } } = await supabase.auth.getUser()
   const userId = user?.id || 'system'
   
-  await queue.addJob(paperId, pdfUrl, title, userId, priority)
+  console.log(`📋 Queueing PDF processing for paper ${paperId}: ${title}`)
+  const result = await pdfQueue.addJob(paperId, pdfUrl, title, userId, priority)
+  console.log(`📋 PDF processing result: ${result}`)
 }
 
-// Optimized batch author creation to replace createOrGetAuthor loops
-export async function batchCreateOrGetAuthors(authorNames: string[]): Promise<Author[]> {
-  if (authorNames.length === 0) return []
-  
-  const supabase = await getSB()
-  
-  // 1. Fetch all existing authors in one query
-  const { data: existingAuthors, error: fetchError } = await supabase
-    .from('authors')
-    .select('*')
-    .in('name', authorNames)
-  
-  if (fetchError) throw fetchError
-  
-  // 2. Find which authors don't exist yet
-  const existingNames = new Set(existingAuthors?.map(a => a.name) || [])
-  const newAuthorNames = authorNames.filter(name => !existingNames.has(name))
-  
-  // 3. Insert new authors in batch with ON CONFLICT handling
-  if (newAuthorNames.length > 0) {
-    const { data: newAuthors, error: insertError } = await supabase
-      .from('authors')
-      .upsert(
-        newAuthorNames.map(name => ({ name })),
-        { onConflict: 'name', ignoreDuplicates: false }
-      )
-      .select()
-    
-    if (insertError) throw insertError
-    
-    // Combine existing and new authors
-    const allAuthors = [...(existingAuthors || []), ...(newAuthors || [])]
-    
-    // Return in the same order as input with proper null checking
-    return authorNames.map(name => {
-      const author = allAuthors.find(author => author.name === name)
-      if (!author) {
-        throw new Error(`Author not found after creation: ${name}`)
-      }
-      return author
-    })
-  }
-  
-  // Return existing authors in input order with proper null checking
-  return authorNames.map(name => {
-    const author = existingAuthors?.find(author => author.name === name)
-    if (!author) {
-      throw new Error(`Author not found: ${name}`)
-    }
-    return author
-  })
-}
-
-// Optimized paper-author relationship management
-export async function upsertPaperAuthors(paperId: string, authorNames: string[]): Promise<void> {
-  if (authorNames.length === 0) return
-  
-  const supabase = await getSB()
-  
-  // 1. Get all authors efficiently (using batch function)
-  const authors = await batchCreateOrGetAuthors(authorNames)
-  
-  // 2. Get current author IDs for this paper
-  const { data: currentRelations } = await supabase
-    .from('paper_authors')
-    .select('author_id')
-    .eq('paper_id', paperId)
-  
-  const currentAuthorIds = new Set(currentRelations?.map(r => r.author_id) || [])
-  const newAuthorIds = authors.map(a => a.id)
-  
-  // 3. Delete relationships that should no longer exist
-  const authorsToRemove = [...currentAuthorIds].filter(id => !newAuthorIds.includes(id))
-  if (authorsToRemove.length > 0) {
-    await supabase
-      .from('paper_authors')
-      .delete()
-      .eq('paper_id', paperId)
-      .in('author_id', authorsToRemove)
-  }
-  
-  // 4. Insert new relationships in batch
-  const relationshipsToInsert = authors.map((author, index) => ({
-    paper_id: paperId,
-    author_id: author.id,
-    ordinal: index + 1
-  }))
-  
-  const { error } = await supabase
-    .from('paper_authors')
-    .upsert(relationshipsToInsert, {
-      onConflict: 'paper_id,author_id',
-      ignoreDuplicates: false
-    })
-  
-  if (error) throw error
-}
+// Author management functions removed - authors are now stored as JSONB arrays
 
 // Check if paper exists by DOI to prevent duplicates
 export async function checkPaperExists(doi?: string, title?: string): Promise<{ exists: boolean, paperId?: string }> {
@@ -1097,6 +941,6 @@ export async function updatePaperCitationFields(
     throw new Error(`Failed to update paper citation fields: ${error.message}`)
   }
 
-  debug.info('Updated paper citation fields', { paperId, fields: Object.keys(citationData) })
+  console.log('Updated paper citation fields', { paperId, fields: Object.keys(citationData) })
 }
 

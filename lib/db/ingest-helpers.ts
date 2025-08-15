@@ -115,8 +115,8 @@ export async function validatePaperData(
   let chunksPreview: { count: number; avgSize: number; estimatedProcessingTime: number } | undefined
   if (options.processChunks && paperData.content) {
     try {
-      const { splitIntoChunks } = await import('@/lib/utils/chunk-processor')
-      const chunks = splitIntoChunks(paperData.content)
+      const { splitIntoChunks } = await import('@/lib/utils/text')
+      const chunks = splitIntoChunks(paperData.content, 'validation-preview')
       
       chunksPreview = {
         count: chunks.length,
@@ -148,11 +148,9 @@ export async function processChunksInMemory(
   const processedChunks: Array<{content: string, embedding: number[], metadata: {chunkIndex: number}}> = []
 
   try {
-    const { splitIntoChunks } = await import('@/lib/utils/chunk-processor')
-    const rawChunks = splitIntoChunks(content)
-    const contentChunks = rawChunks.map((chunk: string | { content: string }) => 
-      typeof chunk === 'string' ? chunk : chunk.content || String(chunk)
-    )
+    const { splitIntoChunks } = await import('@/lib/utils/text')
+    const rawChunks = splitIntoChunks(content, 'temp-paper-id')
+    const contentChunks = rawChunks.map(chunk => chunk.content)
     
     for (let i = 0; i < contentChunks.length; i++) {
       const chunk = contentChunks[i]

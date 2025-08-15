@@ -1,12 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { 
-  createCollection, 
-  getUserCollections, 
-  deleteCollection,
-  addPaperToCollection,
-  removePaperFromCollection
-} from '@/lib/db/library'
+// Collection functions removed - collections are now simple text fields
 
 // GET - Retrieve user's collections
 export async function GET() {
@@ -19,10 +13,35 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const collections = await getUserCollections(user.id)
+    // In the new schema, get distinct collection names from library_papers
+    const { data: collections, error } = await supabase
+      .from('library_papers')
+      .select('collection')
+      .eq('user_id', user.id)
+      .not('collection', 'is', null)
+
+    if (error) {
+      return NextResponse.json({ error: 'Failed to fetch collections' }, { status: 500 })
+    }
+
+    // Get unique collection names with counts
+    const collectionCounts = new Map<string, number>()
+    collections?.forEach(item => {
+      if (item.collection) {
+        collectionCounts.set(item.collection, (collectionCounts.get(item.collection) || 0) + 1)
+      }
+    })
+
+    const collectionsWithCounts = Array.from(collectionCounts.entries()).map(([name, count]) => ({
+      id: name, // Use name as ID in new schema
+      name,
+      paper_count: count,
+      user_id: user.id,
+      created_at: new Date().toISOString() // Placeholder since we don't track creation time anymore
+    }))
 
     return NextResponse.json({
-      collections
+      collections: collectionsWithCounts
     })
 
   } catch (error) {
@@ -51,7 +70,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Collection name is required' }, { status: 400 })
     }
 
-    const collection = await createCollection(user.id, name.trim(), description)
+    // In the new schema, collections are just text values
+    // We'll create a placeholder response that mimics the old structure
+    const collection = {
+      id: name.trim(), // Use name as ID in new schema
+      name: name.trim(),
+      description: description || null,
+      user_id: user.id,
+      paper_count: 0,
+      created_at: new Date().toISOString()
+    }
 
     return NextResponse.json(collection, { status: 201 })
 
@@ -82,19 +110,17 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Collection ID is required' }, { status: 400 })
     }
 
-    // Verify ownership
-    const { data: collection, error } = await supabase
-      .from('library_collections')
-      .select('id')
-      .eq('id', collectionId)
+    // In the new schema, collections are just text values, not separate entities
+    // Instead, we update any library papers that have this collection name
+    const { error } = await supabase
+      .from('library_papers')
+      .update({ collection: null })
       .eq('user_id', user.id)
-      .single()
-
-    if (error || !collection) {
-      return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
+      .eq('collection', collectionId) // collectionId is now the collection name
+    
+    if (error) {
+      return NextResponse.json({ error: 'Failed to clear collection' }, { status: 500 })
     }
-
-    await deleteCollection(collectionId)
 
     return NextResponse.json({ success: true })
 
@@ -126,22 +152,30 @@ export async function PUT(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // Verify collection ownership
-    const { data: collection, error } = await supabase
-      .from('library_collections')
-      .select('id')
-      .eq('id', collectionId)
-      .eq('user_id', user.id)
-      .single()
-
-    if (error || !collection) {
-      return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
-    }
-
+    // In the new schema, collection operations are just updating the text field
     if (action === 'add') {
-      await addPaperToCollection(collectionId, paperId)
+      // Set the collection field to the collection name
+      const { error } = await supabase
+        .from('library_papers')
+        .update({ collection: collectionId }) // collectionId is now the collection name
+        .eq('user_id', user.id)
+        .eq('paper_id', paperId)
+      
+      if (error) {
+        return NextResponse.json({ error: 'Failed to add paper to collection' }, { status: 500 })
+      }
     } else if (action === 'remove') {
-      await removePaperFromCollection(collectionId, paperId)
+      // Clear the collection field
+      const { error } = await supabase
+        .from('library_papers')
+        .update({ collection: null })
+        .eq('user_id', user.id)
+        .eq('paper_id', paperId)
+        .eq('collection', collectionId)
+      
+      if (error) {
+        return NextResponse.json({ error: 'Failed to remove paper from collection' }, { status: 500 })
+      }
     } else {
       return NextResponse.json({ error: 'Invalid action. Use "add" or "remove"' }, { status: 400 })
     }

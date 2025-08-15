@@ -1,9 +1,8 @@
-import { searchPaperChunks } from '@/lib/db/papers'
 import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
 import { getPapersByIds } from '@/lib/db/library'
 import type { PaperWithAuthors } from '@/types/simplified'
 import { getContentStatus, ensureBulkContentIngestion } from '@/lib/content'
-import { createHash } from 'crypto'
+import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
 
 interface PaperChunk {
   id: string
@@ -20,19 +19,7 @@ import {
   ContentQualityError 
 } from '@/lib/content/errors'
 
-/**
- * Helper function to create deterministic chunk IDs
- */
-function createDeterministicChunkId(paperId: string, content: string, index?: number): string {
-  const contentHash = createHash('sha256')
-    .update(content.substring(0, 100)) // Use first 100 chars for hash
-    .digest('hex')
-    .substring(0, 8) // Take first 8 chars of hash
-  
-  return index !== undefined 
-    ? `chunk-${paperId}-${index}-${contentHash}`
-    : `chunk-${paperId}-${contentHash}`
-}
+
 
 /**
  * Get relevant chunks for RAG generation

@@ -1,15 +1,25 @@
-import { Paper, LibraryPaper, LibraryCollection, Tag, LibraryFilters, PaperMetadata, Author } from '@/types/simplified'
+import { LibraryPaper, LibraryFilters } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
 // Legacy browser client import removed - use API endpoints for client operations
-import type { CSLItem } from '@/lib/utils/csl'
-import { 
-  transformPaperWithAuthors, 
-  PAPER_WITH_AUTHORS_SELECT,
-  applySorting,
-  applyFilters,
-  type PaperAuthorJoin, 
-  type PaperWithAuthorJoins 
-} from './library-utils'
+// CSL utilities no longer needed
+// Simplified library utilities - no longer need complex author joins
+
+interface SimplifiedPaper {
+  id: string
+  title: string
+  abstract?: string
+  authors?: string[]
+  publication_date?: string
+  venue?: string
+  doi?: string
+  url?: string
+  pdf_url?: string
+  source?: string
+  citation_count?: number
+  impact_score?: number
+  created_at: string
+  [key: string]: unknown
+}
 
 // Browser-side client now imported from centralized location
 
@@ -26,13 +36,26 @@ export async function addPaperToLibrary(
       paper_id: paperId,
       notes
     })
-    .select(PAPER_WITH_AUTHORS_SELECT)
+    .select(`
+      *,
+      paper:papers(*)
+    `)
     .single()
 
   if (error) throw error
 
-  // Use shared transformation utility
-  return transformPaperWithAuthors(data)
+  // Transform with simplified schema
+  const paper = data.paper as SimplifiedPaper
+  const authors = Array.isArray(paper.authors) ? paper.authors : []
+  
+  return {
+    ...data,
+    paper: {
+      ...paper,
+      authors: authors.map((name: string) => ({ id: '', name })),
+      author_names: authors
+    }
+  }
 }
 
 export async function removePaperFromLibrary(
@@ -71,23 +94,55 @@ export async function getUserLibraryPapers(
   const supabase = await getSB()
   let query = supabase
     .from('library_papers')
-    .select(PAPER_WITH_AUTHORS_SELECT)
+    .select(`
+      *,
+      paper:papers(*)
+    `)
     .eq('user_id', userId)
 
-  // Apply filters using shared utility
-  query = applyFilters(query, filters)
+  // Apply filters
+  if (filters.search) {
+    query = query.or(
+      `paper.title.ilike.%${filters.search}%,paper.abstract.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`
+    )
+  }
 
-  // Apply sorting using shared utility  
+  if (filters.source) {
+    query = query.eq('paper.source', filters.source)
+  }
+
+  // Apply sorting
   const sortBy = filters.sortBy || 'added_at'
   const sortOrder = filters.sortOrder || 'desc'
-  query = applySorting(query, sortBy, sortOrder)
+  
+  if (sortBy === 'added_at') {
+    query = query.order('added_at', { ascending: sortOrder === 'asc' })
+  } else if (sortBy === 'title') {
+    query = query.order('paper.title', { ascending: sortOrder === 'asc' })
+  } else if (sortBy === 'publication_date') {
+    query = query.order('paper.publication_date', { ascending: sortOrder === 'asc', nullsFirst: false })
+  } else if (sortBy === 'citation_count') {
+    query = query.order('paper.citation_count', { ascending: sortOrder === 'asc', nullsFirst: false })
+  }
 
   const { data, error } = await query.range(offset, offset + limit - 1)
 
   if (error) throw error
 
-  // Transform using shared utility
-  return (data || []).map(transformPaperWithAuthors)
+  // Transform with simplified schema
+  return (data || []).map(item => {
+    const paper = item.paper as any
+    const authors = Array.isArray(paper.authors) ? paper.authors : []
+    
+    return {
+      ...item,
+      paper: {
+        ...paper,
+        authors: authors.map((name: string) => ({ id: '', name })),
+        author_names: authors
+      }
+    }
+  })
 }
 
 export async function getLibraryPaper(
@@ -97,7 +152,10 @@ export async function getLibraryPaper(
   const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_papers')
-    .select(PAPER_WITH_AUTHORS_SELECT)
+    .select(`
+      *,
+      paper:papers(*)
+    `)
     .eq('user_id', userId)
     .eq('paper_id', paperId)
     .single()
@@ -105,7 +163,18 @@ export async function getLibraryPaper(
   if (error && error.code !== 'PGRST116') throw error
   if (!data) return null
 
-  return transformPaperWithAuthors(data)
+  // Transform with simplified schema
+  const paper = data.paper as SimplifiedPaper
+  const authors = Array.isArray(paper.authors) ? paper.authors : []
+  
+  return {
+    ...data,
+    paper: {
+      ...paper,
+      authors: authors.map((name: string) => ({ id: '', name })),
+      author_names: authors
+    }
+  }
 }
 
 export async function isInLibrary(
@@ -124,213 +193,9 @@ export async function isInLibrary(
   return !!data
 }
 
-// Collection management
-export async function createCollection(
-  userId: string,
-  name: string,
-  description?: string
-): Promise<LibraryCollection> {
-  const supabase = await getSB()
-  const { data, error } = await supabase
-    .from('library_collections')
-    .insert({
-      user_id: userId,
-      name,
-      description
-    })
-    .select()
-    .single()
+// Collection management functions removed - collections are now simple text fields in library_papers
 
-  if (error) throw error
-  return data
-}
-
-export async function getUserCollections(userId: string): Promise<LibraryCollection[]> {
-  const supabase = await getSB()
-  const { data, error } = await supabase
-    .from('library_collections')
-    .select(`
-      *,
-      paper_count:collection_papers(count)
-    `)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-
-  if (error) throw error
-
-  // Transform the count data
-  return (data || []).map((collection: LibraryCollection & { paper_count: { count: number }[] }) => ({
-    ...collection,
-    paper_count: collection.paper_count[0]?.count || 0
-  }))
-}
-
-export async function addPaperToCollection(
-  collectionId: string,
-  paperId: string
-): Promise<void> {
-  const supabase = await getSB()
-  const { error } = await supabase
-    .from('collection_papers')
-    .insert({
-      collection_id: collectionId,
-      paper_id: paperId
-    })
-
-  if (error) throw error
-}
-
-export async function removePaperFromCollection(
-  collectionId: string,
-  paperId: string
-): Promise<void> {
-  const supabase = await getSB()
-  const { error } = await supabase
-    .from('collection_papers')
-    .delete()
-    .eq('collection_id', collectionId)
-    .eq('paper_id', paperId)
-
-  if (error) throw error
-}
-
-export async function getCollectionPapers(
-  collectionId: string,
-  limit = 20,
-  offset = 0
-): Promise<Paper[]> {
-  const supabase = await getSB()
-  const { data, error } = await supabase
-    .from('collection_papers')
-    .select(`
-      paper:papers(
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      )
-    `)
-    .eq('collection_id', collectionId)
-    .range(offset, offset + limit - 1)
-
-  if (error) throw error
-
-  // Transform the paper data
-  const papers = (data || []).map(item => {
-    const dbPaper = item.paper as unknown as PaperWithAuthorJoins
-    if (!dbPaper) return null
-    
-    // Transform authors from DbAuthor to Author type
-    const authors = dbPaper.authors
-      ?.sort((a: PaperAuthorJoin, b: PaperAuthorJoin) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
-      ?.map((pa: PaperAuthorJoin): Author => ({
-        id: pa.author.id,
-        name: pa.author.name
-      })) || []
-
-    // Transform to Paper type
-    const paper: Paper = {
-      id: dbPaper.id,
-      title: dbPaper.title,
-      abstract: dbPaper.abstract ?? undefined,
-      publication_date: dbPaper.publication_date ?? undefined,
-      venue: dbPaper.venue ?? undefined,
-      doi: dbPaper.doi ?? undefined,
-      url: dbPaper.url ?? undefined,
-      pdf_url: dbPaper.pdf_url ?? undefined,
-      metadata: dbPaper.metadata as PaperMetadata | undefined,
-      source: dbPaper.source ?? undefined,
-      citation_count: dbPaper.citation_count ?? undefined,
-      impact_score: dbPaper.impact_score ?? undefined,
-      created_at: dbPaper.created_at,
-      csl_json: (dbPaper.csl_json as unknown) as CSLItem | undefined,
-      authors
-    }
-
-    return paper
-  }).filter((p): p is Paper => p !== null)
-  
-  return papers
-}
-
-export async function deleteCollection(collectionId: string): Promise<void> {
-  const supabase = await getSB()
-  const { error } = await supabase
-    .from('library_collections')
-    .delete()
-    .eq('id', collectionId)
-
-  if (error) throw error
-}
-
-// Tag management
-export async function createOrGetTag(userId: string, name: string): Promise<Tag> {
-  const supabase = await getSB()
-  // First try to get existing tag
-  const { data: existingTag } = await supabase
-    .from('tags')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('name', name)
-    .single()
-
-  if (existingTag) return existingTag
-
-  // Create new tag
-  const { data, error } = await supabase
-    .from('tags')
-    .insert({
-      user_id: userId,
-      name
-    })
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
-}
-
-export async function getUserTags(userId: string): Promise<Tag[]> {
-  const supabase = await getSB()
-  const { data, error } = await supabase
-    .from('tags')
-    .select('*')
-    .eq('user_id', userId)
-    .order('name')
-
-  if (error) throw error
-  return data || []
-}
-
-export async function addTagToLibraryPaper(
-  libraryPaperId: string,
-  tagId: string
-): Promise<void> {
-  const supabase = await getSB()
-  const { error } = await supabase
-    .from('library_paper_tags')
-    .insert({
-      paper_id: libraryPaperId,
-      tag_id: tagId
-    })
-
-  if (error) throw error
-}
-
-export async function removeTagFromLibraryPaper(
-  libraryPaperId: string,
-  tagId: string
-): Promise<void> {
-  const supabase = await getSB()
-  const { error } = await supabase
-    .from('library_paper_tags')
-    .delete()
-    .eq('paper_id', libraryPaperId)
-    .eq('tag_id', tagId)
-
-  if (error) throw error
-}
+// Tag management functions removed - tags are now stored as text arrays in library_papers.tags
 
 // Legacy clientLibraryOperations removed - use API endpoints instead
 
@@ -352,7 +217,10 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
   if (uuids.length > 0) {
     const query = supabase
       .from('library_papers')
-      .select(PAPER_WITH_AUTHORS_SELECT)
+      .select(`
+        *,
+        paper:papers(*)
+      `)
       .in('paper_id', uuids);
     promises.push(query);
   }
@@ -377,7 +245,10 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
 
       return supabase
         .from('library_papers')
-        .select(PAPER_WITH_AUTHORS_SELECT)
+        .select(`
+          *,
+          paper:papers(*)
+        `)
         .in('paper_id', foundUuids);
     })();
     promises.push(promise);
@@ -395,7 +266,19 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
     }
     if (result.data) {
       for (const item of result.data) {
-        const transformed = transformPaperWithAuthors(item);
+        // Transform with simplified schema
+        const paper = item.paper as any
+        const authors = Array.isArray(paper.authors) ? paper.authors : []
+        
+        const transformed = {
+          ...item,
+          paper: {
+            ...paper,
+            authors: authors.map((name: string) => ({ id: '', name })),
+            author_names: authors
+          }
+        }
+        
         if (!seenIds.has(transformed.id)) {
           papers.push(transformed);
           seenIds.add(transformed.id);

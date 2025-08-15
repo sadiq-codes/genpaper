@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
-import { isBatchedCitationsEnabled } from '@/lib/config/feature-flags'
+
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 import { validateCSL } from '@/lib/utils/csl'
 import { BatchCitationRefSchema, type PlaceholderCitation } from '@/lib/citations/placeholder-schema'

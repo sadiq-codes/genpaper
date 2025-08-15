@@ -21,30 +21,17 @@ export interface PaperMetadata {
   [key: string]: unknown
 }
 
+// Simplified generation config - no feature flags or complex nested objects
 export interface GenerationConfig {
   temperature?: number
   max_tokens?: number
-  stream?: boolean
-  model?: string
-  search_parameters?: {
-    sources?: string[]
-    limit?: number
-    useSemanticSearch?: boolean
-    semanticWeight?: number
-    authorityWeight?: number
-    recencyWeight?: number
-  }
-  paper_settings?: {
-    length?: 'short' | 'medium' | 'long'
-    paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
-    localRegion?: string // TASK 6: Regional boosting support
-    includeFuture?: boolean
-    minCitationCoverage?: number
-    minCitationFloor?: number
-    evidenceSnippetLength?: number
-  }
+  sources?: string[]
+  limit?: number
   library_papers_used?: string[]
-  [key: string]: unknown
+  length?: 'short' | 'medium' | 'long'
+  paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
+  localRegion?: string
+  useLibraryOnly?: boolean
 }
 
 export interface Paper {

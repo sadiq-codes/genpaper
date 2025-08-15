@@ -1,13 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
-interface AuthorRelation {
-  author: {
-    id: string
-    name: string
-  }
-}
-
 interface PaperWithAuthors {
   id: string
   title: string
@@ -20,7 +13,7 @@ interface PaperWithAuthors {
   citation_count: number | null
   impact_score: number | null
   created_at: string
-  authors?: AuthorRelation[]
+  authors?: string[]
 }
 
 export async function GET() {
@@ -54,12 +47,7 @@ export async function GET() {
           citation_count,
           impact_score,
           created_at,
-          authors:paper_authors (
-            author:authors (
-              id,
-              name
-            )
-          )
+          authors
         )
       `)
       .eq('user_id', user.id)
@@ -73,12 +61,13 @@ export async function GET() {
     // Transform the data to match the expected format
     const transformedPapers = libraryPapers.map(lp => {
       const paper = lp.paper as unknown as PaperWithAuthors
+      const authors = Array.isArray(paper.authors) ? paper.authors : []
       return {
         ...lp,
         paper: {
           ...paper,
-          authors: paper.authors?.map((pa: AuthorRelation) => pa.author) || [],
-          author_names: paper.authors?.map((pa: AuthorRelation) => pa.author.name) || []
+          authors: authors,
+          author_names: authors
         }
       }
     })

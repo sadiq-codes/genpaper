@@ -37,14 +37,6 @@ const PapersRequestSchema = z.object({
   ingest: z.boolean().optional().default(true)
 })
 
-interface PaperAuthorRelation {
-  ordinal: number
-  authors: {
-    id: string
-    name: string
-  }
-}
-
 interface PaperData {
   id: string
   title: string
@@ -59,7 +51,7 @@ interface PaperData {
   citation_count: number | null
   impact_score: number | null
   created_at: string
-  paper_authors?: PaperAuthorRelation[]
+  authors?: string[]
 }
 
 function generateCacheKey(params: Record<string, unknown>): string {
@@ -167,13 +159,7 @@ export async function GET(request: NextRequest) {
             citation_count,
             impact_score,
             created_at,
-            paper_authors (
-              ordinal,
-              authors (
-                id,
-                name
-              )
-            )
+            authors
           )
         `)
         .eq('user_id', user.id)
@@ -201,12 +187,13 @@ export async function GET(request: NextRequest) {
 
       const transformedPapers = (papers || []).map((item) => {
         const paperData = item.papers as unknown as PaperData
+        const authors = Array.isArray(paperData.authors) ? paperData.authors : []
         return {
           ...item,
           paper: {
             ...paperData,
-            authors: paperData.paper_authors?.sort((a: PaperAuthorRelation, b: PaperAuthorRelation) => a.ordinal - b.ordinal).map((pa: PaperAuthorRelation) => pa.authors) || [],
-            author_names: paperData.paper_authors?.sort((a: PaperAuthorRelation, b: PaperAuthorRelation) => a.ordinal - b.ordinal).map((pa: PaperAuthorRelation) => pa.authors.name) || []
+            authors: authors,
+            author_names: authors
           }
         }
       })

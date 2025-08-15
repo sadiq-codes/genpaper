@@ -100,16 +100,4 @@ export type SectionKey =
   | 'conclusion'
   | 'abstract'
 
-// Production generator configuration
-export interface ProductionGenerationConfig {
-  paperType: PaperTypeKey
-  section: SectionKey
-  topic: string
-  contextChunks: string[]
-  availablePapers: PaperWithAuthors[]
-  expectedWords: number
-  enablePlanning: boolean
-  enableReflection: boolean
-  enableMetrics: boolean
-  onProgress?: (stage: string, progress: number, message: string) => void
-} 
+// Removed ProductionGenerationConfig - using simplified unified generation 

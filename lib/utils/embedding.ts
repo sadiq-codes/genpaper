@@ -2,7 +2,7 @@
  * Embedding Generation Utility
  * 
  * Centralized embedding generation to avoid circular dependencies
- * between papers.ts and chunk-processor.ts
+ * between papers.ts and text utilities
  */
 
 import { openai } from '@ai-sdk/openai'
