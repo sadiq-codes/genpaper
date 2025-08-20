@@ -81,8 +81,8 @@ async function testPdfExtraction() {
       
       // Step 2d: Create chunks
       console.log('\n🧩 Creating chunks...')
-      const chunks = await createChunksForPaper(testPaper.id, extractionResult.fullText || '')
-      console.log(`✅ Created ${chunks.length} chunks`)
+      const chunkCount = await createChunksForPaper(testPaper.id, extractionResult.fullText || '')
+      console.log(`✅ Created ${chunkCount} chunks`)
       
       console.log('\n🎉 TEST SUCCESSFUL!')
       console.log('   PDF extraction pipeline is working')

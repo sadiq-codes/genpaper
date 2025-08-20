@@ -207,7 +207,8 @@ Provide specific, actionable feedback on:
   }
 
   static estimateTargetWords(paperType: PaperTypeKey, sectionKey: SectionKey): number {
-    const wordEstimates: Record<PaperTypeKey, Record<string, number>> = {
+    // Keep only keys that exist in PaperTypeKey union from prompts/types
+    const wordEstimates: Partial<Record<PaperTypeKey, Record<string, number>>> = {
       researchArticle: {
         introduction: 400,
         methods: 600,
@@ -215,19 +216,32 @@ Provide specific, actionable feedback on:
         discussion: 700,
         conclusion: 300
       },
-      review: {
+      literatureReview: {
         introduction: 500,
         background: 1000,
         analysis: 1200,
         synthesis: 800,
         conclusion: 400
       },
-      proposal: {
+      capstoneProject: {
         introduction: 300,
-        background: 600,
         methodology: 800,
-        timeline: 200,
-        budget: 300
+        discussion: 600,
+        conclusion: 300
+      },
+      mastersThesis: {
+        introduction: 600,
+        methodology: 1200,
+        results: 1200,
+        discussion: 1000,
+        conclusion: 500
+      },
+      phdDissertation: {
+        introduction: 800,
+        methodology: 1500,
+        results: 1600,
+        discussion: 1400,
+        conclusion: 600
       }
     }
 

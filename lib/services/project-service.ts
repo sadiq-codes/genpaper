@@ -47,7 +47,7 @@ export async function createProject(
   config: GenerationConfig
 ): Promise<ProjectCreationResult> {
   try {
-    const project = await createResearchProject(userId, topic, config)
+    const project = await createResearchProject(userId, topic, config as unknown as Record<string, unknown>)
     return {
       id: project.id,
       userId: project.user_id,

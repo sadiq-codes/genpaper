@@ -9,7 +9,6 @@ export const PaperDTOSchema = z.object({
   publication_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   venue: z.string().max(200).optional(),
   doi: z.string().regex(/^10\.\d+\/.*/).optional(),
-  url: z.string().url().optional(),
   pdf_url: z.string().url().optional(),
   metadata: z.record(z.unknown()).optional(),
   source: z.string().max(50).optional(),

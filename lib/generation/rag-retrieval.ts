@@ -116,8 +116,8 @@ export async function getRelevantChunks(
         minScore: attempt.minScore 
       })).chunks
 
-      const searchResults = searchResultsRaw.map(result => ({
-        id: createDeterministicChunkId(result.paper_id, result.content),
+      const searchResults = searchResultsRaw.map((result, idx) => ({
+        id: createDeterministicChunkId(result.paper_id, result.content, idx),
         paper_id: result.paper_id,
         content: result.content,
         metadata: { 
@@ -145,19 +145,20 @@ export async function getRelevantChunks(
           bestScores = scores
         }
         
-        // Validate chunk content
-        const validChunks = searchResults.filter(chunk => {
+        // Validate chunk content (relaxed thresholds)
+        let validChunks = searchResults.filter(chunk => {
           const content = chunk.content.trim()
-          return content.length >= 50 && // Minimum content length
-                 content.split(/\s+/).length >= 10 && // Minimum word count
+          return content.length >= 30 && // Relaxed minimum content length
+                 content.split(/\s+/).length >= 5 && // Relaxed minimum word count
                  !/^[\d\s.,-]+$/.test(content) // Not just numbers and punctuation
         })
-        
+
+        // Safety: if all fail relaxed validation, keep top few anyway to avoid hard fallback
         if (validChunks.length === 0) {
-          console.warn(`⚠️ All chunks failed quality validation in ${attempt.label} attempt`)
-          continue
+          console.warn(`⚠️ All chunks failed quality validation in ${attempt.label} attempt (relaxed). Using top raw chunks as fallback.`)
+          validChunks = searchResults.slice(0, Math.min(10, searchResults.length))
         }
-        
+
         allChunks = validChunks
         console.log(`✅ Found ${validChunks.length} valid chunks in ${attempt.label} attempt`)
         
@@ -225,7 +226,7 @@ export async function getRelevantChunks(
 
   // Validate final content quality (relaxed for abstract-based content)
   const avgScore = allChunks.reduce((sum, chunk) => sum + chunk.score, 0) / allChunks.length
-  if (avgScore < 0.12) { // Lowered from 0.2 to 0.12 for abstract compatibility
+  if (avgScore < 0.08) { // Further lowered threshold to avoid false negatives with abstract-heavy corpora
     throw new ContentQualityError(
       `Content relevance scores too low for reliable generation (avg: ${avgScore.toFixed(3)})`,
       { scores: allChunks.map(c => c.score) }

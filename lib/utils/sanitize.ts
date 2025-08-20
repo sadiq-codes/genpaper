@@ -29,7 +29,8 @@ const HTML_BASE_CONFIG = {
 
 export function sanitizeHtml(dirty: string): string {
   try {
-    return DOMPurify.sanitize(dirty, HTML_BASE_CONFIG);
+    const result = DOMPurify.sanitize(dirty, HTML_BASE_CONFIG as unknown as any);
+    return typeof result === 'string' ? result : String(result);
   } catch (err) {
     console.error('sanitizeHtml failure', err);
     return dirty; // fall back without regex stripping (keeps auditing trail)
@@ -44,7 +45,8 @@ export function sanitizeBibliography(dirty: string): string {
   } as const;
 
   try {
-    return DOMPurify.sanitize(dirty, stricter);
+    const result = DOMPurify.sanitize(dirty, stricter as unknown as any);
+    return typeof result === 'string' ? result : String(result);
   } catch (err) {
     console.error('sanitizeBibliography failure', err);
     return dirty;

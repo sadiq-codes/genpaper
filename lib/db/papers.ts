@@ -171,7 +171,6 @@ export async function semanticSearchPapers(
     publication_date: result.publication_date,
     venue: result.venue,
     doi: result.doi,
-    url: null,
     pdf_url: null,
     metadata: {
       search_scores: {
@@ -778,11 +777,10 @@ export async function ingestPaper(
 /**
  * Create paper metadata (extracted from old ingestPaperLightweight)
  */
-async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
+export async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
   const supabase = await getSB()
   
-  // Use pre-enriched metadata (region detection handled by caller)
-  const enrichedMetadata = paperData.metadata || {}
+  // Metadata column removed from schema; ignore any inbound metadata
   
   // Generate embedding from title + abstract before inserting
   // This is required because the database has a NOT NULL constraint on the embedding column
@@ -799,9 +797,7 @@ async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
       publication_date: paperData.publication_date,
       venue: paperData.venue,
       doi: paperData.doi,
-      url: paperData.url,
       pdf_url: paperData.pdf_url,
-      metadata: enrichedMetadata,
       source: paperData.source || 'unknown',
       citation_count: paperData.citation_count || 0,
       embedding: embedding // Generate embedding immediately to satisfy NOT NULL constraint
@@ -832,17 +828,13 @@ async function processContentImmediately(paperId: string, fullText: string): Pro
 /**
  * Queue PDF processing
  */
-async function queuePdfProcessing(paperId: string, pdfUrl: string, title: string, priority: 'low' | 'normal' | 'high'): Promise<void> {
-  const { pdfQueue } = await import('@/lib/services/pdf-queue')
-  
-  // Get user ID from context (for quota tracking)  
-  const supabase = await getSB()
-  const { data: { user } } = await supabase.auth.getUser()
-  const userId = user?.id || 'system'
-  
-  console.log(`📋 Queueing PDF processing for paper ${paperId}: ${title}`)
-  const result = await pdfQueue.addJob(paperId, pdfUrl, title, userId, priority)
-  console.log(`📋 PDF processing result: ${result}`)
+async function queuePdfProcessing(paperId: string, pdfUrl: string, _title: string, _priority: 'low' | 'normal' | 'high'): Promise<void> {
+  // Direct processing via unified helper (no background queue)
+  const { getOrExtractFullText } = await import('@/lib/services/pdf-processor')
+  const text = await getOrExtractFullText({ pdfUrl, paperId, ocr: true, timeoutMs: 60000 })
+  if (text && text.length > 100) {
+    await processContentImmediately(paperId, text)
+  }
 }
 
 // Author management functions removed - authors are now stored as JSONB arrays

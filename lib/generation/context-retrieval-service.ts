@@ -1,5 +1,5 @@
 import 'server-only'
-// eslint-disable-next-line no-restricted-imports -- ContextRetrievalService needs direct DB access for performance
+ 
 import { searchPaperChunks } from '@/lib/db/papers'
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
 import type { PaperWithAuthors } from '@/types/simplified'

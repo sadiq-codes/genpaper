@@ -129,17 +129,21 @@ export function Editor() {
       const params = new URLSearchParams({
         topic: project.topic,
         paperType: project.generation_config?.paperType || 'researchArticle',
-        length: project.generation_config?.length || 'medium'
+        length: project.generation_config?.length || 'medium',
+        projectId: project.id
       })
       
       const eventSource = new EventSource(`/api/generate?${params}`)
       eventSourceRef.current = eventSource
+      console.log('🔌 EventSource created for:', `/api/generate?${params}`)
       
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
+          console.log('📊 SSE event received:', data)
           
           if (data.type === 'progress') {
+            console.log('📈 Progress update:', data.progress, data.message)
             setGenerationProgress(data.progress || 0)
             if (data.message) {
               toast.info(data.message)
@@ -169,7 +173,8 @@ export function Editor() {
       }
       
       eventSource.onerror = (event) => {
-        console.error('EventSource error:', event)
+        console.error('❌ EventSource error:', event)
+        console.error('EventSource state:', eventSource.readyState)
         setIsGenerating(false)
         toast.error('Connection lost. Generation failed.')
         eventSource.close()
@@ -325,6 +330,10 @@ export function Editor() {
                 <span>{Math.round(generationProgress)}%</span>
               </div>
               <Progress value={generationProgress} className="mt-2" />
+              {/* Debug info */}
+              <div className="text-xs text-muted-foreground mt-1">
+                Debug: {generationProgress}% | {isGenerating ? 'Generating' : 'Not generating'}
+              </div>
             </CardHeader>
           </Card>
         </div>

@@ -3,8 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { 
   getUserLibraryPapers, 
   addPaperToLibrary, 
-  removePaperFromLibrary,
-  LibraryPaper 
+  removePaperFromLibrary
 } from '@/lib/db/library'
 
 // GET - Retrieve user's library papers
@@ -31,7 +30,7 @@ export async function GET(request: NextRequest) {
     if (paperId || id) {
       const targetId = paperId || id
       const papers = await getUserLibraryPapers(user.id, {
-        search: targetId,
+        search: targetId || undefined,
         sortBy: sortBy as any,
         sortOrder: sortOrder as 'asc' | 'desc'
       })
@@ -71,7 +70,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { paperId, collectionId } = body
+    const { paperId, collectionId } = body as { paperId?: string, collectionId?: string }
 
     if (!paperId) {
       return NextResponse.json({ error: 'Paper ID is required' }, { status: 400 })

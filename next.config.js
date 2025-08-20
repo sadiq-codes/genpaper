@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Add serverExternalPackages to opt-out specific dependencies from bundling  
-  serverExternalPackages: ['websocket', 'natural'],
+  serverExternalPackages: ['websocket', 'natural', 'pdf-parse', 'pdf2pic', 'tesseract.js', 'tesseract.js-core'],
 
   // Performance optimizations
   experimental: {
@@ -16,6 +16,16 @@ const nextConfig = {
 
   // Bundle optimization
   webpack: (config, { dev, isServer }) => {
+    // Fix: Tesseract.js worker configuration
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        crypto: false,
+        'webworker-threads': false,
+      }
+    }
     // Fix: Suppress Supabase Realtime critical dependency warning
     config.module = {
       ...config.module,

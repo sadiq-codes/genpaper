@@ -3,8 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
 
 import { CitationService } from '@/lib/citations/immediate-bibliography'
-import { validateCSL } from '@/lib/utils/csl'
-import { BatchCitationRefSchema, type PlaceholderCitation } from '@/lib/citations/placeholder-schema'
+import { validateCSL as _validateCSL } from '@/lib/utils/csl'
+import { BatchCitationRefSchema as _BatchCitationRefSchema, type PlaceholderCitation as _PlaceholderCitation } from '@/lib/citations/placeholder-schema'
 
 
 // Schema for citation creation/updates
@@ -334,7 +334,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { projectId, key, paperId, csl_json, citation_text, context } = validationResult.data
+    const { projectId, key, paperId, csl_json: _csl_json, citation_text, context } = validationResult.data
 
     // Verify project ownership
     const { data: project, error: projectError } = await supabase

@@ -2,7 +2,6 @@
 
 import { useActionState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -45,7 +44,7 @@ export function GenerateForm() {
       <div className="text-center space-y-2">
         <h3 className="text-xl font-semibold">What would you like to write?</h3>
         <p className="text-muted-foreground">
-          Describe your research topic and we'll generate a comprehensive academic paper
+          Describe your research topic and we&apos;ll generate a comprehensive academic paper
         </p>
       </div>
 

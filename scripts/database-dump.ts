@@ -128,7 +128,7 @@ async function analyzeDataQuality(dump: Partial<DatabaseDump>): Promise<any> {
       papers_with_chunks: chunkPaperIds.size,
       papers_without_chunks: paperIds.size - chunkPaperIds.size,
       chunk_distribution: Array.from(chunkPaperIds).reduce((acc: any, paperId) => {
-        const count = dump.paper_chunks.filter((c: any) => c.paper_id === paperId).length
+        const count = (dump.paper_chunks || []).filter((c: any) => c.paper_id === paperId).length
         acc[count] = (acc[count] || 0) + 1
         return acc
       }, {})

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { MoreHorizontal, FileText, Clock, CheckCircle, AlertCircle } from 'lucide-react'
+import { MoreHorizontal, FileText, Clock, CheckCircle, AlertCircle, Plus } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -139,11 +139,11 @@ export function ProjectsList({ projects }: ProjectsListProps) {
           
           <CardContent className="pt-0">
             <p className="text-sm text-muted-foreground">
-              Created {new Date(project.created_at).toLocaleDateString()}
+              Created {new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }).format(new Date(project.created_at))}
             </p>
             {project.completed_at && (
               <p className="text-sm text-muted-foreground">
-                Completed {new Date(project.completed_at).toLocaleDateString()}
+                Completed {new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' }).format(new Date(project.completed_at))}
               </p>
             )}
           </CardContent>

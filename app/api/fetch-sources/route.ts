@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
-import { createClient } from '@/lib/supabase/server'
+// import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
+// import { createClient } from '@/lib/supabase/server'
 import { z } from 'zod'
 import { shortHash } from '@/lib/utils/hash'
 
@@ -8,7 +8,7 @@ import { shortHash } from '@/lib/utils/hash'
 export const runtime = 'edge'
 
 // Schema validation with Zod
-const FetchSourcesRequestSchema = z.object({
+const _FetchSourcesRequestSchema = z.object({
   topic: z.string().min(1).max(500).trim(),
   options: z.object({
     ingestPapers: z.boolean().optional().default(true),
@@ -31,7 +31,7 @@ const FetchSourcesRequestSchema = z.object({
   message: "fromYear must be less than or equal to toYear"
 })
 
-interface FetchSourcesResponse {
+interface _FetchSourcesResponse {
   success: boolean
   topic: string
   papers: Array<{
@@ -65,7 +65,7 @@ type CacheableOptions = {
   useLibraryOnly?: boolean
 }
 
-function generateCacheKey(topic: string, options: CacheableOptions): string {
+function _generateCacheKey(topic: string, options: CacheableOptions): string {
   const normalizedOptions = {
     maxResults: options.maxResults,
     sources: options.sources?.sort(),
@@ -83,7 +83,7 @@ function generateCacheKey(topic: string, options: CacheableOptions): string {
   return shortHash(keyData)
 }
 
-function sanitizeForLogging(options: CacheableOptions) {
+function _sanitizeForLogging(options: CacheableOptions) {
   return {
     maxResults: options.maxResults,
     sources: options.sources,
@@ -93,8 +93,8 @@ function sanitizeForLogging(options: CacheableOptions) {
   }
 }
 
-let healthCheckCache: { result: Record<string, unknown>, timestamp: number } | null = null
-const HEALTH_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+let _healthCheckCache: { result: Record<string, unknown>, timestamp: number } | null = null
+const _HEALTH_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
 // Legacy endpoint - redirect to unified papers API
 export async function POST(request: NextRequest) {

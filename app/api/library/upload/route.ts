@@ -8,19 +8,19 @@ import { ingestPaper } from '@/lib/db/papers'
 import { addPaperToLibrary } from '@/lib/db/library'
 
 import { sanitizeFilename } from '@/lib/utils/text'
-import { debug } from '@/lib/utils/logger'
+import { info, warn, logError } from '@/lib/utils/logger'
 import { PaperDTOSchema } from '@/lib/schemas/paper'
 
 export async function POST(request: NextRequest) {
   try {
-    debug.info('PDF Upload API Started')
+    info('PDF Upload API Started')
     
     // Early size validation from content-length header
     const contentLength = request.headers.get('content-length')
     const maxSize = 20 * 1024 * 1024 // 20MB (many academic PDFs are 11-14MB)
     
     if (contentLength && parseInt(contentLength) > maxSize) {
-      debug.warn('File too large (header check)', { contentLength })
+      warn('File too large (header check)', { contentLength })
       return Response.json({ 
         error: 'File too large. Maximum size is 20MB',
         received: contentLength 
@@ -32,11 +32,11 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     
     if (authError || !user) {
-      debug.error('Authentication failed', { error: authError })
+      logError(new Error('Authentication failed'), { error: authError })
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
     }
     
-    debug.info('Authentication successful', { userId: user.id })
+    info('Authentication successful', { userId: user.id })
 
     // Parse form data
     const formData = await request.formData()
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     const fileName = formData.get('fileName') as string
 
     if (!file) {
-      debug.error('No file provided in form data')
+      logError(new Error('No file provided in form data'))
       return Response.json({ error: 'No file provided' }, { status: 400 })
     }
 
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       ? sanitizeFilename(fileName)
       : sanitizeFilename(file.name)
 
-    debug.info('File received', { 
+    info('File received', { 
       fileName: sanitizedFileName, 
       size: file.size, 
       type: file.type 
@@ -61,13 +61,13 @@ export async function POST(request: NextRequest) {
 
     // Validate file type
     if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
-      debug.error('Invalid file type', { type: file.type })
+      logError(new Error('Invalid file type'), { type: file.type })
       return Response.json({ error: 'Only PDF files are allowed' }, { status: 400 })
     }
 
     // Double-check file size (after form parsing)
     if (file.size > maxSize) {
-      debug.error('File too large', { size: file.size })
+      logError(new Error('File too large'), { size: file.size })
       return Response.json({ 
         error: 'File too large. Maximum size is 20MB',
         received: file.size,
@@ -75,14 +75,14 @@ export async function POST(request: NextRequest) {
       }, { status: 413 })
     }
 
-    debug.info('Processing PDF upload', { fileName: sanitizedFileName, size: file.size })
+    info('Processing PDF upload', { fileName: sanitizedFileName, size: file.size })
 
     // Check for OCR flag from query params (for power users with scanned PDFs)
     const url = new URL(request.url)
     const enableOcr = url.searchParams.get('ocr') === '1'
     
     // Extract metadata and content from PDF using tiered extractor for better results
-    debug.info('Starting PDF metadata extraction using tiered extractor', { enableOcr })
+    info('Starting PDF metadata extraction using tiered extractor', { enableOcr })
     
     const fileBuffer = Buffer.from(await file.arrayBuffer())
     const { extractPdfMetadataTiered } = await import('@/lib/pdf/tiered-extractor')
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
       fullText: tieredResult.fullText?.substring(0, 200) // Truncated for logging
     }
     
-    debug.info('Metadata extraction completed', {
+    info('Metadata extraction completed', {
       title: extractedData.title,
       authorsCount: extractedData.authors?.length,
       abstract: extractedData.abstract ? 'Found' : 'Not found',
@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
     // Validate paper data with Zod schema
     const validationResult = PaperDTOSchema.safeParse(paperData)
     if (!validationResult.success) {
-      debug.error('Paper data validation failed', { 
+      logError(new Error('Paper data validation failed'), { 
         errors: validationResult.error.errors 
       })
       return Response.json({ 
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    debug.info('Starting paper ingestion')
+    info('Starting paper ingestion')
     
     // Ingest paper using the unified system
     const text = tieredResult.fullText?.slice(0, 1_000_000)   // 1 MB safety cap to prevent network choking
@@ -155,10 +155,10 @@ export async function POST(request: NextRequest) {
       // Process immediately for uploads (default behavior)
     })
     const paperId = result.paperId
-    debug.info('Paper ingested successfully', { paperId })
+    info('Paper ingested successfully', { paperId })
 
     // Store the original PDF file in Supabase storage for future reference
-    debug.info('Uploading PDF to storage')
+    info('Uploading PDF to storage')
     try {
       const { uploadPDFToStorage, generatePDFFilename, updatePaperWithPDF } = await import('@/lib/pdf/pdf-utils')
       
@@ -174,21 +174,21 @@ export async function POST(request: NextRequest) {
       if (storedUrl) {
         // Update paper record with PDF URL
         await updatePaperWithPDF(paperId, storedUrl, file.size)
-        debug.info('PDF stored successfully', { storedUrl, filename })
+        info('PDF stored successfully', { storedUrl, filename })
       } else {
-        debug.warn('Failed to store PDF, but paper ingestion succeeded')
+        warn('Failed to store PDF, but paper ingestion succeeded')
       }
     } catch (storageError) {
-      debug.error('PDF storage failed, but paper ingestion succeeded', { error: storageError })
+      logError(new Error('PDF storage failed, but paper ingestion succeeded'), { error: storageError as unknown })
       // Don't fail the entire operation if storage fails
     }
 
-    debug.info('Adding to user library')
+    info('Adding to user library')
     // Add to user's library
     const libraryPaper = await addPaperToLibrary(user.id, paperId, `Uploaded from file: ${sanitizedFileName}`)
-    debug.info('Added to library successfully', { libraryPaperId: libraryPaper.id })
+    info('Added to library successfully', { libraryPaperId: libraryPaper.id })
 
-    debug.info('Upload completed successfully')
+    info('Upload completed successfully')
 
     // Get the stored PDF URL for response
     let storedPdfUrl: string | undefined
@@ -221,11 +221,11 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    debug.error('PDF upload error', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      error: error
-    })
+    if (error instanceof Error) {
+      logError(error)
+    } else {
+      logError(new Error('PDF upload error'), { error: error as unknown })
+    }
     
     return Response.json({
       error: error instanceof Error ? error.message : 'Failed to process PDF upload',

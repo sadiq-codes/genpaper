@@ -6,7 +6,7 @@
  * Tier 3: OCR (10-20% scanned PDFs)
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 import { info, warn, error } from '@/lib/utils/logger'
 // Using native FormData instead of form-data package
 // import FormData from 'form-data'
@@ -269,7 +269,10 @@ async function grobidParse(
 async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtractionResult> | null> {
   try {
     // Dynamic import to handle different environments
-    const pdfParse = await import('pdf-parse').then(m => m.default || m)
+    // Load pdf-parse via Node require to avoid Next bundling issues
+
+    const requireFunc = eval('require') as (id: string) => any
+    const pdfParse = requireFunc('pdf-parse')
     
     // Ensure we're passing a proper Buffer
     if (!Buffer.isBuffer(pdfBuffer)) {
@@ -277,18 +280,18 @@ async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtracti
     }
     
     info(`Attempting pdf-parse with buffer size: ${pdfBuffer.length}`)
-    const data = await pdfParse(pdfBuffer, {
+    const data = await pdfParse(pdfBuffer as unknown as Buffer, {
       // Disable internal pdf.js worker to avoid file system access
       normalizeWhitespace: true,
       disableCombineTextItems: false
-    })
+    } as unknown as Record<string, unknown>)
 
     if (!data.text || data.text.length < 50) {
       throw new Error('Text layer extraction returned minimal content')
     }
 
     // Extract metadata from text
-    const lines = data.text.split('\n').filter(line => line.trim().length > 0)
+    const lines = data.text.split('\n').filter((line: string) => line.trim().length > 0)
     const title = extractTitleFromText(lines)
     const authors = extractAuthorsFromText(data.text)
     const abstract = extractAbstractFromText(data.text)
@@ -318,7 +321,9 @@ async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtracti
 async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
   try {
     // Try to get text content from first page
-    const pdfParse = await import('pdf-parse').then(m => m.default || m)
+
+    const requireFunc = eval('require') as (id: string) => any
+    const pdfParse = requireFunc('pdf-parse')
     
     // Ensure we're passing a proper Buffer
     if (!Buffer.isBuffer(pdfBuffer)) {
@@ -327,11 +332,11 @@ async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
     }
     
     info(`Checking if PDF is scanned with buffer size: ${pdfBuffer.length}`)
-    const data = await pdfParse(pdfBuffer, { 
+    const data = await pdfParse(pdfBuffer as unknown as Buffer, { 
       max: 1, // Only first page
       normalizeWhitespace: true,
       disableCombineTextItems: false
-    })
+    } as unknown as Record<string, unknown>)
     
     const textLen = data.text ? data.text.trim().length : 0
     const avgCharsPerPage = textLen / (data.numpages || 1)
@@ -355,12 +360,20 @@ async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
  */
 async function ocrParse(
   pdfBuffer: Buffer, 
-  timeoutMs: number
+  _timeoutMs: number
 ): Promise<Partial<TieredExtractionResult> | null> {
   try {
+    // Check if we're in a server environment where OCR might not work properly
+    if (typeof window === 'undefined' && !process.env.ENABLE_SERVER_OCR) {
+      warn('OCR disabled in server environment. Set ENABLE_SERVER_OCR=1 to enable.')
+      return null
+    }
+
     // Dynamic imports for OCR dependencies
     const { createWorker } = await import('tesseract.js')
-    const pdfParse = (await import('pdf2pic')).default
+
+    const requireFunc = eval('require') as any
+    const pdfParse = requireFunc('pdf2pic').default
     
     info('Starting OCR extraction process')
     
@@ -374,10 +387,10 @@ async function ocrParse(
       height: 2000
     })
     
-    const maxPages = 10 // Limit pages to prevent timeout
+    const maxPages = 5 // Limit to 5 pages to prevent timeout and improve reliability
     const pageImages = []
     
-    // Convert first few pages to images
+    // Convert first few pages to images with resilience
     for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
       try {
         const pageResult = await convert(pageNum, { responseType: 'buffer' })
@@ -385,8 +398,9 @@ async function ocrParse(
           pageImages.push(pageResult.buffer)
         }
       } catch (pageError) {
-        // If we can't convert this page, break (probably reached end)
-        break
+        warn(`Failed to convert page ${pageNum} to image:`, pageError)
+        // Continue with other pages instead of breaking - one failed page shouldn't stop OCR
+        continue
       }
     }
     
@@ -397,22 +411,50 @@ async function ocrParse(
     
     info(`Extracted ${pageImages.length} page images for OCR processing`)
     
-    // Initialize Tesseract worker
-    const worker = await createWorker('eng')
+    let worker
+    try {
+      // Initialize Tesseract worker with simplified configuration for better reliability
+      worker = await createWorker('eng')
+      
+      // Optional: set timeouts to prevent long-running OCR processes
+      // Note: worker.setParameters() is not available in v4+ but we can control at the page level
+    } catch (workerErr) {
+      warn('Failed to initialize Tesseract worker; skipping OCR', workerErr)
+      return null
+    }
     let fullText = ''
     
-    // Process each page image with OCR
-    for (let i = 0; i < pageImages.length; i++) {
+    try {
+      // Process each page image with OCR and timeout protection
+      for (let i = 0; i < pageImages.length; i++) {
+        try {
+          // Add timeout protection for individual page processing (30s per page)
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('OCR timeout')), 30000)
+          )
+          
+          const ocrPromise = worker.recognize(pageImages[i])
+          const { data: { text } } = await Promise.race([ocrPromise, timeoutPromise]) as any
+          
+          if (text && text.trim().length > 10) {
+            fullText += text + '\n\n'
+            info(`OCR completed for page ${i + 1}/${pageImages.length}`)
+          } else {
+            warn(`OCR returned insufficient text for page ${i + 1}`)
+          }
+        } catch (ocrError) {
+          warn(`OCR failed for page ${i + 1}:`, ocrError)
+          // Continue with remaining pages
+        }
+      }
+    } finally {
+      // Always terminate worker to prevent resource leaks
       try {
-        const { data: { text } } = await worker.recognize(pageImages[i])
-        fullText += text + '\n\n'
-        info(`OCR completed for page ${i + 1}/${pageImages.length}`)
-      } catch (ocrError) {
-        warn(`OCR failed for page ${i + 1}:`, ocrError)
+        await worker.terminate()
+      } catch (terminateError) {
+        warn('Failed to terminate Tesseract worker:', terminateError)
       }
     }
-    
-    await worker.terminate()
     
     if (fullText.trim().length < 100) {
       warn('OCR extracted insufficient text content')
@@ -435,14 +477,12 @@ async function ocrParse(
       fullText: fullText.trim(),
       authors: [], // OCR can't reliably extract structured author data
       metadata: {
-        ocrPagesProcessed: pageImages.length,
-        ocrConfidence: 'estimated-medium', // Tesseract doesn't provide confidence in this API
-        processingNotes: [`OCR processed ${pageImages.length} pages`]
+        processingNotes: [`OCR processed ${pageImages.length} pages (estimated confidence: medium)`]
       }
     }
     
-  } catch (error) {
-    error('OCR extraction failed completely', { error })
+  } catch (err) {
+    error('OCR extraction failed completely', { error: err instanceof Error ? err.message : String(err) })
     return null
   }
 }
@@ -538,7 +578,7 @@ async function parseTeiXml(xml: string): Promise<Partial<TieredExtractionResult>
     return {}
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
+   
   const TEI: any = teiJson.TEI || teiJson.tei || teiJson
 
   const safeGet = (...paths: string[]): string | null | undefined => {
@@ -559,7 +599,7 @@ async function parseTeiXml(xml: string): Promise<Partial<TieredExtractionResult>
   const abstract = safeGet('teiHeader', 'profileDesc', 'abstract')
 
   // Flatten body text recursively
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const extractBodyText = (node: any): string => {
     if (!node) return ''
     if (typeof node === 'string') return node

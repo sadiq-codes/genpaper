@@ -275,7 +275,7 @@ export function validateCSLWithSchema(csl: unknown): boolean {
 /**
  * Validate CSL-JSON with citation-js (cached import) + fallback
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 let citationJsCache: any = null
 
 export async function validateCSL(csl: unknown): Promise<boolean> {
@@ -288,7 +288,7 @@ export async function validateCSL(csl: unknown): Promise<boolean> {
   try {
     if (!citationJsCache) {
     const citationJsModule = await import('citation-js')
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
       citationJsCache = (citationJsModule as any).default || (citationJsModule as any).Cite || citationJsModule
     }
     new citationJsCache([csl])

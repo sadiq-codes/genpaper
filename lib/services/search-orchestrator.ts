@@ -139,7 +139,6 @@ export async function unifiedSearch(
           publication_date: paper.year ? `${paper.year}-01-01` : new Date().toISOString(),
           venue: paper.venue || '',
           doi: paper.doi || '',
-          url: paper.url || '',
           pdf_url: paper.pdf_url || '',
           metadata: {
             api_source: paper.source,
@@ -203,7 +202,7 @@ export async function unifiedSearch(
       const { data: keywordPapers, error } = await supabase
         .from('papers')
         .select(`
-          id, title, abstract, publication_date, venue, doi, url, metadata, created_at, authors
+          id, title, abstract, publication_date, venue, doi, pdf_url, created_at, authors
         `)
         .or(`title.fts.${query},abstract.fts.${query},venue.fts.${query}`)
         .not('id', 'in', `(${[...excludePaperIds, ...allPapers.map(p => p.id)].join(',') || 'null'})`)

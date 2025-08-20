@@ -90,7 +90,7 @@ async function testLocalPdf() {
     }
     
   } catch (error) {
-    if (error instanceof Error && error.code === 'ENOENT') {
+    if (error && typeof error === 'object' && (error as any).code === 'ENOENT') {
       console.error('\n❌ PDF file not found!')
       console.error('   Make sure the Alex Yu PDF is in the project root directory')
       console.error('   Expected path:', pdfPath)

@@ -151,8 +151,6 @@ export async function ensurePapersExist(papers: PaperWithAuthors[]): Promise<str
           publication_date: paper.publication_date,
           venue: paper.venue || '',
           doi: paper.doi || '',
-          url: paper.url || '',
-          metadata: paper.metadata || {},
           created_at: new Date().toISOString()
         })))
         .select('id')

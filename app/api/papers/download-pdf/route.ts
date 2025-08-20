@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { pdfQueue } from '@/lib/services/pdf-queue'
+import { getOrExtractFullText } from '@/lib/services/pdf-processor'
+import { createChunksForPaper } from '@/lib/content/ingestion'
 
 // Download PDF for a single paper
 export async function POST(request: NextRequest) {
@@ -14,73 +15,62 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { paperId, doi, batch, directPdfUrl, directTitle, fastTrack = false } = body
+    const { paperId, doi, batch, directPdfUrl, directTitle, fastTrack: _fastTrack = false } = body
 
     // Handle batch download via queue
     if (batch && Array.isArray(batch)) {
       console.log(`🔄 Starting batch PDF download for ${batch.length} papers`)
       
-      const jobIds: string[] = []
-      const results: Array<{ paperId: string; jobId?: string; error?: string }> = []
+      const results: Array<{ paperId: string; status: 'completed' | 'skipped'; error?: string }> = []
       
       for (const paper of batch) {
         try {
           if (!paper.id || !paper.pdf_url || !paper.title) {
             results.push({ 
               paperId: paper.id || 'unknown', 
+              status: 'skipped',
               error: 'Missing required fields' 
             })
             continue
           }
           
-          const jobId = await pdfQueue.addJob(
-            paper.id,
-            paper.pdf_url,
-            paper.title,
-            user.id,
-            'low' // Use low priority for batch jobs
-          )
-          
-          jobIds.push(jobId)
-          results.push({ paperId: paper.id, jobId })
+          const text = await getOrExtractFullText({ pdfUrl: paper.pdf_url, paperId: paper.id, ocr: true, timeoutMs: 60000 })
+          if (text && text.length > 100) {
+            await createChunksForPaper(paper.id, text)
+            results.push({ paperId: paper.id, status: 'completed' })
+          } else {
+            results.push({ paperId: paper.id, status: 'skipped' })
+          }
           
         } catch (error) {
           results.push({ 
             paperId: paper.id || 'unknown', 
-            error: error instanceof Error ? error.message : 'Failed to queue job'
+            status: 'skipped',
+            error: error instanceof Error ? error.message : 'Failed to process PDF'
           })
         }
       }
       
-      const successful = results.filter(r => r.jobId).length
+      const successful = results.filter(r => r.status === 'completed').length
       
       return NextResponse.json({
         success: true,
-        message: `Queued ${successful}/${batch.length} PDFs for processing`,
-        jobIds,
+        message: `Processed ${successful}/${batch.length} PDFs`,
         results
       })
     }
 
     // Handle direct PDF URL case (from LibraryManager)
     if (directPdfUrl && directTitle) {
-      console.log(`📄 Queueing direct PDF processing for: ${directTitle}`)
+      console.log(`📄 Processing direct PDF for: ${directTitle}`)
       
               try {
-          const jobId = await pdfQueue.addJob(
-            paperId,
-            directPdfUrl,
-            directTitle,
-            user.id,
-            'normal',
-            { fastTrack }
-          )
-        
-        return NextResponse.json({
-          success: true,
-          jobId,
-          message: 'PDF processing queued successfully'
-        })
+        const text = await getOrExtractFullText({ pdfUrl: directPdfUrl, paperId, ocr: true, timeoutMs: 60000 })
+        if (text && text.length > 100) {
+          await createChunksForPaper(paperId, text)
+          return NextResponse.json({ success: true, status: 'completed' })
+        }
+        return NextResponse.json({ success: true, status: 'skipped' })
       } catch (error) {
         return NextResponse.json({
           success: false,
@@ -96,7 +86,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    console.log(`📄 Queueing PDF processing for paper: ${paperId}`)
+    console.log(`📄 Processing PDF for paper: ${paperId}`)
 
     // First, get paper details for the job
     const { data: paper, error: paperError } = await supabase
@@ -116,20 +106,12 @@ export async function POST(request: NextRequest) {
     const pdfUrl = paper.pdf_url || `https://www.unpaywall.org/pdf/${doi}`
 
     try {
-      const jobId = await pdfQueue.addJob(
-        paperId,
-        pdfUrl,
-        paper.title,
-        user.id,
-        'normal', // Normal priority for single downloads
-        { fastTrack }
-      )
-      
-      return NextResponse.json({
-        success: true,
-        jobId,
-        message: 'PDF processing queued successfully'
-      })
+      const text = await getOrExtractFullText({ pdfUrl, paperId, ocr: true, timeoutMs: 60000 })
+      if (text && text.length > 100) {
+        await createChunksForPaper(paperId, text)
+        return NextResponse.json({ success: true, status: 'completed' })
+      }
+      return NextResponse.json({ success: true, status: 'skipped' })
     } catch (error) {
       return NextResponse.json({
         success: false,
@@ -169,7 +151,7 @@ export async function GET(request: NextRequest) {
     // Get PDF status for papers
     const { data: papers, error } = await supabase
       .from('papers')
-      .select('id, pdf_url, doi, metadata')
+      .select('id, pdf_url, doi')
       .in('id', paperIds)
 
     if (error) {
@@ -184,9 +166,7 @@ export async function GET(request: NextRequest) {
       hasPdf: !!paper.pdf_url,
       pdfUrl: paper.pdf_url,
       doi: paper.doi,
-      canDownload: !!paper.doi,
-      downloadedAt: paper.metadata?.pdf_downloaded_at,
-      fileSize: paper.metadata?.pdf_file_size
+      canDownload: !!paper.doi
     }))
 
     return NextResponse.json({

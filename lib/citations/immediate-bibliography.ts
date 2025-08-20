@@ -661,7 +661,7 @@ export class CitationService {
           citationLogger.logResolverPerformance({
             operation: 'resolver',
             projectId,
-            userId,
+            userId: userId || undefined,
             metrics,
             sourceRef,
             resolved: true,
@@ -677,7 +677,7 @@ export class CitationService {
     citationLogger.logResolverPerformance({
       operation: 'resolver',
       projectId,
-      userId,
+      userId: userId || undefined,
       metrics,
       sourceRef,
       resolved: false

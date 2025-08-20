@@ -1,18 +1,15 @@
 #!/usr/bin/env tsx
 
 /**
- * Paper Search Source Analysis Script
- * 
- * Run this script to analyze which sources are returning papers
- * and get detailed performance metrics for your search system.
- * 
- * Usage: npx tsx scripts/test-paper-sources.ts
+ * Test various academic API adapters locally
  */
 
-import { unifiedSearch, withSearchCache } from '@/lib/search'
+import { unifiedSearch } from '@/lib/search'
 import { searchOpenAlex, searchCrossref, searchSemanticScholar, searchArxiv, searchCore } from '@/lib/services/academic-apis'
+
 import { collectPapers } from '@/lib/generation/discovery'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
+import type { PaperSource } from '@/types/simplified'
 
 // Test queries for different domains
 const TEST_QUERIES = [
@@ -97,17 +94,15 @@ async function testUnifiedSearch(query: string, queryName: string): Promise<Test
   const startTime = Date.now()
   
   try {
-    const result = await withSearchCache(async () => {
-      return await unifiedSearch(query, {
-        maxResults: 25,
-        minResults: 5,
-        useHybridSearch: true,
-        useAcademicAPIs: true,
-        sources: ['openalex', 'crossref', 'semantic_scholar', 'arxiv'],
-        fastMode: false,
-        timeoutMs: 15000
-      })
-    })
+    const options = {
+      maxResults: 25,
+      minResults: 5,
+      sources: ['openalex', 'crossref', 'semantic_scholar', 'arxiv'] as PaperSource[],
+      fastMode: false,
+      dedupe: true
+    } as { maxResults: number; minResults: number; sources: PaperSource[]; fastMode: boolean; dedupe: boolean }
+
+    const result = await unifiedSearch(query, options)
     
     const totalTime = Date.now() - startTime
     
@@ -120,11 +115,10 @@ async function testUnifiedSearch(query: string, queryName: string): Promise<Test
     
     console.log(`   📊 Found ${result.papers.length} papers in ${totalTime}ms`)
     console.log(`   🔍 Strategies: ${result.metadata.searchStrategies.join(', ')}`)
-    console.log(`   📈 Hybrid: ${result.metadata.hybridResults}, Academic: ${result.metadata.academicResults}`)
     
     Object.entries(sourceDistribution).forEach(([source, count]) => {
       const percentage = ((count / result.papers.length) * 100).toFixed(1)
-      console.log(`   📄 ${source}: ${count} papers (${percentage}%)`)
+      console.log(`   - ${source}: ${count} (${percentage}%)`)
     })
     
     return {
@@ -156,20 +150,12 @@ async function testDiscoveryPipeline(query: string, queryName: string): Promise<
     projectId: 'test-project',
     userId: 'test-user',
     topic: query,
+    paperType: 'researchArticle',
+    sourceIds: [],
     libraryPaperIds: [],
     useLibraryOnly: false,
     config: {
-      search_parameters: {
-        limit: 20,
-        sources: ['openalex', 'crossref', 'semantic_scholar'],
-        semanticWeight: 0.4,
-        authorityWeight: 0.5,
-        recencyWeight: 0.1
-      },
-      paper_settings: {
-        paperType: 'researchArticle',
-        length: 'medium'
-      }
+      length: 'medium'
     }
   }
   

@@ -4,6 +4,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import { PromptBuilder, type PromptTemplate } from '@/lib/core/prompt-builder'
 import type { PaperTypeKey, SectionKey } from './types'
+import type { PromptData, BuiltPrompt, TemplateOptions } from '@/lib/core/prompt-builder'
 
 /**
  * PromptService - Template Loading Wrapper

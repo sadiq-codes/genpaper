@@ -60,6 +60,58 @@ export async function createResearchProject(
   return data
 }
 
+/**
+ * Update project with generated content and mark as complete
+ */
+export async function updateProjectContent(
+  projectId: string,
+  content: string,
+  citations?: Record<string, { paperId: string; citationText: string }>
+): Promise<void> {
+  const supabase = await getSB()
+  
+  console.log(`💾 Saving generated content to project ${projectId} (${content.length} chars)`)
+  
+  const { error } = await supabase
+    .from('research_projects')
+    .update({
+      content: content,
+      status: 'completed',
+      completed_at: new Date().toISOString()
+    })
+    .eq('id', projectId)
+
+  if (error) {
+    console.error('❌ Failed to update project content:', error)
+    throw new Error(`Failed to save project content: ${error.message}`)
+  }
+  
+  // Save citations if provided
+  if (citations) {
+    const citationInserts = Object.entries(citations).map(([key, citation]) => ({
+      project_id: projectId,
+      paper_id: citation.paperId,
+      citation_number: parseInt(key.replace('citation-', '')) + 1,
+      quote: citation.citationText
+    }))
+    
+    if (citationInserts.length > 0) {
+      const { error: citationError } = await supabase
+        .from('project_citations')
+        .insert(citationInserts)
+      
+      if (citationError) {
+        console.warn('⚠️ Failed to save citations:', citationError)
+        // Don't throw - content was saved successfully
+      } else {
+        console.log(`✅ Saved ${citationInserts.length} citations`)
+      }
+    }
+  }
+  
+  console.log('✅ Project content saved successfully')
+}
+
 // Helper function to ensure profile exists
 async function ensureProfileExists(userId: string): Promise<void> {
   const supabase = await getSB()

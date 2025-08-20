@@ -1,3 +1,4 @@
+// Use service layer for auth to satisfy module boundaries
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'

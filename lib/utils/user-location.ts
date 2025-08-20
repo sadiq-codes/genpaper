@@ -4,7 +4,6 @@
  */
 
 import { createClient } from '@/lib/supabase/server'
-import { detectRegion } from './global-region-detection'
 
 export interface UserLocation {
   country: string

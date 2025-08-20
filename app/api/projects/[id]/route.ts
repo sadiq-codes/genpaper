@@ -29,7 +29,7 @@ export async function GET(
     const includeVersions = url.searchParams.get('includeVersions') === 'true'
     const includeCitations = url.searchParams.get('includeCitations') === 'true'
     const includePapers = url.searchParams.get('includePapers') === 'true'
-    const versionLimit = url.searchParams.get('versionLimit')
+    const _versionLimit = url.searchParams.get('versionLimit')
 
     // Get project details
     const project = await getResearchProject(projectId, user.id)

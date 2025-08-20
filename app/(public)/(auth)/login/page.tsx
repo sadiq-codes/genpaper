@@ -4,7 +4,7 @@ import type React from "react"
 import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import { supabase } from "@/lib/supabase/client"
+import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Mail, Eye, EyeOff, Sparkles } from "lucide-react"
@@ -19,6 +19,7 @@ function LoginPageContent() {
   const [error, setError] = useState("")
   const router = useRouter()
   const searchParams = useSearchParams()
+  const supabase = createClient()
 
   useEffect(() => {
     const checkUser = async () => {

@@ -6,17 +6,14 @@ import {
   BookOpen, 
   Plus, 
   X, 
-  Filter,
   SortAsc,
   SortDesc,
-  MoreVertical,
   ExternalLink,
   Calendar,
   Users,
   Quote,
   Loader2,
-  ArrowRight,
-  FolderPlus
+  ArrowRight
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

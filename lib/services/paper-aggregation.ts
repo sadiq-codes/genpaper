@@ -9,11 +9,13 @@ import {
   enhancePdfUrls,
   getPaperReferences
 } from './academic-apis'
-import { ingestPaper } from '@/lib/db/papers'
+import { checkPaperExists, createPaperMetadata } from '@/lib/db/papers'
+import { createChunksForPaper } from '@/lib/content/ingestion'
+import { getOrExtractFullText } from '@/lib/services/pdf-processor'
 import type { PaperDTO } from '@/lib/schemas/paper'
 import { PaperSources } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
-import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
+
 import { createClient as createSB } from '@/lib/supabase/client'
 import { generateQueryRewrites } from '@/lib/search/query-rewrite'
 // Note: randomUUID imported for future use in enhanced temp ID generation
@@ -413,7 +415,7 @@ function chunkText(text: string, maxLength = 500): string[] {
 function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
   // Normalize impact score to 0-1 range with guard against exceeding 1.0
   const rawScore = paper.combinedScore || 0
-  const normalizedImpactScore = rawScore > 0 ? 
+  const _normalizedImpactScore = rawScore > 0 ? 
     Math.min(0.999, 1 - 1 / (rawScore + 1)) : 0 // Guard against floating point precision issues
 
   return {
@@ -422,7 +424,6 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
     publication_date: paper.year ? `${paper.year}-01-01` : undefined,
     venue: paper.venue || undefined,
     doi: paper.doi || undefined,
-    url: paper.url || undefined,
     pdf_url: paper.pdf_url || undefined,
     metadata: {
       search_query: searchQuery,
@@ -466,96 +467,124 @@ export async function searchAndIngestPapers(
   const ingestedIds: string[] = []
   const ingestedPapers: RankedPaper[] = []
   
-  for (const paper of enhancedPapers) {
-    try {
-      const paperDTO = convertToPaperDTO(paper, query)
-      
-      // Create content chunks from title and abstract for RAG using sentence-aware chunking
-      const contentChunks: string[] = []
-      if (paperDTO.abstract) {
-        // Use sentence-aware chunking for better retrieval
-        const abstractChunks = chunkText(paperDTO.abstract)
-        contentChunks.push(...abstractChunks)
+  // Process PDFs in parallel batches to utilize GROBID's 10-engine pool
+  const PARALLEL_PDF_BATCH_SIZE = 8 // Use 8 out of 10 GROBID engines, keep 2 as buffer
+  
+  for (let i = 0; i < enhancedPapers.length; i += PARALLEL_PDF_BATCH_SIZE) {
+    const batch = enhancedPapers.slice(i, i + PARALLEL_PDF_BATCH_SIZE)
+    console.log(`📄 Processing PDF batch ${Math.floor(i/PARALLEL_PDF_BATCH_SIZE) + 1}: ${batch.length} papers`)
+    
+    // Process this batch in parallel
+    const batchResults = await Promise.allSettled(
+      batch.map(paper => processPaperWithPdf(paper, query))
+    )
+    
+    // Collect successful results
+    for (const result of batchResults) {
+      if (result.status === 'fulfilled') {
+        ingestedIds.push(result.value.paperId)
+        ingestedPapers.push(result.value.paper)
+      } else {
+        console.warn('Paper processing failed:', result.reason)
       }
-      
-      // Always include title as a chunk for title-based matching
-      contentChunks.unshift(paperDTO.title)
-      
-      // 🆕 Full-text ingestion – parse PDF when available (no gating)
-      if (paperDTO.pdf_url) {
-        try {
-          console.log(`📥 Downloading PDF for full-text extraction: ${paperDTO.pdf_url}`)
-          const pdfRes = await fetch(paperDTO.pdf_url, { headers: { 'User-Agent': 'GenPaperBot/1.0' } })
-          if (pdfRes.ok) {
-            const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer())
-            const extraction = await extractPdfMetadataTiered(pdfBuffer, {
-              grobidUrl: process.env.GROBID_URL || 'http://localhost:8070',
-              enableOcr: true, // Enable OCR for scanned PDFs
-              maxTimeoutMs: 60000 // Increased timeout for OCR processing
-            })
+    }
+  }
+  
+  return { papers: ingestedPapers, ingestedIds }
+}
 
-            // Record extraction metrics
-            await recordPdfExtractionMetric({
-              doi: paperDTO.doi,
-              extractionMethod: extraction.extractionMethod,
-              confidence: extraction.confidence,
-              extractionTimeMs: extraction.extractionTimeMs
-            })
-
-            if (extraction.fullText && extraction.fullText.length > 100) {
-              // Add full text to content for chunking by unified ingestion (with 1MB safety cap)
-              const text = extraction.fullText.slice(0, 1_000_000)
-              contentChunks.push(text)
-              paperDTO.abstract = extraction.abstract ?? paperDTO.abstract
-              console.log(`✅ Added full-text content (method: ${extraction.extractionMethod}, ${text.length} chars)`)
-            } else {
-              console.warn('PDF extraction returned no usable text content')
-            }
-          } else {
-            console.warn(`Failed to download PDF (${pdfRes.status})`)
-          }
-        } catch (pdfErr) {
-          console.warn('PDF extraction failed, continuing with abstract only', pdfErr)
-        }
-      }
+// Extract paper processing logic into separate function for parallel execution
+async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = ''): Promise<{ paperId: string; paper: RankedPaper }> {
+    const paperDTO = convertToPaperDTO(paper, searchQuery)
+    
+    // Step 1: Ensure paper exists in DB first (get actual paperId)
+    const { exists, paperId: existingId } = await checkPaperExists(paperDTO.doi, paperDTO.title)
+    let paperId: string
+    
+    if (exists && existingId) {
+      paperId = existingId
+      console.log(`📚 Paper already exists: ${paperId}`)
+    } else {
+      paperId = await createPaperMetadata(paperDTO)
+      console.log(`📚 Created new paper: ${paperId}`)
+    }
+    
+    // Step 2: Check if chunks already exist (using actual DB paperId)
+    const supabase = await getSB()
+    const { data: existingChunks, error: chunksErr } = await supabase
+      .from('paper_chunks')
+      .select('id')
+      .eq('paper_id', paperId)
+      .limit(1)
+    
+    if (!chunksErr && existingChunks && existingChunks.length > 0) {
+      console.log(`📚 Chunks already exist for paper (skipping): ${paperDTO.title}`)
       
-      // Use unified ingestion to create content chunks for RAG
-      const result = await ingestPaper(paperDTO, {
-        fullText: contentChunks.join('\n\n')
-        // Process immediately for search results (default behavior)
-      })
-      const paperId = result.paperId
-      ingestedIds.push(paperId)
-      console.log(`✅ Ingested paper with ${contentChunks.length} chunks: ${paper.title} (ID: ${paperId})`)
-
-      // Create ingested paper object with database ID and enhanced PDF URLs
+      // Create ingested paper object with database ID
       const ingestedPaper: RankedPaper = {
-        ...paper, // This includes the enhanced PDF URLs from enhancePdfUrls()
-        canonical_id: paperId, // Use database ID as canonical ID
-        // Keep all the ranking scores from the original paper
+        ...paper,
+        canonical_id: paperId,
         relevanceScore: paper.relevanceScore,
         combinedScore: paper.combinedScore,
         bm25Score: paper.bm25Score,
         authorityScore: paper.authorityScore,
         recencyScore: paper.recencyScore,
-        // Ensure PDF URL is preserved at top level
         pdf_url: paper.pdf_url
       }
-      ingestedPapers.push(ingestedPaper)
-
-      // Fetch and store references for the paper (using canonical_id as fallback)
-      await fetchAndStoreReferencesForPaper(paper, paperId)
-    } catch (error) {
-      console.error(`Failed to ingest paper "${paper.title}":`, error)
+      
+      return { paperId, paper: ingestedPaper }
     }
-  }
-  
-  console.log(`Successfully ingested ${ingestedIds.length} of ${enhancedPapers.length} papers with content chunks`)
-  
-  return {
-    papers: ingestedPapers, // Return ingested papers with database IDs
-    ingestedIds
-  }
+    
+    // Step 3: Prepare content chunks from title and abstract
+    const contentChunks: string[] = []
+    
+    // Always include title as a chunk for title-based matching
+    contentChunks.push(paperDTO.title)
+    
+    if (paperDTO.abstract) {
+      // Use sentence-aware chunking for better retrieval
+      const abstractChunks = chunkText(paperDTO.abstract)
+      contentChunks.push(...abstractChunks)
+    }
+    
+    // Step 4: Check for PDF content and extract if needed
+    if (paperDTO.pdf_url) {
+      try {
+        // Use unified processor with actual paperId
+        const text = await getOrExtractFullText({ pdfUrl: paperDTO.pdf_url, paperId, ocr: true, timeoutMs: 60000 })
+        if (text && text.length > 100) {
+          contentChunks.push(text)
+          console.log(`✅ Added full-text content (${text.length} chars)`)
+        } else {
+          console.warn('PDF extraction returned no usable text content')
+        }
+      } catch (pdfErr) {
+        console.warn('PDF extraction failed, continuing with abstract only', pdfErr)
+      }
+    }
+    
+    // Step 5: Create chunks for the paper
+    const chunkCount = await createChunksForPaper(paperId, contentChunks.join('\n\n'))
+    console.log(`📚 Ingested paper with ${chunkCount} chunks: ${paperDTO.title}`)
+
+    // Create ingested paper object with database ID and enhanced PDF URLs
+    const ingestedPaper: RankedPaper = {
+      ...paper, // This includes the enhanced PDF URLs from enhancePdfUrls()
+      canonical_id: paperId, // Use database ID as canonical ID
+      // Keep all the ranking scores from the original paper
+      relevanceScore: paper.relevanceScore,
+      combinedScore: paper.combinedScore,
+      bm25Score: paper.bm25Score,
+      authorityScore: paper.authorityScore,
+      recencyScore: paper.recencyScore,
+      // Ensure PDF URL is preserved at top level
+      pdf_url: paper.pdf_url
+    }
+
+    // Fetch and store references for the paper (using canonical_id as fallback)
+    await fetchAndStoreReferencesForPaper(paper, paperId)
+    
+    return { paperId, paper: ingestedPaper }
 }
 
 // Smart batch delay with exponential backoff
@@ -644,7 +673,7 @@ async function fetchAndStoreReferencesForPaper(paper: AcademicPaper, paperId: st
 }
 
 // ---------- PDF observability ----------
-async function recordPdfExtractionMetric(params: {
+async function _recordPdfExtractionMetric(params: {
   doi?: string
   extractionMethod: string
   confidence: 'high' | 'medium' | 'low'

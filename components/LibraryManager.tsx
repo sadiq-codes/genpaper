@@ -240,7 +240,7 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
         if (!ingestResponse.ok) {
           console.warn('Failed to ingest paper, but continuing with library addition')
         } else {
-          const { paperId: actualPaperId, isNewPaper, message } = await ingestResponse.json()
+          const { paperId: actualPaperId, isNewPaper: _isNewPaper, message } = await ingestResponse.json()
           console.log(`📚 ${message}: ${actualPaperId}`)
           
           // If paper has PDF URL, queue it for background processing

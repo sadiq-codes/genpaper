@@ -25,7 +25,7 @@ export default function AppError({
             <CardTitle>Something went wrong</CardTitle>
           </div>
           <CardDescription>
-            An error occurred in the application. This has been logged and we're working on a fix.
+            An error occurred in the application. This has been logged and we&apos;re working on a fix.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

@@ -27,7 +27,6 @@ export async function POST(request: NextRequest) {
       publication_date: paper.publication_date || undefined,
       venue: paper.venue || undefined,
       doi: paper.doi || undefined,
-      url: paper.url || undefined,
       pdf_url: paper.pdf_url || undefined,
       metadata: {
         ...paper.metadata,

@@ -13,7 +13,7 @@ export default function AppNotFound() {
             <CardTitle>Page Not Found</CardTitle>
           </div>
           <CardDescription>
-            The page you're looking for doesn't exist or may have been moved.
+            The page you&apos;re looking for doesn&apos;t exist or may have been moved.
           </CardDescription>
         </CardHeader>
         <CardContent>

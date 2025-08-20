@@ -210,7 +210,7 @@ export async function hasPDFContent(paperId: string): Promise<boolean> {
     const supabase = await getSB()
     const { data, error } = await supabase
       .from('papers')
-      .select('pdf_content, metadata')
+      .select('pdf_content')
       .eq('id', paperId)
       .single()
     
@@ -245,33 +245,41 @@ export async function getPDFContent(paperId: string): Promise<string | null> {
 }
 
 /**
+ * Save extracted PDF full text into the papers table (pdf_content)
+ */
+export async function savePDFContent(paperId: string, content: string): Promise<boolean> {
+  try {
+    if (!content || content.trim().length < 100) return false
+    const supabase = await getSB()
+    const { error } = await supabase
+      .from('papers')
+      .update({ pdf_content: content })
+      .eq('id', paperId)
+    if (error) {
+      console.error('Error saving pdf_content:', error)
+      return false
+    }
+    return true
+  } catch (e) {
+    console.error('Unexpected error saving pdf_content:', e)
+    return false
+  }
+}
+
+/**
  * Updates paper record with PDF URL
  */
 export async function updatePaperWithPDF(
   paperId: string, 
   pdfUrl: string, 
-  fileSize?: number
+  _fileSize?: number
 ): Promise<boolean> {
   try {
     const supabase = await getSB()
     
-    const updateData: {
-      pdf_url: string
-      metadata: {
-        pdf_downloaded_at: string
-        pdf_file_size?: number
-      }
-    } = {
-      pdf_url: pdfUrl,
-      metadata: {
-        pdf_downloaded_at: new Date().toISOString(),
-        pdf_file_size: fileSize
-      }
-    }
-
     const { error } = await supabase
       .from('papers')
-      .update(updateData)
+      .update({ pdf_url: pdfUrl })
       .eq('id', paperId)
 
     if (error) {

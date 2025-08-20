@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { EditOpZ, EditProposalZ, type EditProposal } from '@/lib/schemas/edits'
+import { EditOpZ as _EditOpZ, EditProposalZ as _EditProposalZ, type EditProposal } from '@/lib/schemas/edits'
 // Edits API is always enabled
 import { editsProposeLimiter } from '@/lib/utils/rate-limiter'
 import { ai } from '@/lib/ai/vercel-client'

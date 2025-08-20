@@ -47,6 +47,7 @@ export interface SectionContext {
     content: string
     title?: string
     doi?: string
+    score?: number
   }>
 }
 
@@ -148,27 +149,12 @@ async function generatePromptData(
   }
 
   // Format evidence snippets with clear paper_id tagging for citation tool
-  // Filter out irrelevant context to prevent topic drift
-  const relevantChunks = (workingChunks || []).filter(chunk => {
-    const content = chunk.content.toLowerCase()
-    const title = (chunk.title || '').toLowerCase()
-    
-    // Basic relevance check - ensure content is somewhat related to the project
-    if (projectData.title) {
-      const titleWords = projectData.title.toLowerCase().split(' ')
-      const hasRelevantWords = titleWords.some((word: string) => 
-        word.length > 3 && (content.includes(word) || title.includes(word))
-      )
-      if (!hasRelevantWords) {
-        console.log(`⚠️ Filtering out irrelevant chunk: ${chunk.title}`)
-        return false
-      }
-    }
-    
-    return true
-  })
-  
-  const evidenceSnippets = relevantChunks.slice(0, 10).map(chunk => { // Limit to top 10 most relevant
+  // Use retriever score to sort; avoid ad-hoc keyword filtering
+  const sortedChunks = (workingChunks || [])
+    .slice()
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
+
+  const evidenceSnippets = sortedChunks.slice(0, 10).map(chunk => { // Limit to top 10 by score
     const content = chunk.content.substring(0, 300)
     return `[CONTEXT FROM: ${chunk.paper_id}]
 Title: ${chunk.title || 'Unknown Title'}
@@ -221,7 +207,7 @@ async function loadSkeletonTemplate(): Promise<{ system: string; user: string; t
 /**
  * Get project metadata (title, objectives)
  */
-async function getProjectData(projectId: string): Promise<{ title: string; objectives: string }> {
+async function getProjectData(_projectId: string): Promise<{ title: string; objectives: string }> {
   // TODO: Wire via a service (e.g., ProjectService) — for now, return defaults to avoid DB access
   const project = null as unknown as { title?: string; description?: string; metadata?: any } | null
   if (!project) {
@@ -245,7 +231,7 @@ async function getProjectData(projectId: string): Promise<{ title: string; objec
 /**
  * Build a text representation of the document outline tree
  */
-async function buildOutlineTree(projectId: string): Promise<string> {
+async function buildOutlineTree(_projectId: string): Promise<string> {
   // TODO: Replace with ProjectService.getOutline(projectId)
   const sections = null as unknown as Array<{ section_key: string; title: string; level: number; order_index: number }> | null
   if (!sections || sections.length === 0) {
@@ -265,7 +251,7 @@ async function buildOutlineTree(projectId: string): Promise<string> {
 /**
  * Get summaries of all approved sections before the current one
  */
-async function buildPreviousSectionsSummary(projectId: string, _currentSectionId: string): Promise<string> {
+async function buildPreviousSectionsSummary(_projectId: string, _currentSectionId: string): Promise<string> {
   // TODO: Replace with ProjectService.getApprovedSections(projectId)
   const sections = [] as Array<{ id: string; title: string; content?: string | null; summary?: string | null }>
   if (!sections || sections.length === 0) {
@@ -296,7 +282,7 @@ async function buildPreviousSectionsSummary(projectId: string, _currentSectionId
 /**
  * Build section path (e.g., "Methods → Data Collection → Survey Design")
  */
-async function buildSectionPath(projectId: string, sectionId: string): Promise<string> {
+async function buildSectionPath(_projectId: string, _sectionId: string): Promise<string> {
   // TODO: Replace with ProjectService.getSection(sectionId)
   const section = null as unknown as { title: string; parent_id?: string | null } | null
   if (!section) {
@@ -314,7 +300,7 @@ async function buildSectionPath(projectId: string, sectionId: string): Promise<s
 /**
  * Get current text for rewrite operations
  */
-async function getCurrentText(sectionId: string): Promise<string | null> {
+async function getCurrentText(_sectionId: string): Promise<string | null> {
   // TODO: Replace with ProjectService.getSectionContent(sectionId)
   return null
 }
@@ -322,7 +308,7 @@ async function getCurrentText(sectionId: string): Promise<string | null> {
 /**
  * Get expected word count for a section
  */
-async function getExpectedWords(sectionId: string): Promise<number> {
+async function getExpectedWords(_sectionId: string): Promise<number> {
   // TODO: Replace with ProjectService.getSectionMeta(sectionId)
   const section = null as unknown as { expected_words?: number; section_key?: string } | null
   if (section?.expected_words) return section.expected_words
@@ -406,14 +392,4 @@ export function clearTemplateCache(): void {
   skeletonTemplate = null
 }
 
-async function getProjectSummaryForDrift(projectId: string): Promise<{ previousSummary: string }> {
-  // TODO: Implement actual project summary fetching from database
-  // This would fetch the rolling summary of approved sections
-  if (process.env.NODE_ENV === 'development') {
-    console.debug('TODO: Drift detection not fully implemented - getProjectSummaryForDrift is a placeholder')
-  }
-  
-  return {
-    previousSummary: 'Project summary for drift detection not yet implemented. All similarity checks will return 1.0 (no drift detected).'
-  }
-} 
+// Removed unused getProjectSummaryForDrift placeholder to satisfy linter

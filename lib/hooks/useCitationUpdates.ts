@@ -94,7 +94,7 @@ export function useCitationUpdates(options: UseCitationUpdatesOptions) {
         })
 
         // Subscribe and handle connection state
-        const subscriptionResponse = await channel.subscribe((status) => {
+        await channel.subscribe((status) => {
           if (!mounted) return
 
           if (status === 'SUBSCRIBED') {
@@ -116,12 +116,7 @@ export function useCitationUpdates(options: UseCitationUpdatesOptions) {
           }
         })
 
-        if (subscriptionResponse === 'error') {
-          setState(prev => ({ 
-            ...prev, 
-            error: 'Failed to subscribe to citation updates' 
-          }))
-        }
+        // Supabase v2 channel.subscribe does not return 'error' string; errors are delivered via status callback
 
       } catch (error) {
         if (mounted) {

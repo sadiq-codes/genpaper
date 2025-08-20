@@ -1,9 +1,11 @@
 import { NextRequest } from 'next/server'
 import { authenticateUser, createProject } from '@/lib/services/project-service'
+import { updateProjectContent, getResearchProject, updateResearchProjectStatus } from '@/lib/db/research'
 import type { SectionContext } from '@/lib/prompts/types'
 import type { GeneratedOutline } from '@/lib/prompts/types'
 import type { PaperChunk } from '@/lib/generation/types'
 import type { PaperWithAuthors } from '@/types/simplified'
+import type { PaperStatus } from '@/types/simplified'
 
 // Use Node.js runtime for better DNS resolution and OpenAI SDK compatibility
 export const runtime = 'nodejs'
@@ -129,6 +131,7 @@ export async function GET(request: NextRequest) {
     const length = url.searchParams.get('length') || 'medium'
     const paperType = url.searchParams.get('paperType') || 'researchArticle'
     const libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
+    const existingProjectId = url.searchParams.get('projectId') || undefined
 
     if (!topic) {
       return new Response(
@@ -143,8 +146,8 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    if (isDev) console.log('🎯 Creating research project for streaming generation...')
-    console.log('📝 Creating research project for user:', user.id)
+    if (isDev) console.log('🎯 Preparing research project for streaming generation...')
+    console.log('📝 User:', user.id)
     console.log('📝 Topic:', topic)
     
     // Simple generation config - no complex validation or feature flags
@@ -162,10 +165,44 @@ export async function GET(request: NextRequest) {
 
     console.log('📝 Config:', generationConfig)
 
-    // Create research project using service layer
-    const project = await createProject(user.id, topic, generationConfig)
-    console.log('✅ Research project created successfully:', project.id)
-    if (isDev) console.log('✅ Research project created:', project.id)
+    // Use existing project if provided, otherwise create a new one
+    let project: { id: string }
+    if (existingProjectId) {
+      const existing = await getResearchProject(existingProjectId, user.id)
+      if (!existing) {
+        const encoder = new TextEncoder()
+        const errorStream = new ReadableStream({
+          start(controller) {
+            const errorData = JSON.stringify({
+              type: 'error',
+              error: 'Project not found or access denied',
+              timestamp: new Date().toISOString()
+            })
+            controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
+            controller.close()
+          }
+        })
+        return new Response(errorStream, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Cache-Control',
+            'X-Accel-Buffering': 'no'
+          }
+        })
+      }
+      project = { id: existing.id }
+      await updateResearchProjectStatus(project.id, 'generating' as PaperStatus)
+      console.log('✅ Using existing project:', project.id)
+    } else {
+      // Create research project using service layer
+      project = await createProject(user.id, topic, generationConfig)
+      console.log('✅ Research project created successfully:', project.id)
+      if (isDev) console.log('✅ Research project created:', project.id)
+    }
 
     // 🔧 FIX: Complete Discovery Pipeline BEFORE Streaming
     // Run Discovery → PDF extraction → Embedding → RAG context selection first
@@ -203,8 +240,8 @@ export async function GET(request: NextRequest) {
 
       console.log('🧠 Step 3: Building RAG context...')
       const chunkLimit = Math.max(
-        10 * allPapers.length, // 10 chunks per paper
-        100 // Minimum baseline
+        6 * allPapers.length, // Reduced per-paper target to speed up, rely on better validation
+        60 // Lower baseline to avoid heavy searches on sparse content
       )
       
       await getRelevantChunks(
@@ -249,7 +286,8 @@ export async function GET(request: NextRequest) {
           paper_id: chunk.paper_id,
           content: chunk.content,
           title: allPapers.find(p => p.id === chunk.paper_id)?.title,
-          doi: allPapers.find(p => p.id === chunk.paper_id)?.doi
+          doi: allPapers.find(p => p.id === chunk.paper_id)?.doi,
+          score: (chunk as any).score
         }))
       }))
       
@@ -360,21 +398,32 @@ export async function GET(request: NextRequest) {
               
               console.log(`✅ Generated ${completedSections} sections, ${fullContent.length} chars total`)
               
-              // Send final completion with full content
-              if (!isControllerClosed) {
+              // Save content to database
+              try {
                 const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
                 allCitations.forEach((citation, index) => {
                   citationsMap[`citation-${index}`] = citation
                 })
                 
-                const completionData = JSON.stringify({
-                  type: 'complete',
-                  projectId: project.id,
-                  content: fullContent.trim(),
-                  citations: citationsMap,
-                  timestamp: new Date().toISOString()
-                })
-                controller.enqueue(encoder.encode(`data: ${completionData}\n\n`))
+                await updateProjectContent(project.id, fullContent.trim(), citationsMap)
+                console.log('✅ Content saved to database successfully')
+                
+                // Send final completion with full content
+                if (!isControllerClosed) {
+                  const completionData = JSON.stringify({
+                    type: 'complete',
+                    projectId: project.id,
+                    content: fullContent.trim(),
+                    citations: citationsMap,
+                    timestamp: new Date().toISOString()
+                  })
+                  controller.enqueue(encoder.encode(`data: ${completionData}\n\n`))
+                }
+              } catch (saveError) {
+                console.error('❌ Failed to save content to database:', saveError)
+                if (!isControllerClosed) {
+                  sendError(`Content generated but failed to save: ${saveError instanceof Error ? saveError.message : 'Unknown error'}`)
+                }
               }
               
             } catch (generationError) {

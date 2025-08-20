@@ -145,5 +145,8 @@ export class CitationServiceStub implements CoreCitationService {
 // Export stub instance for testing
 export const citationService = new CitationServiceStub()
 
-// Re-export types for convenience
-export type { SourceRef, AddCitationParams, AddCitationResult, RenderOptions }
+// Re-export types for convenience (aliases to avoid conflicts)
+export type SourceRefType = SourceRef
+export type AddCitationParamsType = AddCitationParams
+export type AddCitationResultType = AddCitationResult
+export type RenderOptionsType = RenderOptions

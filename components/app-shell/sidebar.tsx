@@ -46,7 +46,7 @@ const navigation = [
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const _searchParams = useSearchParams()
   const router = useRouter()
   const supabase = createClient()
   const { state } = useSidebar()

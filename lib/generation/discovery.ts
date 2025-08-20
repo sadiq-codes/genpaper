@@ -1,6 +1,6 @@
-// eslint-disable-next-line no-restricted-imports -- allowed temporarily during simplification
+ 
 import { getSB } from '@/lib/supabase/server'
-// eslint-disable-next-line no-restricted-imports -- allowed temporarily during simplification
+ 
 import { getPapersByIds as getLibraryPapersByIds } from '@/lib/db/library'
 import type { EnhancedGenerationOptions } from './types'
 
@@ -49,7 +49,7 @@ function isLikelyDirectPdfUrl(url: string): boolean {
 import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
 import type { UnifiedSearchOptions } from '@/lib/services/search-orchestrator'
 import { unifiedSearch } from '@/lib/search'
-import { pdfQueue } from '@/lib/services/pdf-queue'
+
 // Removed policy dependency - simplified ingestion logic
 
 // Main entry ────────────────────────────────────────────────
@@ -57,7 +57,7 @@ export async function collectPapers(
   options: EnhancedGenerationOptions
 ): Promise<PaperWithAuthors[]> {
 
-  const { topic, libraryPaperIds = [], useLibraryOnly, config, userId } = options
+  const { topic, libraryPaperIds = [], useLibraryOnly, config, userId: _userId } = options
   
   console.log(`📋 Generation Request:`)
   console.log(`   🎯 Topic: "${topic}"`)
@@ -78,6 +78,11 @@ export async function collectPapers(
     console.log(`      Year: ${paper.publication_date ? new Date(paper.publication_date).getFullYear() : 'Unknown'}`)
   })
   
+  // Hard-stop if useLibraryOnly=true and no pinned papers found
+  if (useLibraryOnly && pinnedPapers.length === 0) {
+    throw new Error('No papers found in library. Cannot proceed with library-only mode when no papers are pinned.')
+  }
+
   const pinnedIds = pinnedPapers.map(lp => lp.paper.id)
   const targetTotal = config?.limit || 90
   const remainingSlots = Math.max(0, targetTotal - pinnedPapers.length)
@@ -156,12 +161,8 @@ export async function collectPapers(
     throw new Error(`No papers found for topic "${topic}". Please add relevant papers to your library.`)
   }
 
-  // 3. background full-text extraction ──────────────────────
-  if (userId) {
-    await autoQueueFullTextExtraction(finalPapers, userId)
-    
-    // 4. chunk coverage gating ─────────────────────────────
-    if (finalPapers.length > 0) {
+  // 3. final coverage check ─────────────────────────────── 
+  if (finalPapers.length > 0) {
       console.log(`🚪 Checking if we should wait for better chunk coverage...`)
       
       const initialCoverage = await getCoverage(finalPapers.map(p => p.id))
@@ -170,121 +171,25 @@ export async function collectPapers(
       // Check if any papers have PDF URLs that could be processed
       const papersWithPdfs = finalPapers.filter(p => p.pdf_url && isLikelyDirectPdfUrl(p.pdf_url))
       
-      if (initialCoverage < 0.7 && papersWithPdfs.length > 0) {
-        console.log(`   ⏳ Coverage below 70%, waiting for content processing to complete...`)
-        console.log(`   💡 This includes PDF extraction, abstract processing, and chunk generation`)
-        
-        // Calculate dynamic wait time based on papers that actually need processing
-        const chunkCounts = await Promise.all(
-          papersWithPdfs.map(async p => ({ id: p.id, count: await getChunkCount(p.id) }))
-        )
-        
-        const papersNeedingProcessing = papersWithPdfs.filter(p => {
-          const chunkCount = chunkCounts.find(c => c.id === p.id)?.count ?? 0
-          return chunkCount < 10 // Papers with less than 10 chunks need processing
-        }).length
-        
-        // Allow 90 seconds per paper, with minimum 2 minutes and maximum 10 minutes
-        const dynamicWaitMs = Math.min(Math.max(papersNeedingProcessing * 90_000, 120_000), 600_000)
-        console.log(`   ⏱️  Dynamic wait time: ${dynamicWaitMs/1000}s for ${papersNeedingProcessing} papers`)
-        
-        const targetReached = await waitForChunkCoverage(
-          finalPapers.map(p => p.id),
-          0.7, // 70% coverage target
-          dynamicWaitMs, // Dynamic wait time
-          3_000 // Poll every 3 seconds
-        )
-        
-        if (!targetReached) {
-          console.warn(`⚠️ PDF processing timeout reached - proceeding with partial coverage`)
-          console.log(`   💡 Some papers may not have full-text content yet`)
-          console.log(`   🔄 Processing continues in background - future generations will have better coverage`)
+      // Since PDF processing is now synchronous during ingestion, just log the final coverage
+      console.log(`   📊 Final coverage check after ingestion: ${(initialCoverage * 100).toFixed(1)}%`)
+      
+      if (initialCoverage < 0.7) {
+        console.warn(`⚠️ Content coverage is low (${(initialCoverage * 100).toFixed(1)}% < 70%). This may impact generation quality.`)
+        if (papersWithPdfs.length === 0) {
+          console.warn(`   💡 No PDFs were available for processing - content limited to abstracts`)
         } else {
-          console.log(`   ✅ PDF processing completed successfully - full coverage achieved`)
+          console.warn(`   💡 PDF processing was attempted but may have failed for some papers`)
         }
-      } else if (initialCoverage < 0.7 && papersWithPdfs.length === 0) {
-        console.warn(`⚠️ Low coverage but no PDFs available to process - skipping wait.`)
-        console.log(`   💡 Coverage: ${(initialCoverage * 100).toFixed(1)}% | Papers with PDFs: ${papersWithPdfs.length}`)
       } else {
-        console.log(`   ✅ Coverage sufficient (${(initialCoverage * 100).toFixed(1)}%) or no waiting needed`)
+        console.log(`   ✅ Good content coverage achieved - proceeding with generation`)
       }
     }
-  }
 
   return finalPapers
 }
 
-// ────────────────────────────────────────────────────────────
-// Auto-queue helper
-// ────────────────────────────────────────────────────────────
-async function autoQueueFullTextExtraction(
-  papers: PaperWithAuthors[],
-  userId: string
-) {
-  try {
-    // 1. fetch chunk counts in parallel
-    const chunkCounts = await Promise.all(
-      papers.map(async p => ({ id: p.id, count: await getChunkCount(p.id) }))
-    )
 
-    // 2. Debug: Show detailed analysis of each paper
-    console.log(`🔍 DETAILED PAPER ANALYSIS:`)
-    papers.forEach((paper, idx) => {
-      const chunkCount = chunkCounts.find(c => c.id === paper.id)?.count ?? 0
-      const hasPdf = !!paper.pdf_url
-      const isDirectPdf = hasPdf && isLikelyDirectPdfUrl(paper.pdf_url!)
-      const needsQueuing = chunkCount < 10 && isDirectPdf
-      
-      console.log(`   ${idx + 1}. "${paper.title}"`)
-      console.log(`      📄 Full-text Chunks: ${chunkCount}`)
-      console.log(`      🔗 PDF URL: ${hasPdf ? 'YES' : 'NO'}`)
-      if (hasPdf && !isDirectPdf) {
-        console.log(`      ⚠️  PDF URL is likely a landing page, not direct PDF`)
-      }
-      console.log(`      ⚡ Needs Queuing: ${needsQueuing ? 'YES' : 'NO'}`)
-      if (!hasPdf && chunkCount === 0) {
-        console.log(`      ⚠️  PROBLEM: No PDF URL and no full-text chunks!`)
-      }
-    })
-
-    // SURGICAL FIX: Queue everything that has < MIN_CHUNKS_OK and has a valid PDF URL
-    const MIN_CHUNKS_OK = 10
-    const papersNeeding = papers.filter(p => {
-      const fullTextChunks = chunkCounts.find(c => c.id === p.id)?.count ?? 0
-      return fullTextChunks < MIN_CHUNKS_OK && p.pdf_url && isLikelyDirectPdfUrl(p.pdf_url)
-    })
-
-    // Calculate coverage based on papers with at least MIN_CHUNKS_OK full-text chunks
-    const ratio = chunkCounts.filter(c => c.count >= MIN_CHUNKS_OK).length / papers.length
-
-    console.log(`📊 Content coverage ${(ratio * 100).toFixed(1)}% — queueing ${papersNeeding.length} PDFs`)
-
-    if (ratio < 0.7) {
-      console.warn(`⚠️ WARNING: Content coverage is low (${(ratio * 100).toFixed(1)}% < 70%). This may impact RAG quality.`)
-    }
-
-    for (const paper of papersNeeding) {
-      await pdfQueue.addJob(
-        paper.id,
-        paper.pdf_url!,
-        paper.title ?? 'Unknown title',
-        userId,
-        'high' // Use high priority for generation-critical PDFs
-      )
-      console.log(`   ↳ queued "${paper.title}" (high priority)`)
-    }
-    
-    if (papersNeeding.length > 0) {
-      console.log(`✅ Queued ${papersNeeding.length} PDFs for high-priority extraction`)
-      console.log(`   🚀 Processing started immediately with high priority`)
-      console.log(`   ⏳ Will wait for completion before starting generation`)
-    } else {
-      console.log(`✅ No PDFs need queuing - papers have sufficient content chunks`)
-    }
-  } catch (err) {
-    console.error('autoQueueFullTextExtraction failed:', err)
-  }
-}
 
 /** Count full-text chunks for a paper (excluding abstracts) */
 async function getChunkCount(paperId: string): Promise<number> {
