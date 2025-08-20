@@ -401,104 +401,12 @@ async function findMedrxivPdf(title: string): Promise<string | null> {
   }
 }
 
-// PubMed Central (PMC) PDF finder
-async function findPmcPdf(title: string, doi?: string): Promise<string | null> {
-  try {
-    // First try searching by DOI if available
-    if (doi) {
-      const pmcUrl = `https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids=${encodeURIComponent(doi)}&format=json`
-      
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 3000) // Reduced from 8s to prevent frontend disconnection
-      
-      try {
-              const response = await fetch(pmcUrl, { 
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'GenPaper Academic Research Tool',
-            'Accept': 'application/json'
-          }
-        })
-        
-        if (response.ok) {
-          const data = await response.json()
-          
-          if (data.records && data.records.length > 0) {
-            const record = data.records[0]
-            if (record.pmcid) {
-              // Construct PDF URL from PMC ID
-              const pdfUrl = `https://www.ncbi.nlm.nih.gov/pmc/articles/${record.pmcid}/pdf/`
-              console.log(`✅ Found PMC PDF: ${pdfUrl}`)
-              return pdfUrl
-            }
-          }
-        }
-      } finally {
-        clearTimeout(timeoutId)
-      }
-    }
-    
-    // If DOI search fails, try title search via PubMed API
-    const searchQuery = encodeURIComponent(title.substring(0, 100))
-    const pubmedUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term=${searchQuery}&retmode=json&retmax=5`
-    
-    const controller2 = new AbortController()
-    const timeoutId2 = setTimeout(() => controller2.abort(), 3000) // Reduced from 8s to prevent frontend disconnection
-    
-    try {
-      const response = await fetch(pubmedUrl, { 
-        signal: controller2.signal,
-        headers: {
-          'User-Agent': 'GenPaper Academic Research Tool',
-          'Accept': 'application/json'
-        }
-      })
-      
-      if (!response.ok) {
-        return null
-      }
-      
-      const data = await response.json()
-      
-      if (data.esearchresult && data.esearchresult.idlist && data.esearchresult.idlist.length > 0) {
-        // Get details for the first result
-        const pmcId = data.esearchresult.idlist[0]
-        const detailsUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id=${pmcId}&retmode=json`
-        
-        const detailsResponse = await fetch(detailsUrl, { 
-          signal: controller2.signal,
-          headers: {
-            'User-Agent': 'GenPaper Academic Research Tool',
-            'Accept': 'application/json'
-          }
-        })
-        
-        if (detailsResponse.ok) {
-          const detailsData = await detailsResponse.json()
-          
-          if (detailsData.result && detailsData.result[pmcId]) {
-            const paperDetails = detailsData.result[pmcId]
-            
-            // Check title similarity
-            if (paperDetails.title && titleSimilarity(title, paperDetails.title) > 0.6) {
-              const pdfUrl = `https://www.ncbi.nlm.nih.gov/pmc/articles/PMC${pmcId}/pdf/`
-              console.log(`✅ Found PMC PDF via search: ${pdfUrl}`)
-              return pdfUrl
-            }
-          }
-        }
-      }
-      
-      return null
-      
-    } finally {
-      clearTimeout(timeoutId2)
-    }
-    
-  } catch (error) {
-    console.warn('PMC search failed:', error)
-    return null
-  }
+// PubMed Central (PMC) PDF finder - DISABLED
+// Removed due to frequent timeout errors and low success rate
+// ArXiv, Unpaywall, and other sources provide better coverage
+async function findPmcPdf(_title: string, _doi?: string): Promise<string | null> {
+  // PMC search disabled - was causing frequent timeout errors in logs
+  return null
 }
 
 // Improved title similarity with minimum threshold
@@ -1078,11 +986,12 @@ const pdfStrategies: PdfStrategy[] = [
     fn: (paper) => findMedrxivPdf(paper.title),
     available: true
   },
-  {
-    name: 'PMC',
-    fn: (paper) => findPmcPdf(paper.title, paper.doi),
-    available: true
-  },
+  // PMC removed - frequent timeouts and low success rate
+  // {
+  //   name: 'PMC',
+  //   fn: (paper) => findPmcPdf(paper.title, paper.doi),
+  //   available: false
+  // },
   {
     name: 'ResearchGate',
     fn: () => findResearchGatePdf(),
@@ -1147,74 +1056,8 @@ export async function enhancePdfUrls(papers: AcademicPaper[]): Promise<AcademicP
   return enhanced
 }
 
-// Main orchestrator function that stops when enough papers are collected
-export async function searchAllSources(
-  query: string,
-  options: SearchOptions = {}
-): Promise<AcademicPaper[]> {
-  const { desired = 60, fastMode = false } = options
-  const limit = pLimit(fastMode ? 3 : 2) // Concurrency control
-  
-  const searchFunctions = [
-    () => searchOpenAlex(query, { ...options, limit: Math.ceil(desired / 4) }),
-    () => searchCrossref(query, { ...options, limit: Math.ceil(desired / 4) }),
-    () => searchSemanticScholar(query, { ...options, limit: Math.ceil(desired / 4) }),
-    () => searchArxiv(query, { ...options, limit: Math.ceil(desired / 5) }),
-    () => searchCore(query, { ...options, limit: Math.ceil(desired / 5) }),
-    () => searchGoogleScholar(query, { ...options, limit: Math.ceil(desired / 6) }),
-  ]
-  
-  // Run searches with concurrency control
-  const results = await Promise.allSettled(
-    searchFunctions.map(fn => limit(fn))
-  )
-  
-  // Collect successful results
-  const allPapers: AcademicPaper[] = []
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      allPapers.push(...result.value)
-    } else {
-      console.warn('Search source failed:', result.reason)
-    }
-  }
-  
-  // Deduplicate and limit results
-  const deduped = deduplicate(allPapers)
-  
-  // Sort by citation count and recency, but prioritize papers with direct PDF access
-  const sorted = deduped.sort((a, b) => {
-    // First priority: Direct PDF access
-    const aPdf = isDirectPdfUrl(a.pdf_url || '') ? 1 : 0
-    const bPdf = isDirectPdfUrl(b.pdf_url || '') ? 1 : 0
-    if (aPdf !== bPdf) return bPdf - aPdf
-    
-    // Second priority: Citation count
-    const citationDiff = b.citationCount - a.citationCount
-    if (citationDiff !== 0) return citationDiff
-    
-    // Third priority: Recency
-    return b.year - a.year
-  })
-  
-  const limitedResults = sorted.slice(0, desired)
-  
-  // Enhance PDF URLs for papers without direct access
-  console.log(`🔍 Enhancing PDF access for ${limitedResults.length} papers...`)
-  const enhanced = await enhancePdfUrls(limitedResults)
-  
-  // Log final PDF access statistics
-  const directPdfCount = enhanced.filter((p: AcademicPaper) => isDirectPdfUrl(p.pdf_url || '')).length
-  const paywallCount = enhanced.filter((p: AcademicPaper) => !isDirectPdfUrl(p.pdf_url || '') && isPaywalledUrl(p.url || '')).length
-  const noPdfCount = enhanced.filter((p: AcademicPaper) => !p.pdf_url && !p.url).length
-  
-  console.log(`📊 PDF Access Summary:`)
-  console.log(`  ✅ Direct PDF access: ${directPdfCount}/${enhanced.length} (${Math.round(directPdfCount/enhanced.length*100)}%)`)
-  console.log(`  🔒 Paywall URLs: ${paywallCount}/${enhanced.length} (${Math.round(paywallCount/enhanced.length*100)}%)`)
-  console.log(`  ❌ No access: ${noPdfCount}/${enhanced.length} (${Math.round(noPdfCount/enhanced.length*100)}%)`)
-  
-  return enhanced
-}
+// NOTE: searchAllSources function removed - use unifiedSearch from @/lib/services/search-orchestrator instead
+// This eliminates duplicate orchestration logic and ensures consistent behavior
 
 // Reference fetching interfaces and functions
 export interface PaperReference {

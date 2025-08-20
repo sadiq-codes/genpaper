@@ -131,7 +131,6 @@ export async function POST(request: NextRequest) {
       },
       source: 'upload',
       citation_count: 0,
-      impact_score: undefined,
       authors: extractedData.authors || ['Unknown Author']
     }
 

@@ -46,7 +46,6 @@ export interface Paper {
   metadata?: PaperMetadata
   source?: string // 'arxiv', 'pubmed', 'manual', etc.
   citation_count?: number
-  impact_score?: number
   created_at: string
   csl_json?: CSLItem // CSL-JSON formatted citation data
   authors?: Author[] // Joined from paper_authors table

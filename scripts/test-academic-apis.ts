@@ -9,7 +9,8 @@
  * Usage: npx tsx scripts/test-academic-apis.ts
  */
 
-import { searchOpenAlex, searchCrossref, searchSemanticScholar, searchArxiv, searchCore, searchAllSources } from '@/lib/services/academic-apis'
+import { searchOpenAlex, searchCrossref, searchSemanticScholar, searchArxiv, searchCore } from '@/lib/services/academic-apis'
+import { unifiedSearch } from '@/lib/search'
 
 // Test queries for different domains
 const TEST_QUERIES = [
@@ -106,18 +107,19 @@ async function testAllSourcesAggregated(query: string): Promise<SourceResult> {
   
   try {
     console.log(`   🔍 Testing All Sources (Aggregated)...`)
-    const papers = await searchAllSources(query, { 
-      limit: 30, 
-      fromYear: 2020, 
-      fastMode: true 
+    const result = await unifiedSearch(query, { 
+      maxResults: 30, 
+      fromYear: 2020
     })
+    const papers = result.papers
     
     const responseTime = Date.now() - startTime
     
-    // Count papers by source
+    // Count papers by source (from metadata)
     const sourceCount: Record<string, number> = {}
     papers.forEach(paper => {
-      sourceCount[paper.source] = (sourceCount[paper.source] || 0) + 1
+      const source = String(paper.metadata?.api_source || 'unknown')
+      sourceCount[source] = (sourceCount[source] || 0) + 1
     })
     
     console.log(`   ✅ All Sources: ${papers.length} papers (${responseTime}ms)`)

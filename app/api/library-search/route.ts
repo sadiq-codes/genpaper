@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { SearchOrchestrator } from '@/lib/services/search-orchestrator'
+import { unifiedSearch } from '@/lib/search'
 import { z } from 'zod'
 
 // Lightweight search schema for Library Manager
 const LibrarySearchRequestSchema = z.object({
   query: z.string().min(1).max(500).trim(),
   options: z.object({
-    maxResults: z.number().int().min(1).max(50).optional().default(20), // Restored full result limit
-    sources: z.array(z.enum(['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'])).optional().default(['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core']), // All sources by default
-    includePreprints: z.boolean().optional().default(true),
-    fromYear: z.number().int().min(1900).max(new Date().getFullYear()).optional(),
-    toYear: z.number().int().min(1900).max(new Date().getFullYear()).optional(),
-    openAccessOnly: z.boolean().optional().default(false),
-    fastMode: z.boolean().optional().default(true) // Enable fast mode by default
+    maxResults: z.number().int().min(1).max(50).optional().default(20),
+    sources: z.array(z.enum(['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'])).optional().default(['openalex', 'crossref', 'semantic_scholar']),
+    fromYear: z.number().int().min(1900).max(new Date().getFullYear()).optional()
   }).optional().default({})
 })
 
@@ -62,13 +58,13 @@ export async function POST(request: NextRequest) {
 
     const { query, options } = validationResult.data
 
-    console.log(`📚 Fast Library Search (unified): "${query}" (${options.sources?.join(', ')})`)
+    console.log(`📚 Library Search (unified): "${query}" (${options.sources?.join(', ')})`)
 
-    // Route through SearchOrchestrator for unified library search
-    const searchPromise = SearchOrchestrator.search({
-      query,
+    // Use unifiedSearch directly for library-only results by passing sources
+    const searchPromise = unifiedSearch(query, {
       maxResults: options.maxResults,
-      includeLibraryOnly: true // Library search only
+      sources: options.sources,
+      fromYear: options.fromYear
     })
 
     // **TIMEOUT CONTROL**: Maximum 10 seconds for library search

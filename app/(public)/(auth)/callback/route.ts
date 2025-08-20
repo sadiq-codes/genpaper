@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
-  const next = searchParams.get('next') ?? '/generate'
+  const next = searchParams.get('next') ?? '/dashboard'
 
   if (code) {
     const supabase = await createClient()
@@ -12,7 +12,31 @@ export async function GET(request: NextRequest) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     
     if (!error) {
-      // Email verification successful, redirect to generate page
+      // Get the authenticated user
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      if (user) {
+        // Ensure profile exists - create if missing
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .upsert({
+            id: user.id,
+            email: user.email || '',
+            full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+            created_at: new Date().toISOString()
+          }, {
+            onConflict: 'id',
+            ignoreDuplicates: false
+          })
+        
+        if (profileError) {
+          console.error('Error creating/updating profile:', profileError)
+        } else {
+          console.log('✅ Profile ensured for user:', user.id)
+        }
+      }
+      
+      // Email verification successful, redirect to dashboard
       return NextResponse.redirect(new URL(next, request.url))
     } else {
       // Email verification failed, redirect to login with error

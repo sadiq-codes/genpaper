@@ -14,7 +14,6 @@ export const PaperDTOSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
   source: z.string().max(50).optional(),
   citation_count: z.number().int().min(0).optional(),
-  impact_score: z.number().min(0).optional(),
   authors: z.array(z.string().min(1).max(100)).optional()
 })
 

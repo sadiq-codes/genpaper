@@ -11,7 +11,6 @@ interface PaperWithAuthors {
   url: string | null
   pdf_url: string | null
   citation_count: number | null
-  impact_score: number | null
   created_at: string
   authors?: string[]
 }
@@ -45,7 +44,6 @@ export async function GET() {
           url,
           pdf_url,
           citation_count,
-          impact_score,
           created_at,
           authors
         )

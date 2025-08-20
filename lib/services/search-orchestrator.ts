@@ -203,8 +203,7 @@ export async function unifiedSearch(
       const { data: keywordPapers, error } = await supabase
         .from('papers')
         .select(`
-          id, title, abstract, publication_date, venue, doi, url, metadata, created_at,
-          authors:paper_authors(author:authors(id, name, affiliation))
+          id, title, abstract, publication_date, venue, doi, url, metadata, created_at, authors
         `)
         .or(`title.fts.${query},abstract.fts.${query},venue.fts.${query}`)
         .not('id', 'in', `(${[...excludePaperIds, ...allPapers.map(p => p.id)].join(',') || 'null'})`)
@@ -212,13 +211,14 @@ export async function unifiedSearch(
         .limit(maxResults)
 
       if (!error && keywordPapers?.length) {
-        const formattedKeywordPapers: PaperWithAuthors[] = keywordPapers.map(paper => ({
-          ...paper,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          authors: paper.authors?.map((pa: any) => pa.author).filter(Boolean) || [],
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          author_names: paper.authors?.map((pa: any) => pa.author?.name).filter(Boolean) || []
-        }))
+        const formattedKeywordPapers: PaperWithAuthors[] = keywordPapers.map(paper => {
+          const authors = Array.isArray(paper.authors) ? paper.authors : []
+          return {
+            ...paper,
+            authors: authors.map((name: string) => ({ id: '', name })),
+            author_names: authors
+          }
+        })
 
         const existingIds = new Set(allPapers.map(p => p.id))
         const newKeywordPapers = formattedKeywordPapers.filter(p => !existingIds.has(p.id))
@@ -256,42 +256,5 @@ export async function unifiedSearch(
 /**
  * Simplified SearchOrchestrator API
  */
-export class SearchOrchestrator {
-  private constructor() {}
-
-  /**
-   * Main search method - simplified unified search
-   */
-  static async search(params: {
-    query: string
-    maxResults?: number
-    includeLibraryOnly?: boolean
-    localRegion?: string
-  }): Promise<UnifiedSearchResult> {
-    const { query, maxResults = 20, includeLibraryOnly = false, localRegion } = params
-
-    const options: UnifiedSearchOptions = {
-      maxResults,
-      localRegion,
-      sources: includeLibraryOnly ? [] : ['openalex', 'crossref', 'semantic_scholar']
-    }
-
-    return unifiedSearch(query, options)
-  }
-
-  /**
-   * Library-only search
-   */
-  static async searchLibrary(params: {
-    query: string
-    maxResults?: number
-  }): Promise<UnifiedSearchResult> {
-    return this.search({
-      ...params,
-      includeLibraryOnly: true
-    })
-  }
-}
-
-// Default export for convenience
-export default SearchOrchestrator 
+// NOTE: Removed SearchOrchestrator class wrapper to avoid duplicate APIs.
+// Prefer importing and using unifiedSearch directly.

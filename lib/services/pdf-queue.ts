@@ -29,8 +29,8 @@ export class SimplePDFProcessor {
       
       // Extract content using correct API
       const result = await extractPdfMetadataTiered(pdfBuffer, {
-        enableOcr: false,
-        maxTimeoutMs: 30000
+        enableOcr: true, // Enable OCR for better text extraction
+        maxTimeoutMs: 60000 // Increased timeout for OCR processing
       })
       
       if (result.fullText && result.fullText.length > 100) {
@@ -75,18 +75,17 @@ export class SimplePDFProcessor {
   }
 }
 
-// Export for backward compatibility
+// Simplified PDF processing interface - no queue complexity
 export const pdfQueue = {
   addJob: async (
     paperId: string, 
     pdfUrl: string, 
     paperTitle: string, 
-    userId?: string, 
-    priority?: 'low' | 'normal' | 'high'
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _userId?: string,  // Ignored in simplified implementation
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _priority?: 'low' | 'normal' | 'high'  // Ignored in simplified implementation
   ) => {
-    // Note: userId and priority are ignored in this simplified implementation
-    void userId
-    void priority
     const result = await SimplePDFProcessor.processPDF(paperId, pdfUrl, paperTitle)
     return result.success ? 'completed' : 'failed'
   }

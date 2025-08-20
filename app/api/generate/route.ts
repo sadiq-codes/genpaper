@@ -34,8 +34,8 @@ async function buildSectionContexts(
 
     if (!contextChunks) {
       try {
-        const { getRelevantChunks: getRagChunks } = await import('@/lib/generation/chunks')
-        contextChunks = await getRagChunks(
+        const { getRelevantChunks } = await import('@/lib/generation/chunks')
+        contextChunks = await getRelevantChunks(
           topic,
           ids,
           Math.min(20, ids.length * 3),
@@ -342,7 +342,6 @@ export async function GET(request: NextRequest) {
               const results = await generateMultipleSectionsUnified(
                 sectionContexts,
                 {
-                  model: 'gpt-4o',
                   temperature: generationConfig.temperature || 0.3,
                   maxTokens: Math.floor((generationConfig.max_tokens || 8000) / sectionContexts.length)
                 },

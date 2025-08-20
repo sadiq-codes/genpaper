@@ -439,7 +439,6 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
     },
     source: `academic_search_${paper.source}`,
     citation_count: paper.citationCount,
-    impact_score: normalizedImpactScore,
     authors: (paper.authors && paper.authors.length > 0) ? paper.authors : ['Unknown']
   }
 }
@@ -491,7 +490,8 @@ export async function searchAndIngestPapers(
             const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer())
             const extraction = await extractPdfMetadataTiered(pdfBuffer, {
               grobidUrl: process.env.GROBID_URL || 'http://localhost:8070',
-              enableOcr: false
+              enableOcr: true, // Enable OCR for scanned PDFs
+              maxTimeoutMs: 60000 // Increased timeout for OCR processing
             })
 
             // Record extraction metrics

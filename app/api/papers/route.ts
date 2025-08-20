@@ -49,7 +49,6 @@ interface PaperData {
   metadata: Record<string, unknown> | null
   source: string | null
   citation_count: number | null
-  impact_score: number | null
   created_at: string
   authors?: string[]
 }
@@ -157,7 +156,6 @@ export async function GET(request: NextRequest) {
             metadata,
             source,
             citation_count,
-            impact_score,
             created_at,
             authors
           )

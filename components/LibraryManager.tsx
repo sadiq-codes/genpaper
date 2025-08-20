@@ -176,12 +176,10 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
             pdf_url: null,
             metadata: {
               citation_count: paper.citation_count,
-              impact_score: paper.impact_score,
               source: paper.source
             },
             source: paper.source,
             citation_count: paper.citation_count || 0,
-            impact_score: Math.max(paper.impact_score || 0, 0),
             created_at: new Date().toISOString(),
             authors: [],
             author_names: []
@@ -228,7 +226,6 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
           },
           source: searchResult.source || 'library_search',
           citation_count: searchResult.citation_count || 0,
-          impact_score: searchResult.impact_score || 0,
           authors: searchResult.authors?.map(a => a.name || a) || []
         }
 

@@ -16,7 +16,6 @@ interface SimplifiedPaper {
   pdf_url?: string
   source?: string
   citation_count?: number
-  impact_score?: number
   created_at: string
   [key: string]: unknown
 }

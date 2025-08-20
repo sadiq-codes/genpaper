@@ -25,7 +25,6 @@ interface DatabasePaper {
   metadata?: Record<string, unknown>
   source: string
   citation_count: number
-  impact_score?: number
   created_at: string
   authors: string[]
 }
@@ -181,7 +180,6 @@ export async function semanticSearchPapers(
     },
     source: 'search',
     citation_count: result.citation_count,
-    impact_score: null,
     created_at: new Date().toISOString(),
     authors: [],
     author_names: []
@@ -277,13 +275,7 @@ export async function hybridSearchPapers(
     const queryWords = query.toLowerCase().split(/\s+/).filter(word => word.length > 2)
     const { data: fallbackResults, error: fallbackError } = await supabase
       .from('papers')
-      .select(`
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      `)
+      .select('*')
       .or(queryWords.map(word => `title.ilike.%${word}%,abstract.ilike.%${word}%`).join(','))
       .gte('publication_date', `${minYear}-01-01`)
       .order('citation_count', { ascending: false })
@@ -812,7 +804,6 @@ async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
       metadata: enrichedMetadata,
       source: paperData.source || 'unknown',
       citation_count: paperData.citation_count || 0,
-      impact_score: Math.max(paperData.impact_score || 0, 0),
       embedding: embedding // Generate embedding immediately to satisfy NOT NULL constraint
     })
     .select('id')

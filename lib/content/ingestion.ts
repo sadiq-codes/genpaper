@@ -188,6 +188,41 @@ export async function createChunksForPaper(
 
   try {
     const supabase = await getSB()
+    
+    // Check if chunks already exist for this paper (try both table names due to migration)
+    let existingChunks = null
+    let checkError = null
+    
+    // Try the expected table name first
+    const { data: chunks1, error: error1 } = await supabase
+      .from('paper_chunks')
+      .select('id')
+      .eq('paper_id', paperId)
+      .limit(1)
+    
+    if (!error1) {
+      existingChunks = chunks1
+    } else {
+      // If that fails, try the _new table name (in case migration incomplete)
+      const { data: chunks2, error: error2 } = await supabase
+        .from('paper_chunks_new')
+        .select('id')
+        .eq('paper_id', paperId)
+        .limit(1)
+      
+      if (!error2) {
+        existingChunks = chunks2
+      } else {
+        checkError = error2
+        console.warn(`Error checking existing chunks for paper ${paperId}:`, error1, error2)
+      }
+    }
+    
+    if (existingChunks && existingChunks.length > 0) {
+      console.log(`📚 Chunks already exist for paper ${paperId}, skipping chunk creation`)
+      return existingChunks.length
+    }
+    
     const normalizedContent = normalizeText(content)
     
     // Create chunks using centralized function
@@ -207,18 +242,30 @@ export async function createChunksForPaper(
     const chunkTexts = chunks.map(chunk => chunk.content)
     const embeddings = await generateEmbeddings(chunkTexts)
 
-    // Insert chunks into database with embeddings
-    const { error } = await supabase
+    // Insert chunks into database with embeddings (try both table names)
+    const chunkData = chunks.map((chunk, index) => ({
+      id: chunk.id,
+      paper_id: paperId,
+      chunk_index: index,
+      content: chunk.content,
+      embedding: embeddings[index]
+    }))
+    
+    // Try inserting to the expected table name first
+    let { error } = await supabase
       .from('paper_chunks')
-      .insert(chunks.map((chunk, index) => ({
-        id: chunk.id,
-        paper_id: paperId,
-        chunk_index: index,
-        content: chunk.content,
-        embedding: embeddings[index]
-      })))
-
-    if (error) {
+      .insert(chunkData)
+    
+    // If that fails, try the _new table (in case migration incomplete)
+    if (error && error.message.includes('relation "paper_chunks" does not exist')) {
+      const { error: newTableError } = await supabase
+        .from('paper_chunks_new')
+        .insert(chunkData)
+      
+      if (newTableError) {
+        throw new ChunkingError(`Failed to insert chunks to both tables: ${error.message} | ${newTableError.message}`)
+      }
+    } else if (error) {
       throw new ChunkingError(`Failed to insert chunks: ${error.message}`)
     }
 

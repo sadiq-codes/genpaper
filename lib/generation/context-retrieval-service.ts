@@ -1,4 +1,5 @@
 import 'server-only'
+// eslint-disable-next-line no-restricted-imports -- ContextRetrievalService needs direct DB access for performance
 import { searchPaperChunks } from '@/lib/db/papers'
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
 import type { PaperWithAuthors } from '@/types/simplified'
@@ -80,8 +81,8 @@ export class ContextRetrievalService {
       })
 
       // Convert to PaperChunk format with deterministic IDs
-      const chunks: PaperChunk[] = searchResults.map(result => ({
-        id: createDeterministicChunkId(result.paper_id, result.content),
+      const chunks: PaperChunk[] = searchResults.map((result, index) => ({
+        id: createDeterministicChunkId(result.paper_id, result.content, index),
         paper_id: result.paper_id,
         content: result.content,
         metadata: { 
@@ -99,7 +100,6 @@ export class ContextRetrievalService {
       const scores = sortedChunks.map(chunk => chunk.score || 0)
       
       // Extract unique papers (stub - would need paper lookup for full objects)
-      const uniquePaperIds = Array.from(new Set(sortedChunks.map(chunk => chunk.paper_id)))
       const papers: PaperWithAuthors[] = [] // TODO: Lookup papers by IDs
 
       return {
@@ -135,25 +135,6 @@ export class ContextRetrievalService {
     }
   }
 
-  // Static methods for backward compatibility with existing code
-  static async getRelevantChunks(
-    topic: string,
-    paperIds: string[],
-    chunkLimit: number,
-    allPapers: PaperWithAuthors[]
-  ): Promise<PaperChunk[]> {
-    const result = await this.retrieve({
-      query: topic,
-      paperIds,
-      k: chunkLimit
-    })
-    
-    // Add paper references to chunks
-    const chunksWithPapers = result.chunks.map(chunk => ({
-      ...chunk,
-      paper: allPapers.find(p => p.id === chunk.paper_id)
-    }))
-    
-    return chunksWithPapers
-  }
+  // NOTE: getRelevantChunks method removed to eliminate duplication
+  // Use getRelevantChunks from @/lib/generation/chunks instead for consistent behavior
 }

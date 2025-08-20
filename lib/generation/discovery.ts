@@ -1,9 +1,12 @@
+// eslint-disable-next-line no-restricted-imports -- allowed temporarily during simplification
 import { getSB } from '@/lib/supabase/server'
+// eslint-disable-next-line no-restricted-imports -- allowed temporarily during simplification
 import { getPapersByIds as getLibraryPapersByIds } from '@/lib/db/library'
 import type { EnhancedGenerationOptions } from './types'
 
 // 🆕 OPTIMIZATION: Import structured logging
-import { logSearchMetrics, createTimer, type SearchMetrics } from '@/lib/utils/logger'
+// Structured logging utilities (unused in simplified flow)
+// import { logSearchMetrics, createTimer, type SearchMetrics } from '@/lib/utils/logger'
 
 // Helper function to check if URL is likely a direct PDF
 function isLikelyDirectPdfUrl(url: string): boolean {
@@ -44,8 +47,8 @@ function isLikelyDirectPdfUrl(url: string): boolean {
   return directPdfPatterns.some(pattern => pattern.test(url))
 }
 import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
-import type { UnifiedSearchOptions, UnifiedSearchResult } from '@/lib/services/search-orchestrator'
-import { unifiedSearch } from '@/lib/services/search-orchestrator'
+import type { UnifiedSearchOptions } from '@/lib/services/search-orchestrator'
+import { unifiedSearch } from '@/lib/search'
 import { pdfQueue } from '@/lib/services/pdf-queue'
 // Removed policy dependency - simplified ingestion logic
 
@@ -60,7 +63,7 @@ export async function collectPapers(
   console.log(`   🎯 Topic: "${topic}"`)
   console.log(`   📚 Pinned Library Papers: ${libraryPaperIds.length}`)
   console.log(`   🔒 Library Only Mode: ${useLibraryOnly}`)
-  console.log(`   ⚙️ Target Limit: ${config?.search_parameters?.limit || 10}`)
+  console.log(`   ⚙️ Target Limit: ${config?.limit || 10}`)
   
   // 1. pinned papers
   const pinnedPapers = libraryPaperIds.length
@@ -76,7 +79,7 @@ export async function collectPapers(
   })
   
   const pinnedIds = pinnedPapers.map(lp => lp.paper.id)
-  const targetTotal = config?.search_parameters?.limit || 90
+  const targetTotal = config?.limit || 90
   const remainingSlots = Math.max(0, targetTotal - pinnedPapers.length)
   
   console.log(`🔍 Search Parameters:`)
@@ -95,20 +98,15 @@ export async function collectPapers(
         minResults: Math.min(5, remainingSlots),
         excludePaperIds: pinnedIds,
         fromYear: 2000,
-        localRegion: config?.paper_settings?.localRegion,
-        useHybridSearch: true,
-        useKeywordSearch: true,
-        useAcademicAPIs: true,
-        combineResults: true,
-        fastMode: false,
-        sources: (config?.search_parameters?.sources as PaperSource[])
+        localRegion: config?.localRegion,
+        sources: (config?.sources as PaperSource[])
                   ?? ['openalex', 'crossref', 'semantic_scholar'],
-        semanticWeight: config?.search_parameters?.semanticWeight ?? 0.4,
-        authorityWeight: config?.search_parameters?.authorityWeight ?? 0.5,
-        recencyWeight: config?.search_parameters?.recencyWeight ?? 0.1
+        semanticWeight: 0.4,
+        authorityWeight: 0.5,
+        recencyWeight: 0.1
       }
       
-      const searchResult = await simpleUnifiedSearch(topic, searchOptions)
+      const searchResult = await unifiedSearch(topic, searchOptions)
       discoveredPapers = searchResult.papers as PaperWithAuthors[]
       
       console.log(`🎯 External search results: ${discoveredPapers.length} papers found`)
@@ -122,77 +120,8 @@ export async function collectPapers(
       discoveredPapers = []
     }
 
-    // Auto-ingest discovered papers with PDF enhancement
-    if (discoveredPapers.length > 0) {
-        console.log(`📥 Auto-ingesting ${discoveredPapers.length} papers to database...`)
-        
-        // Enhance PDF URLs before ingestion
-        console.log(`🔍 Enhancing PDF URLs for ${discoveredPapers.length} papers...`)
-        const { enhancePdfUrls } = await import('@/lib/services/academic-apis')
-        const enhancedPapers = await enhancePdfUrls(discoveredPapers)
-        console.log(`✅ PDF enhancement completed`)
-        
-        try {
-          const { ingestPaper, getPapersByIds } = await import('@/lib/db/papers')
-          
-          const ingestResults = await Promise.allSettled(
-            enhancedPapers.map(async (paper) => {
-              try {
-                const result = await ingestPaper({
-                  title: paper.title,
-                  authors: paper.author_names || [],
-                  abstract: paper.abstract,
-                  publication_date: paper.publication_date,
-                  venue: paper.venue,
-                  doi: paper.doi,
-                  url: paper.url,
-                  pdf_url: paper.pdf_url, // Now enhanced with actual PDF URLs!
-                  metadata: paper.metadata || {},
-                  source: 'search-api',
-                  citation_count: paper.citation_count || 0,
-                  impact_score: paper.impact_score || 0
-                }, {
-                  pdfUrl: paper.pdf_url, // Pass PDF URL for immediate processing
-                  priority: 'normal'
-                })
-                
-                return { paperId: result.paperId, success: true, originalIndex: enhancedPapers.indexOf(paper) }
-              } catch (error) {
-                console.warn(`Failed to ingest paper "${paper.title}":`, error)
-                return { paperId: '', success: false, error: error instanceof Error ? error.message : 'Unknown error', originalIndex: enhancedPapers.indexOf(paper) }
-              }
-            })
-          )
-          
-          const successful = ingestResults.filter(r => r.status === 'fulfilled' && r.value.success)
-          const failed = ingestResults.length - successful.length
-          
-          console.log(`✅ Auto-ingestion completed: ${successful.length}/${enhancedPapers.length} papers ingested`)
-          if (failed > 0) {
-            console.warn(`⚠️ ${failed} papers failed to ingest`)
-          }
-          
-          // Now fetch the complete paper data from database using the returned IDs
-          if (successful.length > 0) {
-            const ingestedPaperIds = successful.map(r => (r as { value: { paperId: string } }).value.paperId)
-            console.log(`🔄 Fetching complete paper data for ${ingestedPaperIds.length} ingested papers...`)
-            
-            const ingestedPapers = await getPapersByIds(ingestedPaperIds)
-            console.log(`✅ Retrieved ${ingestedPapers.length} complete papers from database`)
-            
-            // Replace discoveredPapers with the properly ingested and fetched papers
-            discoveredPapers = ingestedPapers
-          } else {
-            // No papers were successfully ingested
-            console.warn(`❌ No papers were successfully ingested, proceeding with empty discovered papers`)
-            discoveredPapers = []
-          }
-        } catch (error) {
-          console.error('Auto-ingestion failed:', error)
-          // On ingestion failure, clear discovered papers to avoid using stale data
-          discoveredPapers = []
-        }
-    }
+    // Note: unifiedSearch already performs ingestion via searchAndIngestPapers.
+    // Avoid re-ingesting here to prevent duplicate writes and queueing.
   }
 
   // Combine pinned and discovered papers
@@ -261,7 +190,7 @@ export async function collectPapers(
         
         const targetReached = await waitForChunkCoverage(
           finalPapers.map(p => p.id),
-          0.9, // 70% coverage target
+          0.7, // 70% coverage target
           dynamicWaitMs, // Dynamic wait time
           3_000 // Poll every 3 seconds
         )
@@ -489,22 +418,6 @@ async function waitForChunkCoverage(
 }
 
 // Removed library coverage optimization - simplified to direct external search
-
-// Simple search - direct call, no complex retry logic
-async function simpleUnifiedSearch(
-  topic: string,
-  options: UnifiedSearchOptions
-): Promise<UnifiedSearchResult> {
-  try {
-    console.log(`🔍 Searching for papers: ${topic}`)
-    const result = await unifiedSearch(topic, options)
-    console.log(`✅ Found ${result.papers.length} papers`)
-    return result
-  } catch (error) {
-    console.error(`❌ Search failed:`, error)
-    throw new Error(`Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
-  }
-}
 
 // Export helper functions for potential reuse
 export { getCoverage, waitForChunkCoverage }

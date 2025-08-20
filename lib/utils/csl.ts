@@ -49,7 +49,6 @@ export interface PaperWithAuthors {
   metadata?: Record<string, unknown> | null
   source?: string | null
   citation_count?: number | null
-  impact_score?: number | null
   created_at: string
   authors: Array<{
     ordinal: number

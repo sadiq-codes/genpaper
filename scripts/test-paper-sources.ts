@@ -9,7 +9,7 @@
  * Usage: npx tsx scripts/test-paper-sources.ts
  */
 
-import { unifiedSearch, withSearchCache } from '@/lib/search/orchestrator'
+import { unifiedSearch, withSearchCache } from '@/lib/search'
 import { searchOpenAlex, searchCrossref, searchSemanticScholar, searchArxiv, searchCore } from '@/lib/services/academic-apis'
 import { collectPapers } from '@/lib/generation/discovery'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'

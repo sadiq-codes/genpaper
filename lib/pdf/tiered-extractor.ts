@@ -351,18 +351,100 @@ async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
 }
 
 /**
- * OCR extraction (Tier 3) - placeholder for AWS Textract/Google Document AI
+ * OCR extraction (Tier 3) - Using Tesseract.js for text recognition
  */
 async function ocrParse(
-  _pdfBuffer: Buffer, 
-  _timeoutMs: number
+  pdfBuffer: Buffer, 
+  timeoutMs: number
 ): Promise<Partial<TieredExtractionResult> | null> {
-  // TODO: Implement OCR service integration
-  // Options: AWS Textract, Google Document AI, or Tesseract + LayoutParser
-  void _pdfBuffer; // avoid unused-var lint
-  void _timeoutMs;
-  warn('OCR extraction not yet implemented')
-  return null
+  try {
+    // Dynamic imports for OCR dependencies
+    const { createWorker } = await import('tesseract.js')
+    const pdfParse = (await import('pdf2pic')).default
+    
+    info('Starting OCR extraction process')
+    
+    // Convert PDF to images (first 10 pages to avoid timeout)
+    const convert = pdfParse.fromBuffer(pdfBuffer, {
+      density: 200,           // Higher DPI for better OCR
+      saveFilename: "page",
+      savePath: "/tmp",
+      format: "png",
+      width: 2000,
+      height: 2000
+    })
+    
+    const maxPages = 10 // Limit pages to prevent timeout
+    const pageImages = []
+    
+    // Convert first few pages to images
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      try {
+        const pageResult = await convert(pageNum, { responseType: 'buffer' })
+        if (pageResult.buffer) {
+          pageImages.push(pageResult.buffer)
+        }
+      } catch (pageError) {
+        // If we can't convert this page, break (probably reached end)
+        break
+      }
+    }
+    
+    if (pageImages.length === 0) {
+      warn('No images could be extracted from PDF for OCR')
+      return null
+    }
+    
+    info(`Extracted ${pageImages.length} page images for OCR processing`)
+    
+    // Initialize Tesseract worker
+    const worker = await createWorker('eng')
+    let fullText = ''
+    
+    // Process each page image with OCR
+    for (let i = 0; i < pageImages.length; i++) {
+      try {
+        const { data: { text } } = await worker.recognize(pageImages[i])
+        fullText += text + '\n\n'
+        info(`OCR completed for page ${i + 1}/${pageImages.length}`)
+      } catch (ocrError) {
+        warn(`OCR failed for page ${i + 1}:`, ocrError)
+      }
+    }
+    
+    await worker.terminate()
+    
+    if (fullText.trim().length < 100) {
+      warn('OCR extracted insufficient text content')
+      return null
+    }
+    
+    // Extract title from first significant text
+    const lines = fullText.split('\n').filter(line => line.trim().length > 5)
+    const title = lines[0]?.trim() || 'OCR Extracted Document'
+    
+    // Extract abstract (usually in first few lines after title)
+    const abstractLines = lines.slice(1, 5).join(' ').trim()
+    const abstract = abstractLines.length > 50 ? abstractLines.substring(0, 500) + '...' : abstractLines
+    
+    info(`OCR extraction successful: ${fullText.length} characters extracted`)
+    
+    return {
+      title,
+      abstract: abstract || 'No abstract extracted via OCR',
+      fullText: fullText.trim(),
+      authors: [], // OCR can't reliably extract structured author data
+      metadata: {
+        ocrPagesProcessed: pageImages.length,
+        ocrConfidence: 'estimated-medium', // Tesseract doesn't provide confidence in this API
+        processingNotes: [`OCR processed ${pageImages.length} pages`]
+      }
+    }
+    
+  } catch (error) {
+    error('OCR extraction failed completely', { error })
+    return null
+  }
 }
 
 /**

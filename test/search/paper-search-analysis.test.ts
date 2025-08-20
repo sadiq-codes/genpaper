@@ -10,8 +10,8 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { unifiedSearch, withSearchCache } from '@/lib/search/orchestrator'
-import { searchAllSources, searchOpenAlex, searchCrossref, searchSemanticScholar, searchArxiv, searchCore } from '@/lib/services/academic-apis'
+import { searchOpenAlex, searchCrossref, searchSemanticScholar, searchArxiv, searchCore } from '@/lib/services/academic-apis'
+import { unifiedSearch } from '@/lib/search'
 import { collectPapers } from '@/lib/generation/discovery'
 import type { UnifiedSearchOptions } from '@/lib/search/orchestrator'
 import type { SearchOptions } from '@/lib/services/academic-apis'
@@ -503,7 +503,8 @@ describe('Paper Search Source Analysis', () => {
       const query = 'machine learning'
       
       try {
-        const result = await searchAllSources(query, { limit: 30 })
+        const searchResult = await unifiedSearch(query, { maxResults: 30 })
+        const result = searchResult.papers
         
         // Count duplicates by title similarity
         const titles = result.map(p => p.title.toLowerCase().trim())

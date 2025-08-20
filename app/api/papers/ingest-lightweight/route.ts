@@ -36,7 +36,6 @@ export async function POST(request: NextRequest) {
       },
       source: paper.source || 'library_search',
       citation_count: paper.citation_count || 0,
-      impact_score: paper.impact_score || 0,
       authors: paper.authors || []
     }
 

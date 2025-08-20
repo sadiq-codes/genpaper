@@ -60,18 +60,4 @@ export async function createProject(
   }
 }
 
-/**
- * Update project content
- */
-export async function updateProjectContent(projectId: string, content: string): Promise<void> {
-  try {
-    const { updateResearchProjectStatus } = await import('@/lib/db/research')
-    // For now, just update status to completed
-    // TODO: Add actual content update function to research module
-    await updateResearchProjectStatus(projectId, 'completed')
-    console.log(`Project ${projectId} marked as completed with ${content.length} characters`)
-  } catch (error) {
-    console.error('Failed to update project content:', error)
-    throw new Error(`Failed to update project: ${error instanceof Error ? error.message : 'Unknown error'}`)
-  }
-}
+// Note: updateProjectContent was unused and removed to reduce dead code.

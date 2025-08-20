@@ -2,7 +2,6 @@ import { getSB } from '@/lib/supabase/server'
 import { createClient as createBrowserSupabaseClient } from '@/lib/supabase/client'
 import type { 
   ResearchProject, 
-  ResearchProjectVersion, 
   ProjectCitation, 
   PaperStatus,
   ResearchProjectWithLatestVersion,
@@ -21,6 +20,9 @@ export async function createResearchProject(
   console.log('📝 Creating research project for user:', userId)
   console.log('📝 Topic:', topic)
   console.log('📝 Config:', generationConfig)
+  
+  // Ensure profile exists before creating project
+  await ensureProfileExists(userId)
   
   const { data, error } = await supabase
     .from('research_projects')
@@ -56,6 +58,66 @@ export async function createResearchProject(
   
   console.log('✅ Research project created successfully:', data.id)
   return data
+}
+
+// Helper function to ensure profile exists
+async function ensureProfileExists(userId: string): Promise<void> {
+  const supabase = await getSB()
+  
+  // Check if profile exists
+  const { data: existingProfile, error: checkError } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('id', userId)
+    .single()
+  
+  if (checkError && checkError.code !== 'PGRST116') {
+    console.error('Error checking profile:', checkError)
+    return
+  }
+  
+  if (!existingProfile) {
+    console.log('🔧 Creating missing profile for user:', userId)
+    
+    // Get user info from auth
+    const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(userId)
+    
+    if (userError) {
+      console.error('Error getting user info:', userError)
+      // Create minimal profile anyway
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert({
+          id: userId,
+          email: '',
+          full_name: '',
+          created_at: new Date().toISOString()
+        })
+      
+      if (profileError) {
+        console.error('Error creating minimal profile:', profileError)
+      } else {
+        console.log('✅ Created minimal profile for user:', userId)
+      }
+      return
+    }
+    
+    // Create profile with user info
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .insert({
+        id: userId,
+        email: user?.email || '',
+        full_name: user?.user_metadata?.full_name || user?.user_metadata?.name || '',
+        created_at: new Date().toISOString()
+      })
+    
+    if (profileError) {
+      console.error('Error creating profile:', profileError)
+    } else {
+      console.log('✅ Created profile for user:', userId)
+    }
+  }
 }
 
 export async function updateResearchProjectStatus(
@@ -125,22 +187,7 @@ export async function getUserResearchProjects(
   return projectsWithCitations
 }
 
-export async function updateProjectContent(
-  projectId: string,
-  content: string
-): Promise<ResearchProject> {
-  const supabase = await getSB()
-  
-  const { data, error } = await supabase
-    .from('research_projects')
-    .update({ content })
-    .eq('id', projectId)
-    .select()
-    .single()
-
-  if (error) throw error
-  return data
-}
+// Note: updateProjectContent was unused and has been removed to reduce dead code.
 
 export async function getProjectContent(
   projectId: string
@@ -209,10 +256,7 @@ export async function getProjectCitations(
       paper:papers(
         *,
         csl_json,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
+        authors
       )
     `)
     .eq('project_id', projectId)
@@ -258,10 +302,7 @@ export async function getProjectPapersWithCSL(
     .select(`
       *,
       csl_json,
-      authors:paper_authors(
-        ordinal,
-        author:authors(*)
-      )
+      authors
     `)
     .in('id', paperIds)
     
@@ -270,9 +311,10 @@ export async function getProjectPapersWithCSL(
   // Transform to PaperWithAuthors format
   return (papers || []).map(paper => ({
     ...paper,
-    author_names: paper.authors
-      ?.sort((a: { ordinal?: number }, b: { ordinal?: number }) => (a.ordinal || 0) - (b.ordinal || 0))
-      ?.map((pa: { author: { name: string } }) => pa.author.name) || []
+    authors: Array.isArray(paper.authors) 
+      ? paper.authors.map((name: string) => ({ id: '', name }))
+      : [],
+    author_names: Array.isArray(paper.authors) ? paper.authors : []
   }))
 }
 
@@ -348,10 +390,7 @@ export const clientResearchOperations = {
         *,
         paper:papers(
           *,
-          authors:paper_authors(
-            ordinal,
-            author:authors(*)
-          )
+          authors
         )
       `)
       .eq('project_id', projectId)
