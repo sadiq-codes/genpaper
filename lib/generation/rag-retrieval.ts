@@ -94,12 +94,14 @@ export async function getRelevantChunks(
   })
   
   // Multi-stage retrieval with relaxed thresholds optimized for abstract content
-  const attempts = [
-    { minScore: 0.5, label: 'high-precision', paperIds: papersWithContent },
-    { minScore: 0.3, label: 'balanced', paperIds: papersWithContent },
-    { minScore: 0.2, label: 'high-recall', paperIds: papersWithContent },
-    { minScore: 0.15, label: 'ultra-recall', paperIds: papersWithContent } // Ultra-low threshold for abstracts
+  const ATTEMPTS: Array<{minScore: number, label: string}> = [
+    { minScore: 0.1, label: 'high-precision' },
+    { minScore: 0.05, label: 'balanced' },
+    { minScore: 0.2, label: 'high-recall' },
+    { minScore: 0.15, label: 'ultra-recall' } // Ultra-low threshold for abstracts
   ]
+  
+  const attempts = ATTEMPTS.map(config => ({ ...config, paperIds: papersWithContent }))
 
   let allChunks: PaperChunk[] = []
   let firstError: unknown = null

@@ -46,67 +46,7 @@ export class PromptService {
     return PromptBuilder.buildSimple(systemPrompt, userPrompt, data)
   }
 
-  static buildPlanningPrompt(
-    paperType: PaperTypeKey,
-    section: SectionKey,
-    topic: string,
-    availablePapers: string[],
-    expectedWords: number,
-    qualityCriteria: string[] = []
-  ): BuiltPrompt {
-    return PromptBuilder.buildPlanningPrompt(
-      paperType,
-      section,
-      topic,
-      expectedWords,
-      availablePapers,
-      qualityCriteria
-    )
-  }
 
-  static buildCritiquePrompt(
-    content: string,
-    paperType: PaperTypeKey,
-    section: SectionKey,
-    topic: string,
-    qualityCriteria: string[] = []
-  ): BuiltPrompt {
-    const data = {
-      content,
-      paperType,
-      section,
-      topic,
-      qualityCriteria: qualityCriteria.map(c => `• ${c}`).join('\n')
-    }
-
-    const system = `You are an expert academic reviewer specializing in {{paperType}} papers.
-Provide constructive, specific critique that helps improve academic writing quality.
-
-Focus on:
-- Academic rigor and evidence support
-- Logical flow and argumentation
-- Citation adequacy and relevance
-- Discipline-specific conventions`
-
-    const user = `Review this "{{section}}" section from a {{paperType}} about "{{topic}}":
-
-CONTENT TO REVIEW:
-{{content}}
-
-QUALITY CRITERIA TO CHECK:
-{{qualityCriteria}}
-
-Provide a JSON critique:
-{
-  "strengths": ["What works well"],
-  "weaknesses": ["Specific issues to address"],
-  "missing_citations": ["Where more evidence is needed"],
-  "improvement_suggestions": ["Actionable recommendations"],
-  "overall_quality": "A score from 1-10 with brief justification"
-}`
-
-    return this.buildSimple(system, user, data)
-  }
 
   private static async loadTemplate(templateName: string): Promise<PromptTemplate> {
     if (this.templateCache.has(templateName)) {

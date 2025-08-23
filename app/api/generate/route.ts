@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { authenticateUser, createProject } from '@/lib/services/project-service'
-import { updateProjectContent, getResearchProject, updateResearchProjectStatus } from '@/lib/db/research'
+import { updateProjectContent, getResearchProject, getProjectWithContent, updateResearchProjectStatus } from '@/lib/db/research'
 import type { SectionContext } from '@/lib/prompts/types'
 import type { GeneratedOutline } from '@/lib/prompts/types'
 import type { PaperChunk } from '@/lib/generation/types'
@@ -195,6 +195,37 @@ export async function GET(request: NextRequest) {
         })
       }
       project = { id: existing.id }
+
+      // If project already completed with content, stream cached completion instead of regenerating
+      const existingWithContent = await getProjectWithContent(project.id)
+      if (existingWithContent && existingWithContent.content && existing.status === 'complete') {
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          start(controller) {
+            const completionData = JSON.stringify({
+              type: 'complete',
+              projectId: project.id,
+              content: existingWithContent.content,
+              timestamp: new Date().toISOString()
+            })
+            controller.enqueue(encoder.encode(`data: ${completionData}\n\n`))
+            controller.close()
+          }
+        })
+
+        return new Response(stream, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Cache-Control',
+            'X-Accel-Buffering': 'no'
+          }
+        })
+      }
+
       await updateResearchProjectStatus(project.id, 'generating' as PaperStatus)
       console.log('✅ Using existing project:', project.id)
     } else {
@@ -276,17 +307,14 @@ export async function GET(request: NextRequest) {
       const rawSectionContexts = await buildSectionContexts(typedOutline, topic, allPapers)
       
       // Convert to unified generator format
-      const sectionContexts: import('@/lib/prompts/unified/prompt-builder').SectionContext[] = rawSectionContexts.map((ctx, index) => ({
-        projectId: project.id,
-        sectionId: `section-${index}`,
-        paperType: paperType as import('@/lib/prompts/types').PaperTypeKey,
+      const sectionContexts: import('@/lib/prompts/types').SectionContext[] = rawSectionContexts.map((ctx) => ({
         sectionKey: ctx.sectionKey as import('@/lib/prompts/types').SectionKey,
-        availablePapers: ctx.candidatePaperIds,
+        title: ctx.title,
+        candidatePaperIds: ctx.candidatePaperIds,
+        expectedWords: ctx.expectedWords,
         contextChunks: ctx.contextChunks.map(chunk => ({
           paper_id: chunk.paper_id,
           content: chunk.content,
-          title: allPapers.find(p => p.id === chunk.paper_id)?.title,
-          doi: allPapers.find(p => p.id === chunk.paper_id)?.doi,
           score: (chunk as any).score
         }))
       }))

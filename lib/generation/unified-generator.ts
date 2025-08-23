@@ -1,9 +1,9 @@
 import 'server-only'
 import { streamText, type ToolCallPart } from 'ai'
 import { ai } from '@/lib/ai/vercel-client'
-import { buildUnifiedPrompt, checkTopicDrift, type SectionContext, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
+import { buildUnifiedPrompt, checkTopicDrift, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
+import type { SectionContext, SectionKey } from '@/lib/prompts/types'
 import { addCitation } from '@/lib/ai/tools/addCitation'
-import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
 // Removed stream processor - using direct citation tools instead
 
 // Caching removed - direct prompt building only
@@ -87,6 +87,16 @@ function calculateUnifiedQualityScore(params: {
   return Math.round((lengthScore + citationScore + driftScore) / 3)
 }
 
+// Helper to resolve generation options with defaults
+function resolveGenOptions(options: BuildPromptOptions): Required<Pick<BuildPromptOptions, 'model' | 'temperature' | 'maxTokens'>> & BuildPromptOptions {
+  return {
+    ...options,
+    model: options.model || 'gpt-4o',
+    temperature: options.temperature || 0.4,
+    maxTokens: options.maxTokens
+  }
+}
+
 // Direct prompt building - no caching complexity
 async function buildPromptData(
   context: SectionContext, 
@@ -123,13 +133,14 @@ export async function generateWithUnifiedTemplate(
   
   progress('generation', 20, 'Starting content generation...')
   
+  const resolvedOptions = resolveGenOptions(options)
   const result = await streamText({
-    model: ai(options.model || 'gpt-4o'),
+    model: ai(resolvedOptions.model),
     system: promptData.system,
     prompt: promptData.user,
     tools: { addCitation },
-    temperature: options.temperature || 0.4,
-    maxTokens: options.maxTokens
+    temperature: resolvedOptions.temperature,
+    maxTokens: resolvedOptions.maxTokens
   })
 
   // Simple streaming without complex citation processing
@@ -180,7 +191,7 @@ export async function generateWithUnifiedTemplate(
 
   if (enableDriftDetection) {
     progress('drift_check', 55, 'Checking topic drift...')
-    const originalTopic = `${context.paperType} about ${context.sectionKey}`
+    const originalTopic = context.title || String(context.sectionKey)
     const rawDriftCheck = await checkTopicDrift(originalTopic, fullContent)
     
     driftCheck = {
@@ -274,11 +285,9 @@ export async function replaceExistingGenerator(
   
   // Convert to new format
   const context: SectionContext = {
-    projectId: 'legacy-project',
-    sectionId: 'legacy-section',
-    paperType: paperType as PaperTypeKey,
     sectionKey: section as SectionKey,
-    availablePapers: paperIds,
+    title: section,
+    candidatePaperIds: paperIds,
     contextChunks: contextChunks.map(c => ({ paper_id: 'unknown', content: c }))
   }
 

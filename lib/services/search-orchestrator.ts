@@ -1,9 +1,10 @@
 import 'server-only'
 
 import { hybridSearchPapers } from '@/lib/db/papers'
-import { getSB } from '@/lib/supabase/client'
+import { getSB } from '@/lib/supabase/server'
 import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
 import type { AggregatedSearchOptions } from '@/lib/services/paper-aggregation'
+import { DEFAULT_WEIGHTS } from '@/lib/services/paper-aggregation'
 import pLimit from 'p-limit'
 import { generateDeterministicAuthorId, generateDeterministicPaperId } from '@/lib/utils/deterministic-id'
 import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
@@ -53,6 +54,47 @@ function dedupePapers(papers: PaperWithAuthors[]): PaperWithAuthors[] {
   return deduped
 }
 
+// Convert RankedPaper to PaperWithAuthors format
+function convertRankedToPaperWithAuthors(paper: any): PaperWithAuthors {
+  return {
+    id: paper.canonical_id || generateDeterministicPaperId({
+      doi: paper.doi,
+      title: paper.title,
+      authors: paper.authors,
+      year: paper.year
+    }),
+    title: paper.title,
+    abstract: paper.abstract || '',
+    publication_date: paper.year ? `${paper.year}-01-01` : new Date().toISOString(),
+    venue: paper.venue || '',
+    doi: paper.doi || '',
+    pdf_url: paper.pdf_url || '',
+    metadata: {
+      api_source: paper.source,
+      relevance_score: paper.relevanceScore,
+      combined_score: paper.combinedScore,
+      canonical_id: paper.canonical_id
+    },
+    created_at: new Date().toISOString(),
+    authors: paper.authors?.map((author: unknown) => {
+      const authorName = typeof author === 'string' ? author : 
+        (typeof author === 'object' && author && 'name' in author ? (author as { name: string }).name : 'Unknown')
+      const authorAffiliation = typeof author === 'object' && author && 'affiliation' in author ? 
+        (author as { affiliation?: string }).affiliation : undefined
+      
+      return {
+        id: generateDeterministicAuthorId({ name: authorName, affiliation: authorAffiliation }),
+        name: authorName,
+        affiliation: authorAffiliation
+      }
+    }) || [],
+    author_names: paper.authors?.map((author: unknown) => 
+      typeof author === 'string' ? author : 
+      (typeof author === 'object' && author && 'name' in author ? (author as { name: string }).name : 'Unknown')
+    ) || []
+  }
+}
+
 // Regional boosting helper - KEEP FOR QUALITY
 function applyRegionalBoost(papers: PaperWithAuthors[], localRegion: string): PaperWithAuthors[] {
   const localPapers: PaperWithAuthors[] = []
@@ -86,9 +128,9 @@ export async function unifiedSearch(
     fromYear = 2000,
     localRegion,
     sources = ['openalex', 'crossref', 'semantic_scholar'],
-    semanticWeight = 0.7,
-    authorityWeight = 0.5,
-    recencyWeight = 0.1
+    semanticWeight = DEFAULT_WEIGHTS.semanticWeight,
+    authorityWeight = DEFAULT_WEIGHTS.authorityWeight,
+    recencyWeight = DEFAULT_WEIGHTS.recencyWeight
   } = options
 
   console.log(`🔍 Starting unified search: "${query}"`)
@@ -126,44 +168,8 @@ export async function unifiedSearch(
         
         const { papers: rankedPapers } = await searchAndIngestPapers(query, academicOptions)
         
-        // Convert to PaperWithAuthors format
-        const convertedPapers: PaperWithAuthors[] = rankedPapers.map(paper => ({
-          id: paper.canonical_id || generateDeterministicPaperId({
-            doi: paper.doi,
-            title: paper.title,
-            authors: paper.authors,
-            year: paper.year
-          }),
-          title: paper.title,
-          abstract: paper.abstract || '',
-          publication_date: paper.year ? `${paper.year}-01-01` : new Date().toISOString(),
-          venue: paper.venue || '',
-          doi: paper.doi || '',
-          pdf_url: paper.pdf_url || '',
-          metadata: {
-            api_source: paper.source,
-            relevance_score: paper.relevanceScore,
-            combined_score: paper.combinedScore,
-            canonical_id: paper.canonical_id
-          },
-          created_at: new Date().toISOString(),
-          authors: paper.authors?.map((author: unknown) => {
-            const authorName = typeof author === 'string' ? author : 
-              (typeof author === 'object' && author && 'name' in author ? (author as { name: string }).name : 'Unknown')
-            const authorAffiliation = typeof author === 'object' && author && 'affiliation' in author ? 
-              (author as { affiliation?: string }).affiliation : undefined
-            
-            return {
-              id: generateDeterministicAuthorId({ name: authorName, affiliation: authorAffiliation }),
-              name: authorName,
-              affiliation: authorAffiliation
-            }
-          }) || [],
-          author_names: paper.authors?.map((author: unknown) => 
-            typeof author === 'string' ? author : 
-            (typeof author === 'object' && author && 'name' in author ? (author as { name: string }).name : 'Unknown')
-          ) || []
-        }))
+        // Convert to PaperWithAuthors format using helper
+        const convertedPapers: PaperWithAuthors[] = rankedPapers.map(convertRankedToPaperWithAuthors)
         
         return { papers: convertedPapers, strategy: 'academic_apis' }
       } catch (error) {

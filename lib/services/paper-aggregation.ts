@@ -31,6 +31,13 @@ export interface RankedPaper extends AcademicPaper {
   siblings?: string[] // Related papers (e.g., preprint and journal version)
 }
 
+// Default weights for scoring
+export const DEFAULT_WEIGHTS = {
+  semanticWeight: 1.0,
+  authorityWeight: 0.5,
+  recencyWeight: 0.1
+} as const
+
 // Search configuration
 export interface AggregatedSearchOptions extends SearchOptions {
   maxResults?: number
@@ -140,6 +147,14 @@ function calculateRecencyScore(year: number): number {
   return Math.max(0, (year - (currentYear - 10)) * 0.1) // Boost papers from last 10 years
 }
 
+// Helper to normalize titles for deduplication
+function normalizeTitle(title: string): string {
+  return title.toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 // Enhanced deduplication with arXiv preprint handling (no object mutation)
 function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
   const seen = new Set<string>()
@@ -152,10 +167,7 @@ function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
   
   // First pass: identify arXiv preprints and journal papers
   for (const paper of sorted) {
-    const normalizedTitle = paper.title.toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
+    const normalizedTitle = normalizeTitle(paper.title)
     
     if (paper.source === 'arxiv') {
       arxivPapers.set(normalizedTitle, paper)
@@ -167,10 +179,7 @@ function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
   // Second pass: deduplicate with arXiv preprint vs journal DOI preference
   for (const paper of sorted) {
     if (!seen.has(paper.canonical_id)) {
-      const normalizedTitle = paper.title.toLowerCase()
-        .replace(/[^\w\s]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
+      const normalizedTitle = normalizeTitle(paper.title)
       
       // Check for arXiv preprint vs journal version
       if (paper.source === 'arxiv' && journalPapers.has(normalizedTitle)) {
@@ -219,9 +228,9 @@ function rankPapers(
   options: AggregatedSearchOptions = {}
 ): RankedPaper[] {
   const {
-    semanticWeight = 1.0,
-    authorityWeight = 0.5,
-    recencyWeight = 0.1
+    semanticWeight = DEFAULT_WEIGHTS.semanticWeight,
+    authorityWeight = DEFAULT_WEIGHTS.authorityWeight,
+    recencyWeight = DEFAULT_WEIGHTS.recencyWeight
   } = options
   
   const bm25Env = buildBM25Environment(query, papers)

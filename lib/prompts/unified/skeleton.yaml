@@ -95,23 +95,6 @@ user: |-
   
   Remember: CALL the function, don't write about calling it.
 
-tools:
-  addCitation:
-    description: "Call this tool IMMEDIATELY after a sentence that uses information from a provided source. You must provide the exact paper_id from the context chunks you used. Do not cite your own general knowledge."
-    parameters:
-      type: object
-      properties:
-        paper_id:
-          type: string
-          description: "The exact UUID of the source paper from the provided context"
-        reason:
-          type: string
-          description: "Brief explanation of why this source supports your claim"
-        quote:
-          type: string
-          description: "Optional: exact quote from source for verification"
-      required: ["paper_id", "reason"]
-
 metadata:
   version: "1.1"
   created: "2025-01-15"

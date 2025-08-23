@@ -1,67 +1,20 @@
 import 'server-only'
-// R3.1: Remove direct DB client usage from PromptBuilder
-// import { createClient } from '@/lib/supabase/server'
-import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
-// R3.2: retrieval service is mandatory now
-import { PaperTypeKey, SectionKey } from '../types'
 import { GENERATION_DEFAULTS } from '@/lib/ai/generation-defaults'
-import yaml from 'js-yaml'
-import fs from 'fs/promises'
-import path from 'path'
-import Mustache from 'mustache'
+import type { SectionContext } from '../types'
+import { PromptService, type PromptData, type TemplateOptions, type BuiltPrompt } from '@/lib/prompts/prompt-service'
 
 /**
- * Unified prompt builder that creates contextual data for the single skeleton template
- * Replaces multiple hard-coded prompts with data-driven approach
+ * Unified prompt builder that assembles contextual PromptData and delegates
+ * template loading + rendering to PromptService (pure builder under the hood).
  */
 
-export interface UnifiedPromptData {
-  // Paper-level context
-  paperTitle: string
-  paperObjectives: string
-  outlineTree: string
-  
-  // Section coherence data
-  previousSectionsSummary: string
-  sectionPath: string
-  
-  // Writing task parameters
-  targetWords: number
-  minCitations: number
-  isRewrite: boolean
-  currentText?: string
-  
-  // Evidence and context
-  evidenceSnippets: string // JSON string
-}
+export type UnifiedPromptData = PromptData
 
-export interface SectionContext {
-  projectId: string
-  sectionId: string
-  // blockId removed in migration to document-level diffs
-  paperType: PaperTypeKey
-  sectionKey: SectionKey
-  availablePapers: string[]
-  contextChunks: Array<{
-    paper_id: string
-    content: string
-    title?: string
-    doi?: string
-    score?: number
-  }>
-}
-
-export interface BuildPromptOptions {
+export interface BuildPromptOptions extends TemplateOptions {
   targetWords?: number
   forceRewrite?: boolean
   sentenceMode?: boolean // For sentence-level edits
-  model?: string
-  temperature?: number
-  maxTokens?: number
 }
-
-// Cache for loaded skeleton
-let skeletonTemplate: string | null = null
 
 /**
  * Main function: builds the unified prompt with contextual data
@@ -69,23 +22,19 @@ let skeletonTemplate: string | null = null
 export async function buildUnifiedPrompt(
   context: SectionContext,
   options: BuildPromptOptions = {}
-): Promise<{ system: string; user: string; tools: any }> {
-  
-  // Load the skeleton template
-  const skeleton = await loadSkeletonTemplate()
-  
-  // Generate all the contextual data
+): Promise<BuiltPrompt> {
+
+  // Assemble contextual data for template
   const promptData = await generatePromptData(context, options)
-  
-  // Fill the skeleton with data
-  const system = Mustache.render(skeleton.system, promptData)
-  const user = Mustache.render(skeleton.user, promptData)
-  
-  return {
-    system,
-    user,
-    tools: skeleton.tools
-  }
+
+  // Delegate to PromptService for template loading + rendering
+  const built = await PromptService.buildUnified(promptData, {
+    model: options.model,
+    temperature: options.temperature,
+    maxTokens: options.maxTokens
+  })
+
+  return built
 }
 
 /**
@@ -95,75 +44,36 @@ async function generatePromptData(
   context: SectionContext,
   options: BuildPromptOptions
 ): Promise<UnifiedPromptData> {
-  
-  const {
-    projectId,
-    sectionId,
-    availablePapers,
-    contextChunks
-  } = context
-  
-  // Get project metadata
-  const projectData = await getProjectData(projectId)
-  
-  // Build outline tree representation
-  const outlineTree = await buildOutlineTree(projectId)
-  
-  // Get summaries of previous approved sections
-  const previousSummary = await buildPreviousSectionsSummary(projectId, sectionId)
-  
-  // Build section path (e.g., "Methods → Data Collection")
-  const sectionPath = await buildSectionPath(projectId, sectionId)
-  
-  // Get current text if this is a rewrite
-  const currentText = await getCurrentText(sectionId)
-  
-  // Calculate target parameters
-  const targetWords = options.targetWords || 
-    (options.sentenceMode ? 50 : await getExpectedWords(sectionId))
-  
+  // Project-level metadata (defaults until service integration)
+  const projectData = await getProjectData()
+
+  // Document structure and prior coherence (defaults until service integration)
+  const outlineTree = await buildOutlineTree()
+  const previousSummary = await buildPreviousSectionsSummary()
+
+  // Section path uses provided title when available
+  const sectionPath = await buildSectionPath(context.title || String(context.sectionKey))
+
+  // Current text (for rewrites) - default none
+  const currentText = await getCurrentText()
+
+  // Target words: prefer explicit option, then context expectation, then sentence mode, else fallback
+  const targetWords = options.targetWords ?? (options.sentenceMode ? 50 : (context.expectedWords ?? 500))
+
+  // Minimum citations based on available candidate papers
   const minCitations = Math.max(
     GENERATION_DEFAULTS.MIN_CITATION_FLOOR,
-    Math.ceil(availablePapers.length * GENERATION_DEFAULTS.MIN_CITATION_COVERAGE)
+    Math.ceil((context.candidatePaperIds?.length || 0) * GENERATION_DEFAULTS.MIN_CITATION_COVERAGE)
   )
-  
-  // If no context provided, fetch relevant chunks via ContextRetrievalService
-  let workingChunks = contextChunks
-  if (!workingChunks || workingChunks.length === 0) {
-    try {
-      const retrieval = await ContextRetrievalService.retrieve({
-        query: projectData.title || '',
-        projectId,
-        k: 20
-      })
-      workingChunks = retrieval.chunks.map(chunk => ({
-        paper_id: chunk.paper_id,
-        content: chunk.content,
-        title: (chunk as any).metadata?.title || 'Source',
-        doi: undefined
-      }))
-    } catch (e) {
-      console.warn('Retrieval service failed, continuing without fetched context:', e)
-      workingChunks = []
-    }
-  }
 
-  // Format evidence snippets with clear paper_id tagging for citation tool
-  // Use retriever score to sort; avoid ad-hoc keyword filtering
-  const sortedChunks = (workingChunks || [])
+  // Use provided context chunks only; no hidden retrieval here
+  const workingChunks = (context.contextChunks || [])
     .slice()
     .sort((a, b) => (b.score || 0) - (a.score || 0))
 
-  const evidenceSnippets = sortedChunks.slice(0, 10).map(chunk => { // Limit to top 10 by score
-    const content = chunk.content.substring(0, 300)
-    return `[CONTEXT FROM: ${chunk.paper_id}]
-Title: ${chunk.title || 'Unknown Title'}
-DOI: ${chunk.doi || 'N/A'}
-Content: ${content}${chunk.content.length > 300 ? '...' : ''}
+  // JSON-format evidence for the template
+  const evidenceSnippets = PromptService.formatEvidenceSnippets(workingChunks)
 
-`
-  }).join('')
-  
   return {
     paperTitle: projectData.title,
     paperObjectives: projectData.objectives,
@@ -178,36 +88,12 @@ Content: ${content}${chunk.content.length > 300 ? '...' : ''}
   }
 }
 
-/**
- * Load the unified skeleton template
- */
-async function loadSkeletonTemplate(): Promise<{ system: string; user: string; tools: any }> {
-  if (skeletonTemplate) {
-    return JSON.parse(skeletonTemplate)
-  }
-  
-  try {
-    const skeletonPath = path.join(process.cwd(), 'lib/prompts/unified/skeleton.yaml')
-    const yamlContent = await fs.readFile(skeletonPath, 'utf-8')
-    const parsed = yaml.load(yamlContent) as { system: string; user: string; tools: any }
-    
-    skeletonTemplate = JSON.stringify(parsed)
-    return parsed
-  } catch (error) {
-    console.error('Failed to load skeleton template:', error)
-    // Fallback to embedded template
-    return {
-      system: "You are drafting a scholarly paper. Adopt academic tone appropriate for scholarly writing.",
-      user: "Write the {{sectionPath}} section for {{paperTitle}}. Target: {{targetWords}} words.",
-      tools: {}
-    }
-  }
-}
+// Template loading is fully handled by PromptService
 
 /**
  * Get project metadata (title, objectives)
  */
-async function getProjectData(_projectId: string): Promise<{ title: string; objectives: string }> {
+async function getProjectData(): Promise<{ title: string; objectives: string }> {
   // TODO: Wire via a service (e.g., ProjectService) — for now, return defaults to avoid DB access
   const project = null as unknown as { title?: string; description?: string; metadata?: any } | null
   if (!project) {
@@ -231,7 +117,7 @@ async function getProjectData(_projectId: string): Promise<{ title: string; obje
 /**
  * Build a text representation of the document outline tree
  */
-async function buildOutlineTree(_projectId: string): Promise<string> {
+async function buildOutlineTree(): Promise<string> {
   // TODO: Replace with ProjectService.getOutline(projectId)
   const sections = null as unknown as Array<{ section_key: string; title: string; level: number; order_index: number }> | null
   if (!sections || sections.length === 0) {
@@ -251,7 +137,7 @@ async function buildOutlineTree(_projectId: string): Promise<string> {
 /**
  * Get summaries of all approved sections before the current one
  */
-async function buildPreviousSectionsSummary(_projectId: string, _currentSectionId: string): Promise<string> {
+async function buildPreviousSectionsSummary(): Promise<string> {
   // TODO: Replace with ProjectService.getApprovedSections(projectId)
   const sections = [] as Array<{ id: string; title: string; content?: string | null; summary?: string | null }>
   if (!sections || sections.length === 0) {
@@ -282,13 +168,9 @@ async function buildPreviousSectionsSummary(_projectId: string, _currentSectionI
 /**
  * Build section path (e.g., "Methods → Data Collection → Survey Design")
  */
-async function buildSectionPath(_projectId: string, _sectionId: string): Promise<string> {
+async function buildSectionPath(currentSectionTitle: string): Promise<string> {
   // TODO: Replace with ProjectService.getSection(sectionId)
-  const section = null as unknown as { title: string; parent_id?: string | null } | null
-  if (!section) {
-    return 'Unknown Section'
-  }
-  
+  const section = { title: currentSectionTitle } as { title: string }
   const path = [section.title]
   
   // Walk up the parent chain
@@ -300,7 +182,7 @@ async function buildSectionPath(_projectId: string, _sectionId: string): Promise
 /**
  * Get current text for rewrite operations
  */
-async function getCurrentText(_sectionId: string): Promise<string | null> {
+async function getCurrentText(): Promise<string | null> {
   // TODO: Replace with ProjectService.getSectionContent(sectionId)
   return null
 }
@@ -308,24 +190,7 @@ async function getCurrentText(_sectionId: string): Promise<string | null> {
 /**
  * Get expected word count for a section
  */
-async function getExpectedWords(_sectionId: string): Promise<number> {
-  // TODO: Replace with ProjectService.getSectionMeta(sectionId)
-  const section = null as unknown as { expected_words?: number; section_key?: string } | null
-  if (section?.expected_words) return section.expected_words
-  
-  // Fallback based on section type
-  const defaults: Record<string, number> = {
-    introduction: 800,
-    literatureReview: 1200,
-    methodology: 1000,
-    results: 1000,
-    discussion: 1200,
-    conclusion: 600,
-    abstract: 300
-  }
-  
-  return defaults[section?.section_key || 'introduction'] || 800
-}
+// getExpectedWords removed; targetWords now comes from options/context
 
 /**
  * Generate a 35-word summary of section content
@@ -388,8 +253,6 @@ function calculateSimpleTextSimilarity(text1: string, text2: string): number {
 /**
  * Clear template cache (for development/testing)
  */
-export function clearTemplateCache(): void {
-  skeletonTemplate = null
-}
+// No template cache in this module anymore
 
 // Removed unused getProjectSummaryForDrift placeholder to satisfy linter
