@@ -371,7 +371,7 @@ export async function generateOutline(
       { role: 'user', content: [{ type: 'text' as const, text: userPrompt }] },
     ],
     temperature: 0.2,
-    maxTokens: 1000, // Reduced from 2000 - covers ~750 words of JSON
+    maxTokens: 2000, // Increased to handle larger outlines with many papers
   });
 
   // Try to parse the structured response

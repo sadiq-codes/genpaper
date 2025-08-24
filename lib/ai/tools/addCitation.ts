@@ -19,6 +19,7 @@ interface CitationContext {
   citationStyle: string // Store citation style in context
   // per-request cache to avoid duplicate database calls for same paper
   draftStore: Map<string, { number: number; formatted: string }>   // paper_id -> {number, formatted}
+  baseUrl?: string
 }
 
 const citationContextStore = new AsyncLocalStorage<CitationContext>()
@@ -70,7 +71,9 @@ export async function executeAddCitation(payload: CitationPayload) {
 
       try {
         // Use absolute URL on the server to avoid Invalid URL errors
-        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || ''
+        const ctxBase = citationContext.baseUrl
+        const envBase = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || ''
+        const baseUrl = ctxBase || envBase
         const absoluteUrl = baseUrl
           ? `${baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`}/api/citations`
           : '/api/citations'

@@ -1,4 +1,5 @@
 import { Suspense } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { getUserResearchProjects } from '@/lib/db/research'
 import { Button } from '@/components/ui/button'
@@ -45,9 +46,11 @@ export function ProjectsTab() {
             </Button>
           </div>
           
-          <Button className="flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            New Project
+          <Button asChild className="flex items-center gap-2">
+            <Link href="/dashboard?tab=generate">
+              <Plus className="h-4 w-4" />
+              New Project
+            </Link>
           </Button>
         </div>
       </div>
@@ -56,7 +59,7 @@ export function ProjectsTab() {
       <div className="flex justify-center">
         <Card className="cursor-pointer hover:bg-muted/50 transition-colors border-2 border-dashed border-primary/30">
           <CardHeader className="pb-3">
-            <div className="flex items-center gap-3">
+            <Link href="/dashboard?tab=generate" className="flex items-center gap-3">
               <div className="p-3 bg-primary/10 rounded-lg">
                 <Plus className="h-6 w-6 text-primary" />
               </div>
@@ -64,7 +67,7 @@ export function ProjectsTab() {
                 <CardTitle className="text-lg">Start New Research Paper</CardTitle>
                 <CardDescription>Generate a comprehensive academic paper from your research topic</CardDescription>
               </div>
-            </div>
+            </Link>
           </CardHeader>
         </Card>
       </div>

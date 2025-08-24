@@ -382,43 +382,7 @@ export async function parallelSearch(
   return topResults
 }
 
-// Sentence-aware text chunking for better retrieval
-function chunkText(text: string, maxLength = 500): string[] {
-  // Split into sentences using basic punctuation
-  const sentences = text.split(/(?<=[.!?])\s+/)
-  const chunks: string[] = []
-  let currentChunk = ''
-  
-  for (const sentence of sentences) {
-    const trimmedSentence = sentence.trim()
-    if (!trimmedSentence) continue
-    
-    // Check if adding this sentence would exceed max length
-    const potentialChunk = currentChunk ? `${currentChunk} ${trimmedSentence}` : trimmedSentence
-    
-    if (potentialChunk.length > maxLength && currentChunk) {
-      // Current chunk is ready, start new one with this sentence
-      chunks.push(currentChunk.trim())
-      currentChunk = trimmedSentence
-    } else {
-      // Add sentence to current chunk
-      currentChunk = potentialChunk
-    }
-  }
-  
-  // Add final chunk if it has content
-  if (currentChunk.trim()) {
-    chunks.push(currentChunk.trim())
-  }
-  
-  // If no chunks were created (very long sentences), fall back to character splitting
-  if (chunks.length === 0 && text.length > 0) {
-    const charChunks = text.match(/.{1,500}(?:\s|$)/g) || []
-    chunks.push(...charChunks.map(chunk => chunk.trim()).filter(Boolean))
-  }
-  
-  return chunks
-}
+
 
 // Convert AcademicPaper to PaperDTO for ingestion with proper guards
 function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
@@ -475,12 +439,26 @@ export async function searchAndIngestPapers(
   // Convert to PaperDTO format and ingest with chunks
   const ingestedIds: string[] = []
   const ingestedPapers: RankedPaper[] = []
+  const processedPapers = new Set<string>() // Track processed papers to avoid duplicates
+  
+  // Filter out any duplicate papers before processing
+  const uniquePapers = enhancedPapers.filter(paper => {
+    const key = paper.doi || paper.title.toLowerCase().trim()
+    if (processedPapers.has(key)) {
+      console.log(`📚 Skipping duplicate paper: ${paper.title}`)
+      return false
+    }
+    processedPapers.add(key)
+    return true
+  })
+  
+  console.log(`📊 Deduplicated ${enhancedPapers.length} papers to ${uniquePapers.length} unique papers`)
   
   // Process PDFs in parallel batches to utilize GROBID's 10-engine pool
   const PARALLEL_PDF_BATCH_SIZE = 8 // Use 8 out of 10 GROBID engines, keep 2 as buffer
   
-  for (let i = 0; i < enhancedPapers.length; i += PARALLEL_PDF_BATCH_SIZE) {
-    const batch = enhancedPapers.slice(i, i + PARALLEL_PDF_BATCH_SIZE)
+  for (let i = 0; i < uniquePapers.length; i += PARALLEL_PDF_BATCH_SIZE) {
+    const batch = uniquePapers.slice(i, i + PARALLEL_PDF_BATCH_SIZE)
     console.log(`📄 Processing PDF batch ${Math.floor(i/PARALLEL_PDF_BATCH_SIZE) + 1}: ${batch.length} papers`)
     
     // Process this batch in parallel
@@ -518,16 +496,16 @@ async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = '')
       console.log(`📚 Created new paper: ${paperId}`)
     }
     
-    // Step 2: Check if chunks already exist (using actual DB paperId)
+    // Step 2: Check if chunks already exist - but allow PDF upgrade for low-chunk papers
     const supabase = await getSB()
-    const { data: existingChunks, error: chunksErr } = await supabase
+    const { count: existingChunkCount, error: chunksErr } = await supabase
       .from('paper_chunks')
-      .select('id')
+      .select('*', { count: 'exact', head: true })
       .eq('paper_id', paperId)
-      .limit(1)
     
-    if (!chunksErr && existingChunks && existingChunks.length > 0) {
-      console.log(`📚 Chunks already exist for paper (skipping): ${paperDTO.title}`)
+    if (!chunksErr && existingChunkCount && existingChunkCount >= 5) {
+      // Paper has full-text content already (≥5 chunks), skip processing
+      console.log(`📚 Full content already exists for paper (${existingChunkCount} chunks, skipping): ${paperDTO.title}`)
       
       // Create ingested paper object with database ID
       const ingestedPaper: RankedPaper = {
@@ -542,6 +520,20 @@ async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = '')
       }
       
       return { paperId, paper: ingestedPaper }
+    } else if (!chunksErr && existingChunkCount && existingChunkCount > 0) {
+      // Paper has some content but <5 chunks (probably just abstract) - allow PDF upgrade
+      console.log(`📄 Paper has ${existingChunkCount} chunks - attempting PDF upgrade: ${paperDTO.title}`)
+      
+      // Clear existing abstract-only chunks before adding full-text content
+      try {
+        await supabase
+          .from('paper_chunks')
+          .delete()
+          .eq('paper_id', paperId)
+        console.log(`🗑️ Cleared ${existingChunkCount} existing chunks for upgrade`)
+      } catch (deleteErr) {
+        console.warn('Failed to clear existing chunks for upgrade:', deleteErr)
+      }
     }
     
     // Step 3: Prepare content chunks from title and abstract
@@ -552,8 +544,13 @@ async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = '')
     
     if (paperDTO.abstract) {
       // Use sentence-aware chunking for better retrieval
-      const abstractChunks = chunkText(paperDTO.abstract)
-      contentChunks.push(...abstractChunks)
+      // Use token-based chunking for abstract
+      const { chunkByTokens } = await import('@/lib/utils/text')
+      const abstractChunks = await chunkByTokens(paperDTO.abstract, paperId, {
+        maxTokens: 200,
+        preserveParagraphs: false
+      })
+      contentChunks.push(...abstractChunks.map(chunk => chunk.content))
     }
     
     // Step 4: Check for PDF content and extract if needed
@@ -573,8 +570,8 @@ async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = '')
     }
     
     // Step 5: Create chunks for the paper
-    const chunkCount = await createChunksForPaper(paperId, contentChunks.join('\n\n'))
-    console.log(`📚 Ingested paper with ${chunkCount} chunks: ${paperDTO.title}`)
+    const finalChunkCount = await createChunksForPaper(paperId, contentChunks.join('\n\n'))
+    console.log(`📚 Ingested paper with ${finalChunkCount} chunks: ${paperDTO.title}`)
 
     // Create ingested paper object with database ID and enhanced PDF URLs
     const ingestedPaper: RankedPaper = {

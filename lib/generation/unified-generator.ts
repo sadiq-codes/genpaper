@@ -2,21 +2,28 @@ import 'server-only'
 import { streamText, type ToolCallPart } from 'ai'
 import { ai } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, checkTopicDrift, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
-import type { SectionContext, SectionKey } from '@/lib/prompts/types'
+import type { SectionContext } from '@/lib/prompts/types'
 import { addCitation } from '@/lib/ai/tools/addCitation'
-// Removed stream processor - using direct citation tools instead
-
-// Caching removed - direct prompt building only
+// DEDUPLICATION NOTES:
+// - Evidence tracking moved to pipeline.ts (single point of control)
+// - Comprehensive quality assessment consolidated in pipeline.ts 
+// - Basic quality scoring retained here for individual sections
+// - Citation processing streamlined (no double collection)
 
 /**
  * Unified content generator using single skeleton template with contextual data
  * Replaces the multiple hard-coded prompt approach with data-driven generation
  * 
+ * ARCHITECTURAL SEPARATION:
+ * - This module: Core generation logic, streaming, basic quality scoring
+ * - Pipeline module: Orchestration, comprehensive quality review, evidence tracking, overlap detection
+ * 
  * Features:
- * - Single template scales from sentence → section → paper
+ * - Single template scales from sentence → section → paper  
  * - Coherence through rolling summaries
  * - Automatic topic drift detection
  * - Sentence-level streaming
+ * - Basic quality metrics (comprehensive assessment in pipeline)
  */
 
 export type StreamEvent =
@@ -51,27 +58,9 @@ export interface UnifiedGenerationResult {
 }
 
 /**
- * Extract citations from content
+ * Calculate basic quality score (simplified version - full quality assessment done in pipeline)
  */
-function extractCitations(content: string): Array<{ paperId: string; citationText: string }> {
-  const citationRegex = /\[CITE:([^\]]+)\]/g
-  const citations: Array<{ paperId: string; citationText: string }> = []
-  let match
-  
-  while ((match = citationRegex.exec(content)) !== null) {
-    citations.push({
-      paperId: match[1],
-      citationText: match[0]
-    })
-  }
-  
-  return citations
-}
-
-/**
- * Calculate unified quality score
- */
-function calculateUnifiedQualityScore(params: {
+function calculateBasicQualityScore(params: {
   content: string
   citations: Array<{ paperId: string; citationText: string }>
   targetWords: number
@@ -84,6 +73,7 @@ function calculateUnifiedQualityScore(params: {
   const citationScore = Math.min(100, citations.length * 20) // 5 citations = 100%
   const driftScore = driftSimilarity * 100
   
+  // Basic calculation - comprehensive quality assessment handled by pipeline
   return Math.round((lengthScore + citationScore + driftScore) / 3)
 }
 
@@ -92,8 +82,8 @@ function resolveGenOptions(options: BuildPromptOptions): Required<Pick<BuildProm
   return {
     ...options,
     model: options.model || 'gpt-4o',
-    temperature: options.temperature || 0.4,
-    maxTokens: options.maxTokens
+    temperature: options.temperature ?? 0.4,  // Use nullish coalescing for cleaner defaults
+    maxTokens: options.maxTokens ?? 4000
   }
 }
 
@@ -126,6 +116,7 @@ export async function generateWithUnifiedTemplate(
 
   let fullContent = ''
   let tokensUsed = 0
+  const collectedCitations: Array<{ paperId: string; citationText: string }> = []
 
   progress('context', 10, 'Building generation context...')
   
@@ -167,6 +158,32 @@ export async function generateWithUnifiedTemplate(
             pendingText = ''
         }
         onStreamEvent?.({ type: 'citation', data: delta })
+    } else if ((delta as any).type === 'tool-result' && (delta as any).toolName === 'addCitation') {
+        // Collect citation record from tool result AND append formatted citation
+        try {
+          const payload: any = (delta as any).result ?? (delta as any).toolResult ?? (delta as any)
+          const paperId = payload?.paper_id
+          const formatted = payload?.formatted_citation || payload?.formatted || payload?.data?.formatted_citation
+          
+          // Collect citation record for return value
+          if (paperId && typeof paperId === 'string') {
+            collectedCitations.push({
+              paperId: paperId,
+              citationText: formatted || `[${paperId}]`
+            })
+          }
+          
+          // Append formatted citation to content
+          if (typeof formatted === 'string' && formatted.trim().length > 0) {
+            // Insert a space if needed before citation
+            const spacer = fullContent.endsWith(' ') || formatted.startsWith(' ') ? '' : ' '
+            fullContent += spacer + formatted
+            onStreamEvent?.({ type: 'sentence', data: { text: spacer + formatted }})
+          }
+        } catch (error) {
+          console.warn('Error processing citation tool result:', error)
+          // Continue processing without breaking stream
+        }
     }
   }
 
@@ -186,13 +203,16 @@ export async function generateWithUnifiedTemplate(
     token_count: tokensUsed
   })
 
-  const citations = extractCitations(fullContent)
+  // Use collected citations from tool results instead of text extraction
+  console.log(`📊 Citations collected from tools: ${collectedCitations.length}`)
+  
   let driftCheck: UnifiedGenerationResult['driftCheck']
 
   if (enableDriftDetection) {
     progress('drift_check', 55, 'Checking topic drift...')
     const originalTopic = context.title || String(context.sectionKey)
-    const rawDriftCheck = await checkTopicDrift(originalTopic, fullContent)
+    // Compare generated content against original topic/section title summary
+    const rawDriftCheck = await checkTopicDrift(fullContent, originalTopic)
     
     driftCheck = {
       similarity: rawDriftCheck.similarity,
@@ -207,9 +227,9 @@ export async function generateWithUnifiedTemplate(
     }
   }
 
-  const qualityScore = calculateUnifiedQualityScore({
+  const qualityScore = calculateBasicQualityScore({
     content: fullContent,
-    citations: citations,
+    citations: collectedCitations,
     targetWords: options.targetWords || 300,
     driftSimilarity: driftCheck?.similarity || 1.0
   })
@@ -218,7 +238,7 @@ export async function generateWithUnifiedTemplate(
 
   return {
     content: fullContent,
-    citations: citations,
+    citations: collectedCitations, // Use collected citations from tool results
     tokensUsed,
     generationTime: (Date.now() - startTime) / 1000,
     driftCheck,
@@ -246,8 +266,6 @@ export async function generateFullSection(
   })
 }
 
-// Block-specific helpers removed during migration to document-level diff edits
-
 /**
  * Batch processing - process multiple sections with unified approach
  */
@@ -257,6 +275,7 @@ export async function generateMultipleSectionsUnified(
   onBatchProgress?: (completed: number, total: number, currentSection: string) => void
 ): Promise<UnifiedGenerationResult[]> {
   const results: UnifiedGenerationResult[] = []
+  
   for (let i = 0; i < contexts.length; i++) {
     onBatchProgress?.(i, contexts.length, contexts[i].sectionKey)
     const result = await generateWithUnifiedTemplate({
@@ -264,37 +283,8 @@ export async function generateMultipleSectionsUnified(
       options
     })
     results.push(result)
+    // NOTE: Evidence tracking moved to pipeline.ts to avoid duplication
+    // Pipeline handles post-processing including evidence tracking, quality checks, and overlap detection
   }
   return results
 }
-
-/**
- * Helper functions
- */
-
-/**
- * Integration with existing generator for backward compatibility
- */
-export async function replaceExistingGenerator(
-  paperType: string,
-  section: string,
-  topic: string,
-  paperIds: string[],
-  contextChunks: string[]
-): Promise<string> {
-  
-  // Convert to new format
-  const context: SectionContext = {
-    sectionKey: section as SectionKey,
-    title: section,
-    candidatePaperIds: paperIds,
-    contextChunks: contextChunks.map(c => ({ paper_id: 'unknown', content: c }))
-  }
-
-  const result = await generateWithUnifiedTemplate({
-    context,
-    options: { targetWords: 1000 }
-  })
-
-  return result.content
-} 

@@ -205,13 +205,21 @@ export async function unifiedSearch(
       console.log('🔤 Executing keyword search fallback...')
       const supabase = await getSB()
       
-      const { data: keywordPapers, error } = await supabase
+      // Build exclusion list and apply NOT IN only if not empty
+      const exclusionIds = [...excludePaperIds, ...allPapers.map(p => p.id)]
+      let keywordQuery = supabase
         .from('papers')
         .select(`
           id, title, abstract, publication_date, venue, doi, pdf_url, created_at, authors
         `)
         .or(`title.fts.${query},abstract.fts.${query},venue.fts.${query}`)
-        .not('id', 'in', `(${[...excludePaperIds, ...allPapers.map(p => p.id)].join(',') || 'null'})`)
+      
+      // Only apply NOT IN filter if we have IDs to exclude
+      if (exclusionIds.length > 0) {
+        keywordQuery = keywordQuery.not('id', 'in', `(${exclusionIds.join(',')})`)
+      }
+      
+      const { data: keywordPapers, error } = await keywordQuery
         .order('created_at', { ascending: false })
         .limit(maxResults)
 

@@ -76,7 +76,7 @@ export async function updateProjectContent(
     .from('research_projects')
     .update({
       content: content,
-      status: 'completed',
+      status: 'complete',
       completed_at: new Date().toISOString()
     })
     .eq('id', projectId)

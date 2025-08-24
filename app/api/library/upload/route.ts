@@ -79,7 +79,8 @@ export async function POST(request: NextRequest) {
 
     // Check for OCR flag from query params (for power users with scanned PDFs)
     const url = new URL(request.url)
-    const enableOcr = url.searchParams.get('ocr') === '1'
+    // Default OCR ON; allow opt-out with ?ocr=0
+    const enableOcr = url.searchParams.get('ocr') !== '0'
     
     // Extract metadata and content from PDF using tiered extractor for better results
     info('Starting PDF metadata extraction using tiered extractor', { enableOcr })
@@ -88,7 +89,7 @@ export async function POST(request: NextRequest) {
     const { extractPdfMetadataTiered } = await import('@/lib/pdf/tiered-extractor')
     
     const tieredResult = await extractPdfMetadataTiered(fileBuffer, {
-      enableOcr, // Allow OCR via ?ocr=1 query parameter
+      enableOcr, // Default ON; can be disabled via query
       maxTimeoutMs: enableOcr ? 30000 : 15000 // Longer timeout for OCR
     })
     

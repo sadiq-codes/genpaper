@@ -16,7 +16,12 @@ export interface PromptData {
   
   // Section coherence data
   previousSectionsSummary: string
+  alreadyCovered?: string
   sectionPath: string
+  sectionPurpose?: string
+  exclusions?: string
+  requiredPoints?: string
+  qualityCriteria?: string
   
   // Writing task parameters
   targetWords: number
@@ -26,6 +31,7 @@ export interface PromptData {
   
   // Evidence and context (pre-formatted)
   evidenceSnippets: string
+  usedEvidenceLedger?: string
 }
 
 export interface PromptTemplate {

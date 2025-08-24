@@ -14,7 +14,7 @@ system: |-
   - You have access to an addCitation function tool
   - When you reference information from the provided context, immediately call addCitation
   - Use the exact paper_id from the [CONTEXT FROM: paper_id] tags
-  - The function will return a placeholder like ⟦1⟧ that you must include in your text
+  - The tool inserts a formatted inline citation directly into your text
   - Do NOT write text describing function calls - actually make the function calls
   
   CONTENT QUALITY REQUIREMENTS:
@@ -23,24 +23,55 @@ system: |-
   - Do NOT repeat the same information multiple times
   - Focus on synthesizing information rather than listing facts
   - Each paragraph should cover distinct aspects of the topic
+  - Write only new information relative to 'Approved Sections Summary' and 'Already Covered'
+  - Do not restate global background, definitions, or motivations already listed above; write only deltas
+  - If a bridging sentence is necessary, compress it to ≤15 words
+  - Avoid reusing sentence stems or noun phrases already present in the 'Approved Sections Summary' unless absolutely necessary
 
 user: |-
   ## Paper Details
   **Title:** {{paperTitle}}
   
+  {{#paperObjectives}}
   **Global Objectives:**
   {{paperObjectives}}
+  {{/paperObjectives}}
   
+  {{#outlineTree}}
   ## Document Structure
   {{outlineTree}}
+  {{/outlineTree}}
   
+  {{#previousSectionsSummary}}
   ## Approved Sections Summary
   {{previousSectionsSummary}}
+  {{/previousSectionsSummary}}
+  
+  {{#alreadyCovered}}
+  ## Already Covered (Do Not Repeat)
+  {{alreadyCovered}}
+  {{/alreadyCovered}}
   
   ## Current Writing Task
   **Section Path:** {{sectionPath}}
   **Target Length:** {{targetWords}} words
   **Minimum Citations:** {{minCitations}} sources from provided context
+  
+  {{#sectionPurpose}}
+  **Section Purpose:** {{sectionPurpose}}
+  {{/sectionPurpose}}
+  
+  {{#exclusions}}
+  **Must Not Include:** {{exclusions}}
+  {{/exclusions}}
+  
+  {{#requiredPoints}}
+  **Required Points:** {{requiredPoints}}
+  {{/requiredPoints}}
+  
+  {{#qualityCriteria}}
+  **Quality Criteria:** {{qualityCriteria}}
+  {{/qualityCriteria}}
   
   **Constraints:**
   - Maintain logical flow with approved sections above
@@ -54,10 +85,15 @@ user: |-
   ```
   {{/currentText}}
   
-  ### Evidence Context
+  ### Evidence Context (use each snippet at most once)
   ```json
   {{evidenceSnippets}}
   ```
+  
+  {{#usedEvidenceLedger}}
+  ### Already Used Evidence (do not reuse)
+  {{usedEvidenceLedger}}
+  {{/usedEvidenceLedger}}
   
   ---
   
@@ -72,8 +108,8 @@ user: |-
   
   1. Write a sentence using information from context
   2. Immediately call: addCitation(paper_id="exact-id-from-context", reason="brief explanation")  
-  3. Include the returned placeholder (⟦1⟧) in your text
-  4. Continue writing
+  3. The tool inserts the formatted inline citation automatically
+  4. Continue writing without adding extra markers
   
   Example context: `[CONTEXT FROM: abc-123-def]`
   Example call: addCitation(paper_id="abc-123-def", reason="Source discusses topic X")
@@ -90,7 +126,7 @@ user: |-
   **EXAMPLE WORKFLOW:**
   1. Write: "Artificial intelligence has revolutionized healthcare information systems."
   2. Call: addCitation(paper_id="context-source-id", reason="Source discusses AI in healthcare")
-  3. Include the returned placeholder: "⟦1⟧" in your text
+  3. The formatted citation will appear automatically
   4. Continue writing...
   
   Remember: CALL the function, don't write about calling it.

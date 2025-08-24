@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { EditorState } from '@codemirror/state'
@@ -23,9 +24,70 @@ interface ProjectData {
   content?: string
 }
 
+// Clean generation artifacts (e.g., tool-call lines) before rendering
+function cleanGeneratedContent(text: string): string {
+  if (!text) return text
+  // Remove standalone addCitation(...) lines (from tool calls)
+  const cleaned = text
+    .split(/\r?\n/)
+    .filter(line => !/^\s*addCitation\s*\(/i.test(line.trim()))
+    .join('\n')
+    // Collapse 3+ blank lines to at most 2
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return cleaned
+}
+
+// Replace addCitation(...) lines by appending formatted inline citations to the preceding paragraph
+async function processCitationsInline(
+  projectId: string,
+  text: string,
+  style: 'apa' | 'mla' | 'chicago' | 'ieee'
+): Promise<string> {
+  const lines = text.split(/\r?\n/)
+  const addCiteRegex = /^\s*addCitation\s*\(\s*paper_id\s*=\s*"([a-f0-9-]{36})"/i
+  const paperIds: string[] = []
+  for (const line of lines) {
+    const m = line.match(addCiteRegex)
+    if (m && m[1]) paperIds.push(m[1])
+  }
+  if (paperIds.length === 0) {
+    return cleanGeneratedContent(text)
+  }
+  try {
+    const res = await fetch('/api/citations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, refs: paperIds.map((id) => ({ type: 'paperId', value: id })), style })
+    })
+    if (!res.ok) throw new Error('citation resolve failed')
+    const data = await res.json()
+    const map: Record<string, string> = data?.citeKeyMap || {}
+    const out: string[] = []
+    let lastContentIndex = -1
+    for (const line of lines) {
+      const trimmed = line.trim()
+      const m = trimmed.match(addCiteRegex)
+      if (m && m[1]) {
+        const formatted = map[`paperId:${m[1]}`] || ''
+        if (formatted && lastContentIndex >= 0) {
+          out[lastContentIndex] = `${out[lastContentIndex]} ${formatted}`
+        }
+      } else {
+        out.push(line)
+        if (trimmed.length > 0) lastContentIndex = out.length - 1
+      }
+    }
+    return cleanGeneratedContent(out.join('\n'))
+  } catch {
+    return cleanGeneratedContent(text)
+  }
+}
+
 export function Editor() {
   const params = useParams()
   const projectId = params.id as string
+  const searchParams = useSearchParams()
   
   const [project, setProject] = useState<ProjectData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -36,9 +98,13 @@ export function Editor() {
   const [isSaving, setIsSaving] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationProgress, setGenerationProgress] = useState(0)
+  const [citationStyle, setCitationStyle] = useState<'apa' | 'mla' | 'chicago' | 'ieee'>('apa')
+  const rawContentRef = useRef<string>('')
   
   // EventSource reference for cleanup
   const eventSourceRef = useRef<EventSource | null>(null)
+  const isStreamingRef = useRef(false)
+  const hasStartedRef = useRef(false)
   
   // CodeMirror integration
   const editorRef = useRef<HTMLDivElement>(null)
@@ -63,14 +129,25 @@ export function Editor() {
       }
 
       setProject(normalizedProject)
-      setContent(normalizedProject.content || `# ${normalizedProject.topic}\n\nYour AI-generated research paper will appear here...`)
+      const initial = normalizedProject.content || `# ${normalizedProject.topic}\n\nYour AI-generated research paper will appear here...`
+      rawContentRef.current = initial
+      const processed = await processCitationsInline(projectId, initial, citationStyle)
+      setContent(processed)
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load project')
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [projectId, citationStyle])
+
+  // Show toast on first load if created
+  useEffect(() => {
+    const created = searchParams?.get('created')
+    if (created === '1') {
+      toast.success('Project created!')
+    }
+  }, [searchParams])
 
   // Initialize CodeMirror editor
   useEffect(() => {
@@ -115,6 +192,7 @@ export function Editor() {
   // Integrated generation handler
   const handleStartGeneration = useCallback(async () => {
     if (!project) return
+    if (isStreamingRef.current) return
     
     // Close any existing EventSource
     if (eventSourceRef.current) {
@@ -123,6 +201,8 @@ export function Editor() {
     }
     
     setIsGenerating(true)
+    isStreamingRef.current = true
+    hasStartedRef.current = true
     setGenerationProgress(0)
     
     try {
@@ -137,7 +217,11 @@ export function Editor() {
       eventSourceRef.current = eventSource
       console.log('🔌 EventSource created for:', `/api/generate?${params}`)
       
-      eventSource.onmessage = (event) => {
+      eventSource.onopen = () => {
+        console.log('✅ EventSource connection established')
+      }
+      
+      eventSource.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data)
           console.log('📊 SSE event received:', data)
@@ -151,32 +235,47 @@ export function Editor() {
           } else if (data.type === 'complete') {
             // Handle full content from generation completion
             if (data.content) {
-              setContent(data.content)
+              rawContentRef.current = data.content
+              const processed = await processCitationsInline(project.id, data.content, citationStyle)
+              setContent(processed)
               if (viewRef.current) {
                 const transaction = viewRef.current.state.update({
-                  changes: { from: 0, to: viewRef.current.state.doc.length, insert: data.content }
+                  changes: { from: 0, to: viewRef.current.state.doc.length, insert: processed }
                 })
                 viewRef.current.dispatch(transaction)
               }
             }
             setIsGenerating(false)
+            isStreamingRef.current = false
             toast.success('Generation completed!')
             eventSource.close()
             eventSourceRef.current = null
             loadProject()
           } else if (data.type === 'error') {
-            throw new Error(data.error || 'Generation failed')
+            if (data.error === 'GENERATION_IN_PROGRESS') {
+              toast.warning('Generation is already in progress. Please wait.')
+            } else {
+              toast.error(data.error || 'Generation failed')
+            }
+            setIsGenerating(false)
+            isStreamingRef.current = false
+            eventSource.close()
+            eventSourceRef.current = null
           }
         } catch (parseError) {
           console.error('Failed to parse SSE data:', parseError)
+          toast.error('Received invalid data from server')
         }
       }
       
       eventSource.onerror = (event) => {
         console.error('❌ EventSource error:', event)
         console.error('EventSource state:', eventSource.readyState)
+        console.error('EventSource URL:', eventSource.url)
+        
         setIsGenerating(false)
-        toast.error('Connection lost. Generation failed.')
+        isStreamingRef.current = false
+        toast.error('Connection failed. Please try again.')
         eventSource.close()
         eventSourceRef.current = null
       }
@@ -185,8 +284,9 @@ export function Editor() {
       console.error('Generation failed:', err)
       toast.error('Generation failed')
       setIsGenerating(false)
+      isStreamingRef.current = false
     }
-  }, [project, loadProject])
+  }, [project, loadProject, citationStyle])
 
   // Save content handler
   const handleSave = useCallback(async () => {
@@ -265,12 +365,13 @@ export function Editor() {
         eventSourceRef.current.close()
         eventSourceRef.current = null
       }
+      isStreamingRef.current = false
     }
   }, [])
 
   // Auto-start generation for new projects
   useEffect(() => {
-    if (project && project.status === 'generating' && !project.content) {
+    if (project && project.status === 'generating' && !project.content && !isStreamingRef.current && !hasStartedRef.current) {
       setTimeout(() => {
         handleStartGeneration()
       }, 500)
@@ -358,6 +459,31 @@ export function Editor() {
           </div>
           
           <div className="flex items-center gap-2">
+            <Select
+              value={citationStyle}
+              onValueChange={async (v) => {
+                const val = v as 'apa' | 'mla' | 'chicago' | 'ieee'
+                setCitationStyle(val)
+                if (project && rawContentRef.current) {
+                  const processed = await processCitationsInline(project.id, rawContentRef.current, val)
+                  setContent(processed)
+                  if (viewRef.current) {
+                    const tr = viewRef.current.state.update({ changes: { from: 0, to: viewRef.current.state.doc.length, insert: processed } })
+                    viewRef.current.dispatch(tr)
+                  }
+                }
+              }}
+            >
+              <SelectTrigger className="w-[130px]">
+                <SelectValue placeholder="Citation Style" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="apa">APA</SelectItem>
+                <SelectItem value="chicago">Chicago</SelectItem>
+                <SelectItem value="mla">MLA</SelectItem>
+                <SelectItem value="ieee">IEEE</SelectItem>
+              </SelectContent>
+            </Select>
             {/* Simple AI Commands */}
             {editorReady && (
               <>

@@ -6,8 +6,9 @@
  */
 
 import { getSB } from '@/lib/supabase/server'
-import { splitIntoChunks, normalizeText } from '@/lib/utils/text'
-import { ContentRetrievalError, NoRelevantContentError, IngestionError, ChunkingError } from './errors'
+import { chunkByTokens, normalizeText, type TokenChunkOptions } from '@/lib/utils/text'
+import { collisionResistantHash } from '@/lib/utils/hash'
+import { ContentRetrievalError, IngestionError, ChunkingError } from './errors'
 import { getPDFContent, hasPDFContent } from '@/lib/pdf/pdf-utils'
 import type { PaperWithAuthors } from '@/types/simplified'
 
@@ -23,8 +24,9 @@ export interface IngestionOptions {
   skipChunks?: boolean
   regionDetection?: { enabled: boolean }
   forceReprocess?: boolean
-  chunkSize?: number
-  chunkOverlap?: number
+  maxTokens?: number
+  overlapTokens?: number
+  tokenChunkOptions?: TokenChunkOptions
 }
 
 export interface IngestionResult {
@@ -178,57 +180,107 @@ export async function ensurePapersExist(papers: PaperWithAuthors[]): Promise<str
 export async function createChunksForPaper(
   paperId: string,
   content: string,
-  options: { chunkSize?: number; overlap?: number } = {}
+  options: { 
+    maxTokens?: number; 
+    overlapTokens?: number;
+    tokenChunkOptions?: TokenChunkOptions;
+  } = {}
 ): Promise<number> {
-  if (!content || content.trim().length < 100) {
+  const trimmed = (content || '').trim()
+  if (!trimmed) {
     return 0
   }
 
   try {
     const supabase = await getSB()
-    
-    // Check if chunks already exist for this paper (try both table names due to migration)
-    let existingChunks = null
-    let checkError = null
-    
-    // Try the expected table name first
-    const { data: chunks1, error: error1 } = await supabase
+
+    // Fetch existing chunks to detect content changes via hash
+    const { data: existingChunks, error: checkError } = await supabase
       .from('paper_chunks')
-      .select('id')
+      .select('content, chunk_index')
       .eq('paper_id', paperId)
-      .limit(1)
-    
-    if (!error1) {
-      existingChunks = chunks1
-    } else {
-      // If that fails, try the _new table name (in case migration incomplete)
-      const { data: chunks2, error: error2 } = await supabase
-        .from('paper_chunks_new')
-        .select('id')
+      .order('chunk_index', { ascending: true })
+
+    if (checkError) {
+      console.warn(`Error fetching existing chunks for paper ${paperId}:`, checkError.message)
+      // Continue; we'll attempt to (re)create chunks
+    }
+
+    const normalizedContent = normalizeText(trimmed)
+    const newHash = collisionResistantHash(normalizedContent)
+
+    const existingConcatenated = (existingChunks || []).map(c => c.content).join('\n\n')
+    const existingHash = existingConcatenated ? collisionResistantHash(existingConcatenated) : null
+
+    if (existingHash && existingHash === newHash) {
+      // No content change; keep existing chunks
+      console.log(`⏭️ No content change for paper ${paperId} - keeping existing ${(existingChunks || []).length} chunks`)
+      return (existingChunks || []).length
+    }
+
+    // Content changed; delete previous chunks before writing new ones
+    if (existingChunks && existingChunks.length > 0) {
+      const { error: deleteError } = await supabase
+        .from('paper_chunks')
+        .delete()
         .eq('paper_id', paperId)
-        .limit(1)
-      
-      if (!error2) {
-        existingChunks = chunks2
-      } else {
-        checkError = error2
-        console.warn(`Error checking existing chunks for paper ${paperId}:`, error1, error2)
+      if (deleteError) {
+        console.warn(`Failed to delete existing chunks for paper ${paperId}:`, deleteError.message)
       }
     }
-    
-    if (existingChunks && existingChunks.length > 0) {
-      console.log(`📚 Chunks already exist for paper ${paperId}, skipping chunk creation`)
-      return existingChunks.length
+
+    // Handle short content: ensure at least one chunk for short abstracts
+    if (normalizedContent.length < 100) {
+      const supabase = await getSB()
+      const { createDeterministicChunkId } = await import('@/lib/utils/deterministic-id')
+      const { generateEmbeddings } = await import('@/lib/utils/embedding')
+
+      const [embedding] = await generateEmbeddings([normalizedContent])
+      const chunkId = createDeterministicChunkId(paperId, normalizedContent, 0)
+
+      const { error } = await supabase
+        .from('paper_chunks')
+        .upsert({
+          id: chunkId,
+          paper_id: paperId,
+          chunk_index: 0,
+          content: normalizedContent,
+          embedding
+        }, {
+          onConflict: 'id',
+          ignoreDuplicates: true
+        })
+
+      if (error) {
+        // Log error but don't throw - chunk might already exist from parallel processing
+        console.warn(`Chunk insertion warning for paper ${paperId}:`, error.message)
+        
+        // Verify chunk exists - if not, this is a real error
+        const { data: verifyChunk } = await supabase
+          .from('paper_chunks')
+          .select('id')
+          .eq('paper_id', paperId)
+          .limit(1)
+        
+        if (!verifyChunk || verifyChunk.length === 0) {
+          throw new ChunkingError(`Failed to insert short-content chunk: ${error.message}`)
+        }
+      }
+
+      console.log(`✅ Created 1 short-content chunk for paper ${paperId}`)
+      return 1
     }
     
-    const normalizedContent = normalizeText(content)
-    
-    // Create chunks using centralized function
-    const chunks = splitIntoChunks(normalizedContent, paperId, {
-      maxLength: options.chunkSize || 1000,
-      overlap: options.overlap || 100,
+    // Create chunks using token-based chunking only
+    const maxTokens = options.maxTokens ?? 500
+    const overlapTokens = options.overlapTokens ?? 80
+
+    const chunks = await chunkByTokens(normalizedContent, paperId, {
+      maxTokens,
+      overlapTokens,
       preserveParagraphs: true,
-      minChunkSize: 100
+      minChunkTokens: 50,
+      ...(options.tokenChunkOptions || {})
     })
 
     if (chunks.length === 0) {
@@ -240,7 +292,7 @@ export async function createChunksForPaper(
     const chunkTexts = chunks.map(chunk => chunk.content)
     const embeddings = await generateEmbeddings(chunkTexts)
 
-    // Insert chunks into database with embeddings (try both table names)
+    // Insert chunks into database with embeddings
     const chunkData = chunks.map((chunk, index) => ({
       id: chunk.id,
       paper_id: paperId,
@@ -249,26 +301,40 @@ export async function createChunksForPaper(
       embedding: embeddings[index]
     }))
     
-    // Try inserting to the expected table name first
     let { error } = await supabase
       .from('paper_chunks')
-      .insert(chunkData)
+      .upsert(chunkData, {
+        onConflict: 'id',
+        ignoreDuplicates: true
+      })
     
-    // If that fails, try the _new table (in case migration incomplete)
-    if (error && error.message.includes('relation "paper_chunks" does not exist')) {
-      const { error: newTableError } = await supabase
-        .from('paper_chunks_new')
-        .insert(chunkData)
+    if (error) {
+      // Log warning but don't throw - chunks might already exist from parallel processing
+      console.warn(`Chunk insertion warning for paper ${paperId}:`, error.message)
       
-      if (newTableError) {
-        throw new ChunkingError(`Failed to insert chunks to both tables: ${error.message} | ${newTableError.message}`)
+      // Verify at least some chunks exist - if not, this is a real error
+      const { data: verifyChunks } = await supabase
+        .from('paper_chunks')
+        .select('id')
+        .eq('paper_id', paperId)
+        .limit(3)
+      
+      if (!verifyChunks || verifyChunks.length === 0) {
+        throw new ChunkingError(`Failed to insert chunks: ${error.message}`)
       }
-    } else if (error) {
-      throw new ChunkingError(`Failed to insert chunks: ${error.message}`)
+      
+      console.log(`⚠️ Some chunks may have been duplicates, but ${verifyChunks.length} chunks exist for paper`)
     }
 
-    console.log(`✅ Created ${chunks.length} chunks for paper ${paperId}`)
-    return chunks.length
+    // Verify actual chunk count in database
+    const { count: actualCount } = await supabase
+      .from('paper_chunks')
+      .select('*', { count: 'exact', head: true })
+      .eq('paper_id', paperId)
+    
+    const finalCount = actualCount || chunks.length
+    console.log(`✅ Created ${chunks.length} chunks for paper ${paperId} (${finalCount} total in DB)`)
+    return finalCount
   } catch (error) {
     console.error(`Error creating chunks for paper ${paperId}:`, error)
     throw new ChunkingError(`Failed to create chunks for paper ${paperId}: ${error}`)
@@ -284,9 +350,10 @@ export async function ensureBulkContentIngestion(
 ): Promise<BulkIngestionSummary> {
   const {
     skipChunks = false,
-    forceReprocess = false,
-    chunkSize = 1000,
-    chunkOverlap = 100
+    forceReprocess: _forceReprocess = false,
+    maxTokens = 500,
+    overlapTokens = 80,
+    tokenChunkOptions = {}
   } = options
 
   console.log(`📥 Starting bulk content ingestion for ${papers.length} papers...`)
@@ -303,23 +370,10 @@ export async function ensureBulkContentIngestion(
 
     for (const paper of papers) {
       try {
-        const status = contentStatus.get(paper.id)
+        const _status = contentStatus.get(paper.id)
         let content = ''
         let contentLength = 0
         let chunksCreated = 0
-
-        // Skip if already has content and not forcing reprocess
-        if (!forceReprocess && status?.hasContent && status.chunkCount > 0) {
-          console.log(`⏭️  Skipping ${paper.title} - already has ${status.chunkCount} chunks`)
-          results.push({
-            paperId: paper.id,
-            success: true,
-            chunksCreated: status.chunkCount,
-            contentLength: status.contentLength
-          })
-          totalChunks += status.chunkCount
-          continue
-        }
 
         // Try to get PDF content first
         const hasPdf = await hasPDFContent(paper.id)
@@ -342,8 +396,9 @@ export async function ensureBulkContentIngestion(
         // Create chunks if we have content and not skipping
         if (content && !skipChunks) {
           chunksCreated = await createChunksForPaper(paper.id, content, {
-            chunkSize,
-            overlap: chunkOverlap
+            maxTokens,
+            overlapTokens,
+            tokenChunkOptions
           })
           totalChunks += chunksCreated
         }

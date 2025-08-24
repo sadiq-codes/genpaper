@@ -4,8 +4,6 @@ import z from 'zod'
 
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 import { validateCSL as _validateCSL } from '@/lib/utils/csl'
-import { BatchCitationRefSchema as _BatchCitationRefSchema, type PlaceholderCitation as _PlaceholderCitation } from '@/lib/citations/placeholder-schema'
-
 
 // Schema for citation creation/updates
 const CitationCreateSchema = z.object({
@@ -42,7 +40,8 @@ const BatchResolveSchema = z.object({
     value: z.string().min(1),
     context: z.string().optional(),
     fallbackText: z.string().optional()
-  })).min(1)
+  })).min(1),
+  style: z.enum(['apa', 'mla', 'chicago', 'ieee']).optional().default('apa')
 })
 
 export async function GET(request: NextRequest) {
@@ -178,7 +177,7 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      const { projectId, refs } = validationResult.data
+      const { projectId, refs, style } = validationResult.data
 
       // Verify project ownership
       const { data: project, error: projectError } = await supabase
@@ -224,7 +223,7 @@ export async function POST(request: NextRequest) {
             const citeKey = `${ref.type}:${ref.value}`
             const inlineText = await CitationService.renderInline(
               result.cslJson as any,
-              'apa',
+              style,
               (result as any).citationNumber ?? 1
             )
 

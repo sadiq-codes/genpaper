@@ -1,12 +1,6 @@
- 
 import { getSB } from '@/lib/supabase/server'
- 
 import { getPapersByIds as getLibraryPapersByIds } from '@/lib/db/library'
 import type { EnhancedGenerationOptions } from './types'
-
-// 🆕 OPTIMIZATION: Import structured logging
-// Structured logging utilities (unused in simplified flow)
-// import { logSearchMetrics, createTimer, type SearchMetrics } from '@/lib/utils/logger'
 
 // Helper function to check if URL is likely a direct PDF
 function isLikelyDirectPdfUrl(url: string): boolean {
@@ -256,7 +250,7 @@ async function getCoverage(paperIds: string[]): Promise<number> {
 
   try {
     // Count full-text chunks for each paper
-    const MIN_CHUNKS_OK = 10 // Require at least 10 full-text chunks
+    const MIN_CHUNKS_OK = 5 // Require at least 5 full-text chunks (lowered from 10 for better coverage)
     
     const fullTextChecks = await Promise.all(
       paperIds.map(async (paperId) => {

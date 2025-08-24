@@ -46,13 +46,16 @@ export async function extractPdfMetadataTiered(
   const startTime = Date.now()
   const { 
     grobidUrl = process.env.GROBID_URL || 'http://localhost:8070',
-    enableOcr = false,
+    enableOcr = true,
     maxTimeoutMs = 30000
   } = options
 
   const notes: string[] = []
 
   try {
+    // Guardrail: decide if we should attempt GROBID at all
+    const tryGrobid = await shouldUseGrobid(grobidUrl)
+
     // 0️⃣ Fast DOI lookup shortcut (if DOI found in first page)
     const doi = await findDoiInFirstPage(pdfBuffer)
     if (doi) {
@@ -75,6 +78,10 @@ export async function extractPdfMetadataTiered(
 
     // 1️⃣ Try GROBID first (best for scientific PDFs)
     try {
+      if (!tryGrobid) {
+        notes.push('GROBID disabled or unavailable; skipping')
+        throw new Error('GROBID disabled')
+      }
       info('Attempting GROBID extraction')
       const grobidResult = await grobidParse(pdfBuffer, grobidUrl, maxTimeoutMs)
       if (grobidResult && grobidResult.title && grobidResult.fullText) {
@@ -149,7 +156,7 @@ export async function extractPdfMetadataTiered(
         error('OCR extraction failed', { error: err })
       }
     } else {
-      notes.push('OCR disabled, skipping scanned PDF processing')
+      notes.push('OCR disabled by option, skipping scanned PDF processing')
     }
 
     // 4️⃣ Final fallback - minimal extraction
@@ -181,6 +188,24 @@ export async function extractPdfMetadataTiered(
         processingNotes: [...notes, `Critical error: ${error}`]
       }
     }
+  }
+}
+
+// Quick check whether GROBID is enabled/available
+async function shouldUseGrobid(grobidUrl: string): Promise<boolean> {
+  // Respect explicit disable
+  if (process.env.ENABLE_GROBID === '0') return false
+  // Respect explicit enable
+  if (process.env.ENABLE_GROBID === '1') return true
+  // Try a quick health check
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 1500)
+    const res = await fetch(`${grobidUrl}/api/isalive`, { signal: controller.signal })
+    clearTimeout(timeout)
+    return res.ok
+  } catch {
+    return false
   }
 }
 
@@ -363,9 +388,9 @@ async function ocrParse(
   _timeoutMs: number
 ): Promise<Partial<TieredExtractionResult> | null> {
   try {
-    // Check if we're in a server environment where OCR might not work properly
-    if (typeof window === 'undefined' && !process.env.ENABLE_SERVER_OCR) {
-      warn('OCR disabled in server environment. Set ENABLE_SERVER_OCR=1 to enable.')
+    // OCR default enabled; allow explicit disable with ENABLE_SERVER_OCR=0
+    if (typeof window === 'undefined' && process.env.ENABLE_SERVER_OCR === '0') {
+      warn('OCR explicitly disabled via ENABLE_SERVER_OCR=0')
       return null
     }
 

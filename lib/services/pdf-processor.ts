@@ -19,16 +19,19 @@ export interface PdfExtractionOptions {
 export async function getOrExtractFullText(options: PdfExtractionOptions): Promise<string | null> {
   const { pdfUrl, paperId, ocr = true, timeoutMs = 60000 } = options
 
-  // 1) If we have a DB id, skip if chunks already exist
+  // 1) If we have a DB id, skip only if paper has full-text content (≥5 chunks)
   if (paperId) {
     const supabase = await getSB()
-    const { data: existing, error } = await supabase
+    const { count: chunkCount, error } = await supabase
       .from('paper_chunks')
-      .select('id')
+      .select('*', { count: 'exact', head: true })
       .eq('paper_id', paperId)
-      .limit(1)
-    if (!error && existing && existing.length > 0) {
+    
+    if (!error && chunkCount && chunkCount >= 5) {
+      console.log(`PDF extraction skipped - paper already has full content (${chunkCount} chunks)`)
       return null // indicates no need to extract again
+    } else if (!error && chunkCount && chunkCount > 0) {
+      console.log(`PDF extraction proceeding - upgrading paper with ${chunkCount} chunks`)
     }
   }
 

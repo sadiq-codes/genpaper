@@ -2,7 +2,7 @@ import type { PaperWithAuthors, GenerationConfig, GenerationProgress } from '@/t
 import type { CSLItem } from '@/lib/utils/csl'
 import type { PaperTypeKey } from '@/lib/prompts/types'
 
-// Tool call analytics types
+// Tool call analytics types (legacy - kept for backward compatibility)
 export interface CapturedToolCall {
   toolCallId: string
   toolName: string
@@ -41,51 +41,16 @@ export interface EnhancedGenerationOptions {
   onProgress?: (progress: GenerationProgress) => void
 }
 
-export interface GenerationResult {
-  content: string
-  citations: Array<{
-    paperId: string
-    citationText: string
-    positionStart?: number
-    positionEnd?: number
-    pageRange?: string
-    toolCall?: CapturedToolCall
-  }>
-  citationsMap: Map<string, CSLItem>
-  wordCount: number
-  sources: PaperWithAuthors[]
-  structure: {
-    sections: string[]
-    abstract: string
-  }
-  toolCallAnalytics: ToolCallAnalytics
-}
 
-// Chunk types
+
+// Chunk types - unified canonical definition
 export interface PaperChunk {
+  id?: string  // Optional deterministic chunk ID
   paper_id: string
   content: string
   score?: number
-}
-
-export interface PaperWithEvidence {
-  paper: PaperWithAuthors
-  chunk: PaperChunk | null
-}
-
-// Paper types with search scores
-export interface PaperWithScores extends PaperWithAuthors {
-  semantic_score?: number
-  keyword_score?: number
-}
-
-// Prompt template types
-export interface TemplateVars {
-  numProvidedPapers: number
-  length: string
-  lengthGuidance: string
-  paperTypeName: string
-  paperTypeDescription: string
+  metadata?: Record<string, unknown>
+  paper?: PaperWithAuthors  // Optional paper reference for convenience
 }
 
 // Section types for production generator

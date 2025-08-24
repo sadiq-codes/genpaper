@@ -1,17 +1,9 @@
-import { ContextRetrievalService } from '@/lib/generation/context-retrieval-service'
+import { searchPaperChunks } from '@/lib/db/papers'
 import { getPapersByIds } from '@/lib/db/library'
 import type { PaperWithAuthors } from '@/types/simplified'
 import { getContentStatus, ensureBulkContentIngestion } from '@/lib/content'
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
-
-interface PaperChunk {
-  id: string
-  paper_id: string
-  content: string
-  metadata: Record<string, unknown>
-  score: number
-  paper?: PaperWithAuthors
-}
+import type { PaperChunk } from '@/lib/generation/types'
 
 import { 
   ContentRetrievalError, 
@@ -19,7 +11,230 @@ import {
   ContentQualityError 
 } from '@/lib/content/errors'
 
+/**
+ * ContextRetrievalService
+ * 
+ * Single source for fetching ranked context chunks/papers.
+ * Wraps embeddings, keyword search, and filters into a unified API.
+ */
 
+export interface RetrievalParams {
+  query?: string
+  selection?: string
+  projectId?: string
+  paperIds?: string[]
+  k?: number
+  minScore?: number
+}
+
+export interface RetrievalResult {
+  papers: PaperWithAuthors[]
+  chunks: PaperChunk[]
+  scores: number[]
+  totalResults: number
+}
+
+export class ContextRetrievalService {
+  private static cache = new Map<string, { result: RetrievalResult; timestamp: number }>()
+  private static readonly CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+  private constructor() {}
+
+  /**
+   * Create empty retrieval result - eliminates duplicate patterns
+   */
+  private static createEmptyResult(): RetrievalResult {
+    return {
+      papers: [],
+      chunks: [],
+      scores: [],
+      totalResults: 0
+    }
+  }
+
+  /**
+   * Normalize chunk score - handles undefined scores consistently
+   */
+  static normalizeScore(score: number | undefined): number {
+    return score ?? 0
+  }
+
+  static async retrieve(params: RetrievalParams): Promise<RetrievalResult> {
+    const cacheKey = this.getCacheKey(params)
+    const cached = this.cache.get(cacheKey)
+    
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+      console.log(`🎯 Cache HIT for query: "${params.query}" (${cached.result.chunks.length} cached chunks)`)
+      // Apply downstream filtering to cached superset results  
+      return this.applyDownstreamFiltering(cached.result, params)
+    }
+
+    console.log(`🔍 Cache MISS for query: "${params.query}" - performing retrieval`)
+    const result = await this.performRetrieval(params)
+    
+    // Cache the superset result (without k/minScore filtering)
+    this.cache.set(cacheKey, { result, timestamp: Date.now() })
+    
+    // Clean up old cache entries periodically
+    if (Math.random() < 0.1) {
+      this.cleanupCache()
+    }
+    
+    // Apply requested filtering to fresh results
+    return this.applyDownstreamFiltering(result, params)
+  }
+
+  /**
+   * Apply k and minScore filtering to cached superset results
+   */
+  private static applyDownstreamFiltering(cachedResult: RetrievalResult, params: RetrievalParams): RetrievalResult {
+    const { k = 20, minScore = 0.3 } = params
+    
+    // Filter by minScore and limit to k results
+    const filteredChunks = cachedResult.chunks
+      .filter(chunk => this.normalizeScore(chunk.score) >= minScore)
+      .slice(0, k)
+    
+    const filteredScores = filteredChunks.map(chunk => this.normalizeScore(chunk.score))
+    
+    return {
+      papers: cachedResult.papers, // Papers array typically small, keep as-is
+      chunks: filteredChunks,
+      scores: filteredScores,
+      totalResults: filteredChunks.length
+    }
+  }
+
+  private static async performRetrieval(params: RetrievalParams): Promise<RetrievalResult> {
+    const {
+      query = '',
+      paperIds = []
+    } = params
+
+    if (!query.trim()) {
+      return this.createEmptyResult()
+    }
+
+    try {
+      // Fetch larger superset for better cache reuse - let downstream filtering handle limits
+      const supersetLimit = Math.max(100, paperIds.length * 10) // Generous limit for caching
+      const supersetMinScore = 0.05 // Very permissive for caching, filter downstream
+      
+      // Use existing searchPaperChunks with generous options for superset caching
+      const searchResults = await searchPaperChunks(query, {
+        paperIds: paperIds.length > 0 ? paperIds : undefined,
+        limit: supersetLimit,
+        minScore: supersetMinScore
+      })
+
+      // Convert to PaperChunk format with deterministic IDs
+      const chunks: PaperChunk[] = searchResults.map((result, index) => {
+        const normalizedScore = this.normalizeScore(result.score)
+        return {
+          id: createDeterministicChunkId(result.paper_id, result.content, index),
+          paper_id: result.paper_id,
+          content: result.content,
+          metadata: { 
+            source: 'context_retrieval_service',
+            score: normalizedScore
+          },
+          score: normalizedScore
+        }
+      })
+
+      // Sort by score descending but don't limit (cache the superset)
+      const sortedChunks = chunks
+        .sort((a, b) => this.normalizeScore(b.score) - this.normalizeScore(a.score))
+
+      const scores = sortedChunks.map(chunk => this.normalizeScore(chunk.score))
+      
+      // Extract unique papers (stub - would need paper lookup for full objects)
+      const papers: PaperWithAuthors[] = [] // TODO: Lookup papers by IDs
+
+      console.log(`📊 Retrieved ${sortedChunks.length} chunks for caching (superset strategy)`)
+
+      return {
+        papers,
+        chunks: sortedChunks,
+        scores,
+        totalResults: searchResults.length
+      }
+
+    } catch (error) {
+      console.error('Context retrieval failed:', error)
+      return this.createEmptyResult()
+    }
+  }
+
+  private static getCacheKey(params: RetrievalParams): string {
+    const { query = '', paperIds = [], projectId = '' } = params
+    const paperIdsStr = paperIds.slice().sort().join(',')
+    // Normalize cache key to exclude k and minScore for better reuse
+    return `${query}:${paperIdsStr}:${projectId}`
+  }
+
+  private static cleanupCache(): void {
+    const now = Date.now()
+    for (const [key, entry] of this.cache.entries()) {
+      if (now - entry.timestamp > this.CACHE_TTL_MS) {
+        this.cache.delete(key)
+      }
+    }
+  }
+
+  /**
+   * Build contexts for all sections in an outline with caching
+   * This is the unified entry point for section context building
+   * 
+   * Note: Now leverages the main ContextRetrievalService cache instead of maintaining separate cache
+   */
+  static async buildContexts(
+    outline: import('@/lib/prompts/types').GeneratedOutline,
+    topic: string,
+    allPapers: import('@/types/simplified').PaperWithAuthors[] = []
+  ): Promise<import('@/lib/prompts/types').SectionContext[]> {
+    const sectionContexts: import('@/lib/prompts/types').SectionContext[] = []
+
+    console.log(`📊 Building section contexts for ${outline.sections.length} sections...`)
+    
+    for (const section of outline.sections) {
+      const ids = Array.isArray(section.candidatePaperIds) ? section.candidatePaperIds : []
+      
+      let contextChunks: PaperChunk[] = []
+      try {
+        const startTime = Date.now()
+        contextChunks = await getRelevantChunks(
+          topic,
+          ids,
+          Math.min(20, ids.length * 3),
+          allPapers
+        )
+        const retrievalTime = Date.now() - startTime
+        console.log(`📄 Retrieved chunks for "${section.title}" (${contextChunks.length} chunks, ${retrievalTime}ms)`)
+        console.log(`     Paper IDs used: [${ids.slice(0, 3).join(', ')}${ids.length > 3 ? `... +${ids.length - 3}` : ''}]`)
+      } catch (error) {
+        console.warn(`⚠️ No relevant chunks found for section "${section.title}": ${error}`)
+        console.warn(`⚠️ This section may have limited content quality due to lack of relevant source material`)
+        contextChunks = []
+      }
+
+      sectionContexts.push({
+        sectionKey: section.sectionKey,
+        title: section.title,
+        candidatePaperIds: ids,
+        contextChunks: contextChunks.map(chunk => ({
+          paper_id: chunk.paper_id,
+          content: chunk.content,
+          score: chunk.score
+        })),
+        expectedWords: section.expectedWords,
+      })
+    }
+
+    console.log(`📊 Section contexts built: ${sectionContexts.length} sections processed`)
+    return sectionContexts
+  }
+}
 
 /**
  * Get relevant chunks for RAG generation
@@ -93,110 +308,45 @@ export async function getRelevantChunks(
     console.log(`   ${idx + 1}. ${id}`)
   })
   
-  // Multi-stage retrieval with relaxed thresholds optimized for abstract content
-  const ATTEMPTS: Array<{minScore: number, label: string}> = [
-    { minScore: 0.1, label: 'high-precision' },
-    { minScore: 0.05, label: 'balanced' },
-    { minScore: 0.2, label: 'high-recall' },
-    { minScore: 0.15, label: 'ultra-recall' } // Ultra-low threshold for abstracts
-  ]
-  
-  const attempts = ATTEMPTS.map(config => ({ ...config, paperIds: papersWithContent }))
-
+  // Direct retrieval using ContextRetrievalService (already cached and processed)
   let allChunks: PaperChunk[] = []
-  let firstError: unknown = null
-  let bestScores: number[] = []
+  try {
+    console.log(`📄 Single-pass chunk search with permissive floor and superset cache`)
+    const retrievalResult = await ContextRetrievalService.retrieve({ 
+      query: topic, 
+      paperIds: papersWithContent, 
+      k: Math.max(chunkLimit * 2, 120), 
+      minScore: 0.08 
+    })
 
-  for (const attempt of attempts) {
-    try {
-      console.log(`📄 Chunk search attempt (${attempt.label}) with minScore=${attempt.minScore}`)
-      
-      const searchResultsRaw = (await ContextRetrievalService.retrieve({ 
-        query: topic, 
-        paperIds: attempt.paperIds, 
-        k: chunkLimit * 2, 
-        minScore: attempt.minScore 
-      })).chunks
+    // Use chunks directly from ContextRetrievalService (no re-processing needed)
+    const searchResults = retrievalResult.chunks.map(chunk => ({
+      ...chunk,
+      paper: allPapers.find(p => p.id === chunk.paper_id)
+    }))
 
-      const searchResults = searchResultsRaw.map((result, idx) => ({
-        id: createDeterministicChunkId(result.paper_id, result.content, idx),
-        paper_id: result.paper_id,
-        content: result.content,
-        metadata: { 
-          source: 'chunk_search', 
-          score: typeof result.score === 'number' ? result.score : 0,
-          searchStage: attempt.label
-        },
-        score: typeof result.score === 'number' ? result.score : 0,
-        paper: allPapers.find(p => p.id === result.paper_id)
-      }))
-      
-      if (searchResults.length > 0) {
-        // Validate content quality
-        const scores: number[] = searchResults.map(r => r.score)
-        const avgScore = scores.reduce((a: number, b: number) => a + b, 0) / scores.length
-        const minScore = Math.min(...scores)
-        const maxScore = Math.max(...scores)
-        
-        console.log(`📊 Score distribution:`)
-        console.log(`   - Average: ${avgScore.toFixed(3)}`)
-        console.log(`   - Range: ${minScore.toFixed(3)} - ${maxScore.toFixed(3)}`)
-      
-        // Track best scores seen for error reporting
-        if (scores.length > bestScores.length || Math.max(...scores) > Math.max(...bestScores)) {
-          bestScores = scores
-        }
-        
-        // Validate chunk content (relaxed thresholds)
-        let validChunks = searchResults.filter(chunk => {
-          const content = chunk.content.trim()
-          return content.length >= 30 && // Relaxed minimum content length
-                 content.split(/\s+/).length >= 5 && // Relaxed minimum word count
-                 !/^[\d\s.,-]+$/.test(content) // Not just numbers and punctuation
-        })
+    if (searchResults.length > 0) {
+      // Validate chunk content (relaxed thresholds)
+      let validChunks = searchResults.filter(chunk => {
+        const content = chunk.content.trim()
+        return content.length >= 30 &&
+               content.split(/\s+/).length >= 5 &&
+               !/^[\d\s.,-]+$/.test(content)
+      })
 
-        // Safety: if all fail relaxed validation, keep top few anyway to avoid hard fallback
-        if (validChunks.length === 0) {
-          console.warn(`⚠️ All chunks failed quality validation in ${attempt.label} attempt (relaxed). Using top raw chunks as fallback.`)
-          validChunks = searchResults.slice(0, Math.min(10, searchResults.length))
-        }
-
-        allChunks = validChunks
-        console.log(`✅ Found ${validChunks.length} valid chunks in ${attempt.label} attempt`)
-        
-        // DEBUG: Visualize ID mismatch between chunks and requested paper IDs
-        console.log('🔍 CHUNK SEARCH RESULTS:')
-        console.log(`   📄 Found ${validChunks.length} chunks with paper IDs:`)
-        validChunks.forEach((chunk, idx) => {
-          console.log(`      ${idx + 1}. Chunk from paper: ${chunk.paper_id}`)
-          console.log(`         Content preview: "${chunk.content.substring(0, 100)}..."`)
-        })
-        console.log(`   🎯 Expected paper IDs for this project (${paperIds.length} total):`)
-        paperIds.forEach((id, idx) => {
-          console.log(`      ${idx + 1}. ${id}`)
-        })
-        
-        // Show exact matches/mismatches
-        const foundIds = new Set(validChunks.map(c => c.paper_id))
-        const expectedIds = new Set(paperIds)
-        const matches = paperIds.filter(id => foundIds.has(id))
-        const missingInChunks = paperIds.filter(id => !foundIds.has(id))
-        const extraInChunks = validChunks.map(c => c.paper_id).filter(id => !expectedIds.has(id))
-        
-        console.log(`   ✅ Matching IDs (${matches.length}): [${matches.join(', ')}]`)
-        console.log(`   ❌ Expected but not found in chunks (${missingInChunks.length}): [${missingInChunks.join(', ')}]`)
-        console.log(`   ⚠️  Found in chunks but not expected (${extraInChunks.length}): [${extraInChunks.join(', ')}]`)
-        
-        break
+      if (validChunks.length === 0) {
+        console.warn(`⚠️ All chunks failed quality validation. Using top raw chunks as fallback.`)
+        validChunks = searchResults.slice(0, Math.min(10, searchResults.length))
       }
-      
-    } catch (error) {
-      console.warn(`⚠️ Search attempt failed (${attempt.label}):`, error)
-      if (!firstError) firstError = error
+
+      allChunks = validChunks
+      console.log(`✅ Found ${validChunks.length} valid chunks in single-pass search`)
     }
+  } catch (error) {
+    console.warn(`⚠️ Superset search failed:`, error)
   }
 
-  // If no chunks are found after all attempts, use abstracts as a fallback
+  // If no chunks are found after search, use abstracts as a fallback
   if (allChunks.length === 0) {
     console.warn(
       '⚠️ No relevant chunks found. Using paper abstracts as fallback context.'
@@ -227,7 +377,7 @@ export async function getRelevantChunks(
   assertChunksFound(allChunks, topic, paperIds)
 
   // Validate final content quality (relaxed for abstract-based content)
-  const avgScore = allChunks.reduce((sum, chunk) => sum + chunk.score, 0) / allChunks.length
+  const avgScore = allChunks.reduce((sum, chunk) => sum + ContextRetrievalService.normalizeScore(chunk.score), 0) / allChunks.length
   if (avgScore < 0.08) { // Further lowered threshold to avoid false negatives with abstract-heavy corpora
     throw new ContentQualityError(
       `Content relevance scores too low for reliable generation (avg: ${avgScore.toFixed(3)})`,
@@ -235,58 +385,17 @@ export async function getRelevantChunks(
     )
   }
 
-  // SURGICAL FIX: Fallback booster - split abstracts into bite-sized chunks when < 30 chunks
-  if (allChunks.length < 30) {
-    console.warn('⚠️ Too few chunks; falling back to abstracts for additional context.')
-    
-    const abstractChunks: PaperChunk[] = []
-    
-    for (const paper of allPapers) {
-      if (!paper.abstract || paper.abstract.trim().length < 100) continue
-      
-      // Split long abstracts into paragraphs/sentences for better vector retrieval
-      const abstract = paper.abstract.trim()
-      
-      if (abstract.length > 800) {
-        // Split very long abstracts by sentences
-        const sentences = abstract.split(/[.!?]+/).filter(s => s.trim().length > 50)
-        sentences.forEach((sentence, idx) => {
-          if (sentence.trim().length > 50) {
-            abstractChunks.push({
-              id: `abstract-split-${paper.id}-${idx}`,
-              paper_id: paper.id,
-              content: `Title: ${paper.title}\n\nAbstract (Part ${idx + 1}): ${sentence.trim()}.`,
-              metadata: { source: 'abstract-split', part: idx + 1 },
-              score: 0.4,
-              paper
-            })
-          }
-        })
-      } else {
-        // Regular abstract chunk
-        abstractChunks.push({
-          id: `abstract-fallback-${paper.id}`,
-          paper_id: paper.id,
-          content: `Title: ${paper.title}\n\nAbstract: ${abstract}`,
-          metadata: { source: 'abstract-fallback' },
-          score: 0.4,
-          paper
-        })
-      }
-    }
-    
-    // Add abstracts for papers not already represented in chunks
-    const existingPaperIds = new Set(allChunks.map(c => c.paper_id))
-    const newAbstractChunks = abstractChunks.filter(c => !existingPaperIds.has(c.paper_id))
-    
-    allChunks.push(...newAbstractChunks)
-    console.log(`📄 Added ${newAbstractChunks.length} abstract chunks for additional context`)
-  }
+  // Remove abstract-splitting booster to reduce repetition pressure
+
+  // Deduplicate chunks to improve context diversity
+  console.log(`🔄 Deduplicating ${allChunks.length} chunks...`)
+  const deduplicated = deduplicateChunks(allChunks)
+  console.log(`✅ After deduplication: ${deduplicated.length} unique chunks`)
 
   // Balance chunks across papers with higher limits
   const CHUNKS_PER_PAPER = 10 // Increased from 5 to allow more content per paper
   const perPaperCap = Math.max(CHUNKS_PER_PAPER, Math.ceil(chunkLimit / Math.max(1, papersWithContent.length)))
-  const balanced = balanceChunks(allChunks, perPaperCap, chunkLimit)
+  const balanced = balanceChunks(deduplicated, perPaperCap, chunkLimit)
   
   // Final validation of balanced chunks
   if (balanced.length < Math.min(3, chunkLimit)) {
@@ -298,6 +407,42 @@ export async function getRelevantChunks(
   
   console.log(`📄 Final balanced chunks: ${balanced.length} (max ${perPaperCap} per paper)`)
   return balanced
+}
+
+/**
+ * Deduplicate chunks to reduce redundancy and improve context diversity
+ * Uses content similarity to filter near-duplicates from overlapping chunks
+ */
+function deduplicateChunks(chunks: PaperChunk[]): PaperChunk[] {
+  const deduplicated: PaperChunk[] = []
+  const contentHashes = new Set<string>()
+  
+  // Sort by score descending to prefer higher quality chunks
+  const sortedChunks = [...chunks].sort((a, b) => 
+    ContextRetrievalService.normalizeScore(b.score) - ContextRetrievalService.normalizeScore(a.score)
+  )
+  
+  for (const chunk of sortedChunks) {
+    // Create a simple content hash from first/last 100 chars for similarity detection
+    const content = chunk.content.trim()
+    const hashContent = content.length > 200 
+      ? content.slice(0, 100) + content.slice(-100)
+      : content
+    
+    // Normalize for comparison (remove extra whitespace, punctuation)
+    const normalizedHash = hashContent
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    
+    if (!contentHashes.has(normalizedHash)) {
+      contentHashes.add(normalizedHash)
+      deduplicated.push(chunk)
+    }
+  }
+  
+  return deduplicated
 }
 
 /**

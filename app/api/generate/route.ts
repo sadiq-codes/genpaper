@@ -1,11 +1,7 @@
 import { NextRequest } from 'next/server'
 import { authenticateUser, createProject } from '@/lib/services/project-service'
-import { updateProjectContent, getResearchProject, getProjectWithContent, updateResearchProjectStatus } from '@/lib/db/research'
-import type { SectionContext } from '@/lib/prompts/types'
-import type { GeneratedOutline } from '@/lib/prompts/types'
-import type { PaperChunk } from '@/lib/generation/types'
-import type { PaperWithAuthors } from '@/types/simplified'
-import type { PaperStatus } from '@/types/simplified'
+import { getResearchProject, getProjectWithContent } from '@/lib/db/research'
+import { generatePaper, type PipelineConfig } from '@/lib/generation/pipeline'
 
 // Use Node.js runtime for better DNS resolution and OpenAI SDK compatibility
 export const runtime = 'nodejs'
@@ -17,90 +13,24 @@ if (!process.env.OPENAI_API_KEY) {
 
 const isDev = process.env.NODE_ENV !== 'production'
 
+// In-memory lock to avoid duplicate pipeline runs per project in dev/single instance
+// Not a substitute for distributed locks in production.
+const globalAny = globalThis as any
+if (!globalAny.__GEN_LOCKS__) {
+  globalAny.__GEN_LOCKS__ = new Map<string, boolean>()
+}
+const GEN_LOCKS: Map<string, boolean> = globalAny.__GEN_LOCKS__
+
 /**
- * Builds the context for each section of the paper, including retrieving relevant
- * chunks of text from source documents.
+ * Helper function to create error stream for streaming endpoints
  */
-async function buildSectionContexts(
-  outline: GeneratedOutline,
-  topic: string,
-  allPapers: PaperWithAuthors[] = []
-): Promise<SectionContext[]> {
-  const sectionContexts: SectionContext[] = []
-  const chunkCache = new Map<string, PaperChunk[]>()
-
-  for (const section of outline.sections) {
-    const ids = Array.isArray(section.candidatePaperIds) ? section.candidatePaperIds : []
-    const cacheKey = ids.slice().sort().join(',')
-    let contextChunks = chunkCache.get(cacheKey)
-
-    if (!contextChunks) {
-      try {
-        const { getRelevantChunks } = await import('@/lib/generation/chunks')
-        contextChunks = await getRelevantChunks(
-          topic,
-          ids,
-          Math.min(20, ids.length * 3),
-          allPapers
-        )
-        chunkCache.set(cacheKey, contextChunks)
-        console.log(`📄 Cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
-      } catch (error) {
-        console.warn(`⚠️ No relevant chunks found for section "${section.title}": ${error}`)
-        console.warn(`⚠️ This section may have limited content quality due to lack of relevant source material`)
-        contextChunks = []
-        chunkCache.set(cacheKey, contextChunks)
-      }
-    } else {
-      console.log(`📄 Using cached chunks for section "${section.title}" (${contextChunks.length} chunks)`)
-    }
-
-    sectionContexts.push({
-      sectionKey: section.sectionKey,
-      title: section.title,
-      candidatePaperIds: ids,
-      contextChunks,
-      expectedWords: section.expectedWords,
-    })
-  }
-
-  return sectionContexts
-}
-
-export async function OPTIONS() {
-  return new Response(null, {
-    status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Max-Age': '86400'
-    }
-  })
-}
-
-// GET - EventSource endpoint for streaming (unified approach)
-export async function GET(request: NextRequest) {
-  if (isDev) console.log('🚀 Starting unified streaming generation')
-  
-  let user: { id: string }
-  
-  try {
-    // Authenticate user using service layer
-    const authenticatedUser = await authenticateUser()
-    
-    if (!authenticatedUser) {
-      if (isDev) {
-        console.log('❌ Authentication failed: No user found')
-      }
-      
-      // For streaming endpoints, we need to return a proper event-stream response even for errors
+function createErrorStream(error: string): Response {
       const encoder = new TextEncoder()
       const errorStream = new ReadableStream({
         start(controller) {
           const errorData = JSON.stringify({
             type: 'error',
-            error: 'Authentication required. Please refresh the page and try again.',
+        error,
             timestamp: new Date().toISOString()
           })
           controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
@@ -119,12 +49,36 @@ export async function GET(request: NextRequest) {
           'X-Accel-Buffering': 'no'
         }
       })
-    } else {
-      user = authenticatedUser
-      if (isDev) console.log('✅ User authenticated:', user.id)
+}
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Accept, Cache-Control',
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Max-Age': '86400'
+    }
+  })
+}
+
+// GET - EventSource endpoint for streaming (thin wrapper around pipeline)
+export async function GET(request: NextRequest) {
+  if (isDev) console.log('🚀 Starting paper generation via pipeline')
+  if (isDev) console.log('🍪 Request headers:', Object.fromEntries(request.headers.entries()))
+  
+  try {
+    // Authenticate user with enhanced error details
+    const user = await authenticateUser()
+    if (!user) {
+      console.error('❌ Authentication failed for EventSource request')
+      console.error('❌ Cookies:', request.headers.get('cookie'))
+      return createErrorStream('Authentication required. Please refresh the page and try again.')
     }
 
-    // Get query parameters for the generation request
+    // Parse query parameters
     const url = new URL(request.url)
     const topic = url.searchParams.get('topic')
     const useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
@@ -132,6 +86,8 @@ export async function GET(request: NextRequest) {
     const paperType = url.searchParams.get('paperType') || 'researchArticle'
     const libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
     const existingProjectId = url.searchParams.get('projectId') || undefined
+    const temperature = parseFloat(url.searchParams.get('temperature') || '0.2')
+    const maxTokens = parseInt(url.searchParams.get('maxTokens') || '16000')
 
     if (!topic) {
       return new Response(
@@ -146,65 +102,24 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    if (isDev) console.log('🎯 Preparing research project for streaming generation...')
-    console.log('📝 User:', user.id)
-    console.log('📝 Topic:', topic)
-    
-    // Simple generation config - no complex validation or feature flags
-    const generationConfig = {
-      temperature: 0.2,
-      max_tokens: 16000,
-      sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
-      limit: 25,
-      library_papers_used: libraryPaperIds,
-      length: length as 'short' | 'medium' | 'long',
-      paperType: paperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation',
-      useLibraryOnly,
-      localRegion: undefined // Simple regional support
-    }
-
-    console.log('📝 Config:', generationConfig)
-
-    // Use existing project if provided, otherwise create a new one
+    // Use existing project or create new one
     let project: { id: string }
     if (existingProjectId) {
       const existing = await getResearchProject(existingProjectId, user.id)
       if (!existing) {
-        const encoder = new TextEncoder()
-        const errorStream = new ReadableStream({
-          start(controller) {
-            const errorData = JSON.stringify({
-              type: 'error',
-              error: 'Project not found or access denied',
-              timestamp: new Date().toISOString()
-            })
-            controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
-            controller.close()
-          }
-        })
-        return new Response(errorStream, {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': 'Cache-Control',
-            'X-Accel-Buffering': 'no'
-          }
-        })
+        return createErrorStream('Project not found or access denied')
       }
-      project = { id: existing.id }
 
-      // If project already completed with content, stream cached completion instead of regenerating
-      const existingWithContent = await getProjectWithContent(project.id)
-      if (existingWithContent && existingWithContent.content && existing.status === 'complete') {
+      // Return cached content if project is already complete
+      if (existing.status === 'complete') {
+        const existingWithContent = await getProjectWithContent(existing.id)
+        if (existingWithContent?.content) {
         const encoder = new TextEncoder()
         const stream = new ReadableStream({
           start(controller) {
             const completionData = JSON.stringify({
               type: 'complete',
-              projectId: project.id,
+                projectId: existing.id,
               content: existingWithContent.content,
               timestamp: new Date().toISOString()
             })
@@ -224,246 +139,146 @@ export async function GET(request: NextRequest) {
             'X-Accel-Buffering': 'no'
           }
         })
+        }
       }
 
-      await updateResearchProjectStatus(project.id, 'generating' as PaperStatus)
-      console.log('✅ Using existing project:', project.id)
+      project = { id: existing.id }
     } else {
-      // Create research project using service layer
-      project = await createProject(user.id, topic, generationConfig)
-      console.log('✅ Research project created successfully:', project.id)
-      if (isDev) console.log('✅ Research project created:', project.id)
+      // Create new project
+      const config = {
+        temperature,
+        max_tokens: maxTokens,
+        sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+        limit: 25,
+        library_papers_used: libraryPaperIds,
+        length: length as 'short' | 'medium' | 'long',
+        paperType: paperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation',
+        useLibraryOnly,
+        localRegion: undefined
+      }
+      project = await createProject(user.id, topic, config)
     }
 
-    // 🔧 FIX: Complete Discovery Pipeline BEFORE Streaming
-    // Run Discovery → PDF extraction → Embedding → RAG context selection first
-    console.log('🔍 Starting complete discovery pipeline before streaming...')
-    
-    try {
-      // Step 1: Complete discovery pipeline
-      const { collectPapers } = await import('@/lib/generation/discovery')
-      const { getRelevantChunks } = await import('@/lib/generation/chunks')
-      const { generateOutline } = await import('@/lib/prompts/generators')
-      
-      const paperType = generationConfig.paperType || 'researchArticle'
-      const discoveryOptions: import('@/lib/generation/types').EnhancedGenerationOptions = {
-        projectId: project.id,
-        userId: user.id,
-        topic,
-        paperType: paperType as import('@/lib/prompts/types').PaperTypeKey,
-        libraryPaperIds,
-        sourceIds: libraryPaperIds,
-        useLibraryOnly: generationConfig.useLibraryOnly || false,
-        config: generationConfig
-      }
-
-      console.log('📋 Step 1: Collecting papers...')
-      const allPapers = await collectPapers(discoveryOptions)
-      
-      if (allPapers.length === 0) {
-        throw new Error('No papers found for the given topic')
-      }
-      
-      console.log(`✅ Discovery complete: ${allPapers.length} papers collected`)
-
-      console.log('📄 Step 2: Content ingestion handled by discovery pipeline')
-      console.log('✅ Content ingestion complete')
-
-      console.log('🧠 Step 3: Building RAG context...')
-      const chunkLimit = Math.max(
-        6 * allPapers.length, // Reduced per-paper target to speed up, rely on better validation
-        60 // Lower baseline to avoid heavy searches on sparse content
-      )
-      
-      await getRelevantChunks(
-        topic,
-        allPapers.map(p => p.id),
-        chunkLimit,
-        allPapers
-      )
-      console.log('✅ RAG context selection complete')
-
-      console.log('📋 Step 4: Generating outline...')
-      const rawOutline = await generateOutline(
-        paperType,
-        topic
-      )
-      
-      // Build properly typed outline for buildSectionContexts
-      const typedOutline: import('@/lib/prompts/types').GeneratedOutline = {
-        paperType: paperType as import('@/lib/prompts/types').PaperTypeKey,
-        topic,
-        sections: rawOutline.sections as import('@/lib/prompts/types').OutlineSection[],
-        localRegion: generationConfig.localRegion
-      }
-      
-      // Assign all papers to sections
-      const allPaperIds = allPapers.map(p => p.id)
-      typedOutline.sections.forEach((section: { candidatePaperIds?: string[] }) => {
-        section.candidatePaperIds = allPaperIds
+    // Prevent duplicate concurrent runs for the same project (best-effort)
+    if (GEN_LOCKS.get(project.id)) {
+      if (isDev) console.warn('⚠️ Generation already in progress for project', project.id)
+      const encoder = new TextEncoder()
+      const stream = new ReadableStream({
+        start(controller) {
+          const msg = JSON.stringify({ type: 'error', error: 'GENERATION_IN_PROGRESS' })
+          controller.enqueue(encoder.encode(`data: ${msg}\n\n`))
+          controller.close()
+        }
       })
-      
-      console.log('📋 Step 5: Building section contexts...')
-      const rawSectionContexts = await buildSectionContexts(typedOutline, topic, allPapers)
-      
-      // Convert to unified generator format
-      const sectionContexts: import('@/lib/prompts/types').SectionContext[] = rawSectionContexts.map((ctx) => ({
-        sectionKey: ctx.sectionKey as import('@/lib/prompts/types').SectionKey,
-        title: ctx.title,
-        candidatePaperIds: ctx.candidatePaperIds,
-        expectedWords: ctx.expectedWords,
-        contextChunks: ctx.contextChunks.map(chunk => ({
-          paper_id: chunk.paper_id,
-          content: chunk.content,
-          score: (chunk as any).score
-        }))
-      }))
-      
-      console.log('✅ Complete discovery pipeline finished - starting stream with prepared context')
-      
-      // Now create the streaming response with prepared context
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Cache-Control',
+          'X-Accel-Buffering': 'no'
+        }
+      })
+    }
+    GEN_LOCKS.set(project.id, true)
+
+    // Build pipeline config
+    const pipelineConfig: PipelineConfig = {
+        topic,
+      paperType: paperType as any,
+      length: length as 'short' | 'medium' | 'long',
+      useLibraryOnly,
+      libraryPaperIds,
+      sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+      temperature,
+      maxTokens
+    }
+
+    // Create streaming response
       const encoder = new TextEncoder()
       const stream = new ReadableStream({
         async start(controller) {
           let isControllerClosed = false
+          // Heartbeat to keep proxies from buffering the stream
+          const heartbeat = setInterval(() => {
+            if (isControllerClosed) return
+            try {
+              controller.enqueue(encoder.encode(`: keep-alive\n\n`))
+            } catch {
+              isControllerClosed = true
+            }
+          }, 15000)
+
+          // Send immediate start event so client sees streaming instantly
+          try {
+            const startData = JSON.stringify({
+              type: 'progress',
+              stage: 'start',
+              progress: 0,
+              message: 'Starting generation...'
+            })
+            controller.enqueue(encoder.encode(`data: ${startData}\n\n`))
+          } catch {
+            // ignore
+          }
           
-          // Helper function to send progress events
-          const sendProgress = (stage: string, progress: number, message: string, content?: string) => {
+        // Progress callback for pipeline
+        const onProgress = (stage: string, progress: number, message: string, data?: Record<string, unknown>) => {
             if (isControllerClosed) return
             
             try {
-              const data = JSON.stringify({
+            const progressData = JSON.stringify({
                 type: 'progress',
                 stage,
                 progress,
                 message,
-                content,
+              data,
                 timestamp: new Date().toISOString()
               })
-              controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+            controller.enqueue(encoder.encode(`data: ${progressData}\n\n`))
             } catch (error) {
               console.warn('Failed to send progress:', error)
               isControllerClosed = true
             }
           }
 
-          // Helper function to send status events
-          const sendStatus = (status: string, data?: Record<string, unknown>) => {
-            if (isControllerClosed) return
-            
-            try {
-              const statusData = JSON.stringify({
-                type: 'status',
-                status,
-                projectId: project.id,
-                data,
-                timestamp: new Date().toISOString()
-              })
-              controller.enqueue(encoder.encode(`data: ${statusData}\n\n`))
-            } catch (error) {
-              console.warn('Failed to send status:', error)
-              isControllerClosed = true
-            }
-          }
+        try {
+          // Call the pipeline orchestrator
+          const result = await generatePaper(
+            pipelineConfig,
+            project.id,
+            user.id,
+            onProgress,
+            url.origin
+          )
 
-          // Helper function to send error events
-          const sendError = (error: string) => {
-            if (isControllerClosed) return
-            
-            try {
-              const errorData = JSON.stringify({
-                type: 'error',
-                error,
-                timestamp: new Date().toISOString()
-              })
-              controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
-            } catch (error) {
-              console.warn('Failed to send error:', error)
-            } finally {
-              isControllerClosed = true
-            }
-          }
-
-          try {
-            // Send discovery completion status (context already prepared)
-            sendStatus('discovery_complete', { 
-              projectId: project.id,
-              papersFound: allPapers.length,
-              sectionsPlanned: sectionContexts.length
-            })
-
-            // Stream content generation with prepared context
-            sendProgress('generation', 30, 'Starting unified content generation...')
-            
-            try {
-              const { generateMultipleSectionsUnified } = await import('@/lib/generation/unified-generator')
-              
-              console.log(`🚀 Starting unified generation for ${sectionContexts.length} sections`)
-              
-              let completedSections = 0
-              let fullContent = ''
-              const allCitations: Array<{ paperId: string; citationText: string }> = []
-              
-              // Generate all sections using unified template
-              const results = await generateMultipleSectionsUnified(
-                sectionContexts,
-                {
-                  temperature: generationConfig.temperature || 0.3,
-                  maxTokens: Math.floor((generationConfig.max_tokens || 8000) / sectionContexts.length)
-                },
-                (completed, total, currentSection) => {
-                  const progress = Math.round((completed / total) * 70) + 30 // 30-100%
-                  sendProgress('generation', progress, `Generating ${currentSection} (${completed}/${total})`)
-                }
-              )
-              
-              // Combine all section results
-              for (const result of results) {
-                fullContent += result.content + '\n\n'
-                allCitations.push(...result.citations)
-                completedSections++
-              }
-              
-              console.log(`✅ Generated ${completedSections} sections, ${fullContent.length} chars total`)
-              
-              // Save content to database
-              try {
-                const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
-                allCitations.forEach((citation, index) => {
-                  citationsMap[`citation-${index}`] = citation
-                })
-                
-                await updateProjectContent(project.id, fullContent.trim(), citationsMap)
-                console.log('✅ Content saved to database successfully')
-                
-                // Send final completion with full content
+          // Send completion
                 if (!isControllerClosed) {
                   const completionData = JSON.stringify({
                     type: 'complete',
                     projectId: project.id,
-                    content: fullContent.trim(),
-                    citations: citationsMap,
+              content: result.content,
+              citations: result.citations,
+              metrics: result.metrics,
                     timestamp: new Date().toISOString()
                   })
                   controller.enqueue(encoder.encode(`data: ${completionData}\n\n`))
                 }
-              } catch (saveError) {
-                console.error('❌ Failed to save content to database:', saveError)
+        } catch (error) {
+          console.error('Pipeline error:', error)
                 if (!isControllerClosed) {
-                  sendError(`Content generated but failed to save: ${saveError instanceof Error ? saveError.message : 'Unknown error'}`)
-                }
-              }
-              
-            } catch (generationError) {
-              console.error('Unified generation failed:', generationError)
-              sendError(`Generation failed: ${generationError instanceof Error ? generationError.message : 'Unknown error'}`)
-            }
-
-          } catch (error) {
-            console.error('Content generation error:', error)
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
-            sendError(`Content generation failed: ${errorMessage}`)
+            const errorData = JSON.stringify({
+              type: 'error',
+              error: error instanceof Error ? error.message : 'Generation failed',
+              timestamp: new Date().toISOString()
+            })
+            controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
+          }
           } finally {
+            GEN_LOCKS.delete(project.id)
+            clearInterval(heartbeat)
             if (!isControllerClosed) {
               controller.close()
             }
@@ -478,57 +293,15 @@ export async function GET(request: NextRequest) {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
           'Connection': 'keep-alive',
           'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Cache-Control',
-          'X-Accel-Buffering': 'no' // Disable Nginx buffering
+          'Access-Control-Allow-Headers': 'Cache-Control, Accept',
+          'Access-Control-Allow-Credentials': 'true',
+          'X-Accel-Buffering': 'no'
         }
       })
-      
-    } catch (discoveryError) {
-      console.error('Discovery pipeline failed:', discoveryError)
-      
-      // Create error stream if discovery fails
-      const encoder = new TextEncoder()
-      const errorStream = new ReadableStream({
-        start(controller) {
-          const errorData = JSON.stringify({
-            type: 'error',
-            error: `Discovery failed: ${discoveryError instanceof Error ? discoveryError.message : 'Unknown error'}`,
-            timestamp: new Date().toISOString()
-          })
-          controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
-          controller.close()
-        }
-      })
-      
-      return new Response(errorStream, {
-        status: 500,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Connection': 'keep-alive',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Cache-Control',
-          'X-Accel-Buffering': 'no' // Disable Nginx buffering
-        }
-      })
-    }
 
   } catch (error) {
-    console.error('Error in unified generate endpoint:', error)
-    return new Response(
-      JSON.stringify({ 
-        type: 'error',
-        error: error instanceof Error ? error.message : 'Internal server error',
-        timestamp: new Date().toISOString()
-      }), 
-      { 
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        }
-      }
-    )
+    console.error('Route error:', error)
+    return createErrorStream(error instanceof Error ? error.message : 'Internal server error')
   }
 }
 

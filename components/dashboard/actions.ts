@@ -1,9 +1,11 @@
-'use server'
+"use server"
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { getUserResearchProjects, createResearchProject, deleteResearchProject } from '@/lib/db/research'
+import { headers } from 'next/headers'
+import { getAbsoluteUrlFromHeaders } from '@/lib/config'
 
 // Projects Actions
 export async function getProjectsAction(limit = 20, offset = 0) {
@@ -58,8 +60,8 @@ export async function createProjectAction(
     const project = await createResearchProject(user.id, topic.trim(), generationConfig)
     
     revalidatePath('/dashboard')
-    // Redirect to editor - this will replace the client-side redirect
-    redirect(`/projects/${project.id}`)
+    // Redirect to editor with success hint to show toast
+    redirect(`/projects/${project.id}?created=1`)
   } catch (error) {
     // Allow Next.js redirect control flow errors to propagate without logging
     if (
@@ -119,7 +121,9 @@ export async function addToLibraryAction(formData: FormData) {
   const paperId = formData.get('paperId') as string
   
   try {
-    const response = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL}/api/library`, {
+    const h = await headers()
+    const absoluteUrl = getAbsoluteUrlFromHeaders(h, '/api/library')
+    const response = await fetch(absoluteUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paperId })

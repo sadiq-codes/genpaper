@@ -7,13 +7,6 @@
 
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
 
-export interface ChunkOptions {
-  maxLength?: number
-  overlap?: number
-  preserveParagraphs?: boolean
-  minChunkSize?: number
-}
-
 export interface TextChunk {
   id: string
   content: string
@@ -22,94 +15,8 @@ export interface TextChunk {
     wordCount: number
     charCount: number
     isOverlap?: boolean
+    tokenCount?: number
   }
-}
-
-/**
- * Split text into chunks with deterministic IDs
- * Consolidates all the various splitIntoChunks implementations
- */
-export function splitIntoChunks(
-  text: string,
-  paperId: string,
-  options: ChunkOptions = {}
-): TextChunk[] {
-  const {
-    maxLength = 1000,
-    overlap = 100,
-    preserveParagraphs = true,
-    minChunkSize = 100
-  } = options
-
-  if (!text || text.trim().length < minChunkSize) {
-    return []
-  }
-
-  const chunks: TextChunk[] = []
-  let position = 0
-
-  // Split by paragraphs first if preserveParagraphs is true
-  const segments = preserveParagraphs 
-    ? text.split(/\n\s*\n/).filter(seg => seg.trim().length > 0)
-    : [text]
-
-  for (const segment of segments) {
-    if (segment.length <= maxLength) {
-      // Segment fits in one chunk
-      const chunkId = createDeterministicChunkId(paperId, segment, position)
-
-      chunks.push({
-        id: chunkId,
-        content: segment.trim(),
-        position,
-        metadata: {
-          wordCount: segment.trim().split(/\s+/).length,
-          charCount: segment.length
-        }
-      })
-      position += segment.length
-    } else {
-      // Split segment into multiple chunks with overlap
-      let segmentStart = 0
-      
-      while (segmentStart < segment.length) {
-        const chunkEnd = Math.min(segmentStart + maxLength, segment.length)
-        let chunkContent = segment.slice(segmentStart, chunkEnd)
-        
-        // Try to break at word boundaries
-        if (chunkEnd < segment.length) {
-          const lastSpaceIndex = chunkContent.lastIndexOf(' ')
-          if (lastSpaceIndex > maxLength * 0.8) {
-            chunkContent = chunkContent.slice(0, lastSpaceIndex)
-          }
-        }
-
-        if (chunkContent.trim().length >= minChunkSize) {
-          const chunkId = createDeterministicChunkId(paperId, chunkContent, position + segmentStart)
-
-          chunks.push({
-            id: chunkId,
-            content: chunkContent.trim(),
-            position: position + segmentStart,
-            metadata: {
-              wordCount: chunkContent.trim().split(/\s+/).length,
-              charCount: chunkContent.length,
-              isOverlap: segmentStart > 0
-            }
-          })
-        }
-
-        // Move to next chunk with overlap
-        segmentStart = chunkEnd - overlap
-        if (segmentStart >= segment.length - minChunkSize) {
-          break // Avoid tiny trailing chunks
-        }
-      }
-      position += segment.length
-    }
-  }
-
-  return chunks
 }
 
 /**
@@ -144,6 +51,234 @@ export function estimateTokenCount(text: string): number {
   console.warn('estimateTokenCount is deprecated. Use getTokenCount() for accurate token counting.')
   // Rough approximation: 1 token ≈ 4 characters for English text
   return Math.ceil(text.length / 4)
+}
+
+/**
+ * Token-aware chunking with smart boundaries
+ * Improves retrieval quality by respecting token boundaries and preserving semantic continuity
+ */
+export interface TokenChunkOptions {
+  maxTokens?: number      // Target token count per chunk (default: 500)
+  overlapTokens?: number  // Token overlap between chunks (default: 80)
+  preserveParagraphs?: boolean  // Try to keep paragraphs intact (default: true)
+  minChunkTokens?: number // Minimum tokens per chunk (default: 50)
+}
+
+export async function chunkByTokens(
+  text: string,
+  paperId: string,
+  options: TokenChunkOptions = {}
+): Promise<TextChunk[]> {
+  const {
+    maxTokens = 500,
+    overlapTokens = 80,
+    preserveParagraphs = true,
+    minChunkTokens = 50
+  } = options
+
+  if (!text || text.trim().length < 50) {
+    return []
+  }
+
+  const chunks: TextChunk[] = []
+  let position = 0
+
+  // Split by paragraphs first if preserveParagraphs is true
+  const segments = preserveParagraphs 
+    ? text.split(/\n\s*\n/).filter(seg => seg.trim().length > 0)
+    : [text]
+
+  let overlapContent = ''
+
+  for (const segment of segments) {
+    // Check if segment fits in one chunk
+    const segmentTokens = await getTokenCount(segment)
+    
+    if (segmentTokens <= maxTokens) {
+      // Segment fits in one chunk
+      const chunkContent = overlapContent + (overlapContent ? ' ' : '') + segment
+      const totalTokens = await getTokenCount(chunkContent)
+      
+      const chunkId = createDeterministicChunkId(paperId, chunkContent.trim(), position)
+      chunks.push({
+        id: chunkId,
+        content: chunkContent.trim(),
+        position,
+        metadata: {
+          wordCount: chunkContent.trim().split(/\s+/).length,
+          charCount: chunkContent.length,
+          tokenCount: totalTokens,
+          isOverlap: !!overlapContent
+        }
+      })
+      position += segment.length
+      overlapContent = await createTokenOverlap(chunkContent, overlapTokens)
+    } else {
+      // Split segment into sentences and pack by token budget
+      const sentences = splitIntoSentences(segment)
+      
+      let currentChunk = overlapContent
+      let currentTokens = overlapContent ? await getTokenCount(overlapContent) : 0
+      
+      for (const sentence of sentences) {
+        const sentenceTokens = await getTokenCount(sentence)
+        
+        // Check if adding this sentence would exceed token limit
+        if (currentTokens + sentenceTokens > maxTokens && currentChunk.trim()) {
+          // Save current chunk if it meets minimum size
+          if (currentTokens >= minChunkTokens) {
+            const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
+            chunks.push({
+              id: chunkId,
+              content: currentChunk.trim(),
+              position,
+              metadata: {
+                wordCount: currentChunk.trim().split(/\s+/).length,
+                charCount: currentChunk.length,
+                tokenCount: currentTokens,
+                isOverlap: !!overlapContent
+              }
+            })
+            position += currentChunk.length
+            
+            // Prepare overlap for next chunk
+            overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
+            currentChunk = overlapContent + (overlapContent ? ' ' : '') + sentence
+            currentTokens = await getTokenCount(currentChunk)
+          } else {
+            // Current chunk too small, just add the sentence
+            currentChunk += (currentChunk ? ' ' : '') + sentence
+            currentTokens += sentenceTokens
+          }
+        } else {
+          // Add sentence to current chunk
+          currentChunk += (currentChunk ? ' ' : '') + sentence
+          currentTokens += sentenceTokens
+        }
+      }
+      
+      // Add final chunk if it has content
+      if (currentChunk.trim() && currentTokens >= minChunkTokens) {
+        const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
+        chunks.push({
+          id: chunkId,
+          content: currentChunk.trim(),
+          position,
+          metadata: {
+            wordCount: currentChunk.trim().split(/\s+/).length,
+            charCount: currentChunk.length,
+            tokenCount: currentTokens,
+            isOverlap: !!overlapContent
+          }
+        })
+        
+        // Prepare overlap for next segment
+        overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
+      }
+    }
+  }
+
+  return chunks
+}
+
+/**
+ * Split text into sentences with smart boundary detection
+ * Avoids cutting numbered lists, equations, and citations
+ */
+function splitIntoSentences(text: string): string[] {
+  const sentences: string[] = []
+  let current = ''
+  let i = 0
+  
+  while (i < text.length) {
+    const char = text[i]
+    current += char
+    
+    // Check for sentence ending punctuation
+    if (char === '.' || char === '!' || char === '?') {
+      const nextChar = text[i + 1]
+      const prevContext = text.slice(Math.max(0, i - 10), i)
+      
+      // Don't split if:
+      // - Next char is not whitespace (e.g., "2.5")
+      // - Inside parentheses with numbers (e.g., "(2023)")
+      // - Common abbreviations (e.g., "et al.")
+      // - Equations (e.g., "Equation 2.1")
+      if (nextChar && /\s/.test(nextChar) && !isInsideSpecialContext(prevContext, current)) {
+        // Look ahead for capital letter to confirm sentence boundary
+        const remainingText = text.slice(i + 1).trim()
+        if (remainingText && /^[A-Z]/.test(remainingText)) {
+          sentences.push(current.trim())
+          current = ''
+        }
+      }
+    }
+    
+    i++
+  }
+  
+  // Add final sentence if exists
+  if (current.trim()) {
+    sentences.push(current.trim())
+  }
+  
+  return sentences.filter(s => s.length > 10) // Filter out very short fragments
+}
+
+/**
+ * Check if we're inside a special context that shouldn't be split
+ */
+function isInsideSpecialContext(prevContext: string, _current: string): boolean {
+  const abbreviations = ['et al', 'e.g', 'i.e', 'cf', 'vs', 'Fig', 'Eq', 'etc']
+  const contextLower = prevContext.toLowerCase()
+  
+  // Check for abbreviations
+  for (const abbrev of abbreviations) {
+    if (contextLower.endsWith(abbrev)) {
+      return true
+    }
+  }
+  
+  // Check for numbered references in parentheses
+  if (/\(\d+[\d,\s-]*$/.test(prevContext)) {
+    return true
+  }
+  
+  // Check for equation references
+  if (/equation\s+\d+\.?\d*$/i.test(prevContext)) {
+    return true
+  }
+  
+  return false
+}
+
+/**
+ * Create token-based overlap from the end of a chunk
+ */
+async function createTokenOverlap(text: string, targetOverlapTokens: number): Promise<string> {
+  if (targetOverlapTokens <= 0 || !text.trim()) {
+    return ''
+  }
+  
+  // Split into sentences and take from the end
+  const sentences = splitIntoSentences(text)
+  let overlap = ''
+  let tokens = 0
+  
+  // Build overlap from last sentences working backwards
+  for (let i = sentences.length - 1; i >= 0 && tokens < targetOverlapTokens; i--) {
+    const sentence = sentences[i]
+    const sentenceTokens = await getTokenCount(sentence)
+    
+    if (tokens + sentenceTokens <= targetOverlapTokens) {
+      overlap = sentence + (overlap ? ' ' + overlap : '')
+      tokens += sentenceTokens
+    } else {
+      break
+    }
+  }
+  
+  return overlap
 }
 
 /**

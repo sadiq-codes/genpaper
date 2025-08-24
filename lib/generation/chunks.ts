@@ -10,12 +10,8 @@ export {
 
 export {
   getRelevantChunks,
-  assertChunksFound
+  assertChunksFound,
+  ContextRetrievalService,
+  type RetrievalParams,
+  type RetrievalResult
 } from './rag-retrieval'
-
-// Simplified chunks module - now only re-exports centralized functions
-// Citation injection logic removed in favor of unified addCitation tool approach
-
-// NOTE: addEvidenceBasedCitations function removed
-// Citation handling is now unified through the addCitation tool during generation
-// This eliminates redundant citation injection logic and simplifies the pipeline 

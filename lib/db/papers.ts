@@ -2,7 +2,7 @@ import { getSB } from '@/lib/supabase/server'
 import type { PaperWithAuthors } from '@/types/simplified'
 import { generateEmbeddings } from '@/lib/utils/embedding'
 import { PaperDTO } from '@/lib/schemas/paper'
-import { debug } from '@/lib/utils/logger' 
+ 
 
 // Centralized embedding configuration to ensure consistency
 
@@ -39,6 +39,11 @@ function transformDatabasePaper(dbPaper: DatabasePaper): PaperWithAuthors {
     authors: authors.map((name: string) => ({ id: '', name })), // Create minimal Author objects
     author_names: authors
   }
+}
+
+// UUID validator to guard DB queries against invalid inputs
+function isValidUuid(value: unknown): value is string {
+  return typeof value === 'string' && /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(value)
 }
 
 export async function getPaper(paperId: string): Promise<PaperWithAuthors | null> {
@@ -114,7 +119,7 @@ interface SearchResult {
 }
 
 interface HybridSearchResult {
-  paper_id: string
+  id: string  // Database RPC returns 'id', not 'paper_id'
   semantic_score: number
   keyword_score: number
   combined_score: number
@@ -240,22 +245,7 @@ export async function hybridSearchPapers(
   console.log(`🧪 Query embedding sample (first 10 dims): [${queryEmbedding.slice(0, 10).map(x => x.toFixed(3)).join(', ')}]`)
   console.log(`🧪 Embedding magnitude: ${Math.sqrt(queryEmbedding.reduce((sum, x) => sum + x*x, 0)).toFixed(3)}`)
   
-  // Check if RPC function exists
-  const { error: funcError } = await supabase
-    .rpc('hybrid_search_papers', {
-      query_text: query,
-      query_embedding: queryEmbedding,
-      match_count: limit * 2,
-      min_year: minYear,
-      semantic_weight: semanticWeight
-    })
-    .limit(0) // Don't return results, just test if function exists
-  
-  if (funcError) {
-    console.error(`❌ RPC function test failed:`, funcError)
-    console.error(`💡 This suggests the hybrid_search_papers function doesn't exist or has wrong signature`)
-    throw new Error(`Vector search function not available: ${funcError.message}`)
-  }
+  // Call the RPC directly and handle errors below
   
   const { data: searchResults, error } = await supabase
     .rpc('hybrid_search_papers', {
@@ -317,7 +307,7 @@ export async function hybridSearchPapers(
     console.log(`   🎯 Combined: max=${maxCombined.toFixed(4)}, min=${minCombined.toFixed(4)}, avg=${avgCombined.toFixed(4)}`)
     
     searchResults.slice(0, 5).forEach((result: HybridSearchResult, idx: number) => {
-      console.log(`   ${idx + 1}. Paper ID: ${result.paper_id}`)
+      console.log(`   ${idx + 1}. Paper ID: ${result.id}`)
       console.log(`      Combined Score: ${result.combined_score.toFixed(4)}`)
       console.log(`      Semantic Score: ${result.semantic_score.toFixed(4)}`)
       console.log(`      Keyword Score: ${result.keyword_score.toFixed(4)}`)
@@ -337,7 +327,7 @@ export async function hybridSearchPapers(
       console.error(`   4. RPC function is using keyword-only search`)
       
       // Check if returned papers actually have embeddings
-      const samplePaperIds = searchResults.slice(0, 3).map((r: HybridSearchResult) => r.paper_id)
+      const samplePaperIds = searchResults.slice(0, 3).map((r: HybridSearchResult) => r.id)
       const { data: embeddingCheck, error: embeddingError } = await supabase
         .from('papers')
         .select('id, title, embedding')
@@ -363,7 +353,7 @@ export async function hybridSearchPapers(
   // 3. Filter out excluded papers
   const filteredResults = (searchResults || []).filter(
     (result: HybridSearchResult) => 
-      !excludePaperIds.includes(result.paper_id) &&
+      !excludePaperIds.includes(result.id) &&
       result.combined_score >= 0.0001 // Reduced from 0.0001 to be more permissive
   )
 
@@ -380,7 +370,7 @@ export async function hybridSearchPapers(
     // Try again with even more permissive filtering if we got 0 results
     const veryPermissiveResults = (searchResults || []).filter(
       (result: HybridSearchResult) => 
-        !excludePaperIds.includes(result.paper_id) &&
+        !excludePaperIds.includes(result.id) &&
         (result.combined_score > 0 || result.semantic_score > 0 || result.keyword_score > 0)
     )
     
@@ -394,7 +384,13 @@ export async function hybridSearchPapers(
     // Use the permissive results instead
     const topPermissiveResults = veryPermissiveResults.slice(0, limit)
     console.log(`📄 Using permissive results - fetching full details for ${topPermissiveResults.length} papers...`)
-    
+
+    const permissiveIds = topPermissiveResults.map((r: HybridSearchResult) => r.id).filter(isValidUuid)
+    if (permissiveIds.length === 0) {
+      console.warn('⚠️ No valid UUIDs in permissive results; returning empty list')
+      return []
+    }
+
     let papersQuery = supabase
       .from('papers')
       .select(`
@@ -404,7 +400,7 @@ export async function hybridSearchPapers(
           author:authors(*)
         )
       `)
-      .in('id', topPermissiveResults.map((r: HybridSearchResult) => r.paper_id))
+      .in('id', permissiveIds)
 
     // Apply source filter if provided
     if (sources && sources.length > 0) {
@@ -426,9 +422,9 @@ export async function hybridSearchPapers(
     
     const finalResults = topPermissiveResults
       .map((result: HybridSearchResult) => {
-        const paper = paperMap.get(result.paper_id)
+        const paper = paperMap.get(result.id)
         if (!paper) {
-          console.warn(`⚠️ Paper ${result.paper_id} not found in detailed results`)
+          console.warn(`⚠️ Paper ${result.id} not found in detailed results`)
           return null
         }
         
@@ -451,13 +447,20 @@ export async function hybridSearchPapers(
   const topResults = filteredResults.slice(0, limit)
   console.log(`📄 Fetching full details for top ${topResults.length} papers...`)
   
+  // Guard invalid IDs before querying
+  const topIds = topResults.map((r: HybridSearchResult) => r.id).filter(isValidUuid)
+  if (topIds.length === 0) {
+    console.warn('⚠️ No valid UUIDs in top results; skipping DB fetch and returning empty list')
+    return []
+  }
+
   let papersQuery = supabase
     .from('papers')
     .select(`
       *,
       authors
     `)
-    .in('id', topResults.map((r: HybridSearchResult) => r.paper_id))
+    .in('id', topIds)
 
   // Apply source filter if provided
   if (sources && sources.length > 0) {
@@ -466,7 +469,7 @@ export async function hybridSearchPapers(
     const sourceFilterTest = await supabase
       .from('papers')
       .select('id', { count: 'exact' })
-      .in('id', topResults.map((r: HybridSearchResult) => r.paper_id))
+      .in('id', topIds)
       .in('source', sources)
       .limit(1)
     
@@ -500,7 +503,7 @@ export async function hybridSearchPapers(
           author:authors(*)
         )
       `)
-      .in('id', topResults.map((r: HybridSearchResult) => r.paper_id))
+      .in('id', topIds)
     
     if (unfilteredError) {
       console.error(`❌ Failed to fetch unfiltered paper details:`, unfilteredError)
@@ -514,9 +517,9 @@ export async function hybridSearchPapers(
     
     const finalResults = topResults
       .map((result: HybridSearchResult) => {
-        const paper = paperMap.get(result.paper_id)
+        const paper = paperMap.get(result.id)
         if (!paper) {
-          console.warn(`⚠️ Paper ${result.paper_id} not found in detailed results`)
+          console.warn(`⚠️ Paper ${result.id} not found in detailed results`)
           return null
         }
         
@@ -540,9 +543,9 @@ export async function hybridSearchPapers(
   
   const finalResults = topResults
     .map((result: HybridSearchResult) => {
-      const paper = paperMap.get(result.paper_id)
+      const paper = paperMap.get(result.id)
       if (!paper) {
-        console.warn(`⚠️ Paper ${result.paper_id} not found in detailed results`)
+        console.warn(`⚠️ Paper ${result.id} not found in detailed results`)
         return null
       }
       
@@ -926,4 +929,3 @@ export async function updatePaperCitationFields(
 
   console.log('Updated paper citation fields', { paperId, fields: Object.keys(citationData) })
 }
-
