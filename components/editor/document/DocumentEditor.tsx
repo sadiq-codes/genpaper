@@ -20,7 +20,10 @@ import { PrimaryToolbar } from './PrimaryToolbar'
 import { FloatingToolbar } from './FloatingToolbar'
 import { Citation } from '../extensions/Citation'
 import { Mathematics } from '../extensions/Mathematics'
+import { GhostText } from '../extensions/GhostText'
+import { useSmartCompletion } from '../hooks/useSmartCompletion'
 import type { Editor } from '@tiptap/react'
+import type { ProjectPaper, ExtractedClaim } from '../types'
 import {
   Dialog,
   DialogContent,
@@ -42,6 +45,11 @@ interface DocumentEditorProps {
   onInsertCitation: () => void
   onAiEdit: (text: string) => void
   onChat: (text: string) => void
+  // Context for smart completion
+  projectId?: string
+  projectTopic?: string
+  papers?: ProjectPaper[]
+  claims?: ExtractedClaim[]
 }
 
 const DEFAULT_CONTENT = `
@@ -58,6 +66,10 @@ export function DocumentEditor({
   onInsertCitation,
   onAiEdit,
   onChat,
+  projectId = '',
+  projectTopic = '',
+  papers = [],
+  claims = [],
 }: DocumentEditorProps) {
   const [mathDialogOpen, setMathDialogOpen] = useState(false)
   const [mathLatex, setMathLatex] = useState('')
@@ -114,6 +126,7 @@ export function DocumentEditor({
       Typography,
       Citation,
       Mathematics,
+      GhostText, // Add ghost text extension
     ],
     content: initialContent,
     editorProps: {
@@ -127,6 +140,16 @@ export function DocumentEditor({
     onCreate: ({ editor }) => {
       onEditorReady?.(editor)
     },
+  })
+
+  // Smart completion hook - ghost text appears seamlessly
+  useSmartCompletion({
+    editor,
+    enabled: autocompleteEnabled,
+    papers,
+    claims,
+    projectId,
+    projectTopic
   })
 
   const handleInsertMath = useCallback(() => {
@@ -171,7 +194,7 @@ export function DocumentEditor({
         onInsertMath={handleInsertMath}
       />
       
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto relative">
         <FloatingToolbar
           editor={editor}
           onAiEdit={onAiEdit}

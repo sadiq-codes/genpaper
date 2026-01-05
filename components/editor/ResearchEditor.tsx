@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Editor } from '@tiptap/react'
 import { EditorTopNav } from './EditorTopNav'
 import { EditorSidebar } from './sidebar/EditorSidebar'
@@ -112,24 +112,57 @@ export function ResearchEditor({
     }
   }, [projectId, papers.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-save effect
+  // Track if content has unsaved changes
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const contentRef = useRef(content)
+  
+  // Keep ref in sync
+  useEffect(() => {
+    contentRef.current = content
+  }, [content])
+
+  // Save function
+  const saveContent = useCallback(async () => {
+    if (!projectId || !contentRef.current) return
+    try {
+      await fetch('/api/editor/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, content: contentRef.current }),
+      })
+      setHasUnsavedChanges(false)
+      onSave?.(contentRef.current)
+    } catch (error) {
+      console.error('Auto-save failed:', error)
+    }
+  }, [projectId, onSave])
+
+  // Auto-save effect with debounce
   useEffect(() => {
     if (!projectId || !content) return
     
-    const timer = setTimeout(async () => {
-      try {
-        await fetch('/api/editor/save', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId, content }),
-        })
-        onSave?.(content)
-      } catch (error) {
-        console.error('Auto-save failed:', error)
-      }
+    setHasUnsavedChanges(true)
+    const timer = setTimeout(() => {
+      saveContent()
     }, 2000)
     return () => clearTimeout(timer)
-  }, [content, projectId, onSave])
+  }, [content, projectId, saveContent])
+
+  // Save on page unload
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        // Trigger save
+        saveContent()
+        // Show browser warning
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasUnsavedChanges, saveContent])
 
   // Run analysis
   const handleRunAnalysis = useCallback(async () => {
@@ -550,6 +583,11 @@ export function ResearchEditor({
               onInsertCitation={() => setActiveTab('research')}
               onAiEdit={handleAiEdit}
               onChat={handleChatFromToolbar}
+              // Sentence generation context
+              projectId={projectId}
+              projectTopic={projectTitle}
+              papers={papers}
+              claims={analysisState.claims}
             />
           </div>
         </div>

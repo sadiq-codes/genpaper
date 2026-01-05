@@ -1,6 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { SidebarTrigger } from '@/components/ui/sidebar'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +23,7 @@ import {
   FileText,
   FileCode,
   File,
+  Sparkles,
 } from 'lucide-react'
 
 interface EditorTopNavProps {
@@ -39,19 +42,42 @@ export function EditorTopNav({
   projectTitle = 'Untitled Document',
 }: EditorTopNavProps) {
   return (
-    <header className="h-14 border-b-2 border-foreground/10 flex items-center justify-between px-4">
-      {/* Left: Logo */}
-      <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-md border-2 border-foreground/20 flex items-center justify-center bg-foreground/5">
-          <FileText className="w-4 h-4 text-foreground/60" />
+    <header className="h-14 border-b border-border/50 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      {/* Left: Sidebar Trigger + Logo + Title */}
+      <div className="flex items-center gap-2">
+        {/* Sidebar Trigger - Opens app navigation */}
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarTrigger className="h-8 w-8" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Navigation (B)</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        <div className="h-6 w-px bg-border mx-1" />
+
+        {/* Logo */}
+        <Link href="/dashboard" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
+            <Sparkles className="w-4 h-4 text-primary" />
+          </div>
+          <span className="font-semibold text-sm hidden sm:inline">GenPaper</span>
+        </Link>
+
+        <div className="h-6 w-px bg-border mx-1 hidden sm:block" />
+
+        {/* Project Title */}
+        <div className="flex items-center gap-2">
+          <FileText className="w-4 h-4 text-muted-foreground hidden sm:block" />
+          <span className="font-medium text-sm text-foreground/80 truncate max-w-[150px] sm:max-w-[250px]">
+            {projectTitle}
+          </span>
         </div>
-        <span className="font-medium text-sm text-foreground/80 truncate max-w-[200px]">
-          {projectTitle}
-        </span>
       </div>
 
       {/* Right: Actions */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
         <TooltipProvider delayDuration={300}>
           {/* Export Dropdown */}
           <DropdownMenu>
@@ -102,7 +128,7 @@ export function EditorTopNav({
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="h-8 w-8 rounded-full"
+                className="h-8 w-8"
                 onClick={onHistory}
               >
                 <Clock className="h-4 w-4" />

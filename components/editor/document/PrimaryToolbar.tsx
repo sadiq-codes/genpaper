@@ -84,7 +84,6 @@ export function PrimaryToolbar({
           >
             Autocomplete
           </label>
-          <ChevronDown className="h-3 w-3 text-muted-foreground" />
         </div>
 
         <Separator orientation="vertical" className="h-6" />

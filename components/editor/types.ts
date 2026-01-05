@@ -128,3 +128,31 @@ export interface ExportFormat {
   label: string
   icon: string
 }
+
+// Sentence generation types
+export interface SuggestionCitation {
+  paperId: string
+  marker: string // "(Smith, 2023)"
+  startOffset: number
+  endOffset: number
+}
+
+export interface GeneratedSuggestion {
+  text: string
+  citations: SuggestionCitation[]
+  contextHint: string
+}
+
+export interface GenerationContext {
+  precedingText: string
+  currentParagraph: string
+  currentSection: string
+  documentOutline: string[]
+  cursorOffset: number
+}
+
+export interface CursorPosition {
+  top: number
+  left: number
+  bottom: number
+}
