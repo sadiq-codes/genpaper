@@ -1,8 +1,22 @@
+/**
+ * Server-side Supabase Client
+ * 
+ * Usage Guidelines:
+ * - Use `getSB()` or `createClient()` in server components, API routes, and server actions
+ * - Both functions return the same client - use whichever reads better in context
+ * - The client automatically handles cookie-based auth when available
+ * - Falls back to anonymous access when called outside request context (e.g., background tasks)
+ * 
+ * Example:
+ *   const supabase = await getSB()
+ *   const { data } = await supabase.from('papers').select()
+ */
+
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-export async function createClient() {
+export async function createClient(): Promise<SupabaseClient> {
   // `cookies()` is only available inside a Route Handler / Server Component execution context.
   // When we call Supabase helpers from background async tasks (e.g., inside a ReadableStream),
   // it throws an error.  In such cases we still want a working Supabase client, just without

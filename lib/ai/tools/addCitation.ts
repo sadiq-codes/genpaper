@@ -2,7 +2,7 @@ import z from 'zod'
 import { tool } from 'ai'
 import { AsyncLocalStorage } from 'async_hooks'
 import { CSLItem } from '@/lib/utils/csl'
-import { formatInlineCitation } from '@/lib/citations/immediate-bibliography'
+import { CitationService, formatInlineCitation } from '@/lib/citations/immediate-bibliography'
 
 
 // Simplified citation schema - only require paper_id and reason
@@ -64,48 +64,31 @@ export async function executeAddCitation(payload: CitationPayload) {
       }
     }
 
-    // Always call the API to ensure single write path (no direct DB access)
+    // Call service directly to avoid API validation/auth issues in tool runtime
     let citationNumber: number
     let cslJson: CSLItem
     let isNew: boolean
 
-      try {
-        // Use absolute URL on the server to avoid Invalid URL errors
-        const ctxBase = citationContext.baseUrl
-        const envBase = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || ''
-        const baseUrl = ctxBase || envBase
-        const absoluteUrl = baseUrl
-          ? `${baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`}/api/citations`
-          : '/api/citations'
-        const res = await fetch(absoluteUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          key: `cite-${payload.paper_id}`, // Generate consistent key
-          paperId: payload.paper_id,
-          citation_text: payload.reason,
-          context: payload.quote || null
-        }),
-        // Server runtime should handle authentication via cookies
+    try {
+      const result = await CitationService.add({
+        projectId,
+        sourceRef: { paperId: payload.paper_id },
+        reason: payload.reason,
+        quote: payload.quote || null
       })
+
+      // citationNumber is deprecated - use 1 as default for formatting
+      // The actual ordering is handled by first_seen_order in the database
+      citationNumber = result.citationNumber ?? 1
+      cslJson = result.cslJson as unknown as CSLItem
+      isNew = result.isNew
       
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}))
-        throw new Error(`API error ${res.status}: ${errorData.error || 'Unknown error'}`)
-      }
-      
-      const data = await res.json()
-      citationNumber = data?.citation?.citation_number || 0
-      cslJson = data?.citation?.csl_json
-      isNew = data?.citation?.is_new ?? true
-      
-      if (!citationNumber || !cslJson) {
-        throw new Error('API response missing required fields (citation data)')
+      if (!cslJson) {
+        throw new Error('Citation service response missing CSL JSON')
       }
       
     } catch (error) {
-      console.error('AI tool citation API call failed:', error)
+      console.error('AI tool citation service call failed:', error)
       throw new Error(`Citation failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
     

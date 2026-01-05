@@ -44,7 +44,6 @@ interface PaperData {
   publication_date: string | null
   venue: string | null
   doi: string | null
-  url: string | null
   pdf_url: string | null
   metadata: Record<string, unknown> | null
   source: string | null
@@ -104,33 +103,56 @@ export async function GET(request: NextRequest) {
     const params = validationResult.data
 
     // Route 1: Batch paper retrieval by IDs
+    // Optimized: Uses batch queries instead of N+1 pattern
     if (params.ids && params.ids.length > 0) {
-      const papers = await Promise.all(
-        params.ids.map(async (id) => {
-          const paper = await getPaper(id)
-          if (!paper) return null
-          
-          const inLibrary = await isInLibrary(user.id, id)
-          
-          // Get usage statistics
-          const { data: citationStats } = await supabase
-            .from('project_citations')
-            .select('id')
-            .eq('paper_id', id)
-          
-          return {
-            ...paper,
-            inLibrary,
-            usageStats: {
-              citedInProjects: citationStats?.length || 0
-            }
-          }
+      // Batch query 1: Get all papers
+      const { data: papersData, error: papersError } = await supabase
+        .from('papers')
+        .select('*')
+        .in('id', params.ids)
+      
+      if (papersError) throw papersError
+      if (!papersData || papersData.length === 0) {
+        return NextResponse.json({
+          papers: [],
+          count: 0,
+          source: 'batch_retrieval'
         })
-      )
+      }
+      
+      // Batch query 2: Check library status for all papers at once
+      const { data: libraryData } = await supabase
+        .from('library_papers')
+        .select('paper_id')
+        .eq('user_id', user.id)
+        .in('paper_id', params.ids)
+      
+      const libraryPaperIds = new Set(libraryData?.map(l => l.paper_id) || [])
+      
+      // Batch query 3: Get citation counts for all papers at once
+      const { data: citationData } = await supabase
+        .from('project_citations')
+        .select('paper_id')
+        .in('paper_id', params.ids)
+      
+      // Count citations per paper
+      const citationCounts = new Map<string, number>()
+      for (const c of citationData || []) {
+        citationCounts.set(c.paper_id, (citationCounts.get(c.paper_id) || 0) + 1)
+      }
+      
+      // Combine results
+      const papers = papersData.map(paper => ({
+        ...paper,
+        inLibrary: libraryPaperIds.has(paper.id),
+        usageStats: {
+          citedInProjects: citationCounts.get(paper.id) || 0
+        }
+      }))
       
       return NextResponse.json({
-        papers: papers.filter(Boolean),
-        count: papers.filter(Boolean).length,
+        papers,
+        count: papers.length,
         source: 'batch_retrieval'
       })
     }
@@ -151,7 +173,6 @@ export async function GET(request: NextRequest) {
             publication_date,
             venue,
             doi,
-            url,
             pdf_url,
             metadata,
             source,

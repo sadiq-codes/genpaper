@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { MoreHorizontal, FileText, Clock, CheckCircle, AlertCircle, Plus } from 'lucide-react'
+import { MoreHorizontal, FileText, Clock, CheckCircle, AlertCircle, Plus, PenLine } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -83,7 +83,7 @@ export function ProjectsList({ projects }: ProjectsListProps) {
         <Card 
           key={project.id} 
           className="cursor-pointer hover:shadow-md transition-shadow"
-          onClick={() => router.push(`/projects/${project.id}`)}
+          onClick={() => router.push(`/editor/${project.id}`)}
         >
           <CardHeader className="pb-3">
             <div className="flex items-start justify-between">
@@ -120,7 +120,14 @@ export function ProjectsList({ projects }: ProjectsListProps) {
                     e.stopPropagation()
                     router.push(`/projects/${project.id}`)
                   }}>
-                    Open
+                    View Analysis
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={(e) => {
+                    e.stopPropagation()
+                    router.push(`/editor/${project.id}`)
+                  }}>
+                    <PenLine className="h-4 w-4 mr-2" />
+                    Open Editor
                   </DropdownMenuItem>
                   <DropdownMenuItem 
                     onClick={(e) => {

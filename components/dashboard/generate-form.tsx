@@ -5,30 +5,19 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Sparkles, AlertCircle } from 'lucide-react'
+import { Search, AlertCircle } from 'lucide-react'
 import { createProjectAction } from './actions'
 
-const PAPER_TYPES = [
-  { id: 'researchArticle', title: 'Research Article', popular: true },
-  { id: 'literatureReview', title: 'Literature Review', popular: true },
-  { id: 'capstoneProject', title: 'Capstone Project' },
-  { id: 'mastersThesis', title: "Master's Thesis" },
-  { id: 'phdDissertation', title: 'PhD Dissertation' }
-]
-
 const QUICK_PROMPTS = [
-  'The impact of artificial intelligence on healthcare',
-  'Climate change effects on biodiversity',
-  'Social media influence on mental health',
-  'Renewable energy adoption challenges',
-  'Cybersecurity in remote work environments'
+  'Machine learning applications in healthcare diagnostics',
+  'Climate change impact on marine ecosystems',
+  'Social media effects on adolescent mental health',
+  'Renewable energy storage technologies',
+  'Remote work productivity and employee wellbeing'
 ]
 
 export function GenerateForm() {
   const [state, formAction, isPending] = useActionState(createProjectAction, null)
-
-  // Server action handles redirect; no client-side loading UI here
 
   const handleQuickPrompt = (prompt: string) => {
     const textarea = document.getElementById('topic') as HTMLTextAreaElement
@@ -42,9 +31,9 @@ export function GenerateForm() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="text-center space-y-2">
-        <h3 className="text-xl font-semibold">What would you like to write?</h3>
+        <h3 className="text-xl font-semibold">What would you like to research?</h3>
         <p className="text-muted-foreground">
-          Describe your research topic and we&apos;ll generate a comprehensive academic paper
+          Enter your research topic and we&apos;ll help you discover papers, extract key findings, and identify research gaps.
         </p>
       </div>
 
@@ -61,25 +50,12 @@ export function GenerateForm() {
             className="resize-none"
           />
           <p className="text-sm text-muted-foreground">
-            Minimum 10 characters. Be specific for better results.
+            Be specific for better results. Example: &quot;The effectiveness of cognitive behavioral therapy for treating anxiety disorders in adolescents&quot;
           </p>
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="paperType">Paper Type</Label>
-          <Select name="paperType" defaultValue="researchArticle" disabled={isPending}>
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a paper type" />
-            </SelectTrigger>
-            <SelectContent>
-              {PAPER_TYPES.map(type => (
-                <SelectItem key={type.id} value={type.id}>
-                  {type.title} {type.popular && '⭐'}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Hidden field for paper type - default to research analysis */}
+        <input type="hidden" name="paperType" value="literatureReview" />
 
         {/* Quick Prompts */}
         <div className="space-y-2">
@@ -99,8 +75,6 @@ export function GenerateForm() {
           </div>
         </div>
 
-         {/* No progress UI; editor owns the loading/generation experience */}
-
         {/* Error Display */}
         {state && !state.success && (
           <Alert variant="destructive" role="alert">
@@ -108,8 +82,6 @@ export function GenerateForm() {
             <AlertDescription>{state.error}</AlertDescription>
           </Alert>
         )}
-
-                       {/* Success handling is now done by server action redirect - no client success state needed */}
 
         <Button 
           type="submit" 
@@ -119,16 +91,26 @@ export function GenerateForm() {
           {isPending ? (
             <>
               <div className="h-4 w-4 mr-2 animate-spin border-2 border-white border-t-transparent rounded-full" />
-              Creating Project...
+              Creating Research Project...
             </>
           ) : (
             <>
-              <Sparkles className="h-4 w-4 mr-2" />
-              Generate Paper
+              <Search className="h-4 w-4 mr-2" />
+              Start Research
             </>
           )}
         </Button>
       </form>
+      
+      <div className="text-center text-sm text-muted-foreground">
+        <p>After creating your project, you can:</p>
+        <ul className="mt-2 space-y-1">
+          <li>• Search and add relevant papers</li>
+          <li>• Extract key claims and findings</li>
+          <li>• Identify research gaps and contradictions</li>
+          <li>• Generate a literature synthesis</li>
+        </ul>
+      </div>
     </div>
   )
 }

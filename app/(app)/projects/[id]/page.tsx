@@ -1,5 +1,5 @@
-import { Editor } from '@/components/editor/Editor'
+import { ResearchWorkspace } from '@/components/research/ResearchWorkspace'
 
 export default function ProjectPage() {
-  return <Editor />
-} 
+  return <ResearchWorkspace />
+}

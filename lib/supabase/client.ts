@@ -1,3 +1,17 @@
+/**
+ * Browser-side Supabase Client
+ * 
+ * Usage Guidelines:
+ * - Use `createClient()` or `getSB()` in client components (files with 'use client')
+ * - Both return a cached singleton - safe to call multiple times
+ * - Use `supabase` export directly if you don't need a function call
+ * - Call `clearClientCache()` after auth state changes if needed
+ * 
+ * Example:
+ *   const supabase = createClient()
+ *   const { data } = await supabase.from('papers').select()
+ */
+
 import { createBrowserClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
 

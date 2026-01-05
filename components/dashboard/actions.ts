@@ -60,8 +60,9 @@ export async function createProjectAction(
     const project = await createResearchProject(user.id, topic.trim(), generationConfig)
     
     revalidatePath('/dashboard')
+    revalidatePath('/projects')
     // Redirect to editor with success hint to show toast
-    redirect(`/projects/${project.id}?created=1`)
+    redirect(`/editor/${project.id}?created=1`)
   } catch (error) {
     // Allow Next.js redirect control flow errors to propagate without logging
     if (

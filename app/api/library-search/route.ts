@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { unifiedSearch } from '@/lib/search'
+import { parallelSearch } from '@/lib/services/paper-aggregation'
 import { z } from 'zod'
 
 // Lightweight search schema for Library Manager
+// This endpoint is for FAST search results - no ingestion, no PDF processing
 const LibrarySearchRequestSchema = z.object({
   query: z.string().min(1).max(500).trim(),
   options: z.object({
@@ -58,40 +59,45 @@ export async function POST(request: NextRequest) {
 
     const { query, options } = validationResult.data
 
-    console.log(`📚 Library Search (unified): "${query}" (${options.sources?.join(', ')})`)
+    console.log(`📚 Library Search (fast): "${query}" (${options.sources?.join(', ')})`)
 
-    // Use unifiedSearch directly for library-only results by passing sources
-    const searchPromise = unifiedSearch(query, {
+    // Use parallelSearch directly for FAST results
+    // This skips: ingestion, PDF processing, chunking, database writes
+    // Only does: API calls + ranking + deduplication
+    const searchPromise = parallelSearch(query, {
       maxResults: options.maxResults,
       sources: options.sources,
-      fromYear: options.fromYear
+      fromYear: options.fromYear,
+      fastMode: true // Enable fast mode for quicker API timeouts
     })
 
-    // **TIMEOUT CONTROL**: Maximum 10 seconds for library search
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Search timeout after 10 seconds')), 10000)
+    // **TIMEOUT CONTROL**: 20 seconds for library search
+    // parallelSearch with fastMode uses 6s individual API timeouts
+    // Total time: ~6-8s for API calls + ranking
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Search timeout after 20 seconds')), 20000)
     })
 
-    const searchResults = await Promise.race([searchPromise, timeoutPromise]) as Awaited<typeof searchPromise>
+    const rankedPapers = await Promise.race([searchPromise, timeoutPromise])
 
     const searchTimeMs = Date.now() - startTime
 
     const response: LibrarySearchResponse = {
       success: true,
       query,
-      papers: searchResults.papers.map(paper => ({
-        canonical_id: (paper as any).canonical_id || paper.id || paper.doi || paper.url || paper.title,
+      papers: rankedPapers.map(paper => ({
+        canonical_id: paper.canonical_id || paper.doi || paper.title,
         title: paper.title,
         abstract: paper.abstract?.substring(0, 250),
-        year: (paper as any).year || (paper as any).publication_year || new Date(paper.publication_date || '').getFullYear(),
-        venue: (paper as any).venue || (paper as any)['container-title'],
-        doi: (paper as any).doi || (paper as any).DOI,
+        year: paper.year,
+        venue: paper.venue,
+        doi: paper.doi,
         url: paper.url,
-        citationCount: (paper as any).citation_count || (paper as any).citationCount || 0,
-        relevanceScore: (paper as any).relevanceScore,
-        source: (paper as any).source || 'mixed'
+        citationCount: paper.citationCount || 0,
+        relevanceScore: paper.relevanceScore,
+        source: paper.source || 'mixed'
       })),
-      count: searchResults.papers.length,
+      count: rankedPapers.length,
       searchTimeMs
     }
 

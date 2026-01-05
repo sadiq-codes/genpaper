@@ -204,7 +204,8 @@ async function shouldUseGrobid(grobidUrl: string): Promise<boolean> {
     const res = await fetch(`${grobidUrl}/api/isalive`, { signal: controller.signal })
     clearTimeout(timeout)
     return res.ok
-  } catch {
+  } catch (err) {
+    warn('GROBID health check failed', { error: err })
     return false
   }
 }
@@ -294,10 +295,8 @@ async function grobidParse(
 async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtractionResult> | null> {
   try {
     // Dynamic import to handle different environments
-    // Load pdf-parse via Node require to avoid Next bundling issues
-
-    const requireFunc = eval('require') as (id: string) => any
-    const pdfParse = requireFunc('pdf-parse')
+    const pdfParseModule = await import('pdf-parse')
+    const pdfParse = pdfParseModule.default || pdfParseModule
     
     // Ensure we're passing a proper Buffer
     if (!Buffer.isBuffer(pdfBuffer)) {
@@ -346,9 +345,8 @@ async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtracti
 async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
   try {
     // Try to get text content from first page
-
-    const requireFunc = eval('require') as (id: string) => any
-    const pdfParse = requireFunc('pdf-parse')
+    const pdfParseModule = await import('pdf-parse')
+    const pdfParse = pdfParseModule.default || pdfParseModule
     
     // Ensure we're passing a proper Buffer
     if (!Buffer.isBuffer(pdfBuffer)) {
@@ -396,14 +394,13 @@ async function ocrParse(
 
     // Dynamic imports for OCR dependencies
     const { createWorker } = await import('tesseract.js')
-
-    const requireFunc = eval('require') as any
-    const pdfParse = requireFunc('pdf2pic').default
+    const pdf2picModule = await import('pdf2pic')
+    const pdf2pic = pdf2picModule.default || pdf2picModule
     
     info('Starting OCR extraction process')
     
     // Convert PDF to images (first 10 pages to avoid timeout)
-    const convert = pdfParse.fromBuffer(pdfBuffer, {
+    const convert = pdf2pic.fromBuffer(pdfBuffer, {
       density: 200,           // Higher DPI for better OCR
       saveFilename: "page",
       savePath: "/tmp",
@@ -520,7 +517,8 @@ async function findDoiInFirstPage(pdfBuffer: Buffer): Promise<string | null> {
     const pdfParse = await import('pdf-parse').then(m => m.default || m)
     const data = await pdfParse(pdfBuffer, { max: 1 })
     return extractDoiFromText(data.text)
-  } catch {
+  } catch (err) {
+    warn('Failed to find DOI in first page', { error: err })
     return null
   }
 }
@@ -528,6 +526,11 @@ async function findDoiInFirstPage(pdfBuffer: Buffer): Promise<string | null> {
 /**
  * Fetch metadata from Crossref API using DOI
  */
+interface CrossrefAuthor {
+  given?: string
+  family?: string
+}
+
 async function fetchCrossrefMetadata(doi: string): Promise<Partial<TieredExtractionResult> | null> {
   try {
     const response = await fetch(`https://api.crossref.org/works/${doi}`)
@@ -538,14 +541,15 @@ async function fetchCrossrefMetadata(doi: string): Promise<Partial<TieredExtract
 
     return {
       title: work.title?.[0] || 'Unknown Title',
-      authors: work.author?.map((a: any) => `${a.given || ''} ${a.family || ''}`.trim()) || [],
+      authors: work.author?.map((a: CrossrefAuthor) => `${a.given || ''} ${a.family || ''}`.trim()) || [],
       abstract: work.abstract || undefined,
       venue: work['container-title']?.[0] || undefined,
       doi: work.DOI,
       year: work.published?.['date-parts']?.[0]?.[0]?.toString(),
       fullText: `${work.title?.[0] || ''}\n\n${work.abstract || ''}`.trim()
     }
-  } catch {
+  } catch (err) {
+    warn('Crossref metadata fetch failed', { doi, error: err })
     return null
   }
 }

@@ -61,6 +61,9 @@
   /* Border radius */
   --radius: 0.5rem;
 
+  /* Font families */
+  --font-caveat: var(--font-caveat);
+
   /* Keyframes for animations */
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
@@ -638,4 +641,91 @@ pre code .hljs-emphasis {
 /* Keyboard shortcut styling */
 kbd {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Hand-drawn font for editor tabs */
+.font-caveat {
+  font-family: var(--font-caveat), cursive;
+}
+
+/* Research Editor Styles */
+.research-editor-container {
+  @apply rounded-3xl border-2 border-foreground/10 overflow-hidden;
+}
+
+/* TipTap Editor Enhancements */
+.ProseMirror {
+  @apply min-h-full;
+}
+
+.ProseMirror h1 {
+  @apply text-3xl font-bold mb-4 mt-6 first:mt-0;
+}
+
+.ProseMirror h2 {
+  @apply text-2xl font-semibold mb-3 mt-5;
+}
+
+.ProseMirror h3 {
+  @apply text-xl font-medium mb-2 mt-4;
+}
+
+.ProseMirror p {
+  @apply mb-3 leading-relaxed;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  @apply pl-6 mb-3;
+}
+
+.ProseMirror li {
+  @apply mb-1;
+}
+
+.ProseMirror blockquote {
+  @apply border-l-4 border-muted-foreground/30 pl-4 italic text-muted-foreground my-4;
+}
+
+.ProseMirror pre {
+  @apply bg-muted rounded-lg p-4 overflow-x-auto my-4;
+}
+
+.ProseMirror code {
+  @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+}
+
+.ProseMirror pre code {
+  @apply bg-transparent p-0;
+}
+
+.ProseMirror hr {
+  @apply border-t border-border my-6;
+}
+
+.ProseMirror table {
+  @apply border-collapse w-full my-4;
+}
+
+.ProseMirror th,
+.ProseMirror td {
+  @apply border border-border p-2 text-left;
+}
+
+.ProseMirror th {
+  @apply bg-muted font-semibold;
+}
+
+.ProseMirror img {
+  @apply max-w-full h-auto rounded-lg my-4;
+}
+
+/* Citation styling in editor */
+.citation-inline {
+  @apply text-blue-600 hover:text-blue-800 cursor-pointer;
+}
+
+/* Editor accent color for Chat tab */
+.editor-accent-red {
+  @apply text-red-600;
 }

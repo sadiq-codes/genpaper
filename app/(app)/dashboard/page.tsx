@@ -8,8 +8,8 @@ export default function DashboardPage() {
       <Suspense fallback={<DashboardHeaderSkeleton />}>
         <div className="flex items-center justify-between">
           <div className="space-y-1">
-            <h2 className="text-2xl font-bold tracking-tight">Generate Research Paper</h2>
-            <p className="text-muted-foreground">Create your AI-powered research paper with intelligent source discovery.</p>
+            <h2 className="text-2xl font-bold tracking-tight">Research Assistant</h2>
+            <p className="text-muted-foreground">Analyze papers, extract claims, and identify research gaps.</p>
           </div>
         </div>
       </Suspense>

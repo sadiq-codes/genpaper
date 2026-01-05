@@ -299,8 +299,9 @@ export interface AddCitationResult {
 export class CitationService {
   private constructor() {}
   
-  // Realtime channel for citation events (singleton)
-  private static realtimeChannel: any = null
+  // Realtime channel for citation events (singleton with cleanup)
+  private static realtimeChannel: ReturnType<Awaited<ReturnType<typeof getSB>>['channel']> | null = null
+  private static channelSubscribed = false
   
       static async add(params: AddCitationParams): Promise<AddCitationResult> {
     const requestId = citationLogger.generateRequestId()
@@ -481,12 +482,17 @@ export class CitationService {
     }
     
     // Create a map for quick lookup
-    const citationMap = new Map(citations.map((c: any) => [c.cite_key, c]))
+    interface CitationRecord {
+      cite_key: string
+      csl_json: CSLItem
+      first_seen_order: number
+    }
+    const citationMap = new Map(citations.map((c: CitationRecord) => [c.cite_key, c]))
     
     // Render each citation in the requested order
     const rendered: string[] = []
     for (const citeKey of params.citeKeys) {
-      const citation = citationMap.get(citeKey)
+      const citation = citationMap.get(citeKey) as CitationRecord | undefined
       if (!citation) {
         rendered.push('') // Missing citation
         continue
@@ -494,13 +500,13 @@ export class CitationService {
       
       try {
         const formatted = formatInlineCitation(
-          (citation as any).csl_json as CSLItem,
+          citation.csl_json,
           params.style,
-          (citation as any).first_seen_order
+          citation.first_seen_order
         )
         rendered.push(formatted)
-      } catch (error) {
-        console.error(`Failed to format citation ${citeKey}:`, error)
+      } catch (err) {
+        console.error(`Failed to format citation ${citeKey}:`, err)
         rendered.push(`[Error: ${citeKey}]`)
       }
     }
@@ -529,9 +535,23 @@ export class CitationService {
     try {
       const supabase = await getSB()
       
-      // Initialize channel on first use to prevent socket leaks
-      if (!this.realtimeChannel) {
+      // Initialize channel on first use with proper subscription
+      if (!this.realtimeChannel || !this.channelSubscribed) {
+        // Clean up old channel if it exists but isn't subscribed
+        if (this.realtimeChannel) {
+          try {
+            await supabase.removeChannel(this.realtimeChannel)
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+        
         this.realtimeChannel = supabase.channel('citations-changes')
+        
+        // Subscribe to enable broadcasting
+        await this.realtimeChannel.subscribe((status: string) => {
+          this.channelSubscribed = status === 'SUBSCRIBED'
+        })
       }
       
       // Publish realtime payload {projectId, citeKey}
@@ -542,9 +562,8 @@ export class CitationService {
         timestamp: new Date().toISOString()
       }
       
-      if (this.realtimeChannel && typeof this.realtimeChannel === 'object') {
-        const channel = this.realtimeChannel as { send: (data: unknown) => Promise<unknown> }
-        await channel.send({
+      if (this.realtimeChannel && this.channelSubscribed) {
+        await this.realtimeChannel.send({
           type: 'broadcast',
           event: 'citation-changed',
           payload
@@ -554,6 +573,22 @@ export class CitationService {
     } catch (error) {
       // Don't throw on realtime errors - citation success is more important
       console.warn('Failed to emit citation changed event:', error)
+    }
+  }
+  
+  /**
+   * Clean up realtime channel (call on server shutdown if needed)
+   */
+  static async cleanup(): Promise<void> {
+    if (this.realtimeChannel) {
+      try {
+        const supabase = await getSB()
+        await supabase.removeChannel(this.realtimeChannel)
+      } catch {
+        // Ignore cleanup errors
+      }
+      this.realtimeChannel = null
+      this.channelSubscribed = false
     }
   }
 

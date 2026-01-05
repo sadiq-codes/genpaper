@@ -4,26 +4,25 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { 
   Search, 
   BookOpen, 
-  Plus, 
+  Globe, 
   X, 
-  SortAsc,
-  SortDesc,
   ExternalLink,
   Calendar,
   Users,
   Quote,
   Loader2,
-  ArrowRight
+  Plus,
+  Check,
+  Library,
+  FileText,
+  ChevronDown,
+  Sparkles
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { LoadingSpinner } from '@/components/ui/loading-spinner'
-import type { LibraryPaper, Paper } from '@/types/simplified'
+import { cn } from '@/lib/utils'
 
 interface LibraryDrawerProps {
   isOpen: boolean
@@ -43,9 +42,12 @@ interface SearchResult {
   doi?: string
   url?: string
   citationCount?: number
+  relevanceScore?: number
   source: string
   type: 'library' | 'search'
 }
+
+type SearchMode = 'library' | 'online'
 
 export default function LibraryDrawer({ 
   isOpen, 
@@ -54,25 +56,19 @@ export default function LibraryDrawer({
   currentProjectId,
   initialQuery = ''
 }: LibraryDrawerProps) {
-  // Search state
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [libraryPapers, setLibraryPapers] = useState<SearchResult[]>([])
-  const [showOnlineSearch, setShowOnlineSearch] = useState(false)
-
-  // Filter state
-  const [sortBy, setSortBy] = useState<'relevance' | 'date' | 'citations' | 'added_at'>('relevance')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-  const [sourceFilter, setSourceFilter] = useState<string>('all')
-
-  // UI state
+  const [searchMode, setSearchMode] = useState<SearchMode>('library')
+  const [expandedAbstract, setExpandedAbstract] = useState<string | null>(null)
   const [processingPapers, setProcessingPapers] = useState<Set<string>>(new Set())
+  const [addedPapers, setAddedPapers] = useState<Set<string>>(new Set())
 
   // Load user's library
   const loadLibrary = useCallback(async () => {
     try {
-      const response = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=50')
+      const response = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=100')
       if (response.ok) {
         const data = await response.json()
         const transformed: SearchResult[] = data.papers.map((item: any) => ({
@@ -83,336 +79,351 @@ export default function LibraryDrawer({
           journal: item.paper.venue,
           abstract: item.paper.abstract,
           doi: item.paper.doi,
-          url: item.paper.url,
+          url: item.paper.pdf_url || (item.paper.doi ? `https://doi.org/${item.paper.doi}` : undefined),
           citationCount: item.paper.citation_count,
-          source: item.paper.source,
+          source: item.paper.source || 'library',
           type: 'library' as const
         }))
         setLibraryPapers(transformed)
+        if (!query && searchMode === 'library') {
+          setResults(transformed)
+        }
       }
     } catch (error) {
       console.error('Error loading library:', error)
     }
-  }, [])
+  }, [query, searchMode])
 
   // Search functionality
-  const searchPapers = useCallback(async (searchQuery: string, includeOnline = false) => {
-    if (!searchQuery.trim() && !includeOnline) {
-      setResults(libraryPapers)
+  const searchPapers = useCallback(async (searchQuery: string) => {
+    if (searchMode === 'library') {
+      // Local library search
+      if (!searchQuery.trim()) {
+        setResults(libraryPapers)
+        return
+      }
+      const q = searchQuery.toLowerCase()
+      const matches = libraryPapers.filter(paper =>
+        paper.title.toLowerCase().includes(q) ||
+        paper.authors.some(author => author.toLowerCase().includes(q)) ||
+        paper.journal?.toLowerCase().includes(q) ||
+        paper.abstract?.toLowerCase().includes(q)
+      )
+      setResults(matches)
+      return
+    }
+
+    // Online search
+    if (!searchQuery.trim()) {
+      setResults([])
       return
     }
 
     setIsSearching(true)
     try {
-      const searchResults: SearchResult[] = []
-
-      // Search user's library first
-      if (searchQuery.trim()) {
-        const libraryMatches = libraryPapers.filter(paper =>
-          paper.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          paper.authors.some(author => author.toLowerCase().includes(searchQuery.toLowerCase())) ||
-          paper.abstract?.toLowerCase().includes(searchQuery.toLowerCase())
-        )
-        searchResults.push(...libraryMatches)
-      }
-
-      // Search online sources if requested
-      if (includeOnline || showOnlineSearch) {
-        const response = await fetch('/api/library-search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: searchQuery,
-            options: {
-              maxResults: 20,
-              sources: ['openalex', 'crossref', 'semantic_scholar'],
-              fastMode: true
-            }
-          })
-        })
-
-        if (response.ok) {
-          const data = await response.json()
-          if (data.success) {
-            const onlineResults: SearchResult[] = data.papers
-              .filter((paper: any) => !libraryPapers.some(lp => lp.id === paper.canonical_id))
-              .map((paper: any) => ({
-                id: paper.canonical_id,
-                title: paper.title,
-                authors: paper.authors || [],
-                year: paper.year,
-                journal: paper.venue,
-                abstract: paper.abstract,
-                doi: paper.doi,
-                url: paper.url,
-                citationCount: paper.citationCount,
-                source: paper.source,
-                type: 'search' as const
-              }))
-            searchResults.push(...onlineResults)
+      const response = await fetch('/api/library-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: searchQuery,
+          options: {
+            maxResults: 25,
+            sources: ['openalex', 'crossref', 'semantic_scholar']
           }
+        })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        if (data.success) {
+          const libraryIds = new Set(libraryPapers.map(p => p.id))
+          const onlineResults: SearchResult[] = data.papers.map((paper: any) => ({
+            id: paper.canonical_id,
+            title: paper.title,
+            authors: paper.authors || [],
+            year: paper.year,
+            journal: paper.venue,
+            abstract: paper.abstract,
+            doi: paper.doi,
+            url: paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : undefined),
+            citationCount: paper.citationCount,
+            relevanceScore: paper.relevanceScore,
+            source: paper.source,
+            type: libraryIds.has(paper.canonical_id) ? 'library' as const : 'search' as const
+          }))
+          // Results are already sorted by relevance from the API
+          setResults(onlineResults)
         }
       }
-
-      setResults(searchResults)
     } catch (error) {
       console.error('Search error:', error)
     }
     setIsSearching(false)
-  }, [libraryPapers, showOnlineSearch])
+  }, [libraryPapers, searchMode])
 
-  // Add paper to current project
+  // Add paper to project
   const handleAddToProject = useCallback(async (paper: SearchResult) => {
-    if (!currentProjectId) {
-      console.warn('No current project to add paper to')
-      return
-    }
+    if (!currentProjectId || addedPapers.has(paper.id)) return
 
     setProcessingPapers(prev => new Set(prev).add(paper.id))
     
     try {
-      // If it's a search result, add to library first
+      // If from online search, add to library first
       if (paper.type === 'search') {
         const addResponse = await fetch('/api/library', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ paperId: paper.id })
         })
-
         if (!addResponse.ok) {
           throw new Error('Failed to add paper to library')
         }
       }
 
-      // Add to current project via callback
       onAddToProject?.(paper.id, paper.title)
+      setAddedPapers(prev => new Set(prev).add(paper.id))
       
-      // Update local state
-      if (paper.type === 'search') {
-        setLibraryPapers(prev => [...prev, { ...paper, type: 'library' }])
-        setResults(prev => prev.map(p => 
-          p.id === paper.id ? { ...p, type: 'library' } : p
-        ))
-      }
-
+      // Update paper type in results
+      setResults(prev => prev.map(p => 
+        p.id === paper.id ? { ...p, type: 'library' } : p
+      ))
     } catch (error) {
-      console.error('Error adding paper to project:', error)
+      console.error('Error adding paper:', error)
     }
     
     setProcessingPapers(prev => {
-      const newSet = new Set(prev)
-      newSet.delete(paper.id)
-      return newSet
+      const next = new Set(prev)
+      next.delete(paper.id)
+      return next
     })
-  }, [currentProjectId, onAddToProject])
-
-  // Filter and sort results
-  const filteredResults = useMemo(() => {
-    let filtered = results
-
-    // Apply source filter
-    if (sourceFilter !== 'all') {
-      filtered = filtered.filter(paper => paper.source === sourceFilter)
-    }
-
-    // Apply sorting
-    filtered.sort((a, b) => {
-      let aValue: any, bValue: any
-
-      switch (sortBy) {
-        case 'date':
-          aValue = a.year || 0
-          bValue = b.year || 0
-          break
-        case 'citations':
-          aValue = a.citationCount || 0
-          bValue = b.citationCount || 0
-          break
-        case 'added_at':
-          // Library papers first, then by title
-          if (a.type === 'library' && b.type !== 'library') return -1
-          if (a.type !== 'library' && b.type === 'library') return 1
-          aValue = a.title
-          bValue = b.title
-          break
-        default: // relevance
-          aValue = a.title
-          bValue = b.title
-      }
-
-      if (typeof aValue === 'string') {
-        return sortOrder === 'asc' 
-          ? aValue.localeCompare(bValue)
-          : bValue.localeCompare(aValue)
-      }
-
-      return sortOrder === 'asc' ? aValue - bValue : bValue - aValue
-    })
-
-    return filtered
-  }, [results, sourceFilter, sortBy, sortOrder])
+  }, [currentProjectId, onAddToProject, addedPapers])
 
   // Initialize
   useEffect(() => {
     if (isOpen) {
       loadLibrary()
+      setAddedPapers(new Set())
     }
   }, [isOpen, loadLibrary])
 
-  // Search when query changes
+  // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
-      searchPapers(query, showOnlineSearch)
-    }, 300)
-
+      searchPapers(query)
+    }, searchMode === 'online' ? 400 : 150)
     return () => clearTimeout(timer)
-  }, [query, searchPapers, showOnlineSearch])
+  }, [query, searchPapers, searchMode])
 
-  // Set initial query
+  // Initial query
   useEffect(() => {
     if (isOpen && initialQuery) {
       setQuery(initialQuery)
+      if (initialQuery.trim()) {
+        setSearchMode('online')
+      }
     }
   }, [isOpen, initialQuery])
 
+  // Reset when mode changes
+  useEffect(() => {
+    if (searchMode === 'library' && !query) {
+      setResults(libraryPapers)
+    } else {
+      searchPapers(query)
+    }
+  }, [searchMode])
+
   if (!isOpen) return null
 
+  const showEmptyLibrary = searchMode === 'library' && libraryPapers.length === 0 && !query
+  const showNoResults = results.length === 0 && query && !isSearching
+  const showSearchPrompt = searchMode === 'online' && !query && !isSearching
+
   return (
-    <div className="fixed inset-0 z-40 pointer-events-none">
+    <div className="fixed inset-0 z-50">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/20 pointer-events-auto animate-in fade-in-0 duration-200"
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in-0 duration-200"
         onClick={onClose}
       />
       
       {/* Drawer */}
-      <div className="absolute right-0 top-0 h-full w-96 bg-white border-l border-gray-200 shadow-xl pointer-events-auto animate-in slide-in-from-right duration-300">
-        <div className="flex flex-col h-full">
-          {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <BookOpen className="h-5 w-5 text-gray-600" />
-              <h2 className="font-semibold text-lg">Library</h2>
-              <Badge variant="secondary" className="text-xs">
-                {libraryPapers.length}
-              </Badge>
+      <div className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col">
+        {/* Header */}
+        <div className="flex-none border-b bg-muted/30">
+          <div className="flex items-center justify-between px-5 py-4">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary/10">
+                <Library className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-base">Paper Library</h2>
+                <p className="text-xs text-muted-foreground">
+                  {libraryPapers.length} papers in your library
+                </p>
+              </div>
             </div>
-            <Button variant="ghost" size="sm" onClick={onClose}>
+            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
               <X className="h-4 w-4" />
             </Button>
           </div>
 
-          {/* Search */}
-          <div className="p-4 border-b border-gray-100 space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="Search your library..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-
-            {/* Search Options */}
-            <div className="flex items-center gap-2">
-              <Button
-                variant={showOnlineSearch ? "default" : "outline"}
-                size="sm"
-                onClick={() => setShowOnlineSearch(!showOnlineSearch)}
-                className="text-xs"
-              >
-                <Plus className="h-3 w-3 mr-1" />
-                Online Search
-              </Button>
-              
-              <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
-                <SelectTrigger className="w-32 h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="relevance">Relevance</SelectItem>
-                  <SelectItem value="date">Date</SelectItem>
-                  <SelectItem value="citations">Citations</SelectItem>
-                  <SelectItem value="added_at">Added</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-                className="px-2 h-8"
-              >
-                {sortOrder === 'asc' ? (
-                  <SortAsc className="h-3 w-3" />
-                ) : (
-                  <SortDesc className="h-3 w-3" />
+          {/* Search Mode Toggle */}
+          <div className="px-5 pb-4">
+            <div className="flex gap-1 p-1 bg-muted rounded-lg">
+              <button
+                onClick={() => setSearchMode('library')}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all",
+                  searchMode === 'library' 
+                    ? "bg-background text-foreground shadow-sm" 
+                    : "text-muted-foreground hover:text-foreground"
                 )}
-              </Button>
+              >
+                <BookOpen className="h-4 w-4" />
+                My Library
+              </button>
+              <button
+                onClick={() => setSearchMode('online')}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all",
+                  searchMode === 'online' 
+                    ? "bg-background text-foreground shadow-sm" 
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <Globe className="h-4 w-4" />
+                Search Online
+              </button>
             </div>
           </div>
 
-          {/* Results */}
-          <ScrollArea className="flex-1">
-            <div className="p-4">
-              {isSearching ? (
-                <div className="flex items-center justify-center py-8">
-                  <LoadingSpinner text="Searching..." />
-                </div>
-              ) : filteredResults.length > 0 ? (
-                <div className="space-y-3">
-                  {filteredResults.map((paper) => (
-                    <PaperCard
-                      key={paper.id}
-                      paper={paper}
-                      onAddToProject={() => handleAddToProject(paper)}
-                      isProcessing={processingPapers.has(paper.id)}
-                      showAddButton={!!currentProjectId}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <BookOpen className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                  <h3 className="text-base font-medium mb-2">
-                    {query ? 'No papers found' : 'Your library is empty'}
-                  </h3>
-                  <p className="text-sm text-gray-500 mb-4">
-                    {query 
-                      ? 'Try different keywords or enable online search'
-                      : 'Start building your research library'
-                    }
-                  </p>
-                  {!showOnlineSearch && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowOnlineSearch(true)}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Search Online
-                    </Button>
-                  )}
-                </div>
+          {/* Search Input */}
+          <div className="px-5 pb-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder={searchMode === 'library' ? "Filter your papers..." : "Search academic papers..."}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="pl-10 h-10 bg-background"
+                autoFocus
+              />
+              {isSearching && (
+                <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
               )}
-            </div>
-          </ScrollArea>
-
-          {/* Footer */}
-          <div className="p-4 border-t border-gray-100 bg-gray-50">
-            <div className="flex items-center justify-between text-xs text-gray-500">
-              <span>{filteredResults.length} papers shown</span>
-              <div className="flex items-center gap-1">
-                <kbd className="inline-flex items-center rounded border bg-white px-1 py-0.5 font-mono">
-                  Cmd+K
-                </kbd>
-                <span>to search</span>
-              </div>
             </div>
           </div>
         </div>
+
+        {/* Results */}
+        <ScrollArea className="flex-1">
+          <div className="p-4">
+            {/* Loading State */}
+            {isSearching && results.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+                <p className="text-sm text-muted-foreground">Searching papers...</p>
+              </div>
+            )}
+
+            {/* Empty Library */}
+            {showEmptyLibrary && (
+              <EmptyState
+                icon={BookOpen}
+                title="Your library is empty"
+                description="Search online to find and add papers to your library"
+                action={
+                  <Button onClick={() => setSearchMode('online')} size="sm">
+                    <Globe className="h-4 w-4 mr-2" />
+                    Search Online
+                  </Button>
+                }
+              />
+            )}
+
+            {/* Search Prompt */}
+            {showSearchPrompt && (
+              <EmptyState
+                icon={Sparkles}
+                title="Search academic papers"
+                description="Find papers from OpenAlex, CrossRef, and Semantic Scholar"
+              />
+            )}
+
+            {/* No Results */}
+            {showNoResults && (
+              <EmptyState
+                icon={FileText}
+                title="No papers found"
+                description={searchMode === 'library' 
+                  ? "Try different keywords or search online" 
+                  : "Try different search terms"}
+                action={searchMode === 'library' && (
+                  <Button onClick={() => setSearchMode('online')} variant="outline" size="sm">
+                    <Globe className="h-4 w-4 mr-2" />
+                    Search Online
+                  </Button>
+                )}
+              />
+            )}
+
+            {/* Results List */}
+            {results.length > 0 && (
+              <div className="space-y-2">
+                {results.map((paper) => (
+                  <PaperCard
+                    key={paper.id}
+                    paper={paper}
+                    onAdd={() => handleAddToProject(paper)}
+                    isProcessing={processingPapers.has(paper.id)}
+                    isAdded={addedPapers.has(paper.id)}
+                    showAddButton={!!currentProjectId}
+                    isExpanded={expandedAbstract === paper.id}
+                    onToggleExpand={() => setExpandedAbstract(
+                      expandedAbstract === paper.id ? null : paper.id
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+
+        {/* Footer */}
+        {results.length > 0 && (
+          <div className="flex-none px-5 py-3 border-t bg-muted/30">
+            <p className="text-xs text-muted-foreground text-center">
+              Showing {results.length} {results.length === 1 ? 'paper' : 'papers'}
+              {searchMode === 'online' && ' from academic databases'}
+            </p>
+          </div>
+        )}
       </div>
+    </div>
+  )
+}
+
+// Empty State Component
+function EmptyState({ 
+  icon: Icon, 
+  title, 
+  description, 
+  action 
+}: { 
+  icon: any
+  title: string
+  description: string
+  action?: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-center px-4">
+      <div className="flex items-center justify-center w-12 h-12 rounded-full bg-muted mb-4">
+        <Icon className="h-6 w-6 text-muted-foreground" />
+      </div>
+      <h3 className="font-medium text-sm mb-1">{title}</h3>
+      <p className="text-xs text-muted-foreground mb-4 max-w-[240px]">{description}</p>
+      {action}
     </div>
   )
 }
@@ -420,94 +431,167 @@ export default function LibraryDrawer({
 // Paper Card Component
 interface PaperCardProps {
   paper: SearchResult
-  onAddToProject: () => void
+  onAdd: () => void
   isProcessing: boolean
+  isAdded: boolean
   showAddButton: boolean
+  isExpanded: boolean
+  onToggleExpand: () => void
 }
 
-function PaperCard({ paper, onAddToProject, isProcessing, showAddButton }: PaperCardProps) {
+function PaperCard({ 
+  paper, 
+  onAdd, 
+  isProcessing, 
+  isAdded,
+  showAddButton,
+  isExpanded,
+  onToggleExpand
+}: PaperCardProps) {
+  const authorDisplay = useMemo(() => {
+    if (!paper.authors.length) return null
+    if (paper.authors.length <= 2) return paper.authors.join(' & ')
+    return `${paper.authors[0]} et al.`
+  }, [paper.authors])
+
   return (
-    <Card className="hover:shadow-sm transition-all duration-200 border-border/50 hover:border-border">
-      <div className="p-3 space-y-2">
-        {/* Title and Type */}
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="font-medium text-sm leading-tight line-clamp-2 flex-1">
+    <div className={cn(
+      "group rounded-lg border bg-card p-4 transition-all hover:shadow-sm",
+      isAdded && "border-primary/30 bg-primary/5"
+    )}>
+      {/* Header Row */}
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          {/* Title */}
+          <h3 
+            className="font-medium text-sm leading-snug line-clamp-2 cursor-pointer hover:text-primary transition-colors"
+            onClick={onToggleExpand}
+          >
             {paper.title}
           </h3>
-          <div className="flex items-center gap-1">
-            <Badge 
-              variant={paper.type === 'library' ? 'default' : 'secondary'} 
-              className="text-xs"
-            >
-              {paper.type === 'library' ? 'Library' : 'Search'}
-            </Badge>
-          </div>
-        </div>
-
-        {/* Authors */}
-        {paper.authors.length > 0 && (
-          <div className="flex items-center gap-1">
-            <Users className="h-3 w-3 text-gray-400" />
-            <span className="text-xs text-gray-600 line-clamp-1">
-              {paper.authors.join(', ')}
-            </span>
-          </div>
-        )}
-
-        {/* Metadata */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {paper.year && (
-            <div className="flex items-center gap-1">
-              <Calendar className="h-3 w-3 text-gray-400" />
-              <span className="text-xs text-gray-600">{paper.year}</span>
-            </div>
-          )}
-          {paper.journal && (
-            <span className="text-xs text-gray-600 truncate">
-              {paper.journal}
-            </span>
-          )}
-          {paper.citationCount && (
-            <div className="flex items-center gap-1">
-              <Quote className="h-3 w-3 text-gray-400" />
-              <span className="text-xs text-gray-600">{paper.citationCount}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-1">
-            {paper.url && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => window.open(paper.url, '_blank')}
-                className="h-6 px-2 text-xs"
-              >
-                <ExternalLink className="h-3 w-3 mr-1" />
-                View
-              </Button>
+          
+          {/* Meta Row */}
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            {authorDisplay && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Users className="h-3 w-3" />
+                {authorDisplay}
+              </span>
+            )}
+            {paper.year && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Calendar className="h-3 w-3" />
+                {paper.year}
+              </span>
+            )}
+            {paper.citationCount !== undefined && paper.citationCount > 0 && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Quote className="h-3 w-3" />
+                {paper.citationCount.toLocaleString()}
+              </span>
             )}
           </div>
-          
-          {showAddButton && (
-            <Button
-              size="sm"
-              onClick={onAddToProject}
-              disabled={isProcessing}
-              className="h-6 px-2 text-xs"
-            >
-              {isProcessing ? (
-                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-              ) : (
-                <ArrowRight className="h-3 w-3 mr-1" />
-              )}
-              {isProcessing ? 'Adding...' : 'Add to Project'}
-            </Button>
+
+          {/* Journal */}
+          {paper.journal && (
+            <p className="text-xs text-muted-foreground mt-1 truncate">
+              {paper.journal}
+            </p>
+          )}
+        </div>
+
+        {/* Badges */}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <Badge 
+            variant={paper.type === 'library' ? 'default' : 'secondary'}
+            className="text-[10px] px-1.5 py-0"
+          >
+            {paper.type === 'library' ? 'Library' : paper.source}
+          </Badge>
+          {/* Relevance indicator for search results */}
+          {paper.type === 'search' && paper.relevanceScore !== undefined && (
+            <div className="flex items-center gap-1" title={`Relevance: ${Math.round(paper.relevanceScore * 100)}%`}>
+              <div className="w-12 h-1.5 bg-muted rounded-full overflow-hidden">
+                <div 
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    paper.relevanceScore >= 0.5 ? "bg-green-500" :
+                    paper.relevanceScore >= 0.35 ? "bg-yellow-500" : "bg-orange-500"
+                  )}
+                  style={{ width: `${Math.min(100, paper.relevanceScore * 100)}%` }}
+                />
+              </div>
+            </div>
           )}
         </div>
       </div>
-    </Card>
+
+      {/* Expandable Abstract */}
+      {paper.abstract && isExpanded && (
+        <div className="mt-3 pt-3 border-t">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {paper.abstract}
+          </p>
+        </div>
+      )}
+
+      {/* Actions Row */}
+      <div className="flex items-center justify-between mt-3 pt-3 border-t">
+        <div className="flex items-center gap-1">
+          {paper.abstract && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={onToggleExpand}
+              className="h-7 px-2 text-xs text-muted-foreground"
+            >
+              <ChevronDown className={cn(
+                "h-3 w-3 mr-1 transition-transform",
+                isExpanded && "rotate-180"
+              )} />
+              {isExpanded ? 'Less' : 'Abstract'}
+            </Button>
+          )}
+          {paper.url && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open(paper.url, '_blank')}
+              className="h-7 px-2 text-xs text-muted-foreground"
+            >
+              <ExternalLink className="h-3 w-3 mr-1" />
+              View
+            </Button>
+          )}
+        </div>
+        
+        {showAddButton && (
+          <Button
+            size="sm"
+            variant={isAdded ? "secondary" : "default"}
+            onClick={onAdd}
+            disabled={isProcessing || isAdded}
+            className="h-7 px-3 text-xs"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                Adding...
+              </>
+            ) : isAdded ? (
+              <>
+                <Check className="h-3 w-3 mr-1" />
+                Added
+              </>
+            ) : (
+              <>
+                <Plus className="h-3 w-3 mr-1" />
+                Add to Project
+              </>
+            )}
+          </Button>
+        )}
+      </div>
+    </div>
   )
-} 
+}

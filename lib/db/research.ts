@@ -113,6 +113,8 @@ export async function updateProjectContent(
 }
 
 // Helper function to ensure profile exists
+// Note: Uses getUser() which returns the current authenticated user's info
+// This is safe because we only call this for the currently authenticated user
 async function ensureProfileExists(userId: string): Promise<void> {
   const supabase = await getSB()
   
@@ -129,14 +131,16 @@ async function ensureProfileExists(userId: string): Promise<void> {
   }
   
   if (!existingProfile) {
-    console.log('🔧 Creating missing profile for user:', userId)
+    console.log('Creating missing profile for user:', userId)
     
-    // Get user info from auth
-    const { data: { user }, error: userError } = await supabase.auth.admin.getUserById(userId)
+    // Get current user info from auth session (not admin API)
+    // This only works because we're creating a profile for the current user
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
     
-    if (userError) {
-      console.error('Error getting user info:', userError)
-      // Create minimal profile anyway
+    // Verify we're creating a profile for the current user only
+    if (userError || !user || user.id !== userId) {
+      console.warn('Cannot get user info - creating minimal profile')
+      // Create minimal profile
       const { error: profileError } = await supabase
         .from('profiles')
         .insert({
@@ -146,28 +150,26 @@ async function ensureProfileExists(userId: string): Promise<void> {
           created_at: new Date().toISOString()
         })
       
-      if (profileError) {
+      if (profileError && profileError.code !== '23505') { // Ignore duplicate key errors
         console.error('Error creating minimal profile:', profileError)
-      } else {
-        console.log('✅ Created minimal profile for user:', userId)
       }
       return
     }
     
-    // Create profile with user info
+    // Create profile with user info from current session
     const { error: profileError } = await supabase
       .from('profiles')
       .insert({
         id: userId,
-        email: user?.email || '',
-        full_name: user?.user_metadata?.full_name || user?.user_metadata?.name || '',
+        email: user.email || '',
+        full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
         created_at: new Date().toISOString()
       })
     
-    if (profileError) {
+    if (profileError && profileError.code !== '23505') { // Ignore duplicate key errors
       console.error('Error creating profile:', profileError)
     } else {
-      console.log('✅ Created profile for user:', userId)
+      console.log('Created profile for user:', userId)
     }
   }
 }

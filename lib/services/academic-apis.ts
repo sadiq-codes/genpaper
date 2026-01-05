@@ -28,12 +28,6 @@ import { PaperSource } from '@/types/simplified'
 import { XMLParser } from 'fast-xml-parser'
 import pLimit from 'p-limit'
 import { formatDateForAPI, createCanonicalId, deduplicate } from '@/lib/utils/paper-id'
-import { openalexAdapter } from '@/lib/services/adapters/openalex'
-import { crossrefAdapter } from '@/lib/services/adapters/crossref'
-import { semanticScholarAdapter } from '@/lib/services/adapters/semantic_scholar'
-import { arxivAdapter } from '@/lib/services/adapters/arxiv'
-import { coreAdapter } from '@/lib/services/adapters/core'
-import { googleScholarAdapter } from '@/lib/services/adapters/google_scholar'
 
 // OpenAlex publication types - using correct names per API docs
 // Note: OpenAlex uses different type names than Crossref
@@ -669,10 +663,11 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
     const filters = buildOpenAlexFilter(options)
     const base = 'https://api.openalex.org/works'
     
+    // Sort by relevance first, not citations - relevance is critical for search quality
     const url = `${base}?search=${encodeURIComponent(query)}` +
                 `&per_page=${perPage}` +
                 `&filter=${encodeURIComponent(filters)}` +
-                `&sort=cited_by_count:desc` +
+                `&sort=relevance_score:desc` +
                 `&mailto=${encodeURIComponent(CONTACT_EMAIL)}`
     
     const data = await fetchJSON<OpenAlexResponse>(url, {
@@ -1140,6 +1135,14 @@ export async function getPaperReferences(doi?: string, fallbackId?: string): Pro
   }
   return refs
 }
+
+// Adapter exports for unified search interface
+export const openalexAdapter = { search: searchOpenAlex }
+export const crossrefAdapter = { search: searchCrossref }
+export const semanticScholarAdapter = { search: searchSemanticScholar }
+export const arxivAdapter = { search: searchArxiv }
+export const coreAdapter = { search: searchCore }
+export const googleScholarAdapter = { search: searchGoogleScholar }
 
 export const adapters = [
   openalexAdapter,

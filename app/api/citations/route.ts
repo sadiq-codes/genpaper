@@ -10,7 +10,8 @@ const CitationCreateSchema = z.object({
   projectId: z.string().uuid(),
   key: z.string().min(1),
   paperId: z.string().optional(),
-  csl_json: z.object({}).passthrough(), // CSL-JSON object
+  // Make csl_json optional so tool calls with only paperId pass validation
+  csl_json: z.object({}).passthrough().optional(),
   citation_text: z.string().optional(),
   context: z.string().optional()
 })

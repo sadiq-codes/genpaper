@@ -1,0 +1,130 @@
+// Editor types
+import type { Editor } from '@tiptap/react'
+
+export interface Citation {
+  id: string
+  authors: string[]
+  title: string
+  year: number
+  journal?: string
+  doi?: string
+}
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: Date
+  citations?: Citation[]
+}
+
+export interface ProjectPaper {
+  id: string
+  title: string
+  authors: string[]
+  year: number
+  abstract?: string
+  journal?: string
+  doi?: string
+  content?: string
+}
+
+// Claim types from analysis
+export type ClaimType = 'finding' | 'method' | 'limitation' | 'future_work' | 'background'
+
+export interface ExtractedClaim {
+  id: string
+  paper_id: string
+  claim_text: string
+  evidence_quote?: string
+  section?: string
+  claim_type: ClaimType
+  confidence: number
+  // Joined paper data for display
+  paper_title?: string
+  paper_authors?: string[]
+  paper_year?: number
+}
+
+// Gap types from analysis
+export type GapType = 'unstudied' | 'contradiction' | 'limitation'
+
+export interface ResearchGap {
+  id: string
+  project_id: string
+  gap_type: GapType
+  description: string
+  confidence: number
+  supporting_paper_ids: string[]
+  research_opportunity?: string
+  evidence?: Array<{
+    paper_id: string
+    claim_text: string
+    relevance: string
+  }>
+}
+
+// Synthesis/Analysis types
+export type AnalysisType = 'claim_extraction' | 'gap_analysis' | 'synthesis' | 'literature_review'
+
+export interface AnalysisOutput {
+  id: string
+  project_id: string
+  analysis_type: AnalysisType
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  structured_output?: {
+    topic?: string
+    paper_count?: number
+    claim_count?: number
+    themes?: Array<{
+      name: string
+      claims: string[]
+      supporting_papers: string[]
+    }>
+    agreements?: Array<{
+      finding: string
+      papers: string[]
+      confidence: number
+    }>
+    key_insights?: string[]
+  }
+  markdown_output?: string
+  created_at: string
+  completed_at?: string
+}
+
+// Analysis state for the editor
+export interface AnalysisState {
+  status: 'idle' | 'loading' | 'analyzing' | 'complete' | 'error'
+  claims: ExtractedClaim[]
+  gaps: ResearchGap[]
+  synthesis: AnalysisOutput | null
+  lastAnalyzedAt?: string
+  error?: string
+}
+
+export interface EditorContextType {
+  editor: Editor | null
+  sidebarOpen: boolean
+  setSidebarOpen: (open: boolean) => void
+  activeTab: 'chat' | 'research'
+  setActiveTab: (tab: 'chat' | 'research') => void
+  projectId?: string
+  projectPapers: ProjectPaper[]
+  chatMessages: ChatMessage[]
+  addChatMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => void
+  isAiLoading: boolean
+  insertCitation: (citation: Citation) => void
+  insertClaim: (claim: ExtractedClaim) => void
+  insertGap: (gap: ResearchGap) => void
+  autocompleteEnabled: boolean
+  setAutocompleteEnabled: (enabled: boolean) => void
+  analysisState: AnalysisState
+  runAnalysis: () => Promise<void>
+}
+
+export interface ExportFormat {
+  type: 'pdf' | 'docx' | 'latex'
+  label: string
+  icon: string
+}

@@ -392,9 +392,8 @@ export async function getRelevantChunks(
   const deduplicated = deduplicateChunks(allChunks)
   console.log(`✅ After deduplication: ${deduplicated.length} unique chunks`)
 
-  // Balance chunks across papers with higher limits
-  const CHUNKS_PER_PAPER = 10 // Increased from 5 to allow more content per paper
-  const perPaperCap = Math.max(CHUNKS_PER_PAPER, Math.ceil(chunkLimit / Math.max(1, papersWithContent.length)))
+  // Balance chunks across papers with no per-paper cap (allow unlimited per paper)
+  const perPaperCap = chunkLimit
   const balanced = balanceChunks(deduplicated, perPaperCap, chunkLimit)
   
   // Final validation of balanced chunks
@@ -405,7 +404,7 @@ export async function getRelevantChunks(
     )
   }
   
-  console.log(`📄 Final balanced chunks: ${balanced.length} (max ${perPaperCap} per paper)`)
+  console.log(`📄 Final balanced chunks: ${balanced.length} (no per-paper cap)`)
   return balanced
 }
 

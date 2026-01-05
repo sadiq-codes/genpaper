@@ -18,7 +18,7 @@ import { getSB } from '@/lib/supabase/server'
 
 import { createClient as createSB } from '@/lib/supabase/client'
 import { generateQueryRewrites } from '@/lib/search/query-rewrite'
-// Note: randomUUID imported for future use in enhanced temp ID generation
+import { semanticRerank, quickRelevanceCheck } from '@/lib/search/semantic-rerank'
 
 // Enhanced paper type with ranking metadata
 export interface RankedPaper extends AcademicPaper {
@@ -368,16 +368,70 @@ export async function parallelSearch(
   
   console.log(`📊 Raw results: ${allPapers.length} papers from ${sourcesByPriority.length} sources`)
   
-  // Deduplicate and rank as before
+  // Deduplicate
   const deduplicated = deduplicatePapers(allPapers)
   console.log(`🔄 After deduplication: ${deduplicated.length} papers`)
   
-  // Rank papers
-  const ranked = rankPapers(deduplicated, primaryQuery, options)
+  // Quick pre-filter: remove obviously irrelevant papers before expensive embedding
+  const preFiltered = deduplicated.filter(paper => 
+    quickRelevanceCheck(primaryQuery, paper.title, paper.abstract)
+  )
+  console.log(`🔍 After quick relevance filter: ${preFiltered.length} papers`)
+  
+  // If we have enough papers after pre-filtering, use semantic re-ranking
+  // This provides much better relevance than BM25 alone
+  if (preFiltered.length >= 3) {
+    try {
+      // Prepare papers for semantic re-ranking
+      const papersForRerank = preFiltered.map(p => ({
+        ...p,
+        id: p.canonical_id // semantic-rerank expects 'id' field
+      }))
+      
+      // Re-rank using embeddings
+      const reranked = await semanticRerank(primaryQuery, papersForRerank, {
+        minScore: 0.20, // Minimum semantic similarity threshold
+        titleWeight: 0.65, // Slightly favor title matches
+        maxResults: maxResults,
+        boostExactMatch: true
+      })
+      
+      // Convert back to RankedPaper format with combined scores
+      const rankedResults: RankedPaper[] = reranked.map((paper, index) => {
+        const authorityScore = calculateAuthorityScore(paper.citationCount)
+        const recencyScore = calculateRecencyScore(paper.year)
+        
+        // Combined score: semantic similarity (primary) + authority + recency
+        const combinedScore = 
+          paper.semanticScore * 1.0 + // Semantic is primary signal
+          authorityScore * 0.15 +     // Small citation boost
+          recencyScore * 0.05         // Tiny recency boost
+        
+        return {
+          ...paper,
+          relevanceScore: paper.semanticScore,
+          combinedScore,
+          bm25Score: 0, // Not using BM25 when semantic is available
+          authorityScore,
+          recencyScore
+        } as RankedPaper
+      })
+      
+      console.log(`🎯 Final results after semantic ranking: ${rankedResults.length} papers`)
+      return rankedResults
+      
+    } catch (error) {
+      console.warn('Semantic re-ranking failed, falling back to BM25:', error)
+      // Fall through to BM25 ranking
+    }
+  }
+  
+  // Fallback: BM25 ranking (for when semantic fails or too few papers)
+  const ranked = rankPapers(preFiltered.length > 0 ? preFiltered : deduplicated, primaryQuery, options)
   
   // Return top results
   const topResults = ranked.slice(0, maxResults)
-  console.log(`🎯 Final results: ${topResults.length} papers`)
+  console.log(`🎯 Final results (BM25 fallback): ${topResults.length} papers`)
   
   return topResults
 }

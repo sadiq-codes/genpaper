@@ -621,18 +621,12 @@ export async function findSimilarPapers(
     .filter(Boolean) as PaperWithAuthors[]
 }
 
-// Search paper chunks for RAG with adaptive scoring
-/**
- * @deprecated Use ContextRetrievalService.retrieve() instead
- * This legacy function will be removed in the next version.
- */
 export async function searchPaperChunks(
   query: string,
   options: {
     paperIds?: string[]
     limit?: number
     minScore?: number
-    adaptiveScoring?: boolean
   } = {}
 ): Promise<Array<{paper_id: string, content: string, score: number}>> {
   const supabase = await getSB()
@@ -643,72 +637,25 @@ export async function searchPaperChunks(
   const {
     paperIds,
     limit = 50,
-    minScore = 0.1,
-    adaptiveScoring = true
+    minScore = 0.1
   } = options
-  
-  // Adaptive scoring: try progressively lower thresholds
-  const scoreThresholds = adaptiveScoring 
-    ? [0.6, 0.45, 0.3, minScore] // High → Medium → Low → User specified
-    : [minScore] // Single pass with user threshold
-  
-  const allResults: Array<{paper_id: string, content: string, score: number}> = []
-  let targetReached = false
-  
-  for (const threshold of scoreThresholds) {
-    if (targetReached) break
-    
-    console.log(`🔍 Chunk search attempt with minScore=${threshold}`)
-    
-    // Call the RPC function with correct parameters
+
+  // Single-pass RPC call (MVP): one threshold, one limit, minimal logging
   const { data: searchResults, error } = await supabase
-      .rpc('match_paper_chunks', {
-        query_embedding: queryEmbedding,
-        match_count: limit,
-        min_score: threshold,
-        paper_ids: paperIds || null
-      })
-  
+    .rpc('match_paper_chunks', {
+      query_embedding: queryEmbedding,
+      match_count: limit,
+      min_score: minScore,
+      paper_ids: paperIds || null
+    })
+
   if (error) {
-      console.error(`Enhanced chunk search failed at threshold ${threshold}:`, error)
-      continue // Try next threshold
-    }
-    
-    if (searchResults && searchResults.length > 0) {
-      // Filter out duplicates from previous passes
-      const existingIds = new Set(allResults.map(r => r.paper_id + '::' + r.content.substring(0, 100)))
-      const newResults = (searchResults as Array<{paper_id: string, content: string, score: number}>).filter((result) => {
-        const key = result.paper_id + '::' + result.content.substring(0, 100)
-        return !existingIds.has(key)
-      })
-      
-      allResults.push(...newResults)
-      
-      console.log(`   ✅ Found ${newResults.length} new chunks (${allResults.length} total)`)
-      const scores = (searchResults as Array<{score: number}>).map(r => r.score)
-      console.log(`   📊 Score range: ${Math.min(...scores).toFixed(3)} – ${Math.max(...scores).toFixed(3)}`)
-      
-      // Check if we have enough high-quality results
-      if (allResults.length >= limit * 0.8 || threshold >= 0.5) {
-        targetReached = true
-        console.log(`   🎯 Target reached with ${allResults.length} chunks at threshold ${threshold}`)
-      }
-    } else {
-      console.log(`   ❌ No chunks found at threshold ${threshold}`)
-    }
+    console.error('Chunk search failed:', error)
+    return []
   }
-  
-  // Sort by score and limit results
-  const finalResults = allResults
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-  
-  console.log(`✅ Adaptive chunk search complete: ${finalResults.length} chunks retrieved`)
-  if (adaptiveScoring && scoreThresholds.length > 1) {
-    console.log(`   🔄 Used ${scoreThresholds.length} threshold levels for optimal recall`)
-  }
-  
-  return finalResults
+
+  const results = (searchResults as Array<{paper_id: string, content: string, score: number}> | null) || []
+  return results.sort((a, b) => b.score - a.score).slice(0, limit)
 }
 
 

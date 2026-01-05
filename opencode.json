@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "portkey/@opencode/claude-opus-4-5",
+  "provider": {
+    "portkey": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Claude via Portkey",
+      "options": {
+        "baseURL": "https://api.portkey.ai/v1",
+        "headers": {
+          "x-portkey-api-key": "n2vzsJSnEwMqpf5P52Ev8J1ldtUs"
+        }
+      },
+      "models": {
+        "@opencode/claude-opus-4-5": {
+          "name": "Claude Opus 4.5 (My Azure)",
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
+        }
+      }
+    }
+  }
+}
