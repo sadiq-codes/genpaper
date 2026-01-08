@@ -116,28 +116,29 @@ export async function POST(request: NextRequest) {
       }, { status: result.isNew ? 201 : 200 })
 
     } catch (citationError) {
-      const { createErrorResponse } = await import('@/lib/utils/api-errors')
-      return createErrorResponse(citationError, 'Failed to create citation')
+      console.error('Citation creation error:', citationError)
+      return Response.json({ 
+        error: citationError instanceof Error ? citationError.message : 'Failed to create citation' 
+      }, { status: 500 })
     }
 
   } catch (error) {
-    const { createErrorResponse } = await import('@/lib/utils/api-errors')
-    return createErrorResponse(error, 'Citation API error')
+    console.error('Citation API error:', error)
+    return Response.json({ 
+      error: error instanceof Error ? error.message : 'Citation API error' 
+    }, { status: 500 })
   }
 }
 
 // Method not allowed for other HTTP methods
 export async function GET() {
-  const { ApiErrors } = await import('@/lib/utils/api-errors')
-  throw ApiErrors.methodNotAllowed('GET')
+  return Response.json({ error: 'Method GET not allowed' }, { status: 405 })
 }
 
 export async function PUT() {
-  const { ApiErrors } = await import('@/lib/utils/api-errors')
-  throw ApiErrors.methodNotAllowed('PUT')
+  return Response.json({ error: 'Method PUT not allowed' }, { status: 405 })
 }
 
 export async function DELETE() {
-  const { ApiErrors } = await import('@/lib/utils/api-errors')
-  throw ApiErrors.methodNotAllowed('DELETE')
+  return Response.json({ error: 'Method DELETE not allowed' }, { status: 405 })
 }

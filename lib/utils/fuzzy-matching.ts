@@ -1,12 +1,14 @@
 /**
- * Title/Year Fuzzy Matching Library
+ * Text Similarity & Fuzzy Matching Library
  * 
- * Reusable matching for non-DOI papers with normalized title comparison
- * and Levenshtein distance threshold.
+ * Consolidated text comparison utilities:
+ * - Jaccard similarity (word overlap) for general text comparison
+ * - Levenshtein distance for character-level matching
+ * - Title matching for paper deduplication
  */
 
 /**
- * Normalize title for fuzzy matching
+ * Normalize text for comparison
  * Strip punctuation, collapse whitespace, lowercase
  */
 export function normalizeTitle(title: string): string {
@@ -15,6 +17,41 @@ export function normalizeTitle(title: string): string {
     .replace(/[^\w\s]/g, ' ') // Replace punctuation with spaces
     .replace(/\s+/g, ' ')     // Collapse multiple spaces
     .trim()
+}
+
+/**
+ * Calculate Jaccard similarity between two texts (word overlap)
+ * Returns value between 0-1 where 1 means identical word sets
+ * 
+ * @param text1 - First text to compare
+ * @param text2 - Second text to compare  
+ * @param options - Configuration options
+ * @param options.minWordLength - Minimum word length to include (default: 2)
+ * @param options.minUnionSize - Minimum union size for valid comparison (default: 3)
+ */
+export function jaccardSimilarity(
+  text1: string, 
+  text2: string,
+  options: { minWordLength?: number; minUnionSize?: number } = {}
+): number {
+  const { minWordLength = 2, minUnionSize = 3 } = options
+  
+  const normalize = (str: string) => str.toLowerCase().replace(/[^\w\s]/g, '').trim()
+  const t1 = normalize(text1)
+  const t2 = normalize(text2)
+  
+  const words1 = new Set(t1.split(/\s+/).filter(w => w.length > minWordLength))
+  const words2 = new Set(t2.split(/\s+/).filter(w => w.length > minWordLength))
+  
+  const intersection = new Set([...words1].filter(x => words2.has(x)))
+  const union = new Set([...words1, ...words2])
+  
+  // Require minimum union size to avoid false positives with short texts
+  if (union.size < minUnionSize) {
+    return 0
+  }
+  
+  return intersection.size / union.size
 }
 
 /**
@@ -179,38 +216,3 @@ export function findBestTitleMatch(
   return matches[0]
 }
 
-/**
- * Batch find duplicates in a list of papers
- * Returns groups of potentially duplicate papers
- */
-export function findDuplicateGroups(
-  papers: PaperCandidate[],
-  options: {
-    threshold?: number
-    minSimilarity?: number
-  } = {}
-): PaperCandidate[][] {
-  const { threshold = 2, minSimilarity = 0.9 } = options
-  const groups: PaperCandidate[][] = []
-  const processed = new Set<string>()
-  
-  for (let i = 0; i < papers.length; i++) {
-    if (processed.has(papers[i].id)) continue
-    
-    const group = [papers[i]]
-    processed.add(papers[i].id)
-    
-    for (let j = i + 1; j < papers.length; j++) {
-      if (processed.has(papers[j].id)) continue
-      
-      if (isTitleMatch(papers[i].title, papers[j].title, { threshold, minSimilarity })) {
-        group.push(papers[j])
-        processed.add(papers[j].id)
-      }
-    }
-    
-    groups.push(group)
-  }
-  
-  return groups
-}

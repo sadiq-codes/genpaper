@@ -5,10 +5,13 @@ import type { ProjectPaper, ExtractedClaim, ResearchGap, AnalysisOutput } from '
 
 interface EditorPageProps {
   params: Promise<{ projectId: string }>
+  searchParams: Promise<{ created?: string }>
 }
 
-export default async function EditorPage({ params }: EditorPageProps) {
+export default async function EditorPage({ params, searchParams }: EditorPageProps) {
   const { projectId } = await params
+  const { created } = await searchParams
+  const isNewlyCreated = created === '1'
   const supabase = await createClient()
   
   // Get user
@@ -156,6 +159,12 @@ export default async function EditorPage({ params }: EditorPageProps) {
     ? { claims, gaps, synthesis }
     : undefined
 
+  // Determine if we need to show generation progress
+  // Show if newly created AND status is 'generating' AND no content yet
+  const shouldShowGeneration = isNewlyCreated && 
+    project.status === 'generating' && 
+    !project.content
+
   return (
     <div className="h-screen w-full p-2 md:p-4">
       <ResearchEditor
@@ -165,6 +174,8 @@ export default async function EditorPage({ params }: EditorPageProps) {
         initialPapers={papers}
         initialAnalysis={initialAnalysis}
         onSave={undefined}
+        isGenerating={shouldShowGeneration}
+        projectTopic={project.topic || 'Research Paper'}
       />
     </div>
   )

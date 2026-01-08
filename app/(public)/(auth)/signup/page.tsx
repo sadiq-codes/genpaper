@@ -69,7 +69,7 @@ export default function SignupPage() {
           setSuccess(true)
         } else {
           // New user, immediately confirmed (email verification disabled)
-          router.replace("/dashboard")
+          router.replace("/projects")
         }
       }
     } catch (error) {

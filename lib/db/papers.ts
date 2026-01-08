@@ -82,28 +82,7 @@ export async function getPapersByIds(paperIds: string[]): Promise<PaperWithAutho
   return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
 }
 
-export async function getRecentPapers(
-  limit = 10
-): Promise<PaperWithAuthors[]> {
-  const supabase = await getSB()
-  const { data, error } = await supabase
-    .from('papers')
-    .select(`
-      *,
-      authors
-    `)
-    .order('publication_date', { ascending: false, nullsFirst: false })
-    .limit(limit)
-
-  if (error) throw error
-
-  return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
-}
-
-
-// Removed optimizeVectorIndex - now handled automatically by the database
-
-// Task 3: Type definitions for RPC functions
+// Type definitions for RPC functions
 interface SearchResult {
   paper_id: string
   title: string
@@ -128,66 +107,6 @@ interface HybridSearchResult {
 interface SimilarPapersResult {
   paper_id: string
   score: number
-}
-
-// Task 3: Semantic similarity search functions
-export async function semanticSearchPapers(
-  query: string,
-  options: {
-    limit?: number
-    minYear?: number
-    maxYear?: number
-    sources?: string[]
-    threshold?: number
-  } = {}
-): Promise<PaperWithAuthors[]> {
-  const supabase = await getSB()
-  
-  // Prepare JSONB configuration for the RPC
-  const searchConfig = {
-    query,
-    limit: options.limit || 20,
-    threshold: options.threshold || 0.1,
-    ...(options.minYear && { minYear: options.minYear }),
-    ...(options.maxYear && { maxYear: options.maxYear }),
-    ...(options.sources && { sources: options.sources })
-  }
-  
-  // Call the enhanced RPC function
-  const { data: searchResults, error } = await supabase
-    .rpc('semantic_search_papers', { search_config: searchConfig })
-  
-  if (error) {
-    console.error('Enhanced semantic search failed:', error)
-    throw error
-  }
-  
-  if (!searchResults || searchResults.length === 0) {
-    return []
-  }
-  
-  // Authors are now stored directly in the JSONB array, no separate fetch needed
-  
-  // Transform results to include authors and search scores
-  return searchResults.map((result: SearchResult) => ({
-    id: result.paper_id,
-    title: result.title,
-    abstract: result.abstract,
-    publication_date: result.publication_date,
-    venue: result.venue,
-    doi: result.doi,
-    pdf_url: null,
-    metadata: {
-      search_scores: {
-        similarity_score: result.similarity_score
-      }
-    },
-    source: 'search',
-    citation_count: result.citation_count,
-    created_at: new Date().toISOString(),
-    authors: [],
-    author_names: []
-  }))
 }
 
 export async function hybridSearchPapers(
@@ -341,6 +260,17 @@ export async function hybridSearchPapers(
           console.log(`   📄 "${paper.title?.substring(0, 50)}...": ${hasEmbedding ? `✅ Has embedding (${paper.embedding.length} dims)` : '❌ No embedding'}`)
         })
       }
+      
+      // FALLBACK: Use keyword scores only when semantic search fails
+      console.warn(`⚠️ Falling back to keyword-only ranking due to semantic search failure`)
+      // Re-rank results by keyword score to compensate for missing semantic scores
+      searchResults.sort((a: HybridSearchResult, b: HybridSearchResult) => 
+        b.keyword_score - a.keyword_score
+      )
+      // Adjust combined scores to reflect keyword-only ranking
+      searchResults.forEach((r: HybridSearchResult) => {
+        r.combined_score = r.keyword_score
+      })
     }
   } else {
     console.warn(`⚠️ RPC returned no results - this indicates a deeper issue with vector search`)
@@ -354,7 +284,7 @@ export async function hybridSearchPapers(
   const filteredResults = (searchResults || []).filter(
     (result: HybridSearchResult) => 
       !excludePaperIds.includes(result.id) &&
-      result.combined_score >= 0.0001 // Reduced from 0.0001 to be more permissive
+      result.combined_score >= 0.0001 // Minimum score threshold to filter noise
   )
 
   console.log(`🔧 After filtering excluded papers: ${filteredResults.length} results`)

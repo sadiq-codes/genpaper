@@ -141,28 +141,6 @@ class CitationLogger {
   }
 
   /**
-   * Log batch operation metrics
-   */
-  logBatchAdd(context: CitationLogContext & {
-    metrics: PerformanceMetrics
-    batchSize: number
-    successCount: number
-    failureCount: number
-  }): void {
-    this.log({
-      ...context,
-      level: 'info',
-      message: `Batch citation processing completed`,
-      metadata: {
-        batchSize: context.batchSize,
-        successCount: context.successCount,
-        failureCount: context.failureCount,
-        successRate: context.successCount / context.batchSize
-      }
-    })
-  }
-
-  /**
    * Log citation rendering performance
    */
   logRenderPerformance(context: CitationLogContext & {
@@ -204,53 +182,6 @@ class CitationLogger {
         style: context.style,
         citationCount: context.citationCount,
         renderType: context.renderType
-      }
-    })
-  }
-
-  /**
-   * Log API response errors (non-2xx)
-   */
-  logApiError(context: CitationLogContext & {
-    endpoint: string
-    statusCode: number
-    error: Error | string
-    requestBody?: Record<string, unknown>
-  }): void {
-    this.log({
-      ...context,
-      level: 'error',
-      message: `API error: ${context.endpoint}`,
-      error: {
-        message: typeof context.error === 'string' ? context.error : context.error.message,
-        code: `HTTP_${context.statusCode}`,
-        stack: typeof context.error === 'object' ? context.error.stack : undefined
-      },
-      metadata: {
-        endpoint: context.endpoint,
-        statusCode: context.statusCode,
-        requestBody: context.requestBody
-      }
-    })
-  }
-
-  /**
-   * Log validation errors
-   */
-  logValidationError(context: CitationLogContext & {
-    error: Error | string
-    input: Record<string, unknown>
-  }): void {
-    this.log({
-      ...context,
-      level: 'warn',
-      message: 'Validation failed',
-      error: {
-        message: typeof context.error === 'string' ? context.error : context.error.message,
-        code: 'VALIDATION_ERROR'
-      },
-      metadata: {
-        input: context.input
       }
     })
   }

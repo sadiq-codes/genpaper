@@ -2,7 +2,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
-import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar'
+import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/app-shell/sidebar'
 import GlobalLibraryProvider from '@/components/GlobalLibraryProvider'
 
@@ -36,17 +36,8 @@ export default async function AppLayout({
         <AppSidebar />
         
         <SidebarInset>
-          {/* Sticky header for persistent shell */}
-          <header className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
-            <div className="flex h-14 items-center px-4">
-              <SidebarTrigger className="-ml-1" />
-              <div className="mx-2 h-4 w-px bg-sidebar-border" />
-              <h1 className="text-lg font-semibold">GenPaper</h1>
-            </div>
-          </header>
-          
-          {/* Main content area */}
-          <main id="main-content" className="flex-1 p-6">
+          {/* Main content area - matches editor layout with bg-muted/30 */}
+          <main id="main-content" className="flex-1 min-h-screen bg-muted/30 p-2 md:p-4">
             {children}
           </main>
         </SidebarInset>

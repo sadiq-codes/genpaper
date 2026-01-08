@@ -23,11 +23,12 @@ export interface SearchOptions {
   includeOtherTypes?: boolean // Include books, datasets, etc.
 }
 
-// Import shared hash utility
+// Import shared utilities
 import { PaperSource } from '@/types/simplified'
 import { XMLParser } from 'fast-xml-parser'
 import pLimit from 'p-limit'
 import { formatDateForAPI, createCanonicalId, deduplicate } from '@/lib/utils/paper-id'
+import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
 
 // OpenAlex publication types - using correct names per API docs
 // Note: OpenAlex uses different type names than Crossref
@@ -75,52 +76,7 @@ function isDirectPdfUrl(url: string): boolean {
   return pdfPatterns.some(pattern => pattern.test(url))
 }
 
-export function isPaywalledUrl(url: string): boolean {
-  if (!url) return false
-  
-  // Known open access publishers/platforms (exclude from paywall detection)
-  const openAccessPatterns = [
-    /plos\.org/i,
-    /elifesciences\.org/i,
-    /peerj\.com/i,
-    /frontiersin\.org/i,
-    /mdpi\.com/i,
-    /hindawi\.com/i,
-    /biomedcentral\.com/i,
-    /springeropen\.com/i,
-    /nature\.com\/articles\/s41598/i, // Scientific Reports
-    /journals\.plos\.org/i,
-    /doaj\.org/i,
-    /arxiv\.org/i,
-    /biorxiv\.org/i,
-    /medrxiv\.org/i,
-    /ncbi\.nlm\.nih\.gov\/pmc/i
-  ]
-  
-  // If it's a known OA publisher, not paywalled
-  if (openAccessPatterns.some(pattern => pattern.test(url))) {
-    return false
-  }
-  
-  // Known paywall patterns
-  const paywallPatterns = [
-    /doi\.org/i,
-    /dx\.doi\.org/i,
-    /link\.springer\.com/i,
-    /sciencedirect\.com/i,
-    /wiley\.com/i,
-    /nature\.com/i,
-    /tandfonline\.com/i,
-    /jstor\.org/i,
-    /ieee\.org/i,
-    /acm\.org/i,
-    /sage\.com/i
-  ]
-  
-  return paywallPatterns.some(pattern => pattern.test(url))
-}
-
-// Google Scholar Search Interface
+// Google Scholar Search Interface (internal)
 interface GoogleScholarResult {
   title: string
   authors: string[]
@@ -132,8 +88,8 @@ interface GoogleScholarResult {
   snippet?: string
 }
 
-// Google Scholar scraping function (simplified approach)
-export async function searchGoogleScholar(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
+// Google Scholar scraping function (not exported - not reliable enough for production)
+async function searchGoogleScholar(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
   const { limit = 20, fromYear, toYear, fastMode = false } = options
   
   // Note: This is a simplified implementation. In production, you might want to use:
@@ -395,32 +351,10 @@ async function findMedrxivPdf(title: string): Promise<string | null> {
   }
 }
 
-// PubMed Central (PMC) PDF finder - DISABLED
-// Removed due to frequent timeout errors and low success rate
-// ArXiv, Unpaywall, and other sources provide better coverage
-async function findPmcPdf(_title: string, _doi?: string): Promise<string | null> {
-  // PMC search disabled - was causing frequent timeout errors in logs
-  return null
-}
-
-// Improved title similarity with minimum threshold
+// Title similarity using consolidated Jaccard similarity
+// Uses imported jaccardSimilarity from fuzzy-matching.ts with title-specific settings
 function titleSimilarity(title1: string, title2: string): number {
-  const normalize = (str: string) => str.toLowerCase().replace(/[^\w\s]/g, '').trim()
-  const t1 = normalize(title1)
-  const t2 = normalize(title2)
-  
-  const words1 = new Set(t1.split(/\s+/).filter(w => w.length > 2)) // Filter short words
-  const words2 = new Set(t2.split(/\s+/).filter(w => w.length > 2))
-  
-  const intersection = new Set([...words1].filter(x => words2.has(x)))
-  const union = new Set([...words1, ...words2])
-  
-  // Require minimum union size to avoid false positives with short titles
-  if (union.size < 5) {
-    return 0
-  }
-  
-  return intersection.size / union.size
+  return jaccardSimilarity(title1, title2, { minWordLength: 2, minUnionSize: 5 })
 }
 
 // API Response interfaces for better typing
@@ -752,11 +686,11 @@ export async function searchSemanticScholar(query: string, options: SearchOption
   return simpleRetry(async () => {
     let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${limit}&fields=paperId,title,abstract,year,venue,doi,url,citationCount,authors`
     
-    if (fromYear) {
-      url += `&year=${fromYear}-`
-    }
-    if (toYear) {
-      url += `${toYear || ''}`
+    // Build year filter: Semantic Scholar expects format like "2020-2023" or "2020-" or "-2023"
+    if (fromYear || toYear) {
+      const yearFrom = fromYear ? String(fromYear) : ''
+      const yearTo = toYear ? String(toYear) : ''
+      url += `&year=${yearFrom}-${yearTo}`
     }
     
     if (openAccessOnly) {
@@ -981,12 +915,6 @@ const pdfStrategies: PdfStrategy[] = [
     fn: (paper) => findMedrxivPdf(paper.title),
     available: true
   },
-  // PMC removed - frequent timeouts and low success rate
-  // {
-  //   name: 'PMC',
-  //   fn: (paper) => findPmcPdf(paper.title, paper.doi),
-  //   available: false
-  // },
   {
     name: 'ResearchGate',
     fn: () => findResearchGatePdf(),
@@ -1136,19 +1064,4 @@ export async function getPaperReferences(doi?: string, fallbackId?: string): Pro
   return refs
 }
 
-// Adapter exports for unified search interface
-export const openalexAdapter = { search: searchOpenAlex }
-export const crossrefAdapter = { search: searchCrossref }
-export const semanticScholarAdapter = { search: searchSemanticScholar }
-export const arxivAdapter = { search: searchArxiv }
-export const coreAdapter = { search: searchCore }
-export const googleScholarAdapter = { search: searchGoogleScholar }
-
-export const adapters = [
-  openalexAdapter,
-  crossrefAdapter,
-  semanticScholarAdapter,
-  arxivAdapter,
-  coreAdapter,
-  googleScholarAdapter
-] as const; 
+ 

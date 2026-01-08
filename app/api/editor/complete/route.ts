@@ -2,7 +2,13 @@ import { createClient } from '@/lib/supabase/server'
 import { openai } from '@ai-sdk/openai'
 import { generateText } from 'ai'
 import { NextRequest, NextResponse } from 'next/server'
-import { generateEmbeddings } from '@/lib/utils/embedding'
+import { 
+  retrieveEditorContext, 
+  formatEditorContextForPrompt, 
+  verifyAllCitations,
+  getFirstAuthorLastName,
+  type EditorContext 
+} from '@/lib/rag'
 
 // Suggestion types for smart context-aware completion
 type SuggestionType =
@@ -21,22 +27,8 @@ interface CompletionRequest {
     currentSection: string
     documentOutline: string[]
   }
-  papers: Array<{
-    id: string
-    title: string
-    abstract?: string
-    authors: string[]
-    year: number
-  }>
-  claims: Array<{
-    id: string
-    claim_text: string
-    claim_type: string
-    paper_id: string
-    paper_title?: string
-    paper_authors?: string[]
-    paper_year?: number
-  }>
+  // Paper IDs from the project - we'll retrieve chunks/claims from DB
+  paperIds: string[]
   topic: string
   suggestionType?: SuggestionType
 }
@@ -46,66 +38,76 @@ interface CitationInSuggestion {
   marker: string
   startOffset: number
   endOffset: number
+  verified?: boolean
+  // Include paper metadata for frontend display
+  paper?: {
+    id: string
+    title: string
+    authors: string[]
+    year: number
+    doi?: string
+    venue?: string
+  }
 }
 
 interface CompletionResponse {
   suggestion: string
   citations: CitationInSuggestion[]
   contextHint: string
-}
-
-// Calculate cosine similarity between two vectors
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0
-  let dotProduct = 0
-  let normA = 0
-  let normB = 0
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i]
-    normA += a[i] * a[i]
-    normB += b[i] * b[i]
+  ragInfo?: {
+    chunksUsed: number
+    claimsUsed: number
+    papersReferenced: number
   }
-  const magnitude = Math.sqrt(normA) * Math.sqrt(normB)
-  return magnitude === 0 ? 0 : dotProduct / magnitude
 }
 
-// Find most relevant claims based on semantic similarity to context
-async function findRelevantClaims(
-  contextText: string,
-  claims: CompletionRequest['claims'],
-  maxClaims: number = 7
-): Promise<CompletionRequest['claims']> {
-  if (claims.length === 0) return []
-  if (claims.length <= maxClaims) return claims
+// Using getFirstAuthorLastName from @/lib/rag for author name extraction
 
-  try {
-    const textsToEmbed = [contextText, ...claims.map(c => c.claim_text)]
-    const embeddings = await generateEmbeddings(textsToEmbed)
+/**
+ * Find a matching paper from RAG context based on author name and year
+ */
+function findMatchingPaperFromRAG(
+  authorPart: string,
+  year: number,
+  ragContext: EditorContext
+): { id: string; authors: string[]; year: number } | undefined {
+  const searchName = authorPart
+    .replace(/\s+et\s+al\.?/gi, '')
+    .replace(/\s+and\s+.*$/i, '')
+    .replace(/\s+&\s+.*$/i, '')
+    .trim()
+    .toLowerCase()
+
+  for (const [, paper] of ragContext.papers) {
+    if (!paper.authors || paper.authors.length === 0) continue
     
-    const contextEmbedding = embeddings[0]
-    const claimEmbeddings = embeddings.slice(1)
+    const firstAuthorLastName = getFirstAuthorLastName(paper.authors).toLowerCase()
+    const yearMatch = Math.abs(paper.year - year) <= 1
+    const nameMatch = 
+      firstAuthorLastName.includes(searchName) || 
+      searchName.includes(firstAuthorLastName) ||
+      firstAuthorLastName === searchName
 
-    const scoredClaims = claims.map((claim, index) => ({
-      claim,
-      score: cosineSimilarity(contextEmbedding, claimEmbeddings[index])
-    }))
-
-    scoredClaims.sort((a, b) => b.score - a.score)
-    return scoredClaims.slice(0, maxClaims).map(sc => sc.claim)
-  } catch (error) {
-    console.warn('Failed to rank claims by similarity, returning first N:', error)
-    return claims.slice(0, maxClaims)
+    if (nameMatch && yearMatch) {
+      return { id: paper.id, authors: paper.authors, year: paper.year }
+    }
   }
+  
+  return undefined
 }
 
-// Parse AI response to extract citations
+/**
+ * Parse AI response to extract citations and match to papers
+ */
 function parseCitationsFromText(
   text: string,
-  papers: CompletionRequest['papers']
+  ragContext: EditorContext
 ): { cleanText: string; citations: CitationInSuggestion[] } {
   const citations: CitationInSuggestion[] = []
   
-  const citationRegex = /\(([A-Z][a-z]+(?:\s+et\s+al\.)?),\s*(\d{4})\)/g
+  // Citation regex for (Author, Year) format
+  const citationRegex = /\(([A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'\-\s]*?)(?:\s+(?:et\s+al\.|and|&)\s+[A-Za-z\u00C0-\u024F'\-\s]+?)?,\s*(\d{4})\)/g
+  
   let match
   
   while ((match = citationRegex.exec(text)) !== null) {
@@ -113,11 +115,7 @@ function parseCitationsFromText(
     const authorPart = match[1]
     const year = parseInt(match[2])
     
-    const matchingPaper = papers.find(p => {
-      const firstAuthorLastName = p.authors[0]?.split(' ').pop()?.toLowerCase()
-      const matchAuthor = authorPart.replace(' et al.', '').toLowerCase()
-      return firstAuthorLastName === matchAuthor && p.year === year
-    })
+    const matchingPaper = findMatchingPaperFromRAG(authorPart, year, ragContext)
 
     if (matchingPaper) {
       citations.push({
@@ -158,18 +156,17 @@ function getSectionGuidance(section: string): string {
   return 'Continue in an appropriate academic tone.'
 }
 
-// Build prompt based on suggestion type
-function buildPromptForType(
+// Build RAG-grounded prompt
+function buildRAGPrompt(
   suggestionType: SuggestionType,
   context: CompletionRequest['context'],
   topic: string,
   sectionGuidance: string,
-  claimsContext: string,
-  papersContext: string,
+  ragFormatted: { chunksText: string; claimsText: string; papersText: string },
   outlineContext: string
 ): { system: string; user: string } {
   
-  const baseSystemPrompt = `You are an expert academic writing assistant.
+  const baseSystemPrompt = `You are an expert academic writing assistant. You MUST ground your writing in the provided source material.
 
 ## Research Topic
 ${topic}
@@ -180,18 +177,24 @@ ${sectionGuidance}
 ## Document Structure
 ${outlineContext}
 
-## Relevant Evidence
-${claimsContext}
+## SOURCE MATERIAL (Ground your writing in these sources)
 
-## Available Papers for Citation
-${papersContext}
+### Relevant Text Excerpts from Papers:
+${ragFormatted.chunksText}
 
-## Rules
+### Key Claims from Research:
+${ragFormatted.claimsText}
+
+### Available Papers for Citation:
+${ragFormatted.papersText}
+
+## CRITICAL RULES
+- You MUST ONLY make claims that are supported by the source material above
+- You MUST cite sources as (AuthorLastName, Year) when referencing their content
+- You MUST ONLY cite papers from the "Available Papers for Citation" list
+- Do NOT invent facts or citations - if you can't support a claim, don't make it
 - Write 1-2 sentences maximum
 - Use academic tone
-- Cite sources as (AuthorLastName, Year) when making claims
-- Only cite from the available papers list
-- Be concise and precise
 
 ## Output Format
 Return ONLY a JSON object:
@@ -202,37 +205,37 @@ Return ONLY a JSON object:
 
   switch (suggestionType) {
     case 'opening_sentence':
-      systemAddendum = '\n\n## Task: Write an Opening Sentence\nStart this section with a clear topic sentence that introduces the main concept or sets up the discussion.'
-      userPrompt = `Write an opening sentence for the "${context.currentSection}" section.`
+      systemAddendum = '\n\n## Task: Write an Opening Sentence\nStart this section with a clear topic sentence based on the source material.'
+      userPrompt = `Write an opening sentence for the "${context.currentSection}" section using the provided sources.`
       break
 
     case 'complete_sentence':
-      systemAddendum = '\n\n## Task: Complete the Sentence\nFinish the incomplete sentence naturally and grammatically.'
-      userPrompt = `Complete this sentence:\n"${context.precedingText.slice(-200)}"`
+      systemAddendum = '\n\n## Task: Complete the Sentence\nFinish the incomplete sentence using information from the sources.'
+      userPrompt = `Complete this sentence using the source material:\n"${context.precedingText.slice(-200)}"`
       break
 
     case 'next_sentence':
-      systemAddendum = '\n\n## Task: Continue with Next Sentence\nAdd the next logical sentence that builds on what was just stated.'
-      userPrompt = `Continue after:\n"${context.precedingText.slice(-300)}"`
+      systemAddendum = '\n\n## Task: Continue with Next Sentence\nAdd the next logical sentence based on the source material.'
+      userPrompt = `Continue after this text using the sources:\n"${context.precedingText.slice(-300)}"`
       break
 
     case 'provide_examples':
-      systemAddendum = '\n\n## Task: Provide Examples\nProvide specific, concrete examples with citations where appropriate.'
-      userPrompt = `Provide examples following:\n"${context.precedingText.slice(-200)}"`
+      systemAddendum = '\n\n## Task: Provide Examples\nProvide specific examples FROM the source material with citations.'
+      userPrompt = `Provide examples from the sources following:\n"${context.precedingText.slice(-200)}"`
       break
 
     case 'contrast_point':
-      systemAddendum = '\n\n## Task: Complete Contrasting Point\nComplete the contrasting or qualifying statement being made.'
-      userPrompt = `Complete this contrasting statement:\n"${context.precedingText.slice(-200)}"`
+      systemAddendum = '\n\n## Task: Complete Contrasting Point\nComplete the contrast using evidence from the sources.'
+      userPrompt = `Complete this contrasting statement using the sources:\n"${context.precedingText.slice(-200)}"`
       break
 
     case 'contextual':
     default:
-      systemAddendum = '\n\n## Task: Contextual Completion\nDetermine the best way to continue based on the context.'
+      systemAddendum = '\n\n## Task: Contextual Completion\nContinue appropriately using the source material.'
       if (!context.precedingText.trim()) {
-        userPrompt = `Write an appropriate opening for the "${context.currentSection}" section.`
+        userPrompt = `Write an appropriate opening for the "${context.currentSection}" section using the provided sources.`
       } else {
-        userPrompt = `Continue this text appropriately:\n"${context.precedingText.slice(-300)}"`
+        userPrompt = `Continue this text using the sources:\n"${context.precedingText.slice(-300)}"`
       }
       break
   }
@@ -252,14 +255,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body: CompletionRequest = await request.json()
-    const { projectId, context, papers, claims, topic, suggestionType = 'contextual' } = body
+    // Parse request body with error handling
+    let body: CompletionRequest
+    try {
+      const text = await request.text()
+      if (!text || text.trim() === '') {
+        return NextResponse.json({ error: 'Empty request body' }, { status: 400 })
+      }
+      body = JSON.parse(text)
+    } catch (parseError: unknown) {
+      if (parseError instanceof Error) {
+        if (parseError.message === 'aborted' || parseError.message.includes('ECONNRESET')) {
+          return new NextResponse(null, { status: 499 })
+        }
+      }
+      console.error('Failed to parse request body:', parseError)
+      return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 })
+    }
 
-    // Allow empty precedingText for opening_sentence type
+    const { projectId, context, paperIds, topic, suggestionType = 'contextual' } = body
+
     if (!projectId) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
     }
 
+    // Verify project ownership
     const { data: project, error: projectError } = await supabase
       .from('research_projects')
       .select('id, topic')
@@ -271,23 +291,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Find relevant claims
-    const contextText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
-    const relevantClaims = await findRelevantClaims(contextText, claims, 7)
+    // ============================================
+    // CRITICAL: Check if papers are available
+    // ============================================
+    if (!paperIds || paperIds.length === 0) {
+      return NextResponse.json({ 
+        error: 'No papers available',
+        message: 'Add papers to your project to enable AI-assisted writing. This ensures suggestions are grounded in real sources.'
+      }, { status: 422 })
+    }
 
-    // Build context strings
-    const claimsContext = relevantClaims.length > 0
-      ? relevantClaims.map(c => {
-          const authorName = c.paper_authors?.[0]?.split(' ').pop() || 'Unknown'
-          const year = c.paper_year || 'n.d.'
-          return `- "${c.claim_text}" (${authorName}, ${year})`
-        }).join('\n')
-      : 'No claims available.'
+    // ============================================
+    // RAG RETRIEVAL: Get relevant chunks and claims
+    // ============================================
+    const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
+    
+    const ragContext = await retrieveEditorContext(queryText, paperIds, {
+      maxChunks: 8,
+      maxClaims: 6,
+      minChunkScore: 0.25,
+      minClaimScore: 0.25
+    })
 
-    const papersContext = papers.slice(0, 10).map(p => {
-      const firstAuthor = p.authors[0]?.split(' ').pop() || 'Unknown'
-      return `- ${firstAuthor} (${p.year}): "${p.title}"`
-    }).join('\n') || 'No papers available.'
+    // Check if we have any content to work with
+    if (!ragContext.hasContent) {
+      return NextResponse.json({ 
+        error: 'No relevant content found',
+        message: 'The papers in your project don\'t have processed content yet. Try processing the papers first, or add papers with more relevant content.'
+      }, { status: 422 })
+    }
+
+    // Format RAG context for the prompt
+    const ragFormatted = formatEditorContextForPrompt(ragContext)
 
     const outlineContext = context.documentOutline.length > 0
       ? context.documentOutline.map(h => `- ${h}`).join('\n')
@@ -295,25 +330,34 @@ export async function POST(request: NextRequest) {
 
     const sectionGuidance = getSectionGuidance(context.currentSection)
 
-    // Build type-specific prompt
-    const { system, user: userPrompt } = buildPromptForType(
+    // Build RAG-grounded prompt
+    const { system, user: userPrompt } = buildRAGPrompt(
       suggestionType,
       context,
       topic || project.topic,
       sectionGuidance,
-      claimsContext,
-      papersContext,
+      ragFormatted,
       outlineContext
     )
 
-    // Generate completion
-    const { text: rawResponse } = await generateText({
-      model: openai('gpt-4o-mini'),
-      system,
-      prompt: userPrompt,
-      maxTokens: 300,
-      temperature: 0.7,
-    })
+    // Generate completion with timeout
+    const abortController = new AbortController()
+    const timeout = setTimeout(() => abortController.abort(), 30000)
+    
+    let rawResponse: string
+    try {
+      const result = await generateText({
+        model: openai('gpt-4o-mini'),
+        system,
+        prompt: userPrompt,
+        maxTokens: 300,
+        temperature: 0.5, // Lower temperature for more grounded output
+        abortSignal: abortController.signal,
+      })
+      rawResponse = result.text
+    } finally {
+      clearTimeout(timeout)
+    }
 
     // Parse response
     let suggestion: string
@@ -343,13 +387,52 @@ export async function POST(request: NextRequest) {
       }, { status: 422 })
     }
 
-    // Parse citations
-    const { cleanText, citations } = parseCitationsFromText(suggestion, papers)
+    // Parse citations from generated text
+    const { cleanText, citations } = parseCitationsFromText(suggestion, ragContext)
+
+    // ============================================
+    // CITATION VERIFICATION: Semantic matching
+    // ============================================
+    let verifiedCitations: CitationInSuggestion[] = []
+    if (citations.length > 0) {
+      const verificationResults = await verifyAllCitations(
+        citations,
+        cleanText,
+        ragContext,
+        0.4 // Semantic similarity threshold
+      )
+      
+      // Only include verified citations, with paper metadata
+      verifiedCitations = verificationResults
+        .filter(c => c.verified)
+        .map(c => {
+          const paperMeta = ragContext.papers.get(c.paperId)
+          return {
+            paperId: c.paperId,
+            marker: c.marker,
+            startOffset: c.startOffset,
+            endOffset: c.endOffset,
+            paper: paperMeta ? {
+              id: paperMeta.id,
+              title: paperMeta.title,
+              authors: paperMeta.authors,
+              year: paperMeta.year,
+              doi: paperMeta.doi,
+              venue: paperMeta.venue
+            } : undefined
+          }
+        })
+    }
 
     const response: CompletionResponse = {
       suggestion: cleanText,
-      citations,
-      contextHint
+      citations: verifiedCitations,
+      contextHint,
+      ragInfo: {
+        chunksUsed: ragContext.chunks.length,
+        claimsUsed: ragContext.claims.length,
+        papersReferenced: ragContext.papers.size
+      }
     }
 
     return NextResponse.json(response)

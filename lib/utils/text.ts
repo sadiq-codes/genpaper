@@ -6,6 +6,7 @@
  */
 
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
+import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
 
 export interface TextChunk {
   id: string
@@ -41,16 +42,6 @@ export async function getTokenCount(text: string): Promise<number> {
       }
     }
   }
-}
-
-/**
- * @deprecated Use getTokenCount() instead for accurate token counting
- * Kept for backward compatibility, but should be migrated
- */
-export function estimateTokenCount(text: string): number {
-  console.warn('estimateTokenCount is deprecated. Use getTokenCount() for accurate token counting.')
-  // Rough approximation: 1 token ≈ 4 characters for English text
-  return Math.ceil(text.length / 4)
 }
 
 /**
@@ -304,16 +295,11 @@ export function extractSentences(text: string): string[] {
 }
 
 /**
- * Calculate text similarity (simple word overlap)
+ * Calculate text similarity using Jaccard word overlap
+ * Re-exports the consolidated implementation from fuzzy-matching
  */
 export function calculateTextSimilarity(text1: string, text2: string): number {
-  const words1 = new Set(text1.toLowerCase().split(/\s+/))
-  const words2 = new Set(text2.toLowerCase().split(/\s+/))
-  
-  const intersection = new Set([...words1].filter(word => words2.has(word)))
-  const union = new Set([...words1, ...words2])
-  
-  return union.size > 0 ? intersection.size / union.size : 0
+  return jaccardSimilarity(text1, text2, { minWordLength: 0, minUnionSize: 1 })
 }
 
 /**
@@ -330,175 +316,6 @@ export function truncateText(text: string, maxLength: number): string {
   return lastSpaceIndex > maxLength * 0.8 
     ? truncated.slice(0, lastSpaceIndex) + '...'
     : truncated + '...'
-}
-
-/**
- * Extract keywords from text (simple frequency-based)
- */
-export function extractKeywords(text: string, maxKeywords: number = 10): string[] {
-  const words = text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, '')
-    .split(/\s+/)
-    .filter(word => word.length > 3) // Filter short words
-  
-  const frequency = new Map<string, number>()
-  words.forEach(word => {
-    frequency.set(word, (frequency.get(word) || 0) + 1)
-  })
-  
-  return Array.from(frequency.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, maxKeywords)
-    .map(([word]) => word)
-}
-
-/**
- * Extract title from PDF text lines
- */
-export function extractTitle(lines: string[], fallbackName: string): string {
-  let title = fallbackName.replace('.pdf', '').replace(/[-_]/g, ' ')
-  
-  // Look for title in first 10 lines, avoiding headers/metadata
-  for (let i = 0; i < Math.min(10, lines.length); i++) {
-    const line = lines[i]
-    if (line.length > 15 && line.length < 200 && 
-        !line.toLowerCase().includes('journal') &&
-        !line.toLowerCase().includes('volume') &&
-        !line.toLowerCase().includes('page') &&
-        !line.toLowerCase().includes('issn') &&
-        !line.toLowerCase().includes('doi') &&
-        !line.match(/^\d+$/) && // Not just numbers
-        !line.match(/^[A-Z\s]{3,}$/) && // Not all caps
-        line.includes(' ')) { // Has multiple words
-      title = line
-      break
-    }
-  }
-  
-  return title
-}
-
-/**
- * Extract authors from PDF text
- */
-export function extractAuthors(fullText: string): string[] {
-  let authors: string[] = []
-  
-  // Look for author patterns
-  const authorPatterns = [
-    /(?:authors?|by)\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?\s*)*(?:,?\s*(?:and\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]*\.?\s*)*)*)/gi,
-    /^([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s*,\s*[A-Z][a-z]+\s+[A-Z][a-z]+)*)/m,
-    /([A-Z]\.\s*[A-Z][a-z]+(?:\s*,\s*[A-Z]\.\s*[A-Z][a-z]+)*)/g
-  ]
-  
-  for (const pattern of authorPatterns) {
-    const matches = fullText.match(pattern)
-    if (matches && matches.length > 0) {
-      const authorText = matches[0].replace(/^(authors?|by)\s*:?\s*/i, '')
-      authors = authorText.split(/,|\band\b/)
-        .map(author => author.trim())
-        .filter(author => author.length > 2 && author.length < 50)
-        .slice(0, 10) // Max 10 authors
-      if (authors.length > 0) {
-        break
-      }
-    }
-  }
-  
-  return authors.length > 0 ? authors : ['Unknown Author']
-}
-
-/**
- * Extract abstract from PDF text
- */
-export function extractAbstract(fullText: string): string | undefined {
-  const abstractPatterns = [
-    new RegExp('abstract[:\\s]+(.*?)(?:\\n\\s*\\n|\\n\\s*(?:keywords|introduction|1\\.?\\s*introduction))', 'si'),
-    new RegExp('summary[:\\s]+(.*?)(?:\\n\\s*\\n|\\n\\s*(?:keywords|introduction))', 'si')
-  ]
-  
-  for (const pattern of abstractPatterns) {
-    const match = fullText.match(pattern)
-    if (match && match[1]) {
-      let abstract = match[1].trim()
-        .replace(/\s+/g, ' ')
-        .replace(/\n/g, ' ')
-      
-      // Clean up abstract
-      if (abstract.length > 50 && abstract.length < 2000) {
-        if (abstract.length > 500) {
-          abstract = abstract.substring(0, 500) + '...'
-        }
-        return abstract
-      }
-    }
-  }
-  
-  return undefined
-}
-
-/**
- * Extract DOI from PDF text
- */
-export function extractDOI(fullText: string): string | undefined {
-  const doiPatterns = [
-    /DOI[:\s]*(10\.\d+\/[^\s\n]+)/i,
-    /https?:\/\/doi\.org\/(10\.\d+\/[^\s\n]+)/i,
-    /\b(10\.\d+\/[^\s\n]+)\b/g
-  ]
-  
-  for (const pattern of doiPatterns) {
-    const match = fullText.match(pattern)
-    if (match && (match[1] || match[0])) {
-      return match[1] || match[0]
-    }
-  }
-  
-  return undefined
-}
-
-/**
- * Extract publication year from PDF text
- */
-export function extractYear(fullText: string): string | undefined {
-  const yearPattern = /\b(19|20)\d{2}\b/g
-  const firstPartText = fullText.substring(0, Math.min(5000, fullText.length)) // First ~5k chars
-  const yearMatches = firstPartText.match(yearPattern)
-  
-  if (yearMatches && yearMatches.length > 0) {
-    const years = yearMatches
-      .map(y => parseInt(y))
-      .filter(y => y >= 1990 && y <= new Date().getFullYear())
-    if (years.length > 0) {
-      // Prefer the first valid year found (likely publication date)
-      return years[0].toString()
-    }
-  }
-  
-  return undefined
-}
-
-/**
- * Extract venue/journal from PDF text
- */
-export function extractVenue(fullText: string): string | undefined {
-  const venuePatterns = [
-    /(?:published in|journal of|international journal of|proceedings of)\s+([^.\n]+)/i,
-    /(?:conference on|workshop on)\s+([^.\n]+)/i,
-    /([A-Z][a-z\s]+Journal[^.\n]*)/i
-  ]
-  
-  for (const pattern of venuePatterns) {
-    const match = fullText.match(pattern)
-    if (match && match[1]) {
-      let venue = match[1].trim()
-      if (venue.length > 100) venue = venue.substring(0, 100) + '...'
-      return venue
-    }
-  }
-  
-  return undefined
 }
 
 /**

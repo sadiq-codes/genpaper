@@ -59,7 +59,6 @@ export async function createProjectAction(
 
     const project = await createResearchProject(user.id, topic.trim(), generationConfig)
     
-    revalidatePath('/dashboard')
     revalidatePath('/projects')
     // Redirect to editor with success hint to show toast
     redirect(`/editor/${project.id}?created=1`)
@@ -102,7 +101,7 @@ export async function deleteProjectAction(projectId: string) {
 
     await deleteResearchProject(projectId)
     
-    revalidatePath('/dashboard')
+    revalidatePath('/projects')
     return { success: true }
   } catch (error) {
     console.error('Error deleting project:', error)
@@ -134,7 +133,7 @@ export async function addToLibraryAction(formData: FormData) {
       throw new Error('Failed to add to library')
     }
 
-    revalidatePath('/dashboard?tab=library')
+    revalidatePath('/library')
     return { success: true }
   } catch (error) {
     console.error('Error adding to library:', error)

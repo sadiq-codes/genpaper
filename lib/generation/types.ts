@@ -2,29 +2,6 @@ import type { PaperWithAuthors, GenerationConfig, GenerationProgress } from '@/t
 import type { CSLItem } from '@/lib/utils/csl'
 import type { PaperTypeKey } from '@/lib/prompts/types'
 
-// Tool call analytics types (legacy - kept for backward compatibility)
-export interface CapturedToolCall {
-  toolCallId: string
-  toolName: string
-  args: Record<string, unknown>
-  result: Record<string, unknown> | null
-  timestamp: string
-  validated: boolean
-  error?: string
-}
-
-export interface ToolCallAnalytics {
-  totalToolCalls: number
-  validatedToolCalls: number
-  successfulToolCalls: number
-  failedToolCalls: number
-  invalidToolCalls: number
-  addCitationCalls: number
-  successfulCitations: number
-  toolCallTimestamps: string[]
-  errors: { type: string; toolCallId: string; error?: string }[]
-}
-
 // Generation types
 export interface EnhancedGenerationOptions {
   projectId: string

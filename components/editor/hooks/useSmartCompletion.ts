@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Editor } from '@tiptap/react'
-import type { ProjectPaper, ExtractedClaim } from '../types'
+import type { ProjectPaper } from '../types'
 import { hasGhostText, type GhostTextCitation } from '../extensions/GhostText'
 
 // Suggestion types based on context
@@ -18,7 +18,6 @@ interface UseSmartCompletionOptions {
   editor: Editor | null
   enabled: boolean
   papers: ProjectPaper[]
-  claims: ExtractedClaim[]
   projectId: string
   projectTopic: string
 }
@@ -43,7 +42,25 @@ const EXAMPLE_PATTERNS = /(?:such as|for example|for instance|e\.g\.|including)\
 const CONTRAST_PATTERNS = /(?:however|although|but|yet|nevertheless|on the other hand)\s*$/i
 const SENTENCE_END_PATTERN = /[.!?]\s*$/
 
-// Extract context from editor
+// Get debounce delay based on suggestion type
+function getDebounceDelay(suggestionType: SuggestionType): number {
+  switch (suggestionType) {
+    case 'opening_sentence':
+      return 1000  // Fast for empty paragraphs
+    case 'provide_examples':
+    case 'contrast_point':
+      return 800   // Pattern detected - quick
+    case 'complete_sentence':
+    case 'next_sentence':
+      return 1500  // User might still be thinking
+    case 'contextual':
+      return 1200
+    default:
+      return 1500
+  }
+}
+
+// Extract context from editor - single pass document traversal
 function extractEditorContext(editor: Editor): EditorContext | null {
   if (!editor) return null
 
@@ -63,25 +80,22 @@ function extractEditorContext(editor: Editor): EditorContext | null {
   const cursorOffset = $from.parentOffset
   const precedingText = currentParagraph.slice(0, cursorOffset)
   const isEmptyParagraph = currentParagraph.trim().length === 0
-
-  // Find nearest heading above cursor
-  let currentSection = ''
-  let hasHeadingAbove = false
   const cursorPos = $from.pos
 
-  doc.descendants((node, pos) => {
-    if (node.type.name === 'heading' && pos < cursorPos) {
-      currentSection = node.textContent
-      hasHeadingAbove = true
-    }
-    return true
-  })
-
-  // Build document outline
+  // Single pass: find heading above cursor AND build outline
+  let currentSection = ''
+  let hasHeadingAbove = false
   const documentOutline: string[] = []
-  doc.descendants((node) => {
+
+  doc.descendants((node, pos) => {
     if (node.type.name === 'heading') {
-      documentOutline.push(node.textContent)
+      const headingText = node.textContent
+      documentOutline.push(headingText)
+      
+      if (pos < cursorPos) {
+        currentSection = headingText
+        hasHeadingAbove = true
+      }
     }
     return true
   })
@@ -127,84 +141,128 @@ function detectSuggestionType(context: EditorContext): SuggestionType | null {
   }
 
   // Has some text but not a complete sentence -> complete it
-  const wordCount = precedingText.trim().split(/\s+/).length
+  const trimmedText = precedingText.trim()
+  const wordCount = trimmedText.split(/\s+/).length
+  
   if (wordCount >= 3 && !SENTENCE_END_PATTERN.test(precedingText)) {
     return 'complete_sentence'
   }
 
-  return null
-}
-
-// Determine if we should auto-trigger
-function shouldAutoTrigger(
-  context: EditorContext,
-  suggestionType: SuggestionType | null,
-  timeSinceLastEdit: number
-): boolean {
-  if (!suggestionType) return false
-
-  // Different pause times for different contexts
-  switch (suggestionType) {
-    case 'opening_sentence':
-      // Trigger faster for empty paragraphs - user is waiting
-      return timeSinceLastEdit >= 1000
-    case 'provide_examples':
-    case 'contrast_point':
-      // Pattern detected - trigger quickly
-      return timeSinceLastEdit >= 800
-    case 'complete_sentence':
-    case 'next_sentence':
-      // User might still be thinking - wait longer
-      return timeSinceLastEdit >= 1500
-    default:
-      return false
+  // Fallback: if there's any meaningful text (2+ words), use contextual completion
+  if (wordCount >= 2) {
+    return 'contextual'
   }
+
+  return null
 }
 
 export function useSmartCompletion({
   editor,
   enabled,
   papers,
-  claims,
   projectId,
   projectTopic
 }: UseSmartCompletionOptions): UseSmartCompletionReturn {
   const [isGenerating, setIsGenerating] = useState(false)
   
-  const lastEditTimeRef = useRef<number>(Date.now())
-  const checkIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  // Use refs for values that shouldn't trigger re-renders or recreate callbacks
   const abortControllerRef = useRef<AbortController | null>(null)
   const lastContextKeyRef = useRef<string>('')
-
-  // Cancel any pending request
-  const cancelPending = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-      abortControllerRef.current = null
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const selectionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const mountedRef = useRef(true)
+  
+  // Track mounted state
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
     }
   }, [])
+  
+  // Stable ref for papers to avoid recreating callbacks
+  const papersRef = useRef(papers)
+  
+  useEffect(() => {
+    papersRef.current = papers
+  }, [papers])
+
+  // Cancel any pending API request (not the debounce timer)
+  const cancelPendingRequest = useCallback(() => {
+    const controller = abortControllerRef.current
+    if (controller) {
+      abortControllerRef.current = null
+      // Only abort if not already aborted
+      if (!controller.signal.aborted) {
+        // Use a reason to identify cleanup aborts
+        controller.abort('cleanup')
+      }
+    }
+  }, [])
+  
+  // Cancel everything (used on unmount)
+  const cancelAll = useCallback(() => {
+    cancelPendingRequest()
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current)
+      debounceTimeoutRef.current = null
+    }
+  }, [cancelPendingRequest])
 
   // Generate completion from API
   const generateCompletion = useCallback(async (
     context: EditorContext,
     suggestionType: SuggestionType
   ) => {
-    if (!editor || !projectId) return
+    console.log('[Autocomplete] generateCompletion called', { 
+      hasEditor: !!editor, 
+      projectId,
+      suggestionType 
+    })
+    
+    if (!editor || !projectId) {
+      console.log('[Autocomplete] generateCompletion: no editor or projectId')
+      return
+    }
 
     // Don't generate if already showing ghost text
-    if (hasGhostText(editor)) return
+    if (hasGhostText(editor)) {
+      console.log('[Autocomplete] generateCompletion: ghost text already showing')
+      return
+    }
 
     // Create context key to avoid duplicate requests
     const contextKey = `${context.currentSection}:${context.precedingText}:${suggestionType}`
-    if (contextKey === lastContextKeyRef.current) return
+    if (contextKey === lastContextKeyRef.current) {
+      console.log('[Autocomplete] generateCompletion: duplicate context key')
+      return
+    }
     lastContextKeyRef.current = contextKey
 
-    cancelPending()
+    // Cancel any existing request silently
+    try {
+      if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+        abortControllerRef.current.abort()
+      }
+    } catch {
+      // Ignore abort errors
+    }
+    
+    console.log('[Autocomplete] Starting API request...')
     setIsGenerating(true)
-
-    abortControllerRef.current = new AbortController()
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+    const signal = controller.signal
 
     try {
+      // Early exit if already aborted or unmounted (race condition protection)
+      if (signal.aborted || !mountedRef.current) {
+        if (mountedRef.current) setIsGenerating(false)
+        return
+      }
+      const currentPapers = papersRef.current
+      
+      // Send only paper IDs - the API will retrieve chunks/claims via RAG
       const response = await fetch('/api/editor/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -216,27 +274,15 @@ export function useSmartCompletion({
             currentSection: context.currentSection,
             documentOutline: context.documentOutline
           },
-          papers: papers.map(p => ({
-            id: p.id,
-            title: p.title,
-            abstract: p.abstract,
-            authors: p.authors,
-            year: p.year
-          })),
-          claims: claims.slice(0, 20).map(c => ({
-            id: c.id,
-            claim_text: c.claim_text,
-            claim_type: c.claim_type,
-            paper_id: c.paper_id,
-            paper_title: c.paper_title,
-            paper_authors: c.paper_authors,
-            paper_year: c.paper_year
-          })),
+          paperIds: currentPapers.map(p => p.id),
           topic: projectTopic,
           suggestionType
         }),
-        signal: abortControllerRef.current.signal
+        signal
       })
+
+      // Check if aborted
+      if (signal.aborted) return
 
       if (!response.ok) {
         throw new Error('Failed to generate completion')
@@ -244,10 +290,26 @@ export function useSmartCompletion({
 
       const data = await response.json()
 
-      if (data.suggestion && editor) {
+      // Final check before updating editor
+      if (signal.aborted || !editor || editor.isDestroyed) return
+
+      if (data.suggestion) {
         // Convert API citations to ghost text citations
-        const ghostCitations: GhostTextCitation[] = (data.citations || []).map((c: any) => {
-          const paper = papers.find(p => p.id === c.paperId)
+        // The API now returns paper metadata with each citation
+        const ghostCitations: GhostTextCitation[] = (data.citations || []).map((c: {
+          paperId: string
+          marker: string
+          startOffset: number
+          endOffset: number
+          paper?: {
+            id: string
+            title: string
+            authors: string[]
+            year: number
+            doi?: string
+            venue?: string
+          }
+        }) => {
           return {
             paperId: c.paperId,
             marker: c.marker,
@@ -255,28 +317,130 @@ export function useSmartCompletion({
             endOffset: c.endOffset,
             attrs: {
               id: c.paperId,
-              authors: paper?.authors || [],
-              title: paper?.title || '',
-              year: paper?.year || 0,
-              journal: paper?.journal,
-              doi: paper?.doi
+              authors: c.paper?.authors || [],
+              title: c.paper?.title || '',
+              year: c.paper?.year || 0,
+              journal: c.paper?.venue,
+              doi: c.paper?.doi
             }
           }
         })
 
-        // Set ghost text
-        editor.commands.setGhostText(data.suggestion, ghostCitations)
+        // Set ghost text with papers for content processing on accept
+        editor.commands.setGhostText(data.suggestion, ghostCitations, currentPapers)
       }
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        // Request cancelled, ignore
-        return
-      }
+    } catch (error: unknown) {
+      // Ignore all abort errors (including cleanup aborts)
+      if (signal.aborted) return
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      if (error instanceof Error && error.name === 'AbortError') return
+      
+      // Only log non-abort errors
       console.error('Completion error:', error)
     } finally {
-      setIsGenerating(false)
+      // Only update state if component is still mounted
+      if (mountedRef.current) {
+        setIsGenerating(false)
+      }
     }
-  }, [editor, projectId, papers, claims, projectTopic, cancelPending])
+  }, [editor, projectId, projectTopic])
+
+  // Use a ref to track generating state to avoid stale closure in setTimeout
+  const isGeneratingRef = useRef(isGenerating)
+  useEffect(() => {
+    isGeneratingRef.current = isGenerating
+  }, [isGenerating])
+
+  // Debounced check for auto-trigger - replaces polling
+  const scheduleAutoTrigger = useCallback(() => {
+    console.log('[Autocomplete] scheduleAutoTrigger called', { 
+      hasEditor: !!editor, 
+      enabled, 
+      isGenerating,
+      isFocused: editor?.isFocused 
+    })
+    
+    if (!editor || !enabled || isGenerating) {
+      console.log('[Autocomplete] Early return: basic checks failed')
+      return
+    }
+    if (hasGhostText(editor)) {
+      console.log('[Autocomplete] Early return: ghost text already showing')
+      return
+    }
+    if (!editor.isFocused) {
+      console.log('[Autocomplete] Early return: editor not focused')
+      return
+    }
+
+    const context = extractEditorContext(editor)
+    if (!context) {
+      console.log('[Autocomplete] Early return: no context extracted')
+      return
+    }
+    
+    console.log('[Autocomplete] Context:', {
+      precedingText: context.precedingText.slice(-50),
+      isEmptyParagraph: context.isEmptyParagraph,
+      hasHeadingAbove: context.hasHeadingAbove,
+      currentSection: context.currentSection
+    })
+
+    const suggestionType = detectSuggestionType(context)
+    console.log('[Autocomplete] Suggestion type:', suggestionType)
+    
+    if (!suggestionType) {
+      console.log('[Autocomplete] Early return: no suggestion type detected')
+      return
+    }
+
+    // Clear any existing debounce timeout
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current)
+    }
+
+    // Schedule the completion with appropriate delay
+    const delay = getDebounceDelay(suggestionType)
+    console.log('[Autocomplete] Scheduling with delay:', delay)
+    
+    debounceTimeoutRef.current = setTimeout(() => {
+      console.log('[Autocomplete] Timeout fired, checking conditions...')
+      
+      // Re-check conditions before firing (use ref for isGenerating to avoid stale closure)
+      if (!editor || !enabled || isGeneratingRef.current || editor.isDestroyed) {
+        console.log('[Autocomplete] Timeout: basic checks failed', { isGenerating: isGeneratingRef.current })
+        return
+      }
+      if (hasGhostText(editor)) {
+        console.log('[Autocomplete] Timeout: ghost text already showing')
+        return
+      }
+      if (!editor.isFocused) {
+        console.log('[Autocomplete] Timeout: editor not focused')
+        return
+      }
+      
+      // Re-extract context to ensure it's still valid
+      const freshContext = extractEditorContext(editor)
+      if (!freshContext) {
+        console.log('[Autocomplete] Timeout: no fresh context')
+        return
+      }
+      
+      const freshType = detectSuggestionType(freshContext)
+      console.log('[Autocomplete] Timeout: fresh context', {
+        precedingText: freshContext.precedingText.slice(-50),
+        freshType
+      })
+      if (!freshType) {
+        console.log('[Autocomplete] Timeout: no fresh suggestion type')
+        return
+      }
+      
+      console.log('[Autocomplete] Calling generateCompletion with type:', freshType)
+      generateCompletion(freshContext, freshType)
+    }, delay)
+  }, [editor, enabled, isGenerating, generateCompletion])
 
   // Manual trigger - always generates
   const triggerCompletion = useCallback(() => {
@@ -290,40 +454,27 @@ export function useSmartCompletion({
     generateCompletion(context, suggestionType)
   }, [editor, enabled, generateCompletion])
 
-  // Check if we should auto-trigger
-  const checkForAutoTrigger = useCallback(() => {
-    if (!editor || !enabled || isGenerating) return
-    if (hasGhostText(editor)) return
-
-    const context = extractEditorContext(editor)
-    if (!context) return
-
-    const suggestionType = detectSuggestionType(context)
-    if (!suggestionType) return
-
-    const timeSinceLastEdit = Date.now() - lastEditTimeRef.current
-
-    if (shouldAutoTrigger(context, suggestionType, timeSinceLastEdit)) {
-      generateCompletion(context, suggestionType)
-    }
-  }, [editor, enabled, isGenerating, generateCompletion])
-
-  // Track edits and set up polling
+  // Track edits with debounced auto-trigger
   useEffect(() => {
     if (!editor || !enabled) return
 
-    // Update last edit time on any change
+    // On content change, schedule auto-trigger check
     const handleUpdate = () => {
-      lastEditTimeRef.current = Date.now()
       lastContextKeyRef.current = '' // Reset to allow new suggestions
+      cancelPendingRequest() // Cancel any in-flight request when user types
+      scheduleAutoTrigger() // Schedule new check (this resets the debounce timer internally)
     }
 
     // Clear ghost text on selection change
     const handleSelectionUpdate = () => {
       if (hasGhostText(editor)) {
+        // Clear any existing timeout
+        if (selectionTimeoutRef.current) {
+          clearTimeout(selectionTimeoutRef.current)
+        }
         // Small delay to check if this is just cursor repositioning
-        setTimeout(() => {
-          if (hasGhostText(editor)) {
+        selectionTimeoutRef.current = setTimeout(() => {
+          if (editor && !editor.isDestroyed && hasGhostText(editor)) {
             editor.commands.clearGhostText()
           }
         }, 50)
@@ -333,24 +484,29 @@ export function useSmartCompletion({
     editor.on('update', handleUpdate)
     editor.on('selectionUpdate', handleSelectionUpdate)
 
-    // Poll for auto-trigger conditions
-    checkIntervalRef.current = setInterval(checkForAutoTrigger, 300)
-
     return () => {
       editor.off('update', handleUpdate)
       editor.off('selectionUpdate', handleSelectionUpdate)
-      if (checkIntervalRef.current) {
-        clearInterval(checkIntervalRef.current)
+      
+      // Clean up all timeouts
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current)
       }
-      cancelPending()
+      if (selectionTimeoutRef.current) {
+        clearTimeout(selectionTimeoutRef.current)
+      }
+      cancelAll()
     }
-  }, [editor, enabled, checkForAutoTrigger, cancelPending])
+  }, [editor, enabled, scheduleAutoTrigger, cancelAll])
 
-  // Handle Ctrl+Space for manual trigger
+  // Handle Ctrl+Space for manual trigger - only when editor is focused
   useEffect(() => {
     if (!editor || !enabled) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Only handle if editor is focused
+      if (!editor.isFocused) return
+      
       // Ctrl+Space or Cmd+Space
       if (event.code === 'Space' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault()

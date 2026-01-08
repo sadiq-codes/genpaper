@@ -128,7 +128,7 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
     // Use Next.js router for SPA navigation instead of window.location
     // Note: This would require importing useRouter and passing it down
     // For now, we'll use window.location for simplicity
-    window.location.href = `/dashboard?search=${encodeURIComponent(query)}`
+    window.location.href = `/projects?search=${encodeURIComponent(query)}`
   }, [])
 
   const contextValue: GlobalLibraryContextType = {

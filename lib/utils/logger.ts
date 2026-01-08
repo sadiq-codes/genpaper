@@ -130,7 +130,128 @@ export const logUserAction = (action: string, userId: string, metadata: Record<s
   }, `User action: ${action}`)
 }
 
+// 🆕 Pipeline stage logging
+interface PipelineStageLog {
+  projectId: string
+  stage: string
+  status: 'started' | 'completed' | 'failed'
+  durationMs?: number
+  details?: Record<string, unknown>
+}
+
+export const logPipelineStage = (log: PipelineStageLog) => {
+  const level = log.status === 'failed' ? 'error' : 'info'
+  logger[level]({
+    type: 'pipeline_stage',
+    project_id: log.projectId,
+    stage: log.stage,
+    status: log.status,
+    duration_ms: log.durationMs,
+    ...log.details
+  }, `Pipeline ${log.stage}: ${log.status}${log.durationMs ? ` (${log.durationMs}ms)` : ''}`)
+}
+
+// 🆕 RAG retrieval logging
+interface RAGRetrievalLog {
+  query: string
+  paperIds: string[]
+  chunksRetrieved: number
+  claimsRetrieved?: number
+  avgScore: number
+  durationMs: number
+  cacheHit?: boolean
+}
+
+export const logRAGRetrieval = (log: RAGRetrievalLog) => {
+  logger.info({
+    type: 'rag_retrieval',
+    query_preview: log.query.slice(0, 100),
+    paper_count: log.paperIds.length,
+    chunks_retrieved: log.chunksRetrieved,
+    claims_retrieved: log.claimsRetrieved,
+    avg_score: log.avgScore,
+    duration_ms: log.durationMs,
+    cache_hit: log.cacheHit
+  }, `RAG: ${log.chunksRetrieved} chunks, ${log.claimsRetrieved || 0} claims (${log.durationMs}ms)`)
+}
+
+// 🆕 Quality check logging
+interface QualityCheckLog {
+  projectId: string
+  sectionTitle: string
+  score: number
+  issues: string[]
+  passed: boolean
+}
+
+export const logQualityCheck = (log: QualityCheckLog) => {
+  const level = log.passed ? 'info' : 'warn'
+  logger[level]({
+    type: 'quality_check',
+    project_id: log.projectId,
+    section: log.sectionTitle,
+    score: log.score,
+    issues: log.issues,
+    passed: log.passed
+  }, `Quality: ${log.sectionTitle} scored ${log.score}${log.passed ? '' : ' (FAILED)'}`)
+}
+
+// 🆕 Hallucination detection logging
+interface HallucinationCheckLog {
+  projectId: string
+  sectionTitle: string
+  claimsChecked: number
+  hallucinationsFound: number
+  unverifiedCitations: string[]
+}
+
+export const logHallucinationCheck = (log: HallucinationCheckLog) => {
+  const level = log.hallucinationsFound > 0 ? 'warn' : 'info'
+  logger[level]({
+    type: 'hallucination_check',
+    project_id: log.projectId,
+    section: log.sectionTitle,
+    claims_checked: log.claimsChecked,
+    hallucinations_found: log.hallucinationsFound,
+    unverified_citations: log.unverifiedCitations
+  }, `Hallucination check: ${log.hallucinationsFound}/${log.claimsChecked} potential issues`)
+}
+
+// 🆕 Section generation logging
+interface SectionGenerationLog {
+  projectId: string
+  sectionTitle: string
+  sectionKey: string
+  wordCount: number
+  citationCount: number
+  durationMs: number
+  tokensUsed?: number
+}
+
+export const logSectionGeneration = (log: SectionGenerationLog) => {
+  logger.info({
+    type: 'section_generation',
+    project_id: log.projectId,
+    section: log.sectionTitle,
+    section_key: log.sectionKey,
+    word_count: log.wordCount,
+    citation_count: log.citationCount,
+    duration_ms: log.durationMs,
+    tokens_used: log.tokensUsed
+  }, `Generated ${log.sectionTitle}: ${log.wordCount} words, ${log.citationCount} citations (${log.durationMs}ms)`)
+}
+
 // Export types for use in other modules
-export type { GenerationMetrics, SearchMetrics, CitationMetrics, PDFMetrics }
+export type { 
+  GenerationMetrics, 
+  SearchMetrics, 
+  CitationMetrics, 
+  PDFMetrics,
+  PipelineStageLog,
+  RAGRetrievalLog,
+  QualityCheckLog,
+  HallucinationCheckLog,
+  SectionGenerationLog
+}
 
 export default logger 

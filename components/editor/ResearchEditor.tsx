@@ -28,10 +28,13 @@ import type {
   AnalysisOutput,
 } from './types'
 import { cn } from '@/lib/utils'
+import { processContent } from './utils/content-processor'
+import { GenerationProgress } from './GenerationProgress'
 
 interface ResearchEditorProps {
   projectId?: string
   projectTitle?: string
+  projectTopic?: string
   initialContent?: string
   initialPapers?: ProjectPaper[]
   initialAnalysis?: {
@@ -40,15 +43,18 @@ interface ResearchEditorProps {
     synthesis: AnalysisOutput | null
   }
   onSave?: (content: string) => void
+  isGenerating?: boolean
 }
 
 export function ResearchEditor({
   projectId,
   projectTitle = 'Untitled Document',
+  projectTopic,
   initialContent,
   initialPapers = [],
   initialAnalysis,
   onSave,
+  isGenerating: initialIsGenerating = false,
 }: ResearchEditorProps) {
   // Editor state
   const [editor, setEditor] = useState<Editor | null>(null)
@@ -86,6 +92,9 @@ export function ResearchEditor({
   
   // Content state for auto-save
   const [content, setContent] = useState(initialContent || '')
+  
+  // Generation state
+  const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
 
   // Check for mobile on mount and resize
   useEffect(() => {
@@ -364,7 +373,19 @@ export function ResearchEditor({
       if (data.edits && editor) {
         data.edits.forEach((edit: { type: string; content: string }) => {
           if (edit.type === 'insert') {
-            editor.chain().focus().insertContent(edit.content).run()
+            // Process the content to handle markdown and citation markers
+            const { json: processedContent, isFullDoc } = processContent(edit.content, papers)
+            
+            if (isFullDoc && processedContent.content) {
+              // Full document structure - insert the content array
+              editor.chain().focus().insertContent(processedContent.content).run()
+            } else if (Array.isArray(processedContent) && processedContent.length > 0) {
+              // Content fragment - insert directly
+              editor.chain().focus().insertContent(processedContent).run()
+            } else {
+              // Fallback to raw content
+              editor.chain().focus().insertContent(edit.content).run()
+            }
           }
         })
       }
@@ -481,6 +502,44 @@ export function ResearchEditor({
     }
   }, [editor, projectTitle])
 
+  // Handle generation completion - update editor content
+  const handleGenerationComplete = useCallback((generatedContent: string) => {
+    setIsGenerating(false)
+    setContent(generatedContent)
+    
+    // Update editor if it's ready
+    if (editor && !editor.isDestroyed) {
+      // Process the markdown content to HTML
+      const processedContent = processContent(generatedContent, papers)
+      editor.commands.setContent(processedContent)
+    }
+    
+    toast.success('Paper generated successfully!')
+    
+    // Remove ?created=1 from URL without reload
+    const url = new URL(window.location.href)
+    url.searchParams.delete('created')
+    window.history.replaceState({}, '', url.toString())
+  }, [editor, papers])
+
+  // Handle generation error
+  const handleGenerationError = useCallback((error: string) => {
+    setIsGenerating(false)
+    
+    if (error === 'GENERATION_IN_PROGRESS') {
+      toast.info('Generation is already in progress. Please wait...')
+    } else {
+      toast.error(`Generation failed: ${error}`)
+    }
+  }, [])
+
+  // Handle generation cancel
+  const handleGenerationCancel = useCallback(() => {
+    setIsGenerating(false)
+    // Redirect to projects page
+    window.location.href = '/projects'
+  }, [])
+
   // Sidebar content for both desktop and mobile
   const sidebarContent = (
     <EditorSidebar
@@ -510,6 +569,17 @@ export function ResearchEditor({
         onHistory={() => toast.info('History feature coming soon')}
         onSettings={() => toast.info('Settings feature coming soon')}
       />
+
+      {/* Generation Progress Overlay */}
+      {isGenerating && projectId && (
+        <GenerationProgress
+          projectId={projectId}
+          topic={projectTopic || projectTitle}
+          onComplete={handleGenerationComplete}
+          onError={handleGenerationError}
+          onCancel={handleGenerationCancel}
+        />
+      )}
 
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden relative">

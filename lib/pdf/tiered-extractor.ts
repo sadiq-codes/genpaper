@@ -185,7 +185,7 @@ export async function extractPdfMetadataTiered(
       extractionTimeMs: Date.now() - startTime,
       confidence: 'low',
       metadata: {
-        processingNotes: [...notes, `Critical error: ${error}`]
+        processingNotes: [...notes, `Critical error: ${err instanceof Error ? err.message : String(err)}`]
       }
     }
   }

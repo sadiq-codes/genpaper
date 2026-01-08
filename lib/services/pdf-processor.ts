@@ -53,13 +53,13 @@ export async function getOrExtractFullText(options: PdfExtractionOptions): Promi
     ? extraction.fullText.slice(0, 1_000_000)
     : null
 
-  // Persist pdf_content for future reuse
+  // Persist pdf_content for future reuse (non-critical)
   if (paperId && text) {
     try {
       const supabase = await getSB()
       await supabase.from('papers').update({ pdf_content: text }).eq('id', paperId)
-    } catch {
-      // non-fatal
+    } catch (err) {
+      console.warn(`Failed to persist PDF content for paper ${paperId}:`, err instanceof Error ? err.message : String(err))
     }
   }
 

@@ -134,8 +134,13 @@ export async function generateWithUnifiedTemplate(
     maxTokens: resolvedOptions.maxTokens
   })
 
-  // Simple streaming without complex citation processing
-  const sentenceEnd = /([.!?])\s+(?=[A-Z])/;
+  // Sentence boundary detection with abbreviation handling
+  // Uses negative lookbehind to avoid breaking on common abbreviations
+  // Matches: period/exclaim/question + space(s) + capital letter
+  // Excludes: Dr., Mr., Mrs., Ms., Prof., vs., etc., e.g., i.e., U.S., Fig., No.
+  const ABBREVIATIONS = ['Dr', 'Mr', 'Mrs', 'Ms', 'Prof', 'vs', 'etc', 'e\\.g', 'i\\.e', 'U\\.S', 'Fig', 'No', 'Vol', 'pp', 'al']
+  const abbrevPattern = ABBREVIATIONS.join('|')
+  const sentenceEnd = new RegExp(`(?<!(?:${abbrevPattern}))\\.\\s+(?=[A-Z])|[!?]\\s+(?=[A-Z])`, 'g')
   let pendingText = '';
 
   for await (const delta of result.fullStream) {
@@ -196,7 +201,10 @@ export async function generateWithUnifiedTemplate(
   try {
     const usage = await result.usage
     tokensUsed = usage?.totalTokens || 0
-  } catch {}
+  } catch (err) {
+    // Token usage retrieval is non-critical, log and continue
+    console.warn('Failed to retrieve token usage:', err instanceof Error ? err.message : String(err))
+  }
   
   progress('generation', 50, 'Content generated successfully', {
     word_count: fullContent.split(' ').length,
@@ -267,7 +275,7 @@ export async function generateFullSection(
 }
 
 /**
- * Batch processing - process multiple sections with unified approach
+ * Batch processing - process multiple sections sequentially with unified approach
  */
 export async function generateMultipleSectionsUnified(
   contexts: SectionContext[],
@@ -283,8 +291,7 @@ export async function generateMultipleSectionsUnified(
       options
     })
     results.push(result)
-    // NOTE: Evidence tracking moved to pipeline.ts to avoid duplication
-    // Pipeline handles post-processing including evidence tracking, quality checks, and overlap detection
   }
+  
   return results
 }

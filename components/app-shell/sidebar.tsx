@@ -1,10 +1,9 @@
 'use client'
 
-import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { 
-  Home,
-  FileText,
+  FolderOpen,
   Library,
   LogOut
 } from 'lucide-react'
@@ -28,14 +27,9 @@ import { useEffect } from 'react'
 
 const navigation = [
   {
-    title: 'Generate',
-    url: '/dashboard',
-    icon: Home,
-  },
-  {
     title: 'Projects',
     url: '/projects',
-    icon: FileText,
+    icon: FolderOpen,
   },
   {
     title: 'Library',
@@ -46,7 +40,6 @@ const navigation = [
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const _searchParams = useSearchParams()
   const router = useRouter()
   const supabase = createClient()
   const { state } = useSidebar()
@@ -63,22 +56,23 @@ export function AppSidebar() {
 
   // Check if navigation item is active
   const isItemActive = (item: typeof navigation[0]) => {
-    if (item.url === '/dashboard') {
-      return pathname === '/dashboard'
+    // Projects is active for /projects and /editor routes
+    if (item.url === '/projects') {
+      return pathname === '/projects' || pathname.startsWith('/editor')
     }
     
     return pathname === item.url || pathname.startsWith(item.url)
   }
 
   return (
-    <Sidebar collapsible="icon" variant="inset">
+    <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex items-center gap-2 px-2 py-1">
+        <Link href="/projects" className="flex items-center gap-2 px-2 py-1 hover:opacity-80 transition-opacity">
           <Sparkles className="h-6 w-6 text-primary" />
           {state === "expanded" && (
             <span className="font-semibold text-lg">GenPaper</span>
           )}
-        </div>
+        </Link>
       </SidebarHeader>
 
       <SidebarContent>

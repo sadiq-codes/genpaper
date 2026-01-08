@@ -1,6 +1,7 @@
 import 'server-only'
 import type { SectionContext } from '../types'
 import { PromptService, type PromptData, type TemplateOptions, type BuiltPrompt } from '@/lib/prompts/prompt-service'
+import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
 
 /**
  * Unified prompt builder that assembles contextual PromptData and delegates
@@ -451,6 +452,7 @@ async function _generateSectionSummary(content: string): Promise<string> {
 
 /**
  * Check for topic drift using embedding similarity
+ * Uses semantic embeddings for accurate drift detection
  */
 export async function checkTopicDrift(
   newContent: string,
@@ -458,32 +460,47 @@ export async function checkTopicDrift(
   threshold: number = 0.65
 ): Promise<{ isDrift: boolean; similarity: number; warning?: string }> {
   
-  // Placeholder for embedding-based similarity check
-  // In production, this would use pgvector or OpenAI embeddings
-  
-  const similarity = calculateSimpleTextSimilarity(newContent, previousSummary)
-  const isDrift = similarity < threshold
-  
-  return {
-    isDrift,
-    similarity,
-    warning: isDrift ? 
-      `Possible topic drift detected (similarity: ${similarity.toFixed(2)}). Consider revising to maintain coherence with previous sections.` :
-      undefined
+  // Skip check if either text is too short
+  if (newContent.length < 50 || previousSummary.length < 50) {
+    return { isDrift: false, similarity: 1.0 }
   }
-}
-
-/**
- * Simple text similarity calculation (placeholder for embedding similarity)
- */
-function calculateSimpleTextSimilarity(text1: string, text2: string): number {
-  const words1 = new Set(text1.toLowerCase().split(/\W+/).filter(w => w.length > 3))
-  const words2 = new Set(text2.toLowerCase().split(/\W+/).filter(w => w.length > 3))
   
-  const intersection = new Set([...words1].filter(x => words2.has(x)))
-  const union = new Set([...words1, ...words2])
-  
-  return union.size > 0 ? intersection.size / union.size : 0
+  try {
+    // Use embedding-based similarity for accurate drift detection
+    const { generateEmbeddings } = await import('@/lib/utils/embedding')
+    const { cosineSimilarity } = await import('@/lib/rag/base-retrieval')
+    
+    // Generate embeddings for both texts
+    const [newEmbedding, prevEmbedding] = await generateEmbeddings([
+      newContent.slice(0, 2000), // Limit to avoid token issues
+      previousSummary.slice(0, 2000)
+    ])
+    
+    // Calculate cosine similarity
+    const similarity = cosineSimilarity(newEmbedding, prevEmbedding)
+    const isDrift = similarity < threshold
+    
+    return {
+      isDrift,
+      similarity,
+      warning: isDrift ? 
+        `Topic drift detected (semantic similarity: ${similarity.toFixed(2)}). The new content may not align well with previous sections.` :
+        undefined
+    }
+  } catch (error) {
+    // Fallback to simple Jaccard if embeddings fail
+    console.warn('Embedding-based drift check failed, using fallback:', error)
+    const similarity = jaccardSimilarity(newContent, previousSummary, { minWordLength: 3, minUnionSize: 1 })
+    const isDrift = similarity < threshold
+    
+    return {
+      isDrift,
+      similarity,
+      warning: isDrift ? 
+        `Possible topic drift detected (similarity: ${similarity.toFixed(2)}).` :
+        undefined
+    }
+  }
 }
 
 /**

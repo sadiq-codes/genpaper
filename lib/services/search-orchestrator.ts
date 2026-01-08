@@ -207,16 +207,24 @@ export async function unifiedSearch(
       
       // Build exclusion list and apply NOT IN only if not empty
       const exclusionIds = [...excludePaperIds, ...allPapers.map(p => p.id)]
+      
+      // Validate UUIDs to prevent injection (UUID format: 8-4-4-4-12 hex chars)
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      const validExclusionIds = exclusionIds.filter(id => id && uuidRegex.test(id))
+      
+      // Escape the query for FTS to prevent injection
+      const sanitizedQuery = query.replace(/['"\\]/g, ' ').trim()
+      
       let keywordQuery = supabase
         .from('papers')
         .select(`
           id, title, abstract, publication_date, venue, doi, pdf_url, created_at, authors
         `)
-        .or(`title.fts.${query},abstract.fts.${query},venue.fts.${query}`)
+        .or(`title.fts.${sanitizedQuery},abstract.fts.${sanitizedQuery},venue.fts.${sanitizedQuery}`)
       
-      // Only apply NOT IN filter if we have IDs to exclude
-      if (exclusionIds.length > 0) {
-        keywordQuery = keywordQuery.not('id', 'in', `(${exclusionIds.join(',')})`)
+      // Only apply NOT IN filter if we have valid UUIDs to exclude
+      if (validExclusionIds.length > 0) {
+        keywordQuery = keywordQuery.not('id', 'in', `(${validExclusionIds.join(',')})`)
       }
       
       const { data: keywordPapers, error } = await keywordQuery

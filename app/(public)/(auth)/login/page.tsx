@@ -52,7 +52,7 @@ function LoginPageContent() {
         setError(loginError.message)
       } else {
         console.log("Login successful:", data)
-        router.replace("/dashboard")
+        router.replace("/projects")
       }
     } catch (error) {
       console.error("Unexpected error:", error)

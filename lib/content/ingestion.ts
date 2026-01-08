@@ -22,8 +22,6 @@ export interface ContentStatus {
 
 export interface IngestionOptions {
   skipChunks?: boolean
-  regionDetection?: { enabled: boolean }
-  forceReprocess?: boolean
   maxTokens?: number
   overlapTokens?: number
   tokenChunkOptions?: TokenChunkOptions
@@ -350,7 +348,6 @@ export async function ensureBulkContentIngestion(
 ): Promise<BulkIngestionSummary> {
   const {
     skipChunks = false,
-    forceReprocess: _forceReprocess = false,
     maxTokens = 500,
     overlapTokens = 80,
     tokenChunkOptions = {}

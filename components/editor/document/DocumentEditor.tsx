@@ -16,6 +16,8 @@ import { Color } from '@tiptap/extension-color'
 import Highlight from '@tiptap/extension-highlight'
 import TextAlign from '@tiptap/extension-text-align'
 import Typography from '@tiptap/extension-typography'
+import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+import { common, createLowlight } from 'lowlight'
 import { PrimaryToolbar } from './PrimaryToolbar'
 import { FloatingToolbar } from './FloatingToolbar'
 import { Citation } from '../extensions/Citation'
@@ -24,6 +26,9 @@ import { GhostText } from '../extensions/GhostText'
 import { useSmartCompletion } from '../hooks/useSmartCompletion'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper, ExtractedClaim } from '../types'
+
+// Create lowlight instance with common languages
+const lowlight = createLowlight(common)
 import {
   Dialog,
   DialogContent,
@@ -69,7 +74,7 @@ export function DocumentEditor({
   projectId = '',
   projectTopic = '',
   papers = [],
-  claims = [],
+  claims: _claims = [],
 }: DocumentEditorProps) {
   const [mathDialogOpen, setMathDialogOpen] = useState(false)
   const [mathLatex, setMathLatex] = useState('')
@@ -81,6 +86,13 @@ export function DocumentEditor({
       StarterKit.configure({
         heading: {
           levels: [1, 2, 3],
+        },
+        codeBlock: false, // Disable default code block, use CodeBlockLowlight instead
+      }),
+      CodeBlockLowlight.configure({
+        lowlight,
+        HTMLAttributes: {
+          class: 'hljs rounded-lg',
         },
       }),
       Underline,
@@ -147,7 +159,6 @@ export function DocumentEditor({
     editor,
     enabled: autocompleteEnabled,
     papers,
-    claims,
     projectId,
     projectTopic
   })

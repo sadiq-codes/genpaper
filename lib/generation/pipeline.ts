@@ -4,10 +4,12 @@ import { runWithCitationContext } from '@/lib/ai/tools/addCitation'
 import { collectPapers } from '@/lib/generation/discovery'
 import { generateOutline } from '@/lib/prompts/generators'
 import { generateMultipleSectionsUnified } from '@/lib/generation/unified-generator'
-import { ContextRetrievalService } from '@/lib/generation/rag-retrieval'
+import { GenerationContextService } from '@/lib/rag/generation-context'
 import { SectionReviewer } from '@/lib/quality/section-reviewer'
 import { fourGramOverlapRatio } from '@/lib/utils/overlap'
 import { EvidenceTracker } from '@/lib/services/evidence-tracker'
+import { sanitizeTopic } from '@/lib/utils/prompt-safety'
+import { classifyError, CancellationError } from '@/lib/generation/errors'
 import type { PaperStatus } from '@/types/simplified'
 import type { GeneratedOutline, SectionContext, PaperTypeKey } from '@/lib/prompts/types'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
@@ -64,7 +66,7 @@ export interface ProgressCallback {
  * a clean, testable pipeline that follows the 5-layer architecture:
  * 1. Search: collectPapers()
  * 2. Ingestion: ensureBulkContentIngestion() (handled within collectPapers)
- * 3. RAG: ContextRetrievalService.buildContexts()
+ * 3. RAG: GenerationContextService.buildContexts()
  * 4. Generation: generateMultipleSectionsUnified()
  * 5. Quality: comprehensive overlap check + SectionReviewer + evidence tracking
  */
@@ -73,17 +75,30 @@ export async function generatePaper(
   projectId: string,
   userId: string,
   onProgress?: ProgressCallback,
-  baseUrl?: string
+  baseUrl?: string,
+  signal?: AbortSignal
 ): Promise<PipelineResult> {
   const startTime = Date.now()
   
+  // Check for cancellation at pipeline start
+  if (signal?.aborted) {
+    throw new CancellationError('Pipeline cancelled before start')
+  }
+  
   onProgress?.('initialization', 0, 'Starting paper generation pipeline...')
+  
+  // Sanitize user input to prevent prompt injection
+  const sanitizedTopic = sanitizeTopic(config.topic)
+  if (sanitizedTopic !== config.topic) {
+    console.warn('Topic was sanitized for safety:', { original: config.topic.slice(0, 100), sanitized: sanitizedTopic.slice(0, 100) })
+  }
   
   // Set project status to generating
   await updateResearchProjectStatus(projectId, 'generating' as PaperStatus)
   
-  // Set up evidence tracking
+  // Set up evidence tracking with database persistence
   EvidenceTracker.setProject(projectId)
+  await EvidenceTracker.loadFromDatabase(projectId)
 
   try {
     // Step 1: Collect Papers (Search + Ingestion)
@@ -95,7 +110,7 @@ export async function generatePaper(
     const discoveryOptions: EnhancedGenerationOptions = {
       projectId,
       userId,
-      topic: config.topic,
+      topic: sanitizedTopic,
       paperType: config.paperType,
       libraryPaperIds: config.libraryPaperIds || [],
       sourceIds: config.libraryPaperIds || [],
@@ -129,14 +144,14 @@ export async function generatePaper(
     const allPaperIds = allPapers.map(p => p.id)
     const rawOutline = await generateOutline(
       config.paperType,
-      config.topic,
+      sanitizedTopic,
       allPaperIds
     )
     
     // Build properly typed outline
     const typedOutline: GeneratedOutline = {
       paperType: config.paperType,
-      topic: config.topic,
+      topic: sanitizedTopic,
       sections: rawOutline.sections.map(section => ({
         ...section,
         sectionKey: section.sectionKey as any // Type assertion for flexibility
@@ -151,9 +166,9 @@ export async function generatePaper(
     // Step 3: Build Section Contexts (RAG)
     onProgress?.('context', 35, 'Building section contexts...')
     
-    const sectionContexts = await ContextRetrievalService.buildContexts(
+    const sectionContexts = await GenerationContextService.buildContexts(
       typedOutline,
-      config.topic,
+      sanitizedTopic,
       allPapers
     )
     
@@ -238,7 +253,7 @@ export async function generatePaper(
       
       // Track evidence usage for cross-section memory (centralized here to avoid duplication)
       if (sectionContext.contextChunks && sectionContext.contextChunks.length > 0) {
-        EvidenceTracker.trackBulkUsage(sectionContext.contextChunks, sectionContext.title, projectId)
+        EvidenceTracker.trackBulkUsageSync(sectionContext.contextChunks, sectionContext.title, projectId)
       }
       
       // Comprehensive section quality review (pipeline-level assessment)
@@ -261,6 +276,25 @@ export async function generatePaper(
         totalQualityScore += 75
       }
       
+      // Hallucination detection - verify claims are grounded in evidence
+      try {
+        const { quickHallucinationCheck } = await import('@/lib/quality/hallucination-detector')
+        const hallucinationCheck = await quickHallucinationCheck(
+          result.content,
+          sectionContext.contextChunks || []
+        )
+        
+        if (!hallucinationCheck.passed) {
+          console.warn(`⚠️ Hallucination warning in ${sectionContext.title}: ${((1 - hallucinationCheck.score) * 100).toFixed(0)}% of claims may be ungrounded`)
+          qualityIssues.push(`${sectionContext.title}: ${((1 - hallucinationCheck.score) * 100).toFixed(0)}% potentially ungrounded claims`)
+          // Reduce quality score based on hallucination score
+          totalQualityScore -= (1 - hallucinationCheck.score) * 15
+        }
+      } catch (error) {
+        // Don't fail on hallucination check errors - it's an enhancement
+        console.warn(`Hallucination check failed for ${sectionContext.title}:`, error)
+      }
+      
       fullContent += result.content + '\n\n'
       allCitations.push(...result.citations)
       completedSections++
@@ -270,10 +304,20 @@ export async function generatePaper(
     
     onProgress?.('saving', 95, 'Saving generated content...')
     
-    // Create citations map from collected citations (no redundant processing)
+    // Create citations map with deterministic keys (paperId + hash for uniqueness)
     const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
-    allCitations.forEach((citation, index) => {
-      citationsMap[`citation-${index}`] = citation
+    allCitations.forEach((citation) => {
+      // Create deterministic key from paperId and citation text
+      const textHash = citation.citationText.slice(0, 20).replace(/\W/g, '').toLowerCase()
+      const key = `${citation.paperId.slice(0, 8)}-${textHash || 'cite'}`
+      // Handle duplicates by appending count
+      let finalKey = key
+      let counter = 1
+      while (citationsMap[finalKey]) {
+        finalKey = `${key}-${counter}`
+        counter++
+      }
+      citationsMap[finalKey] = citation
     })
     
     await updateProjectContent(projectId, fullContent.trim(), citationsMap)
@@ -299,9 +343,19 @@ export async function generatePaper(
 
   } catch (error) {
     console.error('Pipeline error:', error)
+    
+    // Clean up evidence tracker (use sync to avoid nested async issues)
+    EvidenceTracker.clearLedgerSync(projectId)
+    
+    // Classify error for better reporting
+    const classified = classifyError(error)
+    console.error(`Pipeline failed with ${classified.category} error:`, classified.userMessage)
+    
     // Update project status to failed
     await updateResearchProjectStatus(projectId, 'failed' as PaperStatus)
-    throw error
+    
+    // Re-throw the classified error for better handling upstream
+    throw classified
   }
 }
 

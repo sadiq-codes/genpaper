@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import {
@@ -23,7 +22,6 @@ import {
   FileText,
   FileCode,
   File,
-  Sparkles,
 } from 'lucide-react'
 
 interface EditorTopNavProps {
@@ -43,7 +41,7 @@ export function EditorTopNav({
 }: EditorTopNavProps) {
   return (
     <header className="h-14 border-b border-border/50 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      {/* Left: Sidebar Trigger + Logo + Title */}
+      {/* Left: Sidebar Trigger + Title */}
       <div className="flex items-center gap-2">
         {/* Sidebar Trigger - Opens app navigation */}
         <TooltipProvider delayDuration={300}>
@@ -56,16 +54,6 @@ export function EditorTopNav({
         </TooltipProvider>
 
         <div className="h-6 w-px bg-border mx-1" />
-
-        {/* Logo */}
-        <Link href="/dashboard" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-primary" />
-          </div>
-          <span className="font-semibold text-sm hidden sm:inline">GenPaper</span>
-        </Link>
-
-        <div className="h-6 w-px bg-border mx-1 hidden sm:block" />
 
         {/* Project Title */}
         <div className="flex items-center gap-2">

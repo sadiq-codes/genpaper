@@ -86,15 +86,12 @@ export default function LandingPage() {
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
                 {user ? (
                   <>
-                                      <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
-                    <Link href="/dashboard">
-                      Continue Your Research
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </Link>
-                  </Button>
-                  <Button size="lg" variant="outline" className="px-8 py-3" asChild>
-                    <Link href="/generate">Start New Paper</Link>
-                  </Button>
+                    <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
+                      <Link href="/projects">
+                        Go to Projects
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Link>
+                    </Button>
                   </>
                 ) : (
                   <>
@@ -318,7 +315,7 @@ export default function LandingPage() {
                   </Link>
                 </Button>
                 <Button size="lg" variant="outline" className="px-8 py-3" asChild>
-                  <Link href="/dashboard">View Projects</Link>
+                  <Link href="/projects">View Projects</Link>
                 </Button>
               </>
             ) : (

@@ -35,13 +35,13 @@ export class SectionReviewer {
   /**
    * Review a single section for quality issues
    */
-  static async reviewSection(
+  static reviewSection(
     sectionKey: SectionKey,
     content: string,
     citations: Array<{ paperId: string; citationText: string }>,
     contextChunks: Array<{ paper_id: string; content: string }>,
     targetWords: number
-  ): Promise<ReviewResult> {
+  ): ReviewResult {
     const issues: string[] = []
     const recommendations: string[] = []
     
@@ -50,11 +50,11 @@ export class SectionReviewer {
     const citationCount = citations.length
     const distinctSources = new Set(citations.map(c => c.paperId)).size
     
-    // Quality checks
-    const clarity = await this.checkClarity(content)
-    const scopeAdherence = await this.checkScopeAdherence(sectionKey, content)
+    // Quality checks (all synchronous operations)
+    const clarity = this.checkClarity(content)
+    const scopeAdherence = this.checkScopeAdherence(sectionKey, content)
     const evidenceCoverage = this.checkEvidenceCoverage(content, citations, contextChunks)
-    const duplicationCheck = await this.checkDuplication(content)
+    const duplicationCheck = this.checkDuplication(content)
     
     // Length checks
     if (wordCount < targetWords * 0.7) {
@@ -77,7 +77,7 @@ export class SectionReviewer {
     }
     
     // Section-specific checks
-    await this.addSectionSpecificChecks(sectionKey, content, issues, recommendations)
+    this.addSectionSpecificChecks(sectionKey, content, issues, recommendations)
     
     const averageQuality = (clarity + scopeAdherence + evidenceCoverage + duplicationCheck) / 4
     const passed = issues.length === 0 && averageQuality >= 70
@@ -100,18 +100,18 @@ export class SectionReviewer {
   /**
    * Review paper-level coherence and argument flow
    */
-  static async reviewPaperLevel(
+  static reviewPaperLevel(
     sections: Array<{ key: SectionKey; content: string; citations: Array<{ paperId: string }> }>,
     allCitations: Array<{ paperId: string; citationText: string }>
-  ): Promise<PaperLevelReview> {
+  ): PaperLevelReview {
     const issues: string[] = []
     const recommendations: string[] = []
     
     // Check argument coherence across sections
-    const argumentCoherence = await this.checkArgumentCoherence(sections)
+    const argumentCoherence = this.checkArgumentCoherence(sections)
     
     // Check section distinctness (overlap detection)
-    const sectionDistinctness = await this.checkSectionDistinctness(sections)
+    const sectionDistinctness = this.checkSectionDistinctness(sections)
     
     // Check citation coverage vs distinct sources
     const citationCoverage = this.checkCitationCoverage(allCitations)
@@ -146,7 +146,7 @@ export class SectionReviewer {
     }
   }
   
-  private static async checkClarity(content: string): Promise<number> {
+  private static checkClarity(content: string): number {
     // Simple heuristics for clarity
     const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 10)
     const avgWordsPerSentence = content.split(/\s+/).length / sentences.length
@@ -168,7 +168,7 @@ export class SectionReviewer {
     return Math.max(0, Math.min(100, score))
   }
   
-  private static async checkScopeAdherence(sectionKey: SectionKey, content: string): Promise<number> {
+  private static checkScopeAdherence(sectionKey: SectionKey, content: string): number {
     const contentLower = content.toLowerCase()
     let score = 100
     
@@ -216,7 +216,7 @@ export class SectionReviewer {
     return Math.min(100, score)
   }
   
-  private static async checkDuplication(content: string): Promise<number> {
+  private static checkDuplication(content: string): number {
     // Simple n-gram overlap detection
     const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 20)
     const nGramSize = 4
@@ -241,12 +241,12 @@ export class SectionReviewer {
     return Math.round(score)
   }
   
-  private static async addSectionSpecificChecks(
+  private static addSectionSpecificChecks(
     sectionKey: SectionKey,
     content: string,
     issues: string[],
     recommendations: string[]
-  ): Promise<void> {
+  ): void {
     const contentLower = content.toLowerCase()
     
     switch (sectionKey) {
@@ -280,9 +280,9 @@ export class SectionReviewer {
     }
   }
   
-  private static async checkArgumentCoherence(
+  private static checkArgumentCoherence(
     sections: Array<{ key: SectionKey; content: string }>
-  ): Promise<number> {
+  ): number {
     // Simple coherence check based on transition words and concept continuity
     let coherenceScore = 100
     
@@ -299,9 +299,9 @@ export class SectionReviewer {
     return Math.max(0, Math.min(100, coherenceScore))
   }
   
-  private static async checkSectionDistinctness(
+  private static checkSectionDistinctness(
     sections: Array<{ key: SectionKey; content: string }>
-  ): Promise<number> {
+  ): number {
     const overlapThreshold = 0.15 // 15% overlap is concerning
     let maxOverlap = 0
     
