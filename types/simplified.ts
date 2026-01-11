@@ -21,6 +21,11 @@ export interface PaperMetadata {
   [key: string]: unknown
 }
 
+// Review settings for literature reviews
+export interface ReviewSettingsConfig {
+  review_focus?: string
+}
+
 // Simplified generation config - no feature flags or complex nested objects
 export interface GenerationConfig {
   temperature?: number
@@ -29,9 +34,17 @@ export interface GenerationConfig {
   limit?: number
   library_papers_used?: string[]
   length?: 'short' | 'medium' | 'long'
-  paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
+  paperType?: PaperTypeKey
   localRegion?: string
   useLibraryOnly?: boolean
+  // Paper settings (nested for backwards compatibility)
+  paper_settings?: {
+    paperType?: PaperTypeKey
+  }
+  // Original research configuration (for empirical papers)
+  original_research?: OriginalResearchConfig
+  // Review settings (for literature reviews)
+  review_settings?: ReviewSettingsConfig
 }
 
 export interface Paper {
@@ -59,6 +72,19 @@ export interface PaperAuthor {
 
 export type PaperStatus = 'generating' | 'complete' | 'failed'
 
+export type PaperTypeKey = 
+  | 'researchArticle' 
+  | 'literatureReview' 
+  | 'capstoneProject' 
+  | 'mastersThesis' 
+  | 'phdDissertation'
+
+export interface OriginalResearchConfig {
+  has_original_research: boolean
+  research_question?: string
+  key_findings?: string
+}
+
 export interface ResearchProject {
   id: string
   user_id: string
@@ -68,6 +94,11 @@ export interface ResearchProject {
   content?: string
   created_at: string
   completed_at?: string
+  // New fields for original research support
+  paper_type?: PaperTypeKey
+  has_original_research?: boolean
+  research_question?: string
+  key_findings?: string
 }
 
 export interface ResearchProjectVersion {

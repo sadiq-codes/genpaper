@@ -48,6 +48,9 @@ import type {
   AnalysisState,
   ClaimType,
   GapType,
+  AllClaimTypes,
+  ClaimRelationship,
+  GapAddressedStatus,
 } from '../types'
 import { cn } from '@/lib/utils'
 
@@ -62,13 +65,35 @@ interface ResearchTabProps {
   onRemovePaper: (paperId: string, claimCount: number) => void
 }
 
-// Claim type icons and colors
-const claimTypeConfig: Record<ClaimType, { icon: typeof Lightbulb; color: string; label: string }> = {
+// Claim type icons and colors (includes both literature and original research types)
+const claimTypeConfig: Record<AllClaimTypes, { icon: typeof Lightbulb; color: string; label: string }> = {
+  // Literature claim types
   finding: { icon: Lightbulb, color: 'text-green-600 bg-green-50 border-green-200', label: 'Finding' },
   method: { icon: Beaker, color: 'text-blue-600 bg-blue-50 border-blue-200', label: 'Method' },
   limitation: { icon: AlertTriangle, color: 'text-orange-600 bg-orange-50 border-orange-200', label: 'Limitation' },
   future_work: { icon: Sparkles, color: 'text-purple-600 bg-purple-50 border-purple-200', label: 'Future Work' },
   background: { icon: BookOpen, color: 'text-gray-600 bg-gray-50 border-gray-200', label: 'Background' },
+  // Original research claim types
+  hypothesis: { icon: HelpCircle, color: 'text-amber-600 bg-amber-50 border-amber-200', label: 'Hypothesis' },
+  contribution: { icon: Sparkles, color: 'text-indigo-600 bg-indigo-50 border-indigo-200', label: 'Contribution' },
+  implication: { icon: Lightbulb, color: 'text-teal-600 bg-teal-50 border-teal-200', label: 'Implication' },
+}
+
+// Relationship badge config
+const relationshipConfig: Record<ClaimRelationship, { color: string; label: string; emoji: string }> = {
+  supports: { color: 'text-green-700 bg-green-100 border-green-300', label: 'Supports', emoji: '🟢' },
+  extends: { color: 'text-blue-700 bg-blue-100 border-blue-300', label: 'Extends', emoji: '🔵' },
+  contradicts: { color: 'text-red-700 bg-red-100 border-red-300', label: 'Contradicts', emoji: '🔴' },
+  unrelated: { color: 'text-gray-600 bg-gray-100 border-gray-300', label: 'Unrelated', emoji: '⚪' },
+  not_analyzed: { color: 'text-gray-500 bg-gray-50 border-gray-200', label: '', emoji: '' },
+}
+
+// Gap addressed status config
+const addressedStatusConfig: Record<GapAddressedStatus, { color: string; label: string; emoji: string }> = {
+  fully_addressed: { color: 'text-green-700 bg-green-100 border-green-300', label: 'Addressed', emoji: '✅' },
+  partially_addressed: { color: 'text-yellow-700 bg-yellow-100 border-yellow-300', label: 'Partial', emoji: '⚠️' },
+  not_addressed: { color: 'text-gray-600 bg-gray-100 border-gray-300', label: 'Open', emoji: '❌' },
+  not_analyzed: { color: 'text-gray-500 bg-gray-50 border-gray-200', label: '', emoji: '' },
 }
 
 // Gap type icons and colors
@@ -253,17 +278,26 @@ function PaperCardWithPopover({
 function ClaimCard({ 
   claim, 
   onInsert,
+  showRelationship = false,
 }: { 
   claim: ExtractedClaim
   onInsert: () => void
+  showRelationship?: boolean
 }) {
   const config = claimTypeConfig[claim.claim_type] || claimTypeConfig.finding
   const Icon = config.icon
+  const relConfig = claim.relationship_to_user && claim.relationship_to_user !== 'not_analyzed' 
+    ? relationshipConfig[claim.relationship_to_user] 
+    : null
+  const isUserClaim = claim.source === 'original_research'
 
   return (
     <button
       onClick={onInsert}
-      className="w-full text-left p-2 rounded-lg border bg-card hover:bg-muted/30 transition-colors group"
+      className={cn(
+        "w-full text-left p-2 rounded-lg border bg-card hover:bg-muted/30 transition-colors group",
+        isUserClaim && "border-amber-300 bg-amber-50/50"
+      )}
     >
       <div className="flex items-start gap-2">
         <div className={cn(
@@ -273,17 +307,33 @@ function ClaimCard({
           <Icon className="h-3 w-3" />
         </div>
         <div className="flex-1 min-w-0">
+          {/* Relationship badge for literature claims */}
+          {showRelationship && relConfig && (
+            <Badge className={cn("text-[9px] px-1.5 py-0 h-4 mb-1 font-normal", relConfig.color)}>
+              {relConfig.emoji} {relConfig.label}
+            </Badge>
+          )}
           <p className="text-xs leading-relaxed line-clamp-3">
             {claim.claim_text}
           </p>
           <div className="flex items-center gap-2 mt-1">
             <span className="text-[10px] text-muted-foreground line-clamp-1">
-              {claim.paper_title ? `${claim.paper_authors?.[0]?.split(' ').pop() || 'Unknown'}, ${claim.paper_year}` : 'Unknown source'}
+              {isUserClaim 
+                ? 'Your Research' 
+                : claim.paper_title 
+                  ? `${claim.paper_authors?.[0]?.split(' ').pop() || 'Unknown'}, ${claim.paper_year}` 
+                  : 'Unknown source'}
             </span>
             <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">
               {Math.round(claim.confidence * 100)}%
             </Badge>
           </div>
+          {/* Show relationship explanation */}
+          {showRelationship && claim.relationship_explanation && (
+            <p className="text-[10px] text-muted-foreground mt-1 italic line-clamp-2">
+              {claim.relationship_explanation}
+            </p>
+          )}
         </div>
         <Plus className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-1 text-muted-foreground" />
       </div>
@@ -295,17 +345,25 @@ function ClaimCard({
 function GapCard({ 
   gap, 
   onInsert,
+  showAddressedStatus = false,
 }: { 
   gap: ResearchGap
   onInsert: () => void
+  showAddressedStatus?: boolean
 }) {
   const config = gapTypeConfig[gap.gap_type] || gapTypeConfig.unstudied
   const Icon = config.icon
+  const addressedConfig = gap.addressed_status && gap.addressed_status !== 'not_analyzed'
+    ? addressedStatusConfig[gap.addressed_status]
+    : null
 
   return (
     <button
       onClick={onInsert}
-      className="w-full text-left p-2 rounded-lg border bg-card hover:bg-muted/30 transition-colors group"
+      className={cn(
+        "w-full text-left p-2 rounded-lg border bg-card hover:bg-muted/30 transition-colors group",
+        gap.addressed_status === 'fully_addressed' && "border-green-300 bg-green-50/30"
+      )}
     >
       <div className="flex items-start gap-2">
         <div className={cn(
@@ -315,18 +373,31 @@ function GapCard({
           <Icon className="h-3 w-3" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1 mb-1">
+          <div className="flex items-center gap-1 mb-1 flex-wrap">
             <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4">
               {config.label}
             </Badge>
             <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">
               {Math.round(gap.confidence * 100)}%
             </Badge>
+            {/* Addressed status badge */}
+            {showAddressedStatus && addressedConfig && (
+              <Badge className={cn("text-[9px] px-1.5 py-0 h-4 font-normal", addressedConfig.color)}>
+                {addressedConfig.emoji} {addressedConfig.label}
+              </Badge>
+            )}
           </div>
           <p className="text-xs leading-relaxed line-clamp-3">
             {gap.description}
           </p>
-          {gap.research_opportunity && (
+          {/* Show user contribution if gap is addressed */}
+          {showAddressedStatus && gap.user_contribution && (
+            <p className="text-[10px] text-green-700 mt-1 line-clamp-2 font-medium">
+              Your contribution: {gap.user_contribution}
+            </p>
+          )}
+          {/* Show research opportunity if gap is not addressed */}
+          {(!showAddressedStatus || gap.addressed_status === 'not_addressed') && gap.research_opportunity && (
             <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2 italic">
               Opportunity: {gap.research_opportunity}
             </p>
@@ -500,28 +571,39 @@ export function ResearchTab({
     claims: true,
     gaps: true,
     insights: false,
+    positioning: true,  // Show positioning by default when available
   })
 
   const toggleSection = (section: string) => {
     setOpenSections(prev => ({ ...prev, [section]: !prev[section] }))
   }
 
-  const { claims, gaps, synthesis, status } = analysisState
+  const { claims, userClaims, gaps, synthesis, status, hasOriginalResearch, positioning } = analysisState
   const isLoading = status === 'loading' || status === 'analyzing'
 
-  // Count claims per paper
+  // Count claims per paper (only for literature claims with paper_id)
   const claimCountByPaper = claims.reduce((acc, claim) => {
-    acc[claim.paper_id] = (acc[claim.paper_id] || 0) + 1
+    if (claim.paper_id) {
+      acc[claim.paper_id] = (acc[claim.paper_id] || 0) + 1
+    }
     return acc
   }, {} as Record<string, number>)
 
-  // Group claims by type
+  // Group literature claims by type
   const claimsByType = claims.reduce((acc, claim) => {
     const type = claim.claim_type || 'finding'
     if (!acc[type]) acc[type] = []
     acc[type].push(claim)
     return acc
-  }, {} as Record<ClaimType, ExtractedClaim[]>)
+  }, {} as Record<AllClaimTypes, ExtractedClaim[]>)
+
+  // Group user claims by type
+  const userClaimsByType = (userClaims || []).reduce((acc, claim) => {
+    const type = claim.claim_type || 'finding'
+    if (!acc[type]) acc[type] = []
+    acc[type].push(claim)
+    return acc
+  }, {} as Record<AllClaimTypes, ExtractedClaim[]>)
 
   return (
     <div className="flex flex-col h-full">
@@ -572,10 +654,6 @@ export function ResearchTab({
                 {papers.length === 0 ? (
                   <div className="text-center py-3">
                     <p className="text-xs text-muted-foreground mb-2">No papers added yet</p>
-                    <Button size="sm" variant="outline" onClick={onOpenLibrary}>
-                      <Plus className="h-3 w-3 mr-1" />
-                      Add Papers
-                    </Button>
                   </div>
                 ) : (
                   papers.map(paper => (
@@ -600,24 +678,57 @@ export function ResearchTab({
             <CollapsibleTrigger className="w-full">
               <SectionHeader 
                 title="Claims" 
-                count={claims.length}
+                count={claims.length + (userClaims?.length || 0)}
                 isOpen={openSections.claims}
                 icon={Lightbulb}
                 isLoading={isLoading}
               />
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <div className="pl-6 pr-2 py-2 space-y-2">
-                {claims.length === 0 ? (
+              <div className="pl-6 pr-2 py-2 space-y-3">
+                {/* User Claims Section - shown first when hasOriginalResearch */}
+                {hasOriginalResearch && userClaims && userClaims.length > 0 && (
+                  <div className="space-y-2 pb-2 border-b border-amber-200">
+                    <h5 className="text-[10px] font-semibold uppercase text-amber-700 tracking-wider flex items-center gap-1">
+                      <Sparkles className="h-3 w-3" />
+                      Your Research
+                      <Badge className="text-[9px] ml-1 bg-amber-100 text-amber-700">
+                        {userClaims.length}
+                      </Badge>
+                    </h5>
+                    {Object.entries(userClaimsByType).map(([type, typeClaims]) => (
+                      <div key={`user-${type}`} className="space-y-1">
+                        <h6 className="text-[9px] font-medium text-amber-600 pl-1">
+                          {claimTypeConfig[type as AllClaimTypes]?.label || type}
+                        </h6>
+                        {typeClaims.map(claim => (
+                          <ClaimCard 
+                            key={claim.id} 
+                            claim={claim}
+                            onInsert={() => onInsertClaim(claim)}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Literature Claims Section */}
+                {claims.length === 0 && (!userClaims || userClaims.length === 0) ? (
                   <p className="text-xs text-muted-foreground text-center py-3">
                     {isLoading ? 'Extracting claims...' : 'Run analysis to extract claims'}
                   </p>
-                ) : (
+                ) : claims.length > 0 && (
                   <>
+                    {hasOriginalResearch && (
+                      <h5 className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">
+                        Literature Claims
+                      </h5>
+                    )}
                     {Object.entries(claimsByType).map(([type, typeClaims]) => (
                       <div key={type} className="space-y-1">
                         <h5 className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider flex items-center gap-1">
-                          {claimTypeConfig[type as ClaimType]?.label || type}
+                          {claimTypeConfig[type as AllClaimTypes]?.label || type}
                           <Badge variant="secondary" className="text-[9px] ml-1">
                             {typeClaims.length}
                           </Badge>
@@ -627,6 +738,7 @@ export function ResearchTab({
                             key={claim.id} 
                             claim={claim}
                             onInsert={() => onInsertClaim(claim)}
+                            showRelationship={hasOriginalResearch}
                           />
                         ))}
                         {typeClaims.length > 5 && (
@@ -668,12 +780,105 @@ export function ResearchTab({
                       key={gap.id} 
                       gap={gap}
                       onInsert={() => onInsertGap(gap)}
+                      showAddressedStatus={hasOriginalResearch}
                     />
                   ))
                 )}
               </div>
             </CollapsibleContent>
           </Collapsible>
+
+          {/* Research Positioning Section - only shown when hasOriginalResearch */}
+          {hasOriginalResearch && positioning && (
+            <Collapsible 
+              open={openSections.positioning} 
+              onOpenChange={() => toggleSection('positioning')}
+            >
+              <CollapsibleTrigger className="w-full">
+                <SectionHeader 
+                  title="Positioning" 
+                  count={
+                    (positioning.novelty?.length || 0) + 
+                    (positioning.alignments?.length || 0) + 
+                    (positioning.divergences?.length || 0)
+                  }
+                  isOpen={openSections.positioning || false}
+                  icon={Sparkles}
+                />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="pl-6 pr-2 py-2 space-y-3">
+                  {/* Novelty */}
+                  {positioning.novelty && positioning.novelty.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h5 className="text-[10px] font-semibold uppercase text-indigo-600 tracking-wider">
+                        What&apos;s New
+                      </h5>
+                      {positioning.novelty.map((item, idx) => (
+                        <div 
+                          key={idx}
+                          className="text-xs p-2 rounded-lg bg-indigo-50 border border-indigo-200"
+                        >
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Alignments */}
+                  {positioning.alignments && positioning.alignments.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h5 className="text-[10px] font-semibold uppercase text-green-600 tracking-wider">
+                        Supports Literature
+                      </h5>
+                      {positioning.alignments.slice(0, 3).map((item, idx) => (
+                        <div 
+                          key={idx}
+                          className="text-xs p-2 rounded-lg bg-green-50 border border-green-200"
+                        >
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Divergences */}
+                  {positioning.divergences && positioning.divergences.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h5 className="text-[10px] font-semibold uppercase text-red-600 tracking-wider">
+                        Points to Discuss
+                      </h5>
+                      {positioning.divergences.slice(0, 3).map((item, idx) => (
+                        <div 
+                          key={idx}
+                          className="text-xs p-2 rounded-lg bg-red-50 border border-red-200"
+                        >
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Suggested Discussion Points */}
+                  {positioning.suggestedDiscussionPoints && positioning.suggestedDiscussionPoints.length > 0 && (
+                    <div className="space-y-1.5">
+                      <h5 className="text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">
+                        Discussion Suggestions
+                      </h5>
+                      {positioning.suggestedDiscussionPoints.slice(0, 4).map((item, idx) => (
+                        <div 
+                          key={idx}
+                          className="text-xs p-2 rounded-lg bg-muted/50 border text-muted-foreground"
+                        >
+                          💡 {item}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
 
           {/* Insights Section */}
           <Collapsible 

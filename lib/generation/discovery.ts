@@ -2,19 +2,22 @@ import { getSB } from '@/lib/supabase/server'
 import { getPapersByIds as getLibraryPapersByIds } from '@/lib/db/library'
 import type { EnhancedGenerationOptions } from './types'
 
-// Helper function to check if URL is likely a direct PDF
+// Helper function to check if URL is likely a direct PDF or open access article
 function isLikelyDirectPdfUrl(url: string): boolean {
   if (!url) return false
   
   // Direct PDF patterns
   const directPdfPatterns = [
     /\.pdf$/i,
+    /\.pdf\//i,  // PMC URLs often end with /pdf/
     /arxiv\.org\/pdf\//i,
     /biorxiv\.org\/content\/.*\.full\.pdf/i,
     /medrxiv\.org\/content\/.*\.full\.pdf/i,
     /core\.ac\.uk\/download\/pdf/i,
     /europepmc\.org\/.*\.pdf/i,
+    /europepmc\.org\/backend\/ptpmcrender\.fcgi/i,  // Europe PMC PDF render
     /ncbi\.nlm\.nih\.gov\/pmc\/articles\/.*\/pdf/i,
+    /ncbi\.nlm\.nih\.gov\/pmc\/articles\/PMC\d+$/i,  // PMC article pages (can extract PDF)
   ]
   
   // Publisher landing page patterns (NOT direct PDFs)
@@ -40,9 +43,10 @@ function isLikelyDirectPdfUrl(url: string): boolean {
   // Check if it's a direct PDF
   return directPdfPatterns.some(pattern => pattern.test(url))
 }
-import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
+import type { PaperWithAuthors, PaperSource, OriginalResearchConfig } from '@/types/simplified'
 import type { UnifiedSearchOptions } from '@/lib/services/search-orchestrator'
 import { unifiedSearch } from '@/lib/search'
+import { buildEnhancedSearchQueries } from '@/lib/search/query-rewrite'
 
 // Removed policy dependency - simplified ingestion logic
 
@@ -91,7 +95,44 @@ export async function collectPapers(
   if (!useLibraryOnly && remainingSlots > 0) {
     console.log(`🔍 Searching for papers via external APIs...`)
     
+    // Get original research context if available
+    const originalResearch = config?.original_research as OriginalResearchConfig | undefined
+    const hasOriginalResearch = originalResearch?.has_original_research
+    
     try {
+      // Build enhanced search queries if user has original research
+      let searchQueries: string[] = [topic]
+      
+      if (hasOriginalResearch && originalResearch?.key_findings) {
+        console.log(`🧪 Original research detected - building enhanced search queries...`)
+        searchQueries = await buildEnhancedSearchQueries(topic, {
+          researchQuestion: originalResearch.research_question,
+          keyFindings: originalResearch.key_findings,
+        })
+        console.log(`   📋 Generated ${searchQueries.length} search queries:`)
+        searchQueries.forEach((q, i) => console.log(`      ${i + 1}. "${q.slice(0, 80)}${q.length > 80 ? '...' : ''}"`))
+      }
+      
+      // Adjust recency weight based on profile
+      // cutting-edge: prioritize recent papers heavily
+      // balanced: equal weight to recency and other factors
+      // foundational-heavy: prioritize citation count/authority over recency
+      const recencyProfile = options.recencyProfile
+      let recencyWeight = 0.1  // default balanced
+      let authorityWeight = 0.5
+      
+      if (recencyProfile === 'cutting-edge') {
+        recencyWeight = 0.35
+        authorityWeight = 0.3
+        console.log(`📅 Recency profile: cutting-edge - prioritizing recent papers`)
+      } else if (recencyProfile === 'foundational-heavy') {
+        recencyWeight = 0.05
+        authorityWeight = 0.6
+        console.log(`📅 Recency profile: foundational-heavy - prioritizing high-citation papers`)
+      } else {
+        console.log(`📅 Recency profile: balanced - equal weighting`)
+      }
+      
       const searchOptions: UnifiedSearchOptions = {
         maxResults: remainingSlots,
         minResults: Math.min(5, remainingSlots),
@@ -99,20 +140,46 @@ export async function collectPapers(
         fromYear: 2000,
         localRegion: config?.localRegion,
         sources: (config?.sources as PaperSource[])
-                  ?? ['openalex', 'crossref', 'semantic_scholar'],
+                  ?? ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
         semanticWeight: 0.4,
-        authorityWeight: 0.5,
-        recencyWeight: 0.1
+        authorityWeight,
+        recencyWeight
       }
       
-      const searchResult = await unifiedSearch(topic, searchOptions)
-      discoveredPapers = searchResult.papers as PaperWithAuthors[]
+      // Search with multiple queries and merge results
+      const allPaperIds = new Set<string>()
+      const allPapers: PaperWithAuthors[] = []
       
-      console.log(`🎯 External search results: ${discoveredPapers.length} papers found`)
-      
-      if (searchResult.metadata.errors.length > 0) {
-        console.warn(`⚠️ Search completed with warnings: ${searchResult.metadata.errors.join(', ')}`)
+      for (const query of searchQueries) {
+        // Adjust max results per query to avoid too many total
+        const perQueryMax = Math.ceil(remainingSlots / searchQueries.length) + 5
+        const queryOptions = { ...searchOptions, maxResults: perQueryMax }
+        
+        console.log(`🔍 Searching: "${query.slice(0, 60)}${query.length > 60 ? '...' : ''}"`)
+        
+        const searchResult = await unifiedSearch(query, queryOptions)
+        
+        // Add unique papers
+        for (const paper of searchResult.papers as PaperWithAuthors[]) {
+          if (!allPaperIds.has(paper.id)) {
+            allPaperIds.add(paper.id)
+            allPapers.push(paper)
+          }
+        }
+        
+        if (searchResult.metadata.errors.length > 0) {
+          console.warn(`   ⚠️ Query warnings: ${searchResult.metadata.errors.join(', ')}`)
+        }
+        
+        // Stop if we have enough papers
+        if (allPapers.length >= remainingSlots) {
+          console.log(`   ✅ Reached target paper count (${allPapers.length})`)
+          break
+        }
       }
+      
+      discoveredPapers = allPapers.slice(0, remainingSlots)
+      console.log(`🎯 External search results: ${discoveredPapers.length} unique papers found`)
 
     } catch (err) {
       console.error('External search failed:', err)

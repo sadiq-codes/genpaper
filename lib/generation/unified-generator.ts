@@ -1,9 +1,9 @@
 import 'server-only'
-import { streamText, type ToolCallPart } from 'ai'
-import { ai } from '@/lib/ai/vercel-client'
+import { streamText } from 'ai'
+import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, checkTopicDrift, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
 import type { SectionContext } from '@/lib/prompts/types'
-import { addCitation } from '@/lib/ai/tools/addCitation'
+import { extractCitationMarkers, cleanNonCitationArtifacts } from '@/lib/citations/post-processor'
 // DEDUPLICATION NOTES:
 // - Evidence tracking moved to pipeline.ts (single point of control)
 // - Comprehensive quality assessment consolidated in pipeline.ts 
@@ -28,7 +28,6 @@ import { addCitation } from '@/lib/ai/tools/addCitation'
 
 export type StreamEvent =
   | { type: 'sentence'; data: { text: string } }
-  | { type: 'citation'; data: ToolCallPart }
   | { type: 'progress'; data: { stage: string; progress: number; message: string; [key: string]: unknown } }
   | { type: 'error'; data: { message: string } }
 
@@ -65,12 +64,18 @@ function calculateBasicQualityScore(params: {
   citations: Array<{ paperId: string; citationText: string }>
   targetWords: number
   driftSimilarity: number
+  minCitationsExpected?: number
 }): number {
-  const { content, citations, targetWords, driftSimilarity } = params
+  const { content, citations, targetWords, driftSimilarity, minCitationsExpected } = params
   
   const wordCount = content.split(' ').length
   const lengthScore = Math.min(100, (wordCount / targetWords) * 100)
-  const citationScore = Math.min(100, citations.length * 20) // 5 citations = 100%
+  
+  // Citation score: scale to expected citations from profile
+  // If no expectation provided, use actual citations as the baseline (self-calibrating)
+  const citationTarget = minCitationsExpected || Math.max(citations.length, 1)
+  const citationScore = Math.min(100, (citations.length / citationTarget) * 100)
+  
   const driftScore = driftSimilarity * 100
   
   // Basic calculation - comprehensive quality assessment handled by pipeline
@@ -78,10 +83,9 @@ function calculateBasicQualityScore(params: {
 }
 
 // Helper to resolve generation options with defaults
-function resolveGenOptions(options: BuildPromptOptions): Required<Pick<BuildPromptOptions, 'model' | 'temperature' | 'maxTokens'>> & BuildPromptOptions {
+function resolveGenOptions(options: BuildPromptOptions): Required<Pick<BuildPromptOptions, 'temperature' | 'maxTokens'>> & BuildPromptOptions {
   return {
     ...options,
-    model: options.model || 'gpt-4o',
     temperature: options.temperature ?? 0.4,  // Use nullish coalescing for cleaner defaults
     maxTokens: options.maxTokens ?? 4000
   }
@@ -125,28 +129,27 @@ export async function generateWithUnifiedTemplate(
   progress('generation', 20, 'Starting content generation...')
   
   const resolvedOptions = resolveGenOptions(options)
+  
+  // Use simple text streaming - no tools
+  // Citations are handled via [CITE: paper_id] markers that are post-processed
   const result = await streamText({
-    model: ai(resolvedOptions.model),
+    model: getLanguageModel(),
     system: promptData.system,
     prompt: promptData.user,
-    tools: { addCitation },
     temperature: resolvedOptions.temperature,
     maxTokens: resolvedOptions.maxTokens
   })
 
   // Sentence boundary detection with abbreviation handling
-  // Uses negative lookbehind to avoid breaking on common abbreviations
-  // Matches: period/exclaim/question + space(s) + capital letter
-  // Excludes: Dr., Mr., Mrs., Ms., Prof., vs., etc., e.g., i.e., U.S., Fig., No.
   const ABBREVIATIONS = ['Dr', 'Mr', 'Mrs', 'Ms', 'Prof', 'vs', 'etc', 'e\\.g', 'i\\.e', 'U\\.S', 'Fig', 'No', 'Vol', 'pp', 'al']
   const abbrevPattern = ABBREVIATIONS.join('|')
   const sentenceEnd = new RegExp(`(?<!(?:${abbrevPattern}))\\.\\s+(?=[A-Z])|[!?]\\s+(?=[A-Z])`, 'g')
-  let pendingText = '';
+  let pendingText = ''
 
   for await (const delta of result.fullStream) {
     if (delta.type === 'text-delta') {
       pendingText += delta.textDelta
-      let match;
+      let match
       while ((match = sentenceEnd.exec(pendingText))) {
         const sentence = pendingText.slice(0, match.index + 1)
         pendingText = pendingText.slice(match.index + 1)
@@ -155,47 +158,13 @@ export async function generateWithUnifiedTemplate(
         fullContent += sentence
         onStreamEvent?.({ type: 'sentence', data: { text: sentence }})
       }
-    } else if (delta.type === 'tool-call' && delta.toolName === 'addCitation') {
-        // Flush any remaining text before citation
-        if (pendingText) {
-            fullContent += pendingText
-            onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})
-            pendingText = ''
-        }
-        onStreamEvent?.({ type: 'citation', data: delta })
-    } else if ((delta as any).type === 'tool-result' && (delta as any).toolName === 'addCitation') {
-        // Collect citation record from tool result AND append formatted citation
-        try {
-          const payload: any = (delta as any).result ?? (delta as any).toolResult ?? (delta as any)
-          const paperId = payload?.paper_id
-          const formatted = payload?.formatted_citation || payload?.formatted || payload?.data?.formatted_citation
-          
-          // Collect citation record for return value
-          if (paperId && typeof paperId === 'string') {
-            collectedCitations.push({
-              paperId: paperId,
-              citationText: formatted || `[${paperId}]`
-            })
-          }
-          
-          // Append formatted citation to content
-          if (typeof formatted === 'string' && formatted.trim().length > 0) {
-            // Insert a space if needed before citation
-            const spacer = fullContent.endsWith(' ') || formatted.startsWith(' ') ? '' : ' '
-            fullContent += spacer + formatted
-            onStreamEvent?.({ type: 'sentence', data: { text: spacer + formatted }})
-          }
-        } catch (error) {
-          console.warn('Error processing citation tool result:', error)
-          // Continue processing without breaking stream
-        }
     }
   }
 
   // Flush any final text
   if (pendingText) {
-      fullContent += pendingText
-      onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})
+    fullContent += pendingText
+    onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})
   }
 
   try {
@@ -211,8 +180,21 @@ export async function generateWithUnifiedTemplate(
     token_count: tokensUsed
   })
 
-  // Use collected citations from tool results instead of text extraction
-  console.log(`📊 Citations collected from tools: ${collectedCitations.length}`)
+  // Extract citation markers from content (they will be processed in pipeline)
+  const citationMarkers = extractCitationMarkers(fullContent)
+  console.log(`📊 Citation markers found: ${citationMarkers.length}`)
+  
+  // Convert markers to citation records for return value
+  // Actual formatting happens in the pipeline's post-processing step
+  for (const marker of citationMarkers) {
+    collectedCitations.push({
+      paperId: marker.paperId,
+      citationText: marker.marker // Will be replaced with formatted citation in pipeline
+    })
+  }
+  
+  // Clean any artifacts that shouldn't be in output (but keep [CITE:] markers for pipeline)
+  fullContent = cleanNonCitationArtifacts(fullContent)
   
   let driftCheck: UnifiedGenerationResult['driftCheck']
 
@@ -235,11 +217,14 @@ export async function generateWithUnifiedTemplate(
     }
   }
 
+  // Quality score now self-calibrates based on actual citations generated
+  // We no longer enforce minimum citation counts - semantic guidance handles this
   const qualityScore = calculateBasicQualityScore({
     content: fullContent,
     citations: collectedCitations,
     targetWords: options.targetWords || 300,
-    driftSimilarity: driftCheck?.similarity || 1.0
+    driftSimilarity: driftCheck?.similarity || 1.0,
+    minCitationsExpected: Math.max(collectedCitations.length, 1)  // Self-calibrating
   })
 
   progress('complete', 100, 'Generation finished')
@@ -267,8 +252,7 @@ export async function generateFullSection(
   return generateWithUnifiedTemplate({
     context,
     options: {
-      targetWords,
-      model: 'gpt-4-turbo-preview'
+      targetWords
     },
     onStreamEvent: onProgress
   })

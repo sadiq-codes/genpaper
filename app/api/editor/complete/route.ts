@@ -1,14 +1,19 @@
 import { createClient } from '@/lib/supabase/server'
-import { openai } from '@ai-sdk/openai'
+import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { generateText } from 'ai'
 import { NextRequest, NextResponse } from 'next/server'
 import { 
   retrieveEditorContext, 
   formatEditorContextForPrompt, 
-  verifyAllCitations,
-  getFirstAuthorLastName,
   type EditorContext 
 } from '@/lib/rag'
+import {
+  processCitationMarkersSync,
+  buildCitationInstructions,
+  type PaperMetadata,
+  type CitationStyle
+} from '@/lib/citations/unified-service'
+import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 
 // Suggestion types for smart context-aware completion
 type SuggestionType =
@@ -27,7 +32,6 @@ interface CompletionRequest {
     currentSection: string
     documentOutline: string[]
   }
-  // Paper IDs from the project - we'll retrieve chunks/claims from DB
   paperIds: string[]
   topic: string
   suggestionType?: SuggestionType
@@ -35,23 +39,15 @@ interface CompletionRequest {
 
 interface CitationInSuggestion {
   paperId: string
-  marker: string
+  marker: string           // Original marker [CITE: id]
+  formatted: string        // Formatted (Smith et al., 2023)
   startOffset: number
   endOffset: number
-  verified?: boolean
-  // Include paper metadata for frontend display
-  paper?: {
-    id: string
-    title: string
-    authors: string[]
-    year: number
-    doi?: string
-    venue?: string
-  }
+  paper?: PaperMetadata
 }
 
 interface CompletionResponse {
-  suggestion: string
+  suggestion: string       // Text with formatted citations
   citations: CitationInSuggestion[]
   contextHint: string
   ragInfo?: {
@@ -59,75 +55,6 @@ interface CompletionResponse {
     claimsUsed: number
     papersReferenced: number
   }
-}
-
-// Using getFirstAuthorLastName from @/lib/rag for author name extraction
-
-/**
- * Find a matching paper from RAG context based on author name and year
- */
-function findMatchingPaperFromRAG(
-  authorPart: string,
-  year: number,
-  ragContext: EditorContext
-): { id: string; authors: string[]; year: number } | undefined {
-  const searchName = authorPart
-    .replace(/\s+et\s+al\.?/gi, '')
-    .replace(/\s+and\s+.*$/i, '')
-    .replace(/\s+&\s+.*$/i, '')
-    .trim()
-    .toLowerCase()
-
-  for (const [, paper] of ragContext.papers) {
-    if (!paper.authors || paper.authors.length === 0) continue
-    
-    const firstAuthorLastName = getFirstAuthorLastName(paper.authors).toLowerCase()
-    const yearMatch = Math.abs(paper.year - year) <= 1
-    const nameMatch = 
-      firstAuthorLastName.includes(searchName) || 
-      searchName.includes(firstAuthorLastName) ||
-      firstAuthorLastName === searchName
-
-    if (nameMatch && yearMatch) {
-      return { id: paper.id, authors: paper.authors, year: paper.year }
-    }
-  }
-  
-  return undefined
-}
-
-/**
- * Parse AI response to extract citations and match to papers
- */
-function parseCitationsFromText(
-  text: string,
-  ragContext: EditorContext
-): { cleanText: string; citations: CitationInSuggestion[] } {
-  const citations: CitationInSuggestion[] = []
-  
-  // Citation regex for (Author, Year) format
-  const citationRegex = /\(([A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F'\-\s]*?)(?:\s+(?:et\s+al\.|and|&)\s+[A-Za-z\u00C0-\u024F'\-\s]+?)?,\s*(\d{4})\)/g
-  
-  let match
-  
-  while ((match = citationRegex.exec(text)) !== null) {
-    const fullMatch = match[0]
-    const authorPart = match[1]
-    const year = parseInt(match[2])
-    
-    const matchingPaper = findMatchingPaperFromRAG(authorPart, year, ragContext)
-
-    if (matchingPaper) {
-      citations.push({
-        paperId: matchingPaper.id,
-        marker: fullMatch,
-        startOffset: match.index,
-        endOffset: match.index + fullMatch.length
-      })
-    }
-  }
-
-  return { cleanText: text, citations }
 }
 
 // Get section-specific writing guidance
@@ -156,15 +83,36 @@ function getSectionGuidance(section: string): string {
   return 'Continue in an appropriate academic tone.'
 }
 
-// Build RAG-grounded prompt
+// Format papers list for AI prompt with explicit IDs
+function formatPapersForAI(ragContext: EditorContext): string {
+  const papers: string[] = []
+  
+  for (const [id, paper] of ragContext.papers) {
+    const authorStr = paper.authors?.length > 0 
+      ? paper.authors.slice(0, 2).join(', ') + (paper.authors.length > 2 ? ' et al.' : '')
+      : 'Unknown'
+    
+    papers.push(`- Paper ID: ${id}
+  Title: "${paper.title}"
+  Authors: ${authorStr}
+  Year: ${paper.year}`)
+  }
+  
+  return papers.length > 0 ? papers.join('\n\n') : 'No papers available.'
+}
+
+// Build RAG-grounded prompt with unified citation format
 function buildRAGPrompt(
   suggestionType: SuggestionType,
   context: CompletionRequest['context'],
   topic: string,
   sectionGuidance: string,
-  ragFormatted: { chunksText: string; claimsText: string; papersText: string },
+  ragFormatted: { chunksText: string; claimsText: string },
+  papersForAI: string,
   outlineContext: string
 ): { system: string; user: string } {
+  
+  const citationInstructions = buildCitationInstructions()
   
   const baseSystemPrompt = `You are an expert academic writing assistant. You MUST ground your writing in the provided source material.
 
@@ -186,19 +134,21 @@ ${ragFormatted.chunksText}
 ${ragFormatted.claimsText}
 
 ### Available Papers for Citation:
-${ragFormatted.papersText}
+${papersForAI}
+
+${citationInstructions}
 
 ## CRITICAL RULES
 - You MUST ONLY make claims that are supported by the source material above
-- You MUST cite sources as (AuthorLastName, Year) when referencing their content
-- You MUST ONLY cite papers from the "Available Papers for Citation" list
+- You MUST cite sources using [CITE: paper_id] format when referencing their content
+- You MUST ONLY cite papers from the "Available Papers for Citation" list - use the exact Paper ID
 - Do NOT invent facts or citations - if you can't support a claim, don't make it
 - Write 1-2 sentences maximum
 - Use academic tone
 
 ## Output Format
 Return ONLY a JSON object:
-{"text": "your completion", "contextHint": "2-4 word description"}`
+{"text": "your completion with [CITE: paper_id] markers", "contextHint": "2-4 word description"}`
 
   let userPrompt: string
   let systemAddendum = ''
@@ -246,6 +196,24 @@ Return ONLY a JSON object:
   }
 }
 
+// Convert RAG context papers to PaperMetadata format
+function ragContextToPaperMetadata(ragContext: EditorContext): PaperMetadata[] {
+  const papers: PaperMetadata[] = []
+  
+  for (const [id, paper] of ragContext.papers) {
+    papers.push({
+      id,
+      title: paper.title,
+      authors: paper.authors || [],
+      year: paper.year,
+      doi: paper.doi,
+      venue: paper.venue
+    })
+  }
+  
+  return papers
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
@@ -291,9 +259,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // ============================================
-    // CRITICAL: Check if papers are available
-    // ============================================
+    // Check if papers are available
     if (!paperIds || paperIds.length === 0) {
       return NextResponse.json({ 
         error: 'No papers available',
@@ -301,9 +267,10 @@ export async function POST(request: NextRequest) {
       }, { status: 422 })
     }
 
-    // ============================================
+    // Get citation style for this project
+    const citationStyle: CitationStyle = await getProjectCitationStyle(projectId, user.id)
+
     // RAG RETRIEVAL: Get relevant chunks and claims
-    // ============================================
     const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
     
     const ragContext = await retrieveEditorContext(queryText, paperIds, {
@@ -323,6 +290,7 @@ export async function POST(request: NextRequest) {
 
     // Format RAG context for the prompt
     const ragFormatted = formatEditorContextForPrompt(ragContext)
+    const papersForAI = formatPapersForAI(ragContext)
 
     const outlineContext = context.documentOutline.length > 0
       ? context.documentOutline.map(h => `- ${h}`).join('\n')
@@ -330,13 +298,14 @@ export async function POST(request: NextRequest) {
 
     const sectionGuidance = getSectionGuidance(context.currentSection)
 
-    // Build RAG-grounded prompt
+    // Build RAG-grounded prompt with unified citation format
     const { system, user: userPrompt } = buildRAGPrompt(
       suggestionType,
       context,
       topic || project.topic,
       sectionGuidance,
       ragFormatted,
+      papersForAI,
       outlineContext
     )
 
@@ -347,11 +316,11 @@ export async function POST(request: NextRequest) {
     let rawResponse: string
     try {
       const result = await generateText({
-        model: openai('gpt-4o-mini'),
+        model: getLanguageModel(),
         system,
         prompt: userPrompt,
         maxTokens: 300,
-        temperature: 0.5, // Lower temperature for more grounded output
+        temperature: 0.5,
         abortSignal: abortController.signal,
       })
       rawResponse = result.text
@@ -387,46 +356,41 @@ export async function POST(request: NextRequest) {
       }, { status: 422 })
     }
 
-    // Parse citations from generated text
-    const { cleanText, citations } = parseCitationsFromText(suggestion, ragContext)
-
-    // ============================================
-    // CITATION VERIFICATION: Semantic matching
-    // ============================================
-    let verifiedCitations: CitationInSuggestion[] = []
-    if (citations.length > 0) {
-      const verificationResults = await verifyAllCitations(
-        citations,
-        cleanText,
-        ragContext,
-        0.4 // Semantic similarity threshold
-      )
+    // Extract and process citation markers
+    const papers = ragContextToPaperMetadata(ragContext)
+    // Note: extractCitationMarkers is used by processCitationMarkersSync internally
+    
+    // Build citations array with paper metadata
+    const citations: CitationInSuggestion[] = []
+    
+    // Process markers and format citations
+    const processResult = processCitationMarkersSync(suggestion, papers, citationStyle)
+    
+    // Track citation positions in the formatted text
+    let formattedSuggestion = processResult.content
+    
+    for (const citation of processResult.citations) {
+      // Find position of formatted citation in result
+      const formattedPos = formattedSuggestion.indexOf(citation.formatted)
       
-      // Only include verified citations, with paper metadata
-      verifiedCitations = verificationResults
-        .filter(c => c.verified)
-        .map(c => {
-          const paperMeta = ragContext.papers.get(c.paperId)
-          return {
-            paperId: c.paperId,
-            marker: c.marker,
-            startOffset: c.startOffset,
-            endOffset: c.endOffset,
-            paper: paperMeta ? {
-              id: paperMeta.id,
-              title: paperMeta.title,
-              authors: paperMeta.authors,
-              year: paperMeta.year,
-              doi: paperMeta.doi,
-              venue: paperMeta.venue
-            } : undefined
-          }
-        })
+      citations.push({
+        paperId: citation.paperId,
+        marker: citation.marker,
+        formatted: citation.formatted,
+        startOffset: formattedPos >= 0 ? formattedPos : 0,
+        endOffset: formattedPos >= 0 ? formattedPos + citation.formatted.length : 0,
+        paper: citation.paper
+      })
+    }
+
+    // Log invalid paper IDs (AI hallucinated or used wrong ID)
+    if (processResult.invalidPaperIds.length > 0) {
+      console.warn('Autocomplete: Invalid paper IDs in suggestion:', processResult.invalidPaperIds)
     }
 
     const response: CompletionResponse = {
-      suggestion: cleanText,
-      citations: verifiedCitations,
+      suggestion: formattedSuggestion,
+      citations,
       contextHint,
       ragInfo: {
         chunksUsed: ragContext.chunks.length,

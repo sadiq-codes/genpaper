@@ -27,7 +27,7 @@ export async function getProjectsAction(limit = 20, offset = 0) {
 
 // Enhanced action with proper state management
 export async function createProjectAction(
-  prevState: { success: boolean; error?: string; project?: any } | null,
+  prevState: { success: boolean; error?: string; project?: unknown } | null,
   formData: FormData
 ) {
   const supabase = await createClient()
@@ -37,23 +37,58 @@ export async function createProjectAction(
     return { success: false, error: 'Unauthorized' }
   }
 
+  // Main input serves as topic (for reviews) or research question (for empirical papers)
   const topic = formData.get('topic') as string
   const paperType = formData.get('paperType') as string
   const selectedPapers = formData.getAll('selectedPapers') as string[]
+  
+  // Original research support
+  const hasOriginalResearch = formData.get('hasOriginalResearch') === 'true'
+  const keyFindings = formData.get('keyFindings') as string | null
+  
+  // Debug logging
+  console.log('📝 createProjectAction received:', {
+    topic: topic?.substring(0, 50),
+    paperType,
+    hasOriginalResearch,
+    selectedPapersCount: selectedPapers.length
+  })
 
   if (!topic || topic.trim().length === 0) {
-    return { success: false, error: 'Topic is required' }
+    return { success: false, error: 'Topic/Research question is required' }
   }
 
   if (topic.trim().length < 10) {
-    return { success: false, error: 'Topic must be at least 10 characters long' }
+    return { success: false, error: 'Please provide at least 10 characters' }
+  }
+
+  // Validate paperType - should never be empty since form always sends a value
+  if (!paperType) {
+    console.error('❌ paperType is missing from form data - this should never happen')
+    return { success: false, error: 'Paper type is required' }
+  }
+
+  // Validate key findings if original research is enabled
+  if (hasOriginalResearch) {
+    if (!keyFindings || keyFindings.trim().length < 10) {
+      return { success: false, error: 'Key findings are required (at least 10 characters)' }
+    }
   }
 
   try {
     const generationConfig = {
       paper_settings: {
-        paperType: paperType || 'researchArticle'
+        paperType // No fallback - we've validated it exists
       },
+      // Include original research data in config (for empirical papers)
+      // The main topic input serves as the research question for empirical papers
+      ...(hasOriginalResearch && {
+        original_research: {
+          has_original_research: true,
+          research_question: topic.trim(), // Main input IS the research question
+          key_findings: keyFindings?.trim(),
+        }
+      }),
       ...(selectedPapers.length > 0 && { library_papers_used: selectedPapers })
     }
 

@@ -79,18 +79,22 @@ export async function semanticRerank<T extends RerankableItem>(
       // Weighted combination of title and abstract similarity
       let semanticScore = titleSimilarity * titleWeight + abstractSimilarity * (1 - titleWeight)
       
-      // Boost for exact phrase match in title
+      // Boost for exact phrase match in title (more conservative)
       if (boostExactMatch) {
         const titleLower = item.title.toLowerCase()
         if (titleLower.includes(queryNormalized)) {
-          semanticScore = Math.min(1, semanticScore * 1.3) // 30% boost, capped at 1
+          // Only boost if the base score indicates relevance (>0.5)
+          // This prevents irrelevant papers from getting boosted to 1.0
+          if (semanticScore > 0.5) {
+            semanticScore = Math.min(0.95, semanticScore * 1.15) // 15% boost, capped at 0.95
+          }
         }
-        // Smaller boost for partial word matches
+        // Smaller boost for partial word matches (only if moderately relevant)
         const queryWords = queryNormalized.split(/\s+/).filter(w => w.length > 3)
         const matchingWords = queryWords.filter(word => titleLower.includes(word))
-        if (matchingWords.length > 0) {
+        if (matchingWords.length > 0 && semanticScore > 0.4) {
           const wordMatchRatio = matchingWords.length / queryWords.length
-          semanticScore = Math.min(1, semanticScore * (1 + wordMatchRatio * 0.15))
+          semanticScore = Math.min(0.95, semanticScore * (1 + wordMatchRatio * 0.08))
         }
       }
 

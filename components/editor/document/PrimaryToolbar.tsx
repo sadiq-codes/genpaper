@@ -20,7 +20,7 @@ import {
 import {
   AtSign,
   Type,
-  Image,
+  Image as ImageIcon,
   Table,
   Minus,
   Code,
@@ -152,8 +152,8 @@ export function PrimaryToolbar({
           {/* Insert icons */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={insertImage}>
-                <Image className="h-4 w-4" />
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={insertImage} aria-label="Insert image">
+                <ImageIcon className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Insert image</TooltipContent>

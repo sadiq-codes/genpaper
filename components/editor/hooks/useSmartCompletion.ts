@@ -497,7 +497,7 @@ export function useSmartCompletion({
       }
       cancelAll()
     }
-  }, [editor, enabled, scheduleAutoTrigger, cancelAll])
+  }, [editor, enabled, scheduleAutoTrigger, cancelAll, cancelPendingRequest])
 
   // Handle Ctrl+Space for manual trigger - only when editor is focused
   useEffect(() => {

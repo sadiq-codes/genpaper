@@ -156,8 +156,10 @@ function normalizeTitle(title: string): string {
 }
 
 // Enhanced deduplication with arXiv preprint handling (no object mutation)
+// Uses both canonical_id AND normalized title to catch duplicates from different sources
 function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
-  const seen = new Set<string>()
+  const seenCanonicalIds = new Set<string>()
+  const seenTitles = new Set<string>()  // Secondary dedup by normalized title
   const deduplicated: AcademicPaper[] = []
   const arxivPapers = new Map<string, AcademicPaper>()
   const journalPapers = new Map<string, AcademicPaper>()
@@ -177,44 +179,51 @@ function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
   }
   
   // Second pass: deduplicate with arXiv preprint vs journal DOI preference
+  // Also check normalized title to catch same paper from different APIs
   for (const paper of sorted) {
-    if (!seen.has(paper.canonical_id)) {
-      const normalizedTitle = normalizeTitle(paper.title)
+    const normalizedTitle = normalizeTitle(paper.title)
+    
+    // Skip if we've already seen this canonical_id OR this title
+    if (seenCanonicalIds.has(paper.canonical_id) || seenTitles.has(normalizedTitle)) {
+      continue
+    }
+    
+    // Check for arXiv preprint vs journal version
+    if (paper.source === 'arxiv' && journalPapers.has(normalizedTitle)) {
+      const journalVersion = journalPapers.get(normalizedTitle)!
+      // Create new object instead of mutating - prevent side effects
+      const enhancedJournal = {
+        ...journalVersion,
+        preprint_id: paper.url,
+        siblings: [paper.canonical_id]
+      } as RankedPaper
       
-      // Check for arXiv preprint vs journal version
-      if (paper.source === 'arxiv' && journalPapers.has(normalizedTitle)) {
-        const journalVersion = journalPapers.get(normalizedTitle)!
-        // Create new object instead of mutating - prevent side effects
-        const enhancedJournal = {
-          ...journalVersion,
-          preprint_id: paper.url,
-          siblings: [paper.canonical_id]
-        } as RankedPaper
-        
-        seen.add(paper.canonical_id)
-        seen.add(journalVersion.canonical_id)
-        
-        // Only add if journal version not already added
-        if (!deduplicated.find(p => p.canonical_id === journalVersion.canonical_id)) {
-          deduplicated.push(enhancedJournal)
-        }
-      } else if (paper.doi && arxivPapers.has(normalizedTitle)) {
-        const arxivVersion = arxivPapers.get(normalizedTitle)!
-        // Create new object instead of mutating
-        const enhancedJournal = {
-          ...paper,
-          preprint_id: arxivVersion.url,
-          siblings: [arxivVersion.canonical_id]
-        } as RankedPaper
-        
-        seen.add(paper.canonical_id)
-        seen.add(arxivVersion.canonical_id)
+      seenCanonicalIds.add(paper.canonical_id)
+      seenCanonicalIds.add(journalVersion.canonical_id)
+      seenTitles.add(normalizedTitle)
+      
+      // Only add if journal version not already added
+      if (!deduplicated.find(p => p.canonical_id === journalVersion.canonical_id)) {
         deduplicated.push(enhancedJournal)
-      } else {
-        // No duplicate found, add as-is
-        seen.add(paper.canonical_id)
-        deduplicated.push(paper)
       }
+    } else if (paper.doi && arxivPapers.has(normalizedTitle)) {
+      const arxivVersion = arxivPapers.get(normalizedTitle)!
+      // Create new object instead of mutating
+      const enhancedJournal = {
+        ...paper,
+        preprint_id: arxivVersion.url,
+        siblings: [arxivVersion.canonical_id]
+      } as RankedPaper
+      
+      seenCanonicalIds.add(paper.canonical_id)
+      seenCanonicalIds.add(arxivVersion.canonical_id)
+      seenTitles.add(normalizedTitle)
+      deduplicated.push(enhancedJournal)
+    } else {
+      // No duplicate found, add as-is
+      seenCanonicalIds.add(paper.canonical_id)
+      seenTitles.add(normalizedTitle)
+      deduplicated.push(paper)
     }
   }
   
@@ -298,9 +307,10 @@ export async function parallelSearch(
     requestedSources.push(...SUPPORTED_SOURCES)
   }
   
-  // **SMART PRIORITIZATION**: Order sources by speed/reliability (fastest first)
+  // **SMART PRIORITIZATION**: Order sources by speed/reliability and PDF coverage
+  // CORE moved up because it has 200M+ open access papers with direct PDF URLs
   const sourcesByPriority: SupportedSource[] = []
-  const priorityOrder: SupportedSource[] = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core']
+  const priorityOrder: SupportedSource[] = ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv']
   
   // Add requested sources in priority order
   for (const source of priorityOrder) {
@@ -397,7 +407,7 @@ export async function parallelSearch(
       })
       
       // Convert back to RankedPaper format with combined scores
-      const rankedResults: RankedPaper[] = reranked.map((paper, index) => {
+      const rankedResults: RankedPaper[] = reranked.map((paper, _index) => {
         const authorityScore = calculateAuthorityScore(paper.citationCount)
         const recencyScore = calculateRecencyScore(paper.year)
         

@@ -47,7 +47,7 @@ export async function extractPdfMetadataTiered(
   const { 
     grobidUrl = process.env.GROBID_URL || 'http://localhost:8070',
     enableOcr = true,
-    maxTimeoutMs = 30000
+    maxTimeoutMs = 120000 // Increased to 2 minutes for large PDFs
   } = options
 
   const notes: string[] = []
@@ -204,8 +204,9 @@ async function shouldUseGrobid(grobidUrl: string): Promise<boolean> {
     const res = await fetch(`${grobidUrl}/api/isalive`, { signal: controller.signal })
     clearTimeout(timeout)
     return res.ok
-  } catch (err) {
-    warn('GROBID health check failed', { error: err })
+  } catch {
+    // GROBID unavailable - this is expected when not running locally
+    // Don't log as warning to reduce noise
     return false
   }
 }
@@ -253,12 +254,18 @@ async function grobidParse(
     console.log('- Form data fields: input, includeRawCitations, includeRawAffiliations')
     console.log('- Using native FormData with Blob')
 
+    console.log(`GROBID request starting (timeout: ${timeoutMs}ms)...`)
+    const fetchStartTime = Date.now()
+    
     const response = await fetch(`${grobidUrl}/api/processFulltextDocument`, {
       method: 'POST',
       body: form,
       // Don't set Content-Type header - let fetch handle it automatically for FormData
       signal: controller.signal
     })
+
+    const fetchDuration = Date.now() - fetchStartTime
+    console.log(`GROBID response received in ${fetchDuration}ms, status: ${response.status}`)
 
     if (!response.ok) {
       const errorBody = await response.text();
@@ -269,6 +276,8 @@ async function grobidParse(
     }
 
     const xml = await response.text()
+    console.log(`GROBID returned XML: ${xml.length} bytes`)
+    
     if (!xml || xml.length < 100) {
       throw new Error('GROBID returned empty or minimal response')
     }
@@ -627,8 +636,39 @@ async function parseTeiXml(xml: string): Promise<Partial<TieredExtractionResult>
   const title = safeGet('teiHeader', 'fileDesc', 'titleStmt', 'title')
   const abstract = safeGet('teiHeader', 'profileDesc', 'abstract')
 
+  // Extract authors from TEI structure
+  const extractAuthors = (): string[] => {
+    try {
+      // GROBID TEI typically has authors at teiHeader.fileDesc.sourceDesc.biblStruct.analytic.author
+      const sourceDesc = TEI?.teiHeader?.fileDesc?.sourceDesc
+      const biblStruct = sourceDesc?.biblStruct
+      const authorNodes = biblStruct?.analytic?.author || biblStruct?.monogr?.author || []
+      
+      // Normalize to array
+      const authors = Array.isArray(authorNodes) ? authorNodes : [authorNodes]
+      
+      return authors
+        .map((author: any) => {
+          if (typeof author === 'string') return author
+          // Try to get persName structure
+          const persName = author?.persName
+          if (!persName) return null
+          
+          const forename = persName?.forename?.text || persName?.forename || ''
+          const surname = persName?.surname?.text || persName?.surname || ''
+          
+          if (surname && forename) return `${forename} ${surname}`.trim()
+          if (surname) return surname
+          if (forename) return forename
+          return null
+        })
+        .filter((name: string | null): name is string => !!name)
+    } catch {
+      return []
+    }
+  }
+
   // Flatten body text recursively
-   
   const extractBodyText = (node: any): string => {
     if (!node) return ''
     if (typeof node === 'string') return node
@@ -647,7 +687,7 @@ async function parseTeiXml(xml: string): Promise<Partial<TieredExtractionResult>
     title: title?.trim(),
     abstract: abstract?.trim(),
     fullText: bodyText || undefined,
-    authors: [] // TODO: extract authors properly later
+    authors: extractAuthors()
   }
 }
 

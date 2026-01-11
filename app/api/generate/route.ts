@@ -109,11 +109,19 @@ export async function GET(request: NextRequest) {
     const topic = url.searchParams.get('topic')
     const useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
     const length = url.searchParams.get('length') || 'medium'
-    const paperType = url.searchParams.get('paperType') || 'researchArticle'
+    const paperTypeParam = url.searchParams.get('paperType')
+    const paperType = paperTypeParam || 'literatureReview'
     const libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
     const existingProjectId = url.searchParams.get('projectId') || undefined
     const temperature = parseFloat(url.searchParams.get('temperature') || '0.2')
     const maxTokens = parseInt(url.searchParams.get('maxTokens') || '16000')
+    
+    if (!paperTypeParam) {
+      console.warn('⚠️ paperType URL param missing! Defaulting to literatureReview')
+    }
+    
+    console.log('🔍 Generate API received paperType:', paperType, 
+      paperTypeParam ? '(from URL)' : '(DEFAULT - URL param was missing!)')
 
     if (!topic) {
       return new Response(

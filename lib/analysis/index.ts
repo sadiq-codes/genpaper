@@ -23,9 +23,12 @@ export {
   storeResearchGaps,
   getGapsForProject,
   findContradictions,
+  analyzeGapAddressing,
   type ResearchGap,
   type GapType,
-  type GapAnalysisResult
+  type GapAnalysisResult,
+  type GapAddressingResult,
+  type UserClaim
 } from './gap-finder'
 
 export {

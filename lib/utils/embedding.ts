@@ -5,14 +5,11 @@
  * between papers.ts and text utilities
  */
 
-import { openai } from '@ai-sdk/openai'
 import { embedMany } from 'ai'
+import { getEmbeddingModel } from '@/lib/ai/vercel-client'
 
-// Centralized embedding configuration
-export const EMBEDDING_CONFIG = {
-  model: 'text-embedding-3-small',
-  dimensions: 384
-} as const
+// Re-export for backwards compatibility
+export { EMBEDDING_CONFIG } from '@/lib/ai/vercel-client'
 
 /**
  * Generate embeddings for input text(s) using centralized configuration
@@ -26,9 +23,7 @@ export async function generateEmbeddings(inputs: string | string[]): Promise<num
 
   try {
     const { embeddings } = await embedMany({
-      model: openai.embedding(EMBEDDING_CONFIG.model, {
-        dimensions: EMBEDDING_CONFIG.dimensions
-      }),
+      model: getEmbeddingModel(),
       values: inputArray
     })
     

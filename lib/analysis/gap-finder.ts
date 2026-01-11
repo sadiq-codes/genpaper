@@ -1,5 +1,5 @@
 import 'server-only'
-import { openai } from '@ai-sdk/openai'
+import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { generateObject } from 'ai'
 import { z } from 'zod'
 import { getSB } from '@/lib/supabase/server'
@@ -91,7 +91,7 @@ export async function findResearchGaps(
 
     // Use GPT to identify gaps
     const { object } = await generateObject({
-      model: openai('gpt-4o-mini'),
+      model: getLanguageModel(),
       schema: GapsResponseSchema,
       prompt: buildGapAnalysisPrompt(topic, analysisContext),
       temperature: 0.2,
@@ -195,7 +195,7 @@ export async function findContradictions(
 
   // Use GPT to find contradictions
   const { object } = await generateObject({
-    model: openai('gpt-4o-mini'),
+    model: getLanguageModel(),
     schema: z.object({
       contradictions: z.array(z.object({
         claim_a: z.string(),
@@ -327,4 +327,86 @@ A contradiction occurs when:
 Only report clear contradictions, not just differences in scope or focus.`
   
   return prompt
+}
+
+/**
+ * Analyze how user's original research addresses identified gaps
+ */
+export interface UserClaim {
+  id: string
+  claim_text: string
+  claim_type: string
+}
+
+export interface GapAddressingResult {
+  gap_id: string
+  addressed_status: 'fully_addressed' | 'partially_addressed' | 'not_addressed'
+  user_contribution?: string
+}
+
+const GapAddressingSchema = z.object({
+  results: z.array(z.object({
+    gap_id: z.string(),
+    addressed_status: z.enum(['fully_addressed', 'partially_addressed', 'not_addressed']),
+    user_contribution: z.string().optional().describe('How the user research addresses this gap')
+  }))
+})
+
+export async function analyzeGapAddressing(
+  gaps: ResearchGap[],
+  userClaims: UserClaim[]
+): Promise<GapAddressingResult[]> {
+  if (gaps.length === 0 || userClaims.length === 0) {
+    return gaps.map(g => ({
+      gap_id: g.id || '',
+      addressed_status: 'not_addressed' as const
+    }))
+  }
+
+  try {
+    // Build context for analysis
+    const userClaimsSummary = userClaims
+      .map(c => `- [${c.claim_type}] ${c.claim_text}`)
+      .join('\n')
+    
+    const gapsSummary = gaps
+      .map(g => `ID: ${g.id}\nType: ${g.gap_type}\nDescription: ${g.description}`)
+      .join('\n\n')
+
+    const { object } = await generateObject({
+      model: getLanguageModel(),
+      schema: GapAddressingSchema,
+      prompt: buildGapAddressingPrompt(userClaimsSummary, gapsSummary),
+      temperature: 0.1,
+    })
+
+    return object.results
+  } catch (error) {
+    console.error('Gap addressing analysis failed:', error)
+    return gaps.map(g => ({
+      gap_id: g.id || '',
+      addressed_status: 'not_addressed' as const
+    }))
+  }
+}
+
+function buildGapAddressingPrompt(userClaimsSummary: string, gapsSummary: string): string {
+  return `You are analyzing how a researcher's original work addresses identified gaps in the literature.
+
+THE RESEARCHER'S CLAIMS (from their original research):
+${userClaimsSummary}
+
+RESEARCH GAPS IDENTIFIED IN THE LITERATURE:
+${gapsSummary}
+
+For each gap, determine:
+1. Does the researcher's work address this gap?
+   - "fully_addressed": The research directly and completely addresses this gap
+   - "partially_addressed": The research partially addresses or is related to this gap
+   - "not_addressed": The research does not address this gap
+
+2. If addressed (fully or partially), briefly explain HOW the researcher's work contributes to filling this gap.
+
+Be generous but accurate - if the researcher's work is even tangentially related to a gap, consider it "partially_addressed".
+Focus on substantive connections, not superficial topic overlap.`
 }

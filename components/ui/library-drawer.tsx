@@ -231,6 +231,7 @@ export default function LibraryDrawer({
     } else {
       searchPapers(query)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only trigger on searchMode change
   }, [searchMode])
 
   if (!isOpen) return null

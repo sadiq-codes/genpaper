@@ -3,13 +3,7 @@
 import { useState, useRef, KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { Send, Paperclip, Sparkles } from 'lucide-react'
+import { Send } from 'lucide-react'
 
 interface ChatInputProps {
   onSend: (message: string) => void
@@ -43,38 +37,6 @@ export function ChatInput({
   return (
     <div className="border-t-2 border-foreground/10 p-3">
       <div className="flex items-end gap-2 rounded-xl border-2 border-foreground/15 bg-background p-2">
-        <TooltipProvider delayDuration={300}>
-          {/* Attachment button */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8 shrink-0"
-                disabled={disabled}
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Attach file</TooltipContent>
-          </Tooltip>
-
-          {/* AI prompt templates */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8 shrink-0"
-                disabled={disabled}
-              >
-                <Sparkles className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Prompt templates</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-
         {/* Text input */}
         <Textarea
           ref={textareaRef}

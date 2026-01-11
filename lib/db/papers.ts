@@ -2,6 +2,7 @@ import { getSB } from '@/lib/supabase/server'
 import type { PaperWithAuthors } from '@/types/simplified'
 import { generateEmbeddings } from '@/lib/utils/embedding'
 import { PaperDTO } from '@/lib/schemas/paper'
+import { debug, info, warn, error as logError } from '@/lib/utils/logger'
  
 
 // Centralized embedding configuration to ensure consistency
@@ -83,20 +84,6 @@ export async function getPapersByIds(paperIds: string[]): Promise<PaperWithAutho
 }
 
 // Type definitions for RPC functions
-interface SearchResult {
-  paper_id: string
-  title: string
-  abstract: string
-  publication_date: string
-  venue: string
-  doi: string
-  citation_count: number
-  similarity_score?: number
-  semantic_score?: number
-  keyword_score?: number
-  combined_score?: number
-}
-
 interface HybridSearchResult {
   id: string  // Database RPC returns 'id', not 'paper_id'
   semantic_score: number
@@ -130,41 +117,13 @@ export async function hybridSearchPapers(
     maxYear = 2024
   } = options
 
-  console.log(`🔍 Hybrid Search Starting:`)
-  console.log(`   🎯 Query: "${query}"`)
-  console.log(`   📊 Limit: ${limit}`)
-  console.log(`   📅 Min Year: ${minYear}`)
-  console.log(`   📅 Max Year: ${maxYear}`)
-  console.log(`   🏷️ Sources Filter: ${sources ? `[${sources.join(', ')}]` : 'None'}`)
-  console.log(`   ⚖️ Semantic Weight: ${semanticWeight}`)
-  console.log(`   🚫 Excluded IDs: ${excludePaperIds.length > 0 ? `[${excludePaperIds.join(', ')}]` : 'None'}`)
+  debug({ query, limit, minYear, maxYear, sources, semanticWeight, excludeCount: excludePaperIds.length }, 'Hybrid search starting')
 
   // 1. Generate embedding for the query using centralized configuration
-  console.log(`🧠 Generating embedding for query...`)
   const [queryEmbedding] = await generateEmbeddings([query])
-  console.log(`✅ Embedding generated: ${queryEmbedding.length} dimensions`)
+  debug({ dimensions: queryEmbedding.length }, 'Query embedding generated')
 
   // 2. Call the hybrid search RPC function
-  console.log(`🗄️ Calling hybrid_search_papers RPC...`)
-  
-  // Add diagnostic check for embeddings
-  const { error: countError } = await supabase
-    .from('papers')
-    .select('id', { count: 'exact' })
-    .not('embedding', 'is', null)
-    .limit(1)
-  
-  if (countError) {
-    console.warn(`⚠️ Error checking embedding count:`, countError)
-  } else {
-    console.log(`📊 Papers with embeddings available for search`)
-  }
-  
-  // Test embedding quality by checking if query embedding looks reasonable
-  console.log(`🧪 Query embedding sample (first 10 dims): [${queryEmbedding.slice(0, 10).map(x => x.toFixed(3)).join(', ')}]`)
-  console.log(`🧪 Embedding magnitude: ${Math.sqrt(queryEmbedding.reduce((sum, x) => sum + x*x, 0)).toFixed(3)}`)
-  
-  // Call the RPC directly and handle errors below
   
   const { data: searchResults, error } = await supabase
     .rpc('hybrid_search_papers', {
@@ -176,8 +135,7 @@ export async function hybridSearchPapers(
     })
 
   if (error) {
-    console.error(`❌ RPC search failed:`, error)
-    console.error(`💡 Falling back to basic text search...`)
+    warn({ error }, 'RPC search failed, falling back to text search')
     
     // Fallback to basic text search if RPC fails
     const queryWords = query.toLowerCase().split(/\s+/).filter(word => word.length > 2)
@@ -190,11 +148,11 @@ export async function hybridSearchPapers(
       .limit(limit)
     
     if (fallbackError) {
-      console.error(`❌ Fallback search also failed:`, fallbackError)
+      logError({ error: fallbackError }, 'Fallback search also failed')
       throw error // Throw original RPC error
     }
     
-    console.log(`✅ Fallback search found ${fallbackResults?.length || 0} papers`)
+    debug({ count: fallbackResults?.length || 0 }, 'Fallback search completed')
     
     if (fallbackResults && fallbackResults.length > 0) {
       const transformedResults = fallbackResults.map((paper) => ({
@@ -210,74 +168,23 @@ export async function hybridSearchPapers(
     throw error // If both searches fail, throw original error
   }
 
-  console.log(`📋 RPC returned ${searchResults?.length || 0} initial results`)
+  debug({ resultCount: searchResults?.length || 0 }, 'RPC search completed')
+  
   if (searchResults && searchResults.length > 0) {
-    console.log(`📊 Score distribution:`)
-    const scores = searchResults.map((r: HybridSearchResult) => ({
-      combined: r.combined_score,
-      semantic: r.semantic_score,
-      keyword: r.keyword_score
-    }))
-    
-    const maxCombined = Math.max(...scores.map((s: { combined: number }) => s.combined))
-    const minCombined = Math.min(...scores.map((s: { combined: number }) => s.combined))
-    const avgCombined = scores.reduce((sum: number, s: { combined: number }) => sum + s.combined, 0) / scores.length
-    
-    console.log(`   🎯 Combined: max=${maxCombined.toFixed(4)}, min=${minCombined.toFixed(4)}, avg=${avgCombined.toFixed(4)}`)
-    
-    searchResults.slice(0, 5).forEach((result: HybridSearchResult, idx: number) => {
-      console.log(`   ${idx + 1}. Paper ID: ${result.id}`)
-      console.log(`      Combined Score: ${result.combined_score.toFixed(4)}`)
-      console.log(`      Semantic Score: ${result.semantic_score.toFixed(4)}`)
-      console.log(`      Keyword Score: ${result.keyword_score.toFixed(4)}`)
-    })
-    if (searchResults.length > 5) {
-      console.log(`   ... and ${searchResults.length - 5} more results`)
-    }
-    
-    // CRITICAL: Check why semantic scores are all 0.0000
+    // Check for semantic search failure (all scores zero)
     const allSemanticZero = searchResults.every((r: HybridSearchResult) => r.semantic_score === 0)
     if (allSemanticZero) {
-      console.error(`🚨 CRITICAL: All semantic scores are 0.0000!`)
-      console.error(`💡 This suggests:`)
-      console.error(`   1. Papers in database have no embeddings`)
-      console.error(`   2. Vector similarity function is broken`)
-      console.error(`   3. Embedding dimensions don't match`)
-      console.error(`   4. RPC function is using keyword-only search`)
-      
-      // Check if returned papers actually have embeddings
-      const samplePaperIds = searchResults.slice(0, 3).map((r: HybridSearchResult) => r.id)
-      const { data: embeddingCheck, error: embeddingError } = await supabase
-        .from('papers')
-        .select('id, title, embedding')
-        .in('id', samplePaperIds)
-        .limit(3)
-      
-      if (!embeddingError && embeddingCheck) {
-        console.log(`🔍 Sample paper embedding check:`)
-        embeddingCheck.forEach(paper => {
-          const hasEmbedding = paper.embedding && paper.embedding.length > 0
-          console.log(`   📄 "${paper.title?.substring(0, 50)}...": ${hasEmbedding ? `✅ Has embedding (${paper.embedding.length} dims)` : '❌ No embedding'}`)
-        })
-      }
-      
-      // FALLBACK: Use keyword scores only when semantic search fails
-      console.warn(`⚠️ Falling back to keyword-only ranking due to semantic search failure`)
-      // Re-rank results by keyword score to compensate for missing semantic scores
+      warn('All semantic scores are zero, falling back to keyword-only ranking')
+      // Re-rank by keyword score when semantic search fails
       searchResults.sort((a: HybridSearchResult, b: HybridSearchResult) => 
         b.keyword_score - a.keyword_score
       )
-      // Adjust combined scores to reflect keyword-only ranking
       searchResults.forEach((r: HybridSearchResult) => {
         r.combined_score = r.keyword_score
       })
     }
   } else {
-    console.warn(`⚠️ RPC returned no results - this indicates a deeper issue with vector search`)
-    console.warn(`   🧠 Query embedding: ${queryEmbedding.length} dimensions`)
-    console.warn(`   📅 Min year filter: ${minYear}`)
-    console.warn(`   ⚖️ Semantic weight: ${semanticWeight}`)
-    console.warn(`   💡 Possible issues: No papers with embeddings, year filter too restrictive, or database connectivity`)
+    warn({ queryLength: queryEmbedding.length, minYear, semanticWeight }, 'RPC returned no results')
   }
 
   // 3. Filter out excluded papers
@@ -287,15 +194,11 @@ export async function hybridSearchPapers(
       result.combined_score >= 0.0001 // Minimum score threshold to filter noise
   )
 
-  console.log(`🔧 After filtering excluded papers: ${filteredResults.length} results`)
-  if (filteredResults.length !== (searchResults?.length || 0)) {
-    const excludedCount = (searchResults?.length || 0) - filteredResults.length
-    console.log(`   🚫 Excluded ${excludedCount} papers (${excludedCount - excludePaperIds.length} low scores, ${excludePaperIds.length} from exclude list)`)
-  }
+  debug({ beforeFilter: searchResults?.length || 0, afterFilter: filteredResults.length }, 'Filtered results')
 
   // 4. Get full paper details for the top results
   if (filteredResults.length === 0) {
-    console.warn(`⚠️ No papers found after filtering - trying more permissive approach`)
+    debug('No papers after filtering, trying permissive approach')
     
     // Try again with even more permissive filtering if we got 0 results
     const veryPermissiveResults = (searchResults || []).filter(
@@ -304,20 +207,19 @@ export async function hybridSearchPapers(
         (result.combined_score > 0 || result.semantic_score > 0 || result.keyword_score > 0)
     )
     
-    console.log(`🔧 Permissive filtering found: ${veryPermissiveResults.length} results`)
+    debug({ count: veryPermissiveResults.length }, 'Permissive filtering results')
     
     if (veryPermissiveResults.length === 0) {
-      console.warn(`⚠️ Still no papers found - returning empty result`)
+      debug('No papers found even with permissive filtering')
       return []
     }
     
     // Use the permissive results instead
     const topPermissiveResults = veryPermissiveResults.slice(0, limit)
-    console.log(`📄 Using permissive results - fetching full details for ${topPermissiveResults.length} papers...`)
 
     const permissiveIds = topPermissiveResults.map((r: HybridSearchResult) => r.id).filter(isValidUuid)
     if (permissiveIds.length === 0) {
-      console.warn('⚠️ No valid UUIDs in permissive results; returning empty list')
+      debug('No valid UUIDs in permissive results')
       return []
     }
 
@@ -335,17 +237,14 @@ export async function hybridSearchPapers(
     // Apply source filter if provided
     if (sources && sources.length > 0) {
       papersQuery = papersQuery.in('source', sources)
-      console.log(`🏷️ Applied source filter: [${sources.join(', ')}]`)
     }
 
     const { data: papers, error: papersError } = await papersQuery
 
     if (papersError) {
-      console.error(`❌ Failed to fetch paper details:`, papersError)
+      logError({ error: papersError }, 'Failed to fetch paper details')
       throw papersError
     }
-
-    console.log(`📚 Retrieved ${papers?.length || 0} full paper records (permissive)`)
 
     // Transform and sort by hybrid score
     const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
@@ -354,7 +253,7 @@ export async function hybridSearchPapers(
       .map((result: HybridSearchResult) => {
         const paper = paperMap.get(result.id)
         if (!paper) {
-          console.warn(`⚠️ Paper ${result.id} not found in detailed results`)
+          debug({ paperId: result.id }, 'Paper not found in detailed results')
           return null
         }
         
@@ -369,18 +268,17 @@ export async function hybridSearchPapers(
       })
       .filter(Boolean) as PaperWithAuthors[]
 
-    console.log(`✅ Permissive hybrid search completed: ${finalResults.length} final papers`)
+    info({ count: finalResults.length }, 'Hybrid search completed (permissive)')
     return finalResults
   }
 
   // 5. Get full paper details for the top results
   const topResults = filteredResults.slice(0, limit)
-  console.log(`📄 Fetching full details for top ${topResults.length} papers...`)
   
   // Guard invalid IDs before querying
   const topIds = topResults.map((r: HybridSearchResult) => r.id).filter(isValidUuid)
   if (topIds.length === 0) {
-    console.warn('⚠️ No valid UUIDs in top results; skipping DB fetch and returning empty list')
+    debug('No valid UUIDs in top results')
     return []
   }
 
@@ -394,7 +292,6 @@ export async function hybridSearchPapers(
 
   // Apply source filter if provided
   if (sources && sources.length > 0) {
-    console.log(`🏷️ Applying source filter: [${sources.join(', ')}]`)
     // Check if any papers match the source filter before applying it
     const sourceFilterTest = await supabase
       .from('papers')
@@ -405,25 +302,20 @@ export async function hybridSearchPapers(
     
     if (sourceFilterTest.data && sourceFilterTest.data.length > 0) {
       papersQuery = papersQuery.in('source', sources)
-      console.log(`✅ Source filter will be applied - ${sourceFilterTest.data.length} papers match`)
     } else {
-      console.warn(`⚠️ Source filter would exclude all papers - skipping source filter`)
+      debug({ sources }, 'Source filter would exclude all papers, skipping')
     }
   }
 
   const { data: papers, error: papersError } = await papersQuery
 
   if (papersError) {
-    console.error(`❌ Failed to fetch paper details:`, papersError)
+    logError({ error: papersError }, 'Failed to fetch paper details')
     throw papersError
   }
-
-  console.log(`📚 Retrieved ${papers?.length || 0} full paper records`)
   
   // If we got 0 papers due to source filtering, try without the filter
   if ((!papers || papers.length === 0) && sources && sources.length > 0) {
-    console.warn(`⚠️ Source filter returned 0 papers, retrying without source filter...`)
-    
     const { data: unfilteredPapers, error: unfilteredError } = await supabase
       .from('papers')
       .select(`
@@ -436,11 +328,9 @@ export async function hybridSearchPapers(
       .in('id', topIds)
     
     if (unfilteredError) {
-      console.error(`❌ Failed to fetch unfiltered paper details:`, unfilteredError)
+      logError({ error: unfilteredError }, 'Failed to fetch unfiltered paper details')
       throw unfilteredError
     }
-    
-    console.log(`📚 Retrieved ${unfilteredPapers?.length || 0} unfiltered paper records`)
     
     // Use the unfiltered results
     const paperMap = new Map(unfilteredPapers?.map(p => [p.id, p]) || [])
@@ -448,10 +338,7 @@ export async function hybridSearchPapers(
     const finalResults = topResults
       .map((result: HybridSearchResult) => {
         const paper = paperMap.get(result.id)
-        if (!paper) {
-          console.warn(`⚠️ Paper ${result.id} not found in detailed results`)
-          return null
-        }
+        if (!paper) return null
         
         const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
         
@@ -464,7 +351,7 @@ export async function hybridSearchPapers(
       })
       .filter(Boolean) as PaperWithAuthors[]
 
-    console.log(`✅ Unfiltered hybrid search completed: ${finalResults.length} final papers`)
+    info({ count: finalResults.length }, 'Hybrid search completed (unfiltered)')
     return finalResults
   }
 
@@ -473,11 +360,10 @@ export async function hybridSearchPapers(
   
   const finalResults = topResults
     .map((result: HybridSearchResult) => {
-      const paper = paperMap.get(result.id)
-      if (!paper) {
-        console.warn(`⚠️ Paper ${result.id} not found in detailed results`)
-        return null
-      }
+        const paper = paperMap.get(result.id)
+        if (!paper) {
+          return null
+        }
       
       const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
       
@@ -580,7 +466,7 @@ export async function searchPaperChunks(
     })
 
   if (error) {
-    console.error('Chunk search failed:', error)
+    logError({ error }, 'Chunk search failed')
     return []
   }
 
@@ -614,7 +500,7 @@ export async function ingestPaper(
   // 1. Check for duplicates (idempotent)
   const { exists, paperId: existingId } = await checkPaperExists(paperData.doi, paperData.title)
   if (exists && existingId) {
-    console.log(`📚 Paper already exists: ${existingId}`)
+    debug({ paperId: existingId }, 'Paper already exists')
     
     // If we have new content for existing paper, process it
     if (options.pdfUrl) {
@@ -630,7 +516,7 @@ export async function ingestPaper(
 
   // 2. Create the basic paper metadata record
   const newPaperId = await createPaperMetadata(paperData)
-  console.log(`📚 Created new paper: ${newPaperId}`)
+  debug({ paperId: newPaperId }, 'Created new paper')
 
   // 3. Decide how to handle content
   if (options.pdfUrl) {
@@ -639,14 +525,8 @@ export async function ingestPaper(
     return { paperId: newPaperId, isNew: true, status: 'queued' }
   } 
   else if (options.fullText) {
-    // If raw text is provided, process it immediately (or queue if requested)
-    if (options.background) {
-      // TODO: Implement proper background text processing queue
-      console.log(`📋 Background text processing requested for ${newPaperId} - processing immediately`)
-      await processContentImmediately(newPaperId, options.fullText)
-    } else {
-      await processContentImmediately(newPaperId, options.fullText)
-    }
+    // If raw text is provided, process it immediately
+    await processContentImmediately(newPaperId, options.fullText)
     return { paperId: newPaperId, isNew: true, status: 'processed' }
   }
 
@@ -804,5 +684,5 @@ export async function updatePaperCitationFields(
     throw new Error(`Failed to update paper citation fields: ${error.message}`)
   }
 
-  console.log('Updated paper citation fields', { paperId, fields: Object.keys(citationData) })
+  debug({ paperId, fields: Object.keys(citationData) }, 'Updated paper citation fields')
 }

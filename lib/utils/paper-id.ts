@@ -17,13 +17,13 @@ export function formatDateForAPI(year: number, month = 1, day = 1): string {
  * Heuristics:
  *   1. If a DOI is available → `doi:{normalisedDoi}` (most reliable)
  *   2. If an arXiv URL is present → `arxiv:{id}`
- *   3. Fallback: a hash of clean(title)|year|source
+ *   3. Fallback: a hash of clean(title)|year (source-agnostic for cross-API dedup)
  */
 export function createCanonicalId(
   title: string | undefined,
   year?: number,
   doi?: string,
-  source?: string,
+  _source?: string,  // Kept for API compatibility but not used in fallback hash
   url?: string
 ): string {
   if (doi) {
@@ -36,8 +36,10 @@ export function createCanonicalId(
     .toLowerCase()
     .replace(/[^\w\s]/g, '')
     .trim()
-  const input = `${normalisedTitle}-${year || 'unknown'}-${source || 'unknown'}`
-  return `${source || 'paper'}:${collisionResistantHash(input)}`
+  // NOTE: Source is intentionally excluded from the hash to ensure the same paper
+  // from different APIs (OpenAlex, Crossref, Semantic Scholar) gets the same canonical_id
+  const input = `${normalisedTitle}-${year || 'unknown'}`
+  return `paper:${collisionResistantHash(input)}`
 }
 
 /**

@@ -4,7 +4,6 @@ import {
   levenshteinDistance, 
   isTitleMatch, 
   findBestTitleMatch,
-  findDuplicateGroups,
   type PaperCandidate 
 } from '@/lib/utils/fuzzy-matching'
 
@@ -169,52 +168,4 @@ describe('fuzzy-matching', () => {
     })
   })
 
-  describe('findDuplicateGroups', () => {
-    const papers: PaperCandidate[] = [
-      { id: '1', title: 'Machine Learning Applications in Healthcare' },
-      { id: '2', title: 'Machine Learning Applications in Health Care' }, // duplicate
-      { id: '3', title: 'Computer Vision in Medical Imaging' },
-      { id: '4', title: 'Computer Vision for Medical Imaging' }, // duplicate
-      { id: '5', title: 'Quantum Computing Algorithms' } // unique
-    ]
-
-    test('groups near-duplicates correctly', () => {
-      const groups = findDuplicateGroups(papers, { threshold: 2, minSimilarity: 0.9 })
-
-      expect(groups).toHaveLength(3) // 3 distinct groups
-      
-      // Find the ML group
-      const mlGroup = groups.find(group => 
-        group.some(p => p.title.includes('Machine Learning'))
-      )
-      expect(mlGroup).toHaveLength(2)
-      expect(mlGroup!.map(p => p.id).sort()).toEqual(['1', '2'])
-
-      // Find the CV group  
-      const cvGroup = groups.find(group => 
-        group.some(p => p.title.includes('Computer Vision'))
-      )
-      expect(cvGroup).toHaveLength(2)
-      expect(cvGroup!.map(p => p.id).sort()).toEqual(['3', '4'])
-
-      // Find the unique group
-      const quantumGroup = groups.find(group => 
-        group.some(p => p.title.includes('Quantum'))
-      )
-      expect(quantumGroup).toHaveLength(1)
-      expect(quantumGroup![0].id).toBe('5')
-    })
-
-    test('handles no duplicates', () => {
-      const uniquePapers: PaperCandidate[] = [
-        { id: '1', title: 'Machine Learning' },
-        { id: '2', title: 'Computer Vision' },
-        { id: '3', title: 'Quantum Computing' }
-      ]
-
-      const groups = findDuplicateGroups(uniquePapers)
-      expect(groups).toHaveLength(3)
-      expect(groups.every(group => group.length === 1)).toBe(true)
-    })
-  })
 })

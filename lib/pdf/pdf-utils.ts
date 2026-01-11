@@ -162,7 +162,7 @@ export async function uploadPDFToStorage(buffer: Buffer, filename: string): Prom
     const supabase = await getSB()
     
     // Upload file to storage bucket
-    const { data, error } = await supabase.storage
+    const { error } = await supabase.storage
       .from(PDF_BUCKET)
       .upload(filename, buffer, {
         contentType: 'application/pdf',

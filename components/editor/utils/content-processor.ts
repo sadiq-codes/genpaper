@@ -160,13 +160,30 @@ function processTipTapNode(
 }
 
 /**
- * Configure marked for safe HTML output
+ * Configure marked for safe HTML output (synchronous mode)
  */
 function configureMarked() {
   marked.setOptions({
     gfm: true,
     breaks: false,
+    async: false, // Explicitly set synchronous mode
   })
+}
+
+/**
+ * Convert markdown to HTML using marked (handles sync/async)
+ */
+function markdownToHtml(markdown: string): string {
+  configureMarked()
+  const result = marked.parse(markdown)
+  // Handle both sync and async returns (for safety)
+  if (typeof result === 'string') {
+    return result
+  }
+  // If marked returns a promise, we can't handle it synchronously
+  // This shouldn't happen with async: false, but let's be safe
+  console.warn('[content-processor] marked.parse returned non-string, falling back')
+  return markdown
 }
 
 /**
@@ -187,41 +204,70 @@ export function processAIContent(
     }
   }
 
-  // Step 1: Configure marked
-  configureMarked()
+  try {
+    // Step 1: Temporarily replace citation markers with placeholders that won't be escaped
+    const placeholders: Map<string, string> = new Map()
+    let placeholderIndex = 0
+    
+    const citationPattern = createCitationPattern()
+    const markdownWithPlaceholders = markdown.replace(
+      citationPattern,
+      (_match, paperId) => {
+        const placeholder = `__CITATION_${placeholderIndex}__`
+        placeholders.set(placeholder, paperId)
+        placeholderIndex++
+        return placeholder
+      }
+    )
 
-  // Step 2: Convert markdown to HTML
-  // First, temporarily replace citation markers with placeholders that won't be escaped
-  const placeholders: Map<string, string> = new Map()
-  let placeholderIndex = 0
-  
-  const citationPattern = createCitationPattern()
-  const markdownWithPlaceholders = markdown.replace(
-    citationPattern,
-    (match, paperId) => {
-      const placeholder = `__CITATION_${placeholderIndex}__`
-      placeholders.set(placeholder, paperId)
-      placeholderIndex++
-      return placeholder
+    // Step 2: Parse markdown to HTML
+    let html = markdownToHtml(markdownWithPlaceholders)
+
+    // Restore citation markers in HTML
+    for (const [placeholder, paperId] of placeholders) {
+      html = html.replace(placeholder, `[CONTEXT FROM: ${paperId}]`)
     }
-  )
 
-  // Parse markdown to HTML
-  let html = marked.parse(markdownWithPlaceholders) as string
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[content-processor] Markdown to HTML conversion:', {
+        markdownLength: markdown.length,
+        htmlLength: html.length,
+        htmlPreview: html.slice(0, 300) + (html.length > 300 ? '...' : ''),
+        hasH1Tags: /<h1[^>]*>/.test(html),
+        hasH2Tags: /<h2[^>]*>/.test(html),
+        hasPTags: /<p[^>]*>/.test(html),
+      })
+    }
 
-  // Restore citation markers in HTML
-  for (const [placeholder, paperId] of placeholders) {
-    html = html.replace(placeholder, `[CONTEXT FROM: ${paperId}]`)
+    // Step 3: Convert HTML to TipTap JSON
+    const json = generateJSON(html, parserExtensions)
+
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[content-processor] HTML to TipTap JSON:', {
+        isDoc: json?.type === 'doc',
+        contentLength: json?.content?.length || 0,
+        firstNodeType: json?.content?.[0]?.type,
+      })
+    }
+
+    // Step 4: Process the JSON tree to replace citation markers with nodes
+    const paperLookup = createPaperLookup(papers)
+    const processedJson = processTipTapNode(json, paperLookup)
+
+    return processedJson
+  } catch (err) {
+    console.error('[content-processor] Failed to process markdown:', err)
+    // Fallback: return basic doc structure with raw content
+    return {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: markdown }]
+        }
+      ]
+    }
   }
-
-  // Step 3: Convert HTML to TipTap JSON
-  const json = generateJSON(html, parserExtensions)
-
-  // Step 4: Process the JSON tree to replace citation markers with nodes
-  const paperLookup = createPaperLookup(papers)
-  const processedJson = processTipTapNode(json, paperLookup)
-
-  return processedJson
 }
 
 /**
@@ -305,15 +351,21 @@ export function hasCitationMarkers(text: string): boolean {
 export function hasMarkdownFormatting(text: string): boolean {
   // Check for common markdown patterns
   const markdownPatterns = [
-    /^#{1,6}\s+/m,           // Headers
+    /^#{1,6}\s+/m,           // Headers at line start
+    /\n#{1,6}\s+/,           // Headers after newline
     /\*\*[^*]+\*\*/,         // Bold
-    /\*[^*]+\*/,             // Italic
+    /__[^_]+__/,             // Bold (underscore style)
+    /\*[^*\n]+\*/,           // Italic (single asterisk)
+    /_[^_\n]+_/,             // Italic (underscore style)
     /`[^`]+`/,               // Inline code
-    /```[\s\S]*```/,         // Code blocks
+    /```[\s\S]*?```/,        // Code blocks (non-greedy)
     /^\s*[-*+]\s+/m,         // Unordered lists
     /^\s*\d+\.\s+/m,         // Ordered lists
     /^\s*>/m,                // Blockquotes
     /\[([^\]]+)\]\([^)]+\)/, // Links
+    /!\[([^\]]*)\]\([^)]+\)/, // Images
+    /^---+$/m,               // Horizontal rules
+    /^\*\*\*+$/m,            // Horizontal rules (asterisks)
   ]
 
   return markdownPatterns.some(pattern => pattern.test(text))

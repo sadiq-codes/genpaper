@@ -364,27 +364,35 @@ pre code .hljs-emphasis {
   font-size: 1em;
 }
 
-/* Prose styling for markdown preview */
+/* Prose styling for markdown preview - Light mode */
 .prose {
   max-width: none;
+  color: var(--foreground);
 }
 
 .prose h1 {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 0.5rem;
+  color: var(--foreground);
 }
 
 .prose h2 {
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 0.25rem;
+  color: var(--foreground);
+}
+
+.prose h3 {
+  color: var(--foreground);
 }
 
 .prose blockquote {
-  border-left: 4px solid #3b82f6;
-  background-color: #eff6ff;
+  border-left: 4px solid var(--primary);
+  background-color: var(--muted);
   margin: 1rem 0;
   padding: 1rem;
   border-radius: 0 0.375rem 0.375rem 0;
+  color: var(--muted-foreground);
 }
 
 .prose table {
@@ -394,32 +402,38 @@ pre code .hljs-emphasis {
 
 .prose th,
 .prose td {
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border);
   padding: 0.5rem 1rem;
   text-align: left;
 }
 
 .prose th {
-  background-color: #f9fafb;
+  background-color: var(--muted);
   font-weight: 600;
+  color: var(--foreground);
+}
+
+.prose td {
+  color: var(--foreground);
 }
 
 .prose code {
-  background-color: #f3f4f6;
+  background-color: var(--muted);
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
   font-size: 0.875em;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border);
+  color: var(--foreground);
 }
 
 .prose pre {
-  background-color: #1f2937;
-  color: #f9fafb;
+  background-color: var(--card);
+  color: var(--card-foreground);
   padding: 1rem;
   border-radius: 0.5rem;
   overflow-x: auto;
   margin: 1rem 0;
-  border: 1px solid #374151;
+  border: 1px solid var(--border);
 }
 
 .prose pre code {
@@ -441,15 +455,16 @@ pre code .hljs-emphasis {
 
 .prose li {
   margin: 0.25rem 0;
+  color: var(--foreground);
 }
 
 .prose a {
-  color: #2563eb;
+  color: var(--primary);
   text-decoration: underline;
 }
 
 .prose a:hover {
-  color: #1d4ed8;
+  opacity: 0.8;
 }
 
 .prose img {
@@ -462,18 +477,22 @@ pre code .hljs-emphasis {
 
 .prose hr {
   border: none;
-  border-top: 1px solid #d1d5db;
+  border-top: 1px solid var(--border);
   margin: 1.5rem 0;
 }
 
 .prose strong {
   font-weight: 600;
-  color: #111827;
+  color: var(--foreground);
 }
 
 .prose em {
   font-style: italic;
-  color: #374151;
+  color: var(--muted-foreground);
+}
+
+.prose p {
+  color: var(--foreground);
 }
 
 /* Responsive adjustments */
@@ -754,4 +773,85 @@ kbd {
 
 .dark .ghost-text-citation {
   color: oklch(0.7 0.15 250);
+}
+
+/* Slash Command Menu - Notion-like styling */
+.slash-command-menu {
+  @apply bg-background border border-border rounded-lg shadow-lg overflow-hidden min-w-[280px] max-h-[400px] overflow-y-auto;
+}
+
+.slash-command-item {
+  @apply flex items-center gap-3 w-full px-3 py-2 text-left transition-colors hover:bg-muted cursor-pointer;
+}
+
+.slash-command-item.is-selected {
+  @apply bg-muted;
+}
+
+.slash-command-icon {
+  @apply flex items-center justify-center w-10 h-10 rounded-md bg-muted text-muted-foreground shrink-0;
+}
+
+.slash-command-item.is-selected .slash-command-icon,
+.slash-command-item:hover .slash-command-icon {
+  @apply bg-background text-foreground;
+}
+
+.slash-command-content {
+  @apply flex flex-col min-w-0;
+}
+
+.slash-command-title {
+  @apply text-sm font-medium text-foreground;
+}
+
+.slash-command-description {
+  @apply text-xs text-muted-foreground truncate;
+}
+
+/* Tippy.js base styles for slash commands */
+.tippy-box[data-theme~='slash-command'] {
+  @apply bg-transparent border-0 shadow-none p-0;
+}
+
+.tippy-box[data-theme~='slash-command'] .tippy-content {
+  @apply p-0;
+}
+
+/* Task List Styles - Notion-like checkboxes */
+.ProseMirror ul[data-type="taskList"] {
+  @apply list-none pl-0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  @apply flex items-start gap-2;
+}
+
+.ProseMirror ul[data-type="taskList"] li > label {
+  @apply flex items-center justify-center pt-0.5;
+}
+
+.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+  @apply h-4 w-4 rounded border-2 border-border cursor-pointer;
+  @apply checked:bg-primary checked:border-primary;
+}
+
+.ProseMirror ul[data-type="taskList"] li > div {
+  @apply flex-1;
+}
+
+.ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+  @apply text-muted-foreground line-through;
+}
+
+/* Notion-like focus styling */
+.ProseMirror:focus {
+  @apply outline-none;
+}
+
+/* Empty heading placeholder styling */
+.ProseMirror h1.is-empty::before,
+.ProseMirror h2.is-empty::before,
+.ProseMirror h3.is-empty::before {
+  @apply text-muted-foreground/50;
 }

@@ -22,7 +22,10 @@ import {
   FileText,
   FileCode,
   File,
+  Check,
+  Loader2,
 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface EditorTopNavProps {
   onExport: (format: 'pdf' | 'docx' | 'latex') => void
@@ -30,6 +33,7 @@ interface EditorTopNavProps {
   onHistory?: () => void
   onSettings?: () => void
   projectTitle?: string
+  saveStatus?: 'saved' | 'saving' | 'unsaved'
 }
 
 export function EditorTopNav({
@@ -38,6 +42,7 @@ export function EditorTopNav({
   onHistory,
   onSettings,
   projectTitle = 'Untitled Document',
+  saveStatus = 'saved',
 }: EditorTopNavProps) {
   return (
     <header className="h-14 border-b border-border/50 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -61,6 +66,28 @@ export function EditorTopNav({
           <span className="font-medium text-sm text-foreground/80 truncate max-w-[150px] sm:max-w-[250px]">
             {projectTitle}
           </span>
+        </div>
+
+        {/* Save Status Indicator */}
+        <div className={cn(
+          "flex items-center gap-1.5 text-xs transition-opacity",
+          saveStatus === 'saved' ? "text-muted-foreground" : "text-foreground"
+        )}>
+          {saveStatus === 'saving' && (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span className="hidden sm:inline">Saving...</span>
+            </>
+          )}
+          {saveStatus === 'saved' && (
+            <>
+              <Check className="h-3 w-3 text-green-600" />
+              <span className="hidden sm:inline">Saved</span>
+            </>
+          )}
+          {saveStatus === 'unsaved' && (
+            <span className="text-amber-600">Unsaved changes</span>
+          )}
         </div>
       </div>
 

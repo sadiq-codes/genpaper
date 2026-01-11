@@ -50,16 +50,43 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { topic, paperType, selectedPapers } = body
+    const { 
+      topic, 
+      paperType, 
+      selectedPapers,
+      // Original research support
+      hasOriginalResearch,
+      keyFindings,
+    } = body
 
     if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
-      return NextResponse.json({ error: 'Topic is required' }, { status: 400 })
+      return NextResponse.json({ error: 'Topic/Research question is required' }, { status: 400 })
+    }
+
+    // Validate key findings if original research is enabled
+    if (hasOriginalResearch) {
+      if (!keyFindings || typeof keyFindings !== 'string' || keyFindings.trim().length < 10) {
+        return NextResponse.json(
+          { error: 'Key findings are required (at least 10 characters)' }, 
+          { status: 400 }
+        )
+      }
     }
 
     // Create generation config
     const generationConfig: Record<string, unknown> = {
       paper_settings: {
         paperType: paperType || 'researchArticle'
+      }
+    }
+
+    // Add original research data if provided
+    // The main topic input serves as the research question for empirical papers
+    if (hasOriginalResearch) {
+      generationConfig.original_research = {
+        has_original_research: true,
+        research_question: topic.trim(), // Main input IS the research question
+        key_findings: keyFindings?.trim(),
       }
     }
 

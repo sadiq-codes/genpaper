@@ -7,7 +7,7 @@
 
 import 'server-only'
 import { getSB } from '@/lib/supabase/server'
-import { buildCSLFromPaper, validateCSL, type CSLItem, type PaperWithAuthors } from '@/lib/utils/csl'
+import { buildCSLFromPaper, type CSLItem, type PaperWithAuthors } from '@/lib/utils/csl'
 import { findBestTitleMatch, type PaperCandidate } from '@/lib/utils/fuzzy-matching'
 import { citationLogger } from '@/lib/utils/citation-logger'
 
@@ -306,6 +306,16 @@ export class CitationService {
       static async add(params: AddCitationParams): Promise<AddCitationResult> {
     const requestId = citationLogger.generateRequestId()
     const timer = citationLogger.startTimer()
+    
+    const isDev = process.env.NODE_ENV !== 'production'
+    if (isDev) {
+      console.log(`[Citation ${requestId}] Add started:`, { 
+        projectId: params.projectId,
+        sourceRef: params.sourceRef,
+        reason: params.reason?.slice(0, 50)
+      })
+    }
+    
   const supabase = await getSB()
 
     // Step 1: Resolve sourceRef to paperId
@@ -314,20 +324,27 @@ export class CitationService {
     if (params.sourceRef.paperId) {
       // Direct paperId provided
       paperId = params.sourceRef.paperId
+      if (isDev) console.log(`[Citation ${requestId}] Using direct paperId:`, paperId)
     } else {
       // Resolve DOI/title/URL to paperId
       paperId = await this.resolveSourceRef(params.sourceRef, params.projectId)
+      if (isDev) console.log(`[Citation ${requestId}] Resolved sourceRef:`, { paperId, sourceRef: params.sourceRef })
     }
 
     if (!paperId) {
+      console.error(`[Citation ${requestId}] Could not resolve source reference:`, params.sourceRef)
       throw new Error(`Could not resolve source reference: ${JSON.stringify(params.sourceRef)}`)
     }
 
-    // Step 2: Validate and fetch paper with authors
-  const { data: paper, error: paperError } = await supabase
+    // Step 2: Validate and fetch paper - try simple query first (paper_authors may not exist)
+    let paper: any = null
+    let paperError: any = null
+    
+    // First try with paper_authors join
+    const { data: paperWithAuthors, error: joinError } = await supabase
     .from('papers')
     .select(`
-      id, title, doi, url, venue, volume, issue, pages, publication_date, created_at,
+      id, title, doi, pdf_url, venue, publication_date, created_at, authors,
       paper_authors(
         ordinal,
         authors(id, name)
@@ -335,8 +352,27 @@ export class CitationService {
     `)
       .eq('id', paperId)
     .single()
+    
+    if (joinError) {
+      // Fallback to simple query without paper_authors (table might not exist)
+      if (isDev) {
+        console.log(`[Citation ${requestId}] paper_authors join failed, trying simple query:`, joinError.message)
+      }
+      
+      const { data: simplePaper, error: simpleError } = await supabase
+        .from('papers')
+        .select('id, title, doi, pdf_url, venue, publication_date, created_at, authors')
+        .eq('id', paperId)
+        .single()
+      
+      paper = simplePaper
+      paperError = simpleError
+    } else {
+      paper = paperWithAuthors
+    }
 
   if (paperError || !paper) {
+      console.error(`[Citation ${requestId}] Paper not found:`, { paperId, error: paperError?.message })
       throw new Error(`Paper not found: ${paperId}`)
     }
 
@@ -353,8 +389,17 @@ export class CitationService {
     
     const cslJson = validation.normalized!
 
-        // Step 3: Persist via unified RPC with idempotency (handles uniqueness constraint and numbering)
+        // Step 4: Persist via unified RPC with idempotency (handles uniqueness constraint and numbering)
         // The UNIQUE(project_id, paper_id) constraint ensures race-safe deduplication
+    if (isDev) {
+      console.log(`[Citation ${requestId}] Calling add_citation_unified RPC:`, {
+        p_project_id: params.projectId,
+        p_paper_id: paperId,
+        p_reason: params.reason?.slice(0, 30),
+        csl_title: cslJson?.title?.slice(0, 50)
+      })
+    }
+    
     const { data: rpcResult, error: citationError } = await supabase
     .rpc('add_citation_unified', {
       p_project_id: params.projectId,
@@ -366,9 +411,18 @@ export class CitationService {
     .single()
 
     if (citationError) {
+      console.error(`[Citation ${requestId}] RPC error:`, {
+        code: citationError.code,
+        message: citationError.message,
+        details: citationError.details,
+        hint: citationError.hint
+      })
+      
       // Check if error is due to constraint violation (concurrent add)
       if (citationError.code === '23505' || citationError.message?.includes('duplicate')) {
         // Race condition detected, fetch existing citation
+        if (isDev) console.log(`[Citation ${requestId}] Duplicate detected, fetching existing`)
+        
         const { data: existing, error: fetchError } = await supabase
           .from('project_citations')
           .select('id, csl_json, cite_key')
@@ -395,11 +449,21 @@ export class CitationService {
         return result
       }
       
+      // Check for function signature mismatch error
+      if (citationError.message?.includes('function') || citationError.code === '42883') {
+        console.error(`[Citation ${requestId}] RPC function signature mismatch - please run migration 20260109000000_fix_citation_system.sql`)
+      }
+      
       throw new Error(`Failed to add citation: ${citationError.message}`)
     }
 
     if (!rpcResult) {
+      console.error(`[Citation ${requestId}] RPC returned no result`)
       throw new Error('Citation RPC returned no result')
+    }
+    
+    if (isDev) {
+      console.log(`[Citation ${requestId}] RPC success:`, rpcResult)
     }
 
     const { is_new, cite_key } = rpcResult as { 
@@ -518,62 +582,31 @@ export class CitationService {
     return generateBibliography(projectId, style)
   }
 
-  static async suggest(projectId: string, context: string): Promise<string[]> {
-    // TODO: Implement citation suggestions based on context
+  /**
+   * Suggest citation keys based on context text.
+   * Currently returns empty array - feature not yet implemented.
+   * Future: Use semantic search to find relevant papers from project library.
+   */
+  static async suggest(_projectId: string, _context: string): Promise<string[]> {
     return []
   }
 
   /**
    * Emit realtime event for citation changes
    * Purpose: Notify clients to refresh bibliography/inline disambiguation
+   * 
+   * NOTE: Disabled due to bufferUtil.mask WebSocket error in Node.js
+   * This is a non-critical feature - citations work without it
    */
   private static async emitCitationChangedEvent(
-    projectId: string, 
-    citeKey: string, 
-    isNew: boolean
+    _projectId: string, 
+    _citeKey: string, 
+    _isNew: boolean
   ): Promise<void> {
-    try {
-      const supabase = await getSB()
-      
-      // Initialize channel on first use with proper subscription
-      if (!this.realtimeChannel || !this.channelSubscribed) {
-        // Clean up old channel if it exists but isn't subscribed
-        if (this.realtimeChannel) {
-          try {
-            await supabase.removeChannel(this.realtimeChannel)
-          } catch {
-            // Ignore cleanup errors
-          }
-        }
-        
-        this.realtimeChannel = supabase.channel('citations-changes')
-        
-        // Subscribe to enable broadcasting
-        await this.realtimeChannel.subscribe((status: string) => {
-          this.channelSubscribed = status === 'SUBSCRIBED'
-        })
-      }
-      
-      // Publish realtime payload {projectId, citeKey}
-      const payload = {
-        projectId,
-        citeKey,
-        isNew,
-        timestamp: new Date().toISOString()
-      }
-      
-      if (this.realtimeChannel && this.channelSubscribed) {
-        await this.realtimeChannel.send({
-          type: 'broadcast',
-          event: 'citation-changed',
-          payload
-        })
-      }
-      
-    } catch (error) {
-      // Don't throw on realtime errors - citation success is more important
-      console.warn('Failed to emit citation changed event:', error)
-    }
+    // Disabled: Supabase Realtime has WebSocket compatibility issues
+    // causing "bufferUtil.mask is not a function" errors
+    // Citations work fine without realtime notifications
+    return
   }
   
   /**

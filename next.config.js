@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Add serverExternalPackages to opt-out specific dependencies from bundling  
-  serverExternalPackages: ['websocket', 'natural', 'pdf-parse', 'pdf2pic', 'tesseract.js', 'tesseract.js-core'],
+  serverExternalPackages: ['websocket', 'natural', 'pdf-parse', 'pdf2pic', 'tesseract.js', 'tesseract.js-core', '@dqbd/tiktoken', 'tiktoken'],
 
   // Performance optimizations
   experimental: {

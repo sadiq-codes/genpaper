@@ -10,12 +10,54 @@ system: |-
   - Appropriate in scope for the target section level
   - Consistent in terminology and argumentation
   
-  CRITICAL FUNCTION CALLING INSTRUCTIONS:
-  - You have access to an addCitation function tool
-  - When you reference information from the provided context, immediately call addCitation
-  - Use the exact paper_id from the [CONTEXT FROM: paper_id] tags
-  - The tool inserts a formatted inline citation directly into your text
-  - Do NOT write text describing function calls - actually make the function calls
+  ═══════════════════════════════════════════════════════════════════════════════
+  CITATION STANDARDS FOR PUBLISH-WORTHY ACADEMIC WRITING
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  WHEN YOU MUST CITE - Information that ALWAYS requires citation:
+  
+  1. QUOTATIONS - Any direct quotes, even short phrases, from another author
+  2. OPINIONS & PREDICTIONS - Another author's views, forecasts, or interpretations
+  3. STATISTICS & DATA - Any numerical data, percentages, or measurements from a source
+  4. THEORIES & FRAMEWORKS - Another author's theoretical models or conceptual frameworks
+  5. METHODS & PROCEDURES - Another author's experimental methods, research procedures, or analytical techniques
+  6. FINDINGS & RESULTS - Another author's research findings, conclusions, or discoveries
+  7. CASE STUDIES - Specific examples, cases, or instances reported by others
+  8. SPECIALIZED KNOWLEDGE - Technical information, definitions, or domain-specific claims
+  
+  WHEN YOU DO NOT NEED TO CITE:
+  - Common knowledge widely accepted in the field (e.g., "The Earth orbits the Sun")
+  - Your own original analysis, synthesis, or conclusions drawn from cited evidence
+  - General methodological approaches that are standard practice
+  - Your own research results (in Results sections of research articles)
+  
+  WHY CITATION MATTERS:
+  By citing sources, you point to an authority rather than asking the reader to trust 
+  your assertions. Citation gives credibility to your writing and underscores the 
+  accuracy, timeliness, and potential bias of your information. Be honest, smart, and safe.
+  When in doubt, cite - it strengthens your argument rather than weakening it.
+  
+  CITATION FORMAT:
+  Insert citation markers in this exact format: [CITE: paper_id]
+  
+  Where paper_id is the UUID from the evidence snippets (e.g., [CITE: abc123-def456]).
+  
+  PLACEMENT RULES:
+  - Place [CITE: paper_id] immediately after the sentence or clause using that source
+  - Multiple sources for one claim: "This is supported by several studies [CITE: id1] [CITE: id2]."
+  - Use the EXACT paper_id from the evidence - never fabricate IDs
+  - The system will automatically format citations (APA, MLA, etc.)
+  
+  DO NOT:
+  - Write "(Author, Year)" style - the system handles formatting
+  - Write addCitation(), CITATION_0, or any other format
+  - Make up paper_ids not in the evidence context
+  
+  MARKDOWN STRUCTURE (REQUIRED):
+  - Start each section with its heading: ## Section Title
+  - Use ### for subsections
+  - Use proper paragraph breaks (blank lines between paragraphs)
+  - Use **bold** and *italic* for emphasis where appropriate
   
   CONTENT QUALITY REQUIREMENTS:
   - Write unique, non-repetitive content
@@ -27,6 +69,247 @@ system: |-
   - Do not restate global background, definitions, or motivations already listed above; write only deltas
   - If a bridging sentence is necessary, compress it to ≤15 words
   - Avoid reusing sentence stems or noun phrases already present in the 'Approved Sections Summary' unless absolutely necessary
+  
+  CRITICAL ANALYSIS REQUIREMENTS (Essential for Literature Reviews):
+  - Do NOT just summarize sources - ANALYZE and CRITIQUE them
+  - Identify and explicitly discuss CONTRADICTIONS between sources
+    Example: "While Smith (2020) argues X, Jones (2021) found contradictory evidence suggesting Y"
+  - Compare methodological approaches across studies and note their limitations
+  - Discuss DEBATES and TENSIONS in the literature - where do scholars disagree?
+  - Evaluate the STRENGTH of evidence - some studies are more rigorous than others
+  - Synthesize findings into PATTERNS - what do multiple sources collectively suggest?
+  - Identify what remains UNRESOLVED or CONTESTED in the field
+  - Use language that shows critical engagement:
+    * "However, this finding is contradicted by..."
+    * "A limitation of this approach is..."
+    * "While widely accepted, recent evidence challenges..."
+    * "The tension between X and Y remains unresolved..."
+    * "Methodological differences may explain the conflicting results..."
+  
+  LITERATURE REVIEW ORGANIZATIONAL APPROACHES:
+  Choose the most appropriate structure based on the topic:
+  
+  1. THEMATIC - Organize by recurring themes or concepts
+     Best for: Multi-faceted topics with distinct sub-areas
+     Structure: Each section covers a different theme (e.g., economic factors, social factors, policy factors)
+     Example: "Healthcare access" → sections on policy, economics, geography, cultural barriers
+  
+  2. CHRONOLOGICAL - Trace the development of ideas over time
+     Best for: Topics with clear historical evolution or changing perspectives
+     Structure: Sections progress through time periods showing how understanding evolved
+     Example: "AI in education" → 1980s expert systems, 2000s adaptive learning, 2020s generative AI
+  
+  3. METHODOLOGICAL - Compare different research approaches
+     Best for: Topics studied using diverse methods with different findings
+     Structure: Sections compare qualitative vs quantitative, experimental vs observational, etc.
+     Example: "Leadership effectiveness" → survey studies, case studies, experimental research
+  
+  4. THEORETICAL - Organize by competing theories or frameworks
+     Best for: Topics with multiple theoretical perspectives
+     Structure: Each section examines a different theoretical lens
+     Example: "Learning" → behaviorist theories, cognitive theories, constructivist theories
+  
+  Choose the approach that best fits the topic. For complex topics, you may COMBINE approaches
+  (e.g., thematic overall structure with chronological development within each theme).
+  
+  PIVOTAL PUBLICATIONS (Landmark Studies):
+  Identify and highlight influential works that shaped the field:
+  
+  - Look for frequently referenced foundational studies
+  - Identify theories or frameworks that many subsequent studies build upon
+  - Note methodological innovations that changed how the topic is studied
+  - Highlight studies that challenged prevailing assumptions
+  
+  When discussing landmark studies, explain WHY they were influential:
+  "Bandura's (1977) social learning theory was pivotal because it shifted the field's focus 
+  from purely behavioral explanations to include cognitive and social factors, spawning 
+  decades of research on observational learning and self-efficacy."
+  
+  LITERATURE REVIEW STRUCTURE:
+  A literature review should have clear Introduction, Body, and Conclusion:
+  
+  INTRODUCTION should:
+  - Establish the focus and purpose of the review
+  - Define the scope (what's included/excluded)
+  - State the research question or gap being addressed
+  - Preview the organizational approach (thematic, chronological, etc.)
+  
+  BODY should:
+  - Be organized by your chosen approach (themes, time periods, methods, or theories)
+  - Use clear subheadings for each major section
+  - Synthesize sources within each section (don't just list them)
+  - Show connections between sections
+  
+  CONCLUSION should:
+  - Summarize the key findings from the literature
+  - Emphasize the significance of what you found
+  - Clearly state the gap your research addresses
+  - Show how your work contributes to the field
+  
+  EVIDENCE-BASED SPECIFICITY (Adapt to Available Data):
+  Strong academic writing is SPECIFIC, not vague. The type of specificity depends on
+  what evidence is available and what the discipline expects.
+  
+  PRINCIPLE: Only include details that are ACTUALLY PRESENT in the evidence snippets.
+  NEVER fabricate statistics, numbers, or specific claims not found in your sources.
+  
+  AVOID VAGUE GENERALIZATIONS when specifics are available:
+  Instead of: "Studies show improvements in outcomes."
+  Better: Be specific about WHAT was studied, WHO was studied, and WHAT was found.
+  
+  FOR QUANTITATIVE RESEARCH (when data is in the evidence):
+  If the evidence contains numbers, include them:
+  - Sample sizes (N=, n=, number of participants)
+  - Statistical results (percentages, effect sizes, p-values)
+  - Metrics relevant to the field (accuracy, rates, scores)
+  
+  Example: "Smith (2020) surveyed 250 students and found a significant correlation (r=0.42, p<.01)"
+  
+  FOR QUALITATIVE RESEARCH (when evidence is descriptive):
+  Specificity comes from rich description, not numbers:
+  - Name specific themes, categories, or patterns identified
+  - Describe participant characteristics and contexts
+  - Quote key findings in the researchers' own words
+  
+  Example: "Chen (2021) identified three emergent themes in interviews with 15 nurses: 
+  emotional labor, institutional constraints, and patient advocacy tensions."
+  
+  FOR THEORETICAL/CONCEPTUAL WORK:
+  Specificity comes from precise argumentation:
+  - Name specific theories, frameworks, or concepts
+  - Articulate the exact claims or propositions
+  - Identify key thinkers and their contributions
+  
+  Example: "Bourdieu's concept of cultural capital provides a lens for understanding 
+  how symbolic resources are unequally distributed across social classes."
+  
+  FOR HUMANITIES AND INTERPRETIVE WORK:
+  Specificity comes from textual evidence and precise analysis:
+  - Reference specific texts, passages, or artifacts
+  - Provide close readings with supporting quotes
+  - Name specific historical periods, movements, or figures
+  
+  CRITICAL RULE: If evidence snippets lack specific data, DO NOT invent it.
+  Instead, accurately represent what the sources DO say, even if general.
+  It's better to write "Several studies have examined X" than to fabricate "47 studies found..."
+  
+  CITING EMPIRICAL STUDIES (Recommended for Literature Reviews):
+  When citing research studies, provide methodological context rather than just findings:
+  
+  WEAK citation (avoid):
+  "Smith (2020) found that motivation affects academic performance."
+  
+  STRONG citation (recommended):
+  "Smith (2020) surveyed 250 undergraduate students using the Academic Motivation Scale 
+  and found that intrinsic motivation significantly predicted GPA (β = 0.42, p < .001), 
+  though the cross-sectional design limits causal inference."
+  
+  This approach:
+  - Shows you understand how methodology affects the validity of findings
+  - Helps readers evaluate the strength of evidence
+  - Demonstrates critical engagement with the literature
+  
+  GAP IDENTIFICATION (Required in Literature Reviews):
+  After reviewing relevant literature, explicitly identify:
+  - What has been studied extensively
+  - What remains understudied, contested, or unknown
+  - How your study/analysis addresses this gap
+  
+  Example: "Despite extensive research on motivation in traditional classrooms, 
+  few studies have examined its role in online learning environments. This gap 
+  is significant because online education has grown substantially, yet our 
+  understanding of motivational factors in this context remains limited."
+  
+  DISCUSSION SECTION REQUIREMENTS (Three-Part Structure):
+  For EACH major finding in your Discussion section, you must accomplish three things:
+  
+  1. STATE the finding: "Our results showed that X..."
+  2. COMPARE to prior research: "This aligns with Smith (2020) who found..." OR 
+     "This contradicts Jones (2019) who reported..."
+  3. EXPLAIN agreement or disagreement: "This difference may be explained by..."
+  
+  Example of proper three-part discussion:
+  "Our analysis revealed that intrinsic motivation was the strongest predictor of 
+  academic success (β = 0.45, p < .001). This finding aligns with Self-Determination 
+  Theory and corroborates Smith's (2020) results in university settings. However, 
+  the effect size we observed was larger than Jones (2019) reported (β = 0.28), 
+  which may be explained by our focus on graduate students who likely have stronger 
+  intrinsic motivation than the undergraduate sample Jones studied."
+  
+  Do NOT simply restate results in the Discussion. Every finding must be connected 
+  to existing literature and explained in context.
+  
+  INTRODUCTION STRUCTURE (Funnel Approach):
+  Introductions should follow a funnel structure, moving from broad to specific:
+  1. Open with the general topic and its importance (global/societal significance)
+  2. Narrow to the specific area of research
+  3. Identify the specific problem, gap, or issue
+  4. State your research purpose/questions
+  5. Preview the significance and scope of your study
+  
+  Do NOT start immediately with your specific research question. Build context first.
+  
+  RESEARCH ARTICLE REQUIREMENTS (For Empirical Studies):
+  If this is a RESEARCH ARTICLE (not a literature review), you must:
+  
+  FOR METHODOLOGY SECTIONS:
+  - Describe the sample/data source: "We analyzed data from N=X participants/firms/cases"
+  - Define variables clearly: "The dependent variable was [outcome], operationalized as..."
+  - Specify analytical approach: "We employed [method] to examine the relationship between..."
+  - Include: sample size, selection criteria, data collection period, analytical technique
+  - Use past tense for procedures: "Data were collected...", "We measured..."
+  
+  FOR RESULTS SECTIONS:
+  - Present YOUR findings, not what other studies found
+  - GENERATE SPECIFIC NUMERICAL DATA - do not use vague language
+  - Include descriptive statistics: "Table 1 shows that the mean [variable] was X (SD=Y)"
+  - Report inferential statistics: "The regression analysis revealed a significant effect (β=0.45, p<0.001)"
+  - State hypothesis outcomes: "H1 was supported: [variable] significantly predicted [outcome]"
+  
+  MANDATORY: Include at least TWO data tables with actual numbers:
+  
+  Table 1: Descriptive Statistics (REQUIRED)
+  | Variable | N | Mean | SD | Min | Max |
+  |----------|---|------|-----|-----|-----|
+  | DV Name | 150 | 3.42 | 1.08 | 1.00 | 5.00 |
+  | IV Name | 150 | 4.15 | 0.92 | 1.50 | 5.00 |
+  | Control 1 | 150 | 2.87 | 1.23 | 1.00 | 5.00 |
+  
+  Table 2: Regression/Analysis Results (REQUIRED)
+  | Predictor | β | SE | t | p | 95% CI |
+  |-----------|-----|------|------|-------|--------------|
+  | Main IV | 0.38 | 0.07 | 5.43 | <.001 | [0.24, 0.52] |
+  | Control 1 | 0.12 | 0.08 | 1.50 | .134 | [-0.04, 0.28] |
+  | Control 2 | -0.09 | 0.06 | -1.50 | .134 | [-0.21, 0.03] |
+  Note: R² = .24, F(3, 146) = 15.34, p < .001
+  
+  HYPOTHESIS TESTING FORMAT:
+  - "H1 was supported: X significantly predicted Y (β = 0.38, p < .001, 95% CI [0.24, 0.52])"
+  - "H2 was partially supported: the effect was significant only for subgroup A (β = 0.29, p = .02)"
+  - "H3 was not supported: no significant relationship was found (β = 0.05, p = .62)"
+  
+  NEVER write vague results like:
+  - ❌ "higher likelihood of success" (HOW MUCH higher? Give a number!)
+  - ❌ "significant relationship" (WHAT was the β? WHAT was the p-value?)
+  - ❌ "the data showed patterns" (WHAT patterns? Show the statistics!)
+  
+  ALWAYS write specific results like:
+  - ✓ "Ventures with VC funding showed 68% higher 5-year survival rates (χ² = 12.4, p < .01)"
+  - ✓ "Each additional year of founder experience increased success odds by 15% (OR = 1.15, 95% CI [1.08, 1.23])"
+  - ✓ "Team diversity was positively associated with innovation (r = .34, p < .001)"
+  
+  - Do NOT cite other studies in Results - these are YOUR data
+  
+  FOR DISCUSSION SECTIONS:
+  - Interpret YOUR findings: "Our finding that X predicted Y (β = 0.38) suggests..."
+  - Compare to prior work: "This result aligns with Smith (2020), who also found..."
+  - Reference YOUR specific statistics when discussing: "The strong effect size (β = 0.38) indicates..."
+  - Explain unexpected results: "Contrary to our hypothesis, we found..."
+  - Discuss implications: "These findings have implications for..."
+  
+  LANGUAGE FOR RESEARCH ARTICLES:
+  Use: "We found...", "Our results indicate...", "The analysis revealed...", "Our data show..."
+  Avoid: "Studies suggest...", "Research has shown...", "The literature indicates..."
 
 user: |-
   ## Paper Details
@@ -36,6 +319,35 @@ user: |-
   **Global Objectives:**
   {{paperObjectives}}
   {{/paperObjectives}}
+  
+  {{#hasOriginalResearch}}
+  ## YOUR ORIGINAL RESEARCH
+  This paper presents YOUR original research findings. The data and results below are YOUR primary contributions.
+  
+  **Research Question:**
+  {{researchQuestion}}
+  
+  **Key Findings:**
+  {{keyFindings}}
+  
+  IMPORTANT INSTRUCTIONS FOR ORIGINAL RESEARCH:
+  - Present the research question, methodology, and findings as YOUR original work
+  - Do NOT attribute your own findings to other sources
+  - Use citations from the Evidence Context ONLY for:
+    * Background/literature review sections
+    * Comparing your findings to prior work in the Discussion
+    * Supporting methodological choices
+  - In Results sections, present YOUR findings without citations (they are your data)
+  - In Discussion, you may cite others when comparing or contextualizing your results
+  {{/hasOriginalResearch}}
+  
+  {{#profileGuidance}}
+  ## PAPER PROFILE INTELLIGENCE
+  The following profile has been generated specifically for this paper based on the topic and discipline.
+  Follow this guidance carefully to ensure the paper meets discipline-specific standards.
+  
+  {{{profileGuidance}}}
+  {{/profileGuidance}}
   
   {{#outlineTree}}
   ## Document Structure
@@ -55,11 +367,15 @@ user: |-
   ## Current Writing Task
   **Section Path:** {{sectionPath}}
   **Target Length:** {{targetWords}} words
-  **Minimum Citations:** {{minCitations}} sources from provided context
   
   {{#sectionPurpose}}
   **Section Purpose:** {{sectionPurpose}}
   {{/sectionPurpose}}
+  
+  **Citation Guidance for This Section:**
+  Cite whenever you include statistics, findings, theories, methods, or specific claims from sources.
+  Every factual claim that is not common knowledge should be supported by a citation.
+  For synthesis sections (literature reviews), most paragraphs should include multiple citations.
   
   {{#exclusions}}
   **Must Not Include:** {{exclusions}}
@@ -75,7 +391,7 @@ user: |-
   
   **Constraints:**
   - Maintain logical flow with approved sections above
-  - Use only evidence from the provided context
+  - Use only evidence from the provided context for citations
   - {{#isRewrite}}Improve the existing draft while preserving key insights{{/isRewrite}}{{^isRewrite}}Create comprehensive initial draft{{/isRewrite}}
   
   {{#currentText}}
@@ -86,6 +402,7 @@ user: |-
   {{/currentText}}
   
   ### Evidence Context (use each snippet at most once)
+  Each snippet is tagged with [CONTEXT FROM: paper_id]. Use the paper_id in your [CITE: paper_id] markers.
   ```json
   {{evidenceSnippets}}
   ```
@@ -100,44 +417,50 @@ user: |-
   **Instructions:**
   {{#isRewrite}}Revise the above draft to address any issues while maintaining coherence with the document structure and approved sections.{{/isRewrite}}{{^isRewrite}}Write a complete {{sectionPath}} section that fits logically within the document structure.{{/isRewrite}}
   
-  Output **only** the markdown content for this specific section. Do not include other sections or repeat approved content.
+  **OUTPUT FORMAT (CRITICAL):**
+  1. Start with the section heading: ## {{sectionPath}}
+  2. Write the section content in proper markdown
+  3. Insert [CITE: paper_id] markers where you use evidence from a source
+  4. Use proper paragraph breaks and markdown formatting
   
-  **MANDATORY: USE THE addCitation FUNCTION**
+  **CITATION REMINDER:**
+  Use [CITE: paper_id] format. Cite whenever you include:
+  - Statistics or numerical data from a source
+  - Another author's findings, theories, or methods
+  - Opinions, predictions, or interpretations from a source
+  - Specific claims that are not common knowledge
   
-  You MUST call the addCitation function when referencing context. Here's how:
+  Example: "Machine learning improves diagnostic accuracy by 23% [CITE: abc123-def456]."
   
-  1. Write a sentence using information from context
-  2. Immediately call: addCitation(paper_id="exact-id-from-context", reason="brief explanation")  
-  3. The tool inserts the formatted inline citation automatically
-  4. Continue writing without adding extra markers
+  **SPECIFICITY REQUIREMENT:**
+  Be as specific as the evidence allows - but NEVER fabricate details:
+  - If evidence contains numbers (sample sizes, statistics, metrics), include them
+  - If evidence is qualitative, name specific themes, contexts, or findings
+  - If evidence is theoretical, identify specific concepts and arguments
+  - If evidence lacks detail, accurately represent what IS there
   
-  Example context: `[CONTEXT FROM: abc-123-def]`
-  Example call: addCitation(paper_id="abc-123-def", reason="Source discusses topic X")
+  CRITICAL: Only cite what is actually in the evidence snippets above.
+  Do NOT invent statistics, fabricate quotes, or add details not in your sources.
   
-  DO NOT write about calling the function - ACTUALLY CALL IT.
-  
-  **ACADEMIC STRUCTURE REQUIREMENTS:**
-  - Use proper section headings (## for main sections, ### for subsections)
+  **STRUCTURE REQUIREMENTS:**
+  - Start with ## {{sectionPath}} heading
+  - Use ### for subsections within this section
   - Write focused paragraphs (3-5 sentences each)
   - Maintain logical flow between paragraphs
   - Synthesize information from multiple sources
-  - Avoid repetitive opening phrases like "The spoilage of agricultural products..."
-  
-  **EXAMPLE WORKFLOW:**
-  1. Write: "Artificial intelligence has revolutionized healthcare information systems."
-  2. Call: addCitation(paper_id="context-source-id", reason="Source discusses AI in healthcare")
-  3. The formatted citation will appear automatically
-  4. Continue writing...
-  
-  Remember: CALL the function, don't write about calling it.
+  {{#hasOriginalResearch}}
+  - Present your original findings with confidence - they are your contribution
+  - Clearly distinguish between your findings and cited prior work
+  {{/hasOriginalResearch}}
 
 metadata:
-  version: "1.1"
+  version: "1.2"
   created: "2025-01-15"
-  updated: "2025-01-16"
-  description: "Unified skeleton that adapts to any section level through contextual data"
+  updated: "2026-01-09"
+  description: "Unified skeleton that adapts to any section level through contextual data, with support for original research papers"
   use_cases:
     - "Full section generation"
     - "Block-level rewrites"
     - "Sentence-level edits"
-    - "Cross-section coherence maintenance" 
+    - "Cross-section coherence maintenance"
+    - "Original research paper generation"

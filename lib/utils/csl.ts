@@ -186,15 +186,43 @@ export function parsePublicationDate(dateStr: string) {
 /**
  * CANONICAL FUNCTION: Convert paper data to CSL-JSON format
  * This is the single source of truth for Paper → CSL conversion
+ * 
+ * Handles multiple author formats:
+ * 1. JSONB string array: ["John Smith", "Jane Doe"]
+ * 2. Relational join: [{ ordinal: 1, author: { name: "John Smith" } }]
  */
-export function buildCSLFromPaper(paper: PaperWithAuthors): CSLItem {
-  // Parse authors using robust name parser
-  const authors: CSLAuthor[] = paper.authors
-    ?.sort((a, b) => a.ordinal - b.ordinal)
-    .map(({ author }) => parseAuthorName(author.name)) || []
+export function buildCSLFromPaper(paper: PaperWithAuthors | Record<string, any>): CSLItem {
+  // Parse authors - handle different formats
+  let parsedAuthors: CSLAuthor[] = []
+  
+  if (paper.authors) {
+    if (Array.isArray(paper.authors)) {
+      // Check if it's a string array (JSONB format) or relational format
+      if (paper.authors.length > 0) {
+        const firstItem = paper.authors[0]
+        
+        if (typeof firstItem === 'string') {
+          // JSONB string array format: ["John Smith", "Jane Doe"]
+          parsedAuthors = paper.authors.map((name: string) => parseAuthorName(name))
+        } else if (firstItem && typeof firstItem === 'object' && 'ordinal' in firstItem && 'author' in firstItem) {
+          // Relational format: [{ ordinal: 1, author: { name: "John Smith" } }]
+          parsedAuthors = paper.authors
+            .sort((a: any, b: any) => a.ordinal - b.ordinal)
+            .map(({ author }: any) => parseAuthorName(author?.name || 'Unknown'))
+        } else if (firstItem && typeof firstItem === 'object' && ('family' in firstItem || 'literal' in firstItem)) {
+          // Already CSL author format
+          parsedAuthors = paper.authors.map((a: any) => ({
+            family: a.family || '',
+            given: a.given || '',
+            literal: a.literal
+          }))
+        }
+      }
+    }
+  }
 
   // Ensure we have at least one author
-  const finalAuthors = authors.length > 0 ? authors : [{ family: 'Unknown', given: '' }]
+  const finalAuthors = parsedAuthors.length > 0 ? parsedAuthors : [{ family: 'Unknown', given: '' }]
 
   // Determine publication type
   const type = paper.venue ? determinePublicationType(paper.venue) : 'article-journal'
@@ -213,7 +241,7 @@ export function buildCSLFromPaper(paper: PaperWithAuthors): CSLItem {
   if (paper.venue) csl['container-title'] = paper.venue
   if (issued) csl.issued = issued
   if (paper.doi) csl.DOI = paper.doi
-  if (paper.url) csl.URL = paper.url
+  if (paper.url || paper.pdf_url) csl.URL = paper.url || paper.pdf_url
   if (paper.abstract) csl.abstract = paper.abstract
   if (paper.volume) csl.volume = paper.volume
   if (paper.issue) csl.issue = paper.issue
@@ -458,80 +486,5 @@ export async function validateAndNormalizeCSL(csl: unknown): Promise<{ isValid: 
   }
 }
 
-/**
- * Create a proper hash of CSL data for memoization
- */
-export function hashCSLData(cslData: CSLItem[]): string {
-  const dataString = cslData
-    .map(item => `${item.id}:${item.title}:${item.author.length}`)
-    .join('|')
-  
-  // Simple hash function (djb2)
-  let hash = 5381
-  for (let i = 0; i < dataString.length; i++) {
-    hash = ((hash << 5) + hash) + dataString.charCodeAt(i)
-  }
-  return hash.toString(36)
-}
-
 // Export for backward compatibility
-export const paperToCSL = buildCSLFromPaper
-
-// Simple CSL formatter for basic citation styles
-export function formatCSLSimple(csl: CSLItem, style: 'apa' | 'ieee' | 'mla' = 'apa'): string {
-  const authors = csl.author || []
-  const year = csl.issued?.['date-parts']?.[0]?.[0]
-  const title = csl.title
-  const venue = csl['container-title']
-  
-  switch (style) {
-    case 'apa':
-      return formatAPA(authors, year, title, venue)
-    case 'ieee':
-      return formatIEEE(authors, year, title, venue)
-    case 'mla':
-      return formatMLA(authors, year, title, venue)
-    default:
-      return formatAPA(authors, year, title, venue)
-  }
-}
-
-function formatAPA(authors: CSLAuthor[], year?: number, title?: string, venue?: string): string {
-  const authorStr = authors.length > 0 
-    ? authors.map(a => a.literal || `${a.family}, ${a.given?.[0] || ''}.`).join(', ')
-    : 'Unknown Author'
-  
-  const yearStr = year ? ` (${year})` : ''
-  const titleStr = title ? `. ${title}` : ''
-  const venueStr = venue ? `. *${venue}*` : ''
-  
-  return `${authorStr}${yearStr}${titleStr}${venueStr}.`
-}
-
-function formatIEEE(authors: CSLAuthor[], year?: number, title?: string, venue?: string): string {
-  const authorStr = authors.length > 0
-    ? authors.length > 3 
-      ? `${authors[0].given?.[0] || ''}. ${authors[0].family} et al.`
-      : authors.map(a => `${a.given?.[0] || ''}. ${a.family}`).join(', ')
-    : 'Unknown Author'
-  
-  const titleStr = title ? `, "${title}"` : ''
-  const venueStr = venue ? `, *${venue}*` : ''
-  const yearStr = year ? `, ${year}` : ''
-  
-  return `${authorStr}${titleStr}${venueStr}${yearStr}.`
-}
-
-function formatMLA(authors: CSLAuthor[], year?: number, title?: string, venue?: string): string {
-  const authorStr = authors.length > 0
-    ? authors.length > 1
-      ? `${authors[0].family}, ${authors[0].given} et al.`
-      : `${authors[0].family}, ${authors[0].given}`
-    : 'Unknown Author'
-  
-  const titleStr = title ? ` "${title}"` : ''
-  const venueStr = venue ? ` *${venue}*` : ''
-  const yearStr = year ? `, ${year}` : ''
-  
-  return `${authorStr}.${titleStr}${venueStr}${yearStr}.`
-} 
+export const paperToCSL = buildCSLFromPaper 

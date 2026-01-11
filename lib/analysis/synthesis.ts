@@ -1,5 +1,5 @@
 import 'server-only'
-import { openai } from '@ai-sdk/openai'
+import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { generateText } from 'ai'
 import { getSB } from '@/lib/supabase/server'
 import { getClaimsForPaper, type ExtractedClaim } from './claim-extractor'
@@ -89,7 +89,7 @@ export async function generateSynthesis(
 
     // Group findings by theme using GPT
     const { text: synthesisText } = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: getLanguageModel(),
       prompt: buildSynthesisPrompt(topic, allClaims, gaps),
       temperature: 0.3,
     })
@@ -146,7 +146,7 @@ export async function generateLiteratureReview(
 
     // Generate narrative review
     const { text: reviewText } = await generateText({
-      model: openai('gpt-4o'),
+      model: getLanguageModel(),
       prompt: buildLiteratureReviewPrompt(topic, allClaims, gaps),
       temperature: 0.4,
     })

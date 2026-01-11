@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useRef } from 'react'
 import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Button } from '@/components/ui/button'
@@ -30,6 +30,8 @@ import {
   Strikethrough,
   Code,
   Link,
+  Undo,
+  Redo,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -57,6 +59,8 @@ export function FloatingToolbar({
   onChat,
 }: FloatingToolbarProps) {
   const [linkUrl, setLinkUrl] = useState('')
+  // Store selection when bubble menu opens to prevent losing it on dropdown click
+  const selectionRef = useRef<{ from: number; to: number } | null>(null)
   
   const getSelectedText = useCallback(() => {
     const { from, to } = editor.state.selection
@@ -89,9 +93,31 @@ export function FloatingToolbar({
     return 'Paragraph'
   }
 
+  // Apply text style with saved selection to prevent affecting entire document
+  const applyTextStyle = useCallback((action: () => void) => {
+    const savedSelection = selectionRef.current
+    if (savedSelection && savedSelection.from !== savedSelection.to) {
+      // Restore selection before applying command
+      editor.chain()
+        .focus()
+        .setTextSelection(savedSelection)
+        .run()
+    }
+    action()
+  }, [editor])
+
   return (
     <BubbleMenu
       editor={editor}
+      shouldShow={({ editor: editorInstance }) => {
+        // Save selection whenever bubble menu visibility is computed
+        const { from, to } = editorInstance.state.selection
+        if (from !== to) {
+          selectionRef.current = { from, to }
+        }
+        // Show menu when there's a selection
+        return !editorInstance.state.selection.empty
+      }}
       options={{ placement: 'top' }}
       className="flex items-center gap-0.5 p-1.5 bg-background border border-border rounded-lg shadow-lg"
     >
@@ -138,16 +164,36 @@ export function FloatingToolbar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
-          <DropdownMenuItem onClick={() => editor.chain().focus().setParagraph().run()}>
+          <DropdownMenuItem 
+            onSelect={(e) => {
+              e.preventDefault()
+              applyTextStyle(() => editor.chain().focus().setParagraph().run())
+            }}
+          >
             Paragraph
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}>
+          <DropdownMenuItem 
+            onSelect={(e) => {
+              e.preventDefault()
+              applyTextStyle(() => editor.chain().focus().toggleHeading({ level: 1 }).run())
+            }}
+          >
             Heading 1
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>
+          <DropdownMenuItem 
+            onSelect={(e) => {
+              e.preventDefault()
+              applyTextStyle(() => editor.chain().focus().toggleHeading({ level: 2 }).run())
+            }}
+          >
             Heading 2
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}>
+          <DropdownMenuItem 
+            onSelect={(e) => {
+              e.preventDefault()
+              applyTextStyle(() => editor.chain().focus().toggleHeading({ level: 3 }).run())
+            }}
+          >
             Heading 3
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -258,6 +304,29 @@ export function FloatingToolbar({
           </div>
         </PopoverContent>
       </Popover>
+
+      <Separator orientation="vertical" className="h-5 mx-1" />
+
+      {/* Undo/Redo */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7"
+        onClick={() => editor.chain().focus().undo().run()}
+        disabled={!editor.can().undo()}
+      >
+        <Undo className="h-3 w-3" />
+      </Button>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7"
+        onClick={() => editor.chain().focus().redo().run()}
+        disabled={!editor.can().redo()}
+      >
+        <Redo className="h-3 w-3" />
+      </Button>
     </BubbleMenu>
   )
 }

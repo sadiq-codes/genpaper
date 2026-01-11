@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { openai } from '@ai-sdk/openai'
+import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { generateText } from 'ai'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -101,7 +101,7 @@ Respond helpfully and cite sources when relevant.`
 
     // Generate AI response
     const { text } = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: getLanguageModel(),
       system: systemPrompt,
       prompt: message,
       maxTokens: 1500,

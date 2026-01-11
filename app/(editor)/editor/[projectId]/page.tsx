@@ -106,6 +106,9 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
           paper_title: paper?.title,
           paper_authors: paper?.authors,
           paper_year: paper?.year,
+          // New fields for original research support
+          source: 'literature' as const,
+          relationship_to_user: 'not_analyzed' as const,
         }
       })
     }
@@ -128,6 +131,8 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
       supporting_paper_ids: gap.supporting_paper_ids || [],
       research_opportunity: gap.research_opportunity,
       evidence: gap.evidence,
+      // New fields for original research support
+      addressed_status: 'not_analyzed' as const,
     }))
   }
 
@@ -165,17 +170,45 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     project.status === 'generating' && 
     !project.content
 
+  // Determine paperType with explicit logging for debugging
+  const resolvedPaperType = (() => {
+    if (project.paper_type) {
+      console.log('📋 Using paper_type from DB column:', project.paper_type)
+      return project.paper_type
+    }
+    const configPaperType = (project.generation_config as Record<string, unknown> | null)?.paper_settings as Record<string, unknown> | undefined
+    if (configPaperType?.paperType) {
+      console.log('📋 Using paperType from generation_config (DB column was null):', configPaperType.paperType)
+      return configPaperType.paperType as string
+    }
+    console.warn('⚠️ No paperType found in DB or config, defaulting to literatureReview')
+    return 'literatureReview'
+  })()
+
+  // Debug logging for generation state
+  if (isNewlyCreated) {
+    console.log('📋 Editor page loaded for new project:', {
+      projectId,
+      isNewlyCreated,
+      projectStatus: project.status,
+      hasContent: !!project.content,
+      shouldShowGeneration,
+      resolvedPaperType
+    })
+  }
+
   return (
     <div className="h-screen w-full p-2 md:p-4">
       <ResearchEditor
         projectId={projectId}
         projectTitle={project.topic || 'Untitled Document'}
+        projectTopic={project.topic || 'Research Paper'}
+        paperType={resolvedPaperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'}
         initialContent={project.content || undefined}
         initialPapers={papers}
         initialAnalysis={initialAnalysis}
         onSave={undefined}
         isGenerating={shouldShowGeneration}
-        projectTopic={project.topic || 'Research Paper'}
       />
     </div>
   )

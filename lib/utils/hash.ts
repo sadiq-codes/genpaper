@@ -20,22 +20,4 @@ export function collisionResistantHash(str: string): string {
  */
 export function shortHash(str: string): string {
   return collisionResistantHash(str).replace(/-/g, '').substring(0, 16)
-}
-
-/**
- * Generate cache key from request parameters (for API cache)
- * Uses collision-resistant UUID v5 hash
- */
-export function generateCacheKey(endpoint: string, params: Record<string, unknown>): string {
-  const normalized = JSON.stringify({ endpoint, params }, Object.keys({ endpoint, params }).sort())
-  return shortHash(normalized)
-}
-
-/**
- * Generate cache key from structured data
- * Uses collision-resistant UUID v5 hash
- */
-export function generateDataCacheKey(data: Record<string, unknown>): string {
-  const normalized = JSON.stringify(data, Object.keys(data).sort())
-  return shortHash(normalized)
 } 

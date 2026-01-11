@@ -1,5 +1,5 @@
 import 'server-only'
-import { openai } from '@ai-sdk/openai'
+import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { generateObject } from 'ai'
 import { z } from 'zod'
 import { getSB } from '@/lib/supabase/server'
@@ -76,7 +76,7 @@ export async function extractClaimsFromPaper(
 
     // Use GPT to extract claims
     const { object } = await generateObject({
-      model: openai('gpt-4o-mini'),
+      model: getLanguageModel(),
       schema: ClaimsResponseSchema,
       prompt: buildExtractionPrompt(title, textToAnalyze),
       temperature: 0.1, // Low temperature for consistent extraction

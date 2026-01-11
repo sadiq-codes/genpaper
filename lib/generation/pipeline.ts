@@ -1,16 +1,22 @@
 import 'server-only'
 import { updateProjectContent, updateResearchProjectStatus } from '@/lib/db/research'
-import { runWithCitationContext } from '@/lib/ai/tools/addCitation'
 import { collectPapers } from '@/lib/generation/discovery'
-import { generateOutline } from '@/lib/prompts/generators'
+import { generateOutline, type OriginalResearchInput } from '@/lib/prompts/generators'
 import { generateMultipleSectionsUnified } from '@/lib/generation/unified-generator'
 import { GenerationContextService } from '@/lib/rag/generation-context'
 import { SectionReviewer } from '@/lib/quality/section-reviewer'
+import { validatePaperType } from '@/lib/quality/paper-type-validator'
 import { fourGramOverlapRatio } from '@/lib/utils/overlap'
 import { EvidenceTracker } from '@/lib/services/evidence-tracker'
 import { sanitizeTopic } from '@/lib/utils/prompt-safety'
 import { classifyError, CancellationError } from '@/lib/generation/errors'
-import type { PaperStatus } from '@/types/simplified'
+import { warn, error as logError, info } from '@/lib/utils/logger'
+import { processAndCleanCitations, hasCitationMarkers } from '@/lib/citations/post-processor'
+import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
+import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
+import { extractThemes, mergeThemeAnalysisIntoProfile, buildThemeGuidanceForOutline } from '@/lib/generation/theme-extraction'
+import type { PaperProfile, ThemeAnalysis } from '@/lib/generation/paper-profile-types'
+import type { PaperStatus, OriginalResearchConfig } from '@/types/simplified'
 import type { GeneratedOutline, SectionContext, PaperTypeKey } from '@/lib/prompts/types'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
 
@@ -29,6 +35,9 @@ export interface PipelineConfig {
   sources?: string[]
   temperature?: number
   maxTokens?: number
+  
+  // Original research support
+  originalResearch?: OriginalResearchConfig
 }
 
 /**
@@ -39,6 +48,10 @@ export interface PipelineResult {
   outline: GeneratedOutline
   sections: SectionContext[]
   citations: Record<string, { paperId: string; citationText: string }>
+  /** The generated paper profile that guided generation */
+  profile: PaperProfile
+  /** Theme analysis from collected papers (Scribbr-aligned approach) */
+  themeAnalysis?: ThemeAnalysis
   metrics: {
     papersUsed: number
     sectionsGenerated: number
@@ -90,7 +103,7 @@ export async function generatePaper(
   // Sanitize user input to prevent prompt injection
   const sanitizedTopic = sanitizeTopic(config.topic)
   if (sanitizedTopic !== config.topic) {
-    console.warn('Topic was sanitized for safety:', { original: config.topic.slice(0, 100), sanitized: sanitizedTopic.slice(0, 100) })
+    warn({ original: config.topic.slice(0, 100), sanitized: sanitizedTopic.slice(0, 100) }, 'Topic was sanitized for safety')
   }
   
   // Set project status to generating
@@ -101,10 +114,35 @@ export async function generatePaper(
   await EvidenceTracker.loadFromDatabase(projectId)
 
   try {
-    // Step 1: Collect Papers (Search + Ingestion)
+    // Step 0: Generate Paper Profile (NEW - contextual intelligence)
+    onProgress?.('profiling', 2, 'Analyzing topic and determining paper requirements...')
+    
+    const paperProfile = await generatePaperProfile({
+      topic: sanitizedTopic,
+      paperType: config.paperType,
+      hasOriginalResearch: config.originalResearch?.has_original_research,
+      userContext: undefined  // Could be extended to accept user context
+    })
+    
+    info({
+      discipline: paperProfile.discipline.primary,
+      sections: paperProfile.structure.appropriateSections.map(s => s.key),
+      inappropriateSections: paperProfile.structure.inappropriateSections.map(s => s.name),
+      minSources: paperProfile.sourceExpectations.minimumUniqueSources,
+      recencyProfile: paperProfile.sourceExpectations.recencyProfile
+    }, 'Paper profile generated')
+    
+    onProgress?.('profiling', 8, 'Paper profile generated', {
+      discipline: paperProfile.discipline.primary,
+      sectionsPlanned: paperProfile.structure.appropriateSections.length,
+      minSources: paperProfile.sourceExpectations.minimumUniqueSources
+    })
+    
+    // Step 1: Collect Papers (Search + Ingestion) - now uses profile for guidance
     onProgress?.('search', 10, 'Collecting and ingesting papers...', { 
       useLibraryOnly: config.useLibraryOnly,
-      libraryPapers: config.libraryPaperIds?.length || 0
+      libraryPapers: config.libraryPaperIds?.length || 0,
+      recencyProfile: paperProfile.sourceExpectations.recencyProfile
     })
     
     const discoveryOptions: EnhancedGenerationOptions = {
@@ -119,13 +157,17 @@ export async function generatePaper(
         temperature: config.temperature || 0.2,
         max_tokens: config.maxTokens || 16000,
         sources: config.sources || ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
-        limit: 25,
+        // Use profile's ideal source count to determine paper limit
+        // Fetch more papers than needed to ensure diversity after filtering
+        limit: Math.max(50, paperProfile.sourceExpectations.idealSourceCount * 2),
         library_papers_used: config.libraryPaperIds || [],
         length: config.length,
         paperType: config.paperType,
         useLibraryOnly: config.useLibraryOnly || false,
         localRegion: undefined
-      }
+      },
+      // Pass recency profile from paper profile
+      recencyProfile: paperProfile.sourceExpectations.recencyProfile
     }
 
     const allPapers = await collectPapers(discoveryOptions)
@@ -134,21 +176,128 @@ export async function generatePaper(
       throw new Error('No papers found for the given topic')
     }
     
+    // Profile-driven source availability check
+    // Calculate how many papers likely have usable content (not just abstracts)
+    // We'll get more accurate numbers later in prompt-builder, but this provides early warning
+    const minRequiredSources = paperProfile.sourceExpectations.minimumUniqueSources
+    const availablePapers = allPapers.length
+    
+    // Critical threshold: if we have fewer papers than 50% of minimum required, fail early
+    // This prevents generating papers with insufficient source diversity
+    const criticalThreshold = Math.ceil(minRequiredSources * 0.5)
+    
+    if (availablePapers < criticalThreshold) {
+      const errorMsg = `Insufficient sources for ${paperProfile.paperType} on this topic. ` +
+        `Found ${availablePapers} papers but this paper type requires at least ${minRequiredSources} sources ` +
+        `(critical minimum: ${criticalThreshold}). ` +
+        `Consider broadening the topic or adding papers to your library.`
+      
+      logError({ 
+        availablePapers, 
+        minRequiredSources, 
+        criticalThreshold,
+        paperType: paperProfile.paperType,
+        discipline: paperProfile.discipline.primary
+      }, 'Source availability below critical threshold')
+      
+      throw new Error(errorMsg)
+    }
+    
+    // Warning threshold: if below minimum but above critical, warn but continue
+    if (availablePapers < minRequiredSources) {
+      warn({
+        availablePapers,
+        minRequiredSources,
+        paperType: paperProfile.paperType,
+        discipline: paperProfile.discipline.primary
+      }, `Source availability below recommended minimum (${availablePapers}/${minRequiredSources}). Paper quality may be affected.`)
+      
+      onProgress?.('search', 18, `⚠️ Limited source availability: ${availablePapers} papers found, ${minRequiredSources} recommended`, {
+        papersFound: availablePapers,
+        minRequired: minRequiredSources,
+        warning: 'Paper may have limited citation diversity'
+      })
+    }
+    
     onProgress?.('search', 20, 'Papers collected successfully', {
-      papersFound: allPapers.length
+      papersFound: allPapers.length,
+      minRequiredByProfile: minRequiredSources
     })
 
-    // Step 2: Generate Outline
+    // Step 1.5: Theme Extraction (NEW - Scribbr-aligned approach)
+    // Analyze collected papers to identify emergent themes BEFORE outline generation
+    // This ensures themes come from actual literature, not guesses
+    onProgress?.('themes', 22, 'Analyzing literature for themes and patterns...')
+    
+    let themeAnalysis: ThemeAnalysis | undefined
+    let enhancedProfile = paperProfile
+    
+    try {
+      themeAnalysis = await extractThemes(allPapers, sanitizedTopic, paperProfile)
+      
+      // Merge emergent themes into the profile
+      enhancedProfile = mergeThemeAnalysisIntoProfile(paperProfile, themeAnalysis)
+      
+      info({
+        emergentThemes: themeAnalysis.emergentThemes.length,
+        debates: themeAnalysis.debates.length,
+        gaps: themeAnalysis.gaps.length,
+        pivotalPapers: themeAnalysis.pivotalPapers.length,
+        suggestedOrganization: themeAnalysis.organizationSuggestion.approach,
+        confidence: themeAnalysis.confidence
+      }, 'Theme extraction completed')
+      
+      onProgress?.('themes', 24, 'Theme analysis complete', {
+        themesFound: themeAnalysis.emergentThemes.length,
+        debatesFound: themeAnalysis.debates.length,
+        gapsFound: themeAnalysis.gaps.length,
+        suggestedOrganization: themeAnalysis.organizationSuggestion.approach
+      })
+    } catch (themeError) {
+      // Theme extraction is an enhancement - don't fail the pipeline if it fails
+      warn({ error: themeError }, 'Theme extraction failed, continuing with original profile')
+      onProgress?.('themes', 24, 'Theme analysis skipped (using default structure)')
+    }
+
+    // Step 2: Generate Outline (now with theme-informed profile)
     onProgress?.('outline', 25, 'Generating paper outline...')
     
+    // Limit paper IDs passed to outline generation to prevent token overflow
+    // The outline only needs representative papers - full paper list is used during RAG
+    const MAX_PAPERS_FOR_OUTLINE = 50
     const allPaperIds = allPapers.map(p => p.id)
+    const outlinePaperIds = allPaperIds.slice(0, MAX_PAPERS_FOR_OUTLINE)
+    
+    if (allPaperIds.length > MAX_PAPERS_FOR_OUTLINE) {
+      info({
+        totalPapers: allPaperIds.length,
+        usedForOutline: MAX_PAPERS_FOR_OUTLINE
+      }, 'Limiting papers for outline generation to prevent token overflow')
+    }
+    
+    // Build original research input if available
+    const originalResearchInput: OriginalResearchInput | undefined = 
+      config.originalResearch?.has_original_research ? {
+        researchQuestion: config.originalResearch.research_question,
+        keyFindings: config.originalResearch.key_findings
+      } : undefined
+    
+    // Build theme guidance for outline generation
+    const themeGuidance = themeAnalysis ? buildThemeGuidanceForOutline(themeAnalysis) : undefined
+    
     const rawOutline = await generateOutline(
       config.paperType,
       sanitizedTopic,
-      allPaperIds
+      outlinePaperIds,  // Use limited paper IDs for outline (prevents token overflow)
+      originalResearchInput,
+      enhancedProfile,  // Use the enhanced profile with emergent themes
+      themeGuidance     // Pass theme guidance for better outline structure
     )
     
     // Build properly typed outline
+    // Note: The outline generator receives comprehensive profile guidance that tells it
+    // exactly which sections are appropriate and which are forbidden for this paper type.
+    // The prompts are designed to prevent inappropriate sections from being generated.
     const typedOutline: GeneratedOutline = {
       paperType: config.paperType,
       topic: sanitizedTopic,
@@ -159,7 +308,7 @@ export async function generatePaper(
       localRegion: undefined
     }
     
-    onProgress?.('outline', 30, 'Outline generated with paper assignments', {
+    onProgress?.('outline', 30, 'Outline generated with profile-guided structure', {
       sectionsPlanned: typedOutline.sections.length
     })
 
@@ -188,27 +337,37 @@ export async function generatePaper(
     const sectionCount = Math.max(1, sectionContexts.length)
     const perSectionTokens = Math.max(1000, Math.floor(totalMaxTokens / sectionCount))
 
-    // Generate all sections using unified template within citation context
-    const results = await runWithCitationContext({
-      projectId,
-      userId,
-      citationStyle: 'apa',
-      baseUrl: baseUrl || 'http://localhost:3000'
-    }, async () => {
-      const outlineTreeText = typedOutline.sections.map(s => `• ${s.title}`).join('\n')
-      return await generateMultipleSectionsUnified(
-        sectionContexts,
-        {
-          temperature: config.temperature || 0.2,
-          maxTokens: perSectionTokens,
-          outlineTree: outlineTreeText
-        },
-        (completed, total, currentSection) => {
-          const progress = Math.round((completed / total) * 40) + 45 // 45-85%
-          onProgress?.('generation', progress, `Generating ${currentSection} (${completed}/${total})`)
-        }
-      )
-    })
+    // Generate all sections using unified template
+    const outlineTreeText = typedOutline.sections.map(s => `• ${s.title}`).join('\n')
+    
+    // Build profile guidance for prompts
+    const profileGuidance = buildProfileGuidanceForPrompt(paperProfile)
+    
+    const results = await generateMultipleSectionsUnified(
+      sectionContexts,
+      {
+        temperature: config.temperature || 0.2,
+        maxTokens: perSectionTokens,
+        outlineTree: outlineTreeText,
+        // Pass project context for better prompts
+        topic: sanitizedTopic,
+        paperType: config.paperType,
+        projectTitle: sanitizedTopic,
+        // Pass original research context if available
+        originalResearch: config.originalResearch?.has_original_research ? {
+          hasOriginalResearch: true,
+          researchQuestion: config.originalResearch.research_question,
+          keyFindings: config.originalResearch.key_findings
+        } : undefined,
+        // Pass paper profile guidance for contextual intelligence
+        profileGuidance
+        // Note: minSourcesRequired removed - using semantic citation guidance instead
+      },
+      (completed, total, currentSection) => {
+        const progress = Math.round((completed / total) * 40) + 45 // 45-85%
+        onProgress?.('generation', progress, `Generating ${currentSection} (${completed}/${total})`)
+      }
+    )
 
     // Step 5: Quality Checks and Assembly
     onProgress?.('quality', 85, 'Running quality checks...')
@@ -224,30 +383,23 @@ export async function generatePaper(
       // Check cross-section overlap and rewrite if necessary
       const overlap = fourGramOverlapRatio(result.content, fullContent)
       if (fullContent && overlap > OVERLAP_THRESHOLD) {
-        console.log(`⚠️ High overlap detected in ${sectionContext.title} (ratio=${overlap.toFixed(2)}). Triggering rewrite.`)
+        warn({ section: sectionContext.title, overlap: overlap.toFixed(2) }, 'High overlap detected, triggering rewrite')
         try {
           const prevSummary = `Avoid repeating earlier content; focus only on new insights for ${sectionContext.title}.`
           const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
-          result = await runWithCitationContext({
-            projectId,
-            userId,
-            citationStyle: 'apa',
-            baseUrl: baseUrl || 'http://localhost:3000'
-          }, async () => {
-            return await generateWithUnifiedTemplate({
-              context: sectionContext,
-              options: {
-                temperature: config.temperature || 0.2,
-                maxTokens: perSectionTokens,
-                forceRewrite: true,
-                rewriteText: result.content,
-                previousSectionsSummary: prevSummary,
-                outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n')
-              }
-            })
+          result = await generateWithUnifiedTemplate({
+            context: sectionContext,
+            options: {
+              temperature: config.temperature || 0.2,
+              maxTokens: perSectionTokens,
+              forceRewrite: true,
+              rewriteText: result.content,
+              previousSectionsSummary: prevSummary,
+              outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n')
+            }
           })
         } catch (rewriteError) {
-          console.warn(`Rewrite failed for ${sectionContext.title}:`, rewriteError)
+          warn({ section: sectionContext.title, error: rewriteError }, 'Rewrite failed')
         }
       }
       
@@ -270,8 +422,8 @@ export async function generatePaper(
         if (!review.passed) {
           qualityIssues.push(`${sectionContext.title}: ${review.issues.join(', ')}`)
         }
-      } catch (error) {
-        console.warn(`Quality review failed for ${sectionContext.title}:`, error)
+      } catch (err) {
+        warn({ section: sectionContext.title, error: err }, 'Quality review failed')
         // Use a default score if review fails
         totalQualityScore += 75
       }
@@ -285,24 +437,106 @@ export async function generatePaper(
         )
         
         if (!hallucinationCheck.passed) {
-          console.warn(`⚠️ Hallucination warning in ${sectionContext.title}: ${((1 - hallucinationCheck.score) * 100).toFixed(0)}% of claims may be ungrounded`)
-          qualityIssues.push(`${sectionContext.title}: ${((1 - hallucinationCheck.score) * 100).toFixed(0)}% potentially ungrounded claims`)
+          const ungroundedPct = ((1 - hallucinationCheck.score) * 100).toFixed(0)
+          warn({ section: sectionContext.title, ungroundedPct }, 'Hallucination warning: claims may be ungrounded')
+          qualityIssues.push(`${sectionContext.title}: ${ungroundedPct}% potentially ungrounded claims`)
           // Reduce quality score based on hallucination score
           totalQualityScore -= (1 - hallucinationCheck.score) * 15
         }
-      } catch (error) {
+      } catch (err) {
         // Don't fail on hallucination check errors - it's an enhancement
-        console.warn(`Hallucination check failed for ${sectionContext.title}:`, error)
+        warn({ section: sectionContext.title, error: err }, 'Hallucination check failed')
       }
       
-      fullContent += result.content + '\n\n'
+      // Verify section has proper markdown heading (prompt now instructs AI to include it)
+      let sectionContent = result.content.trim()
+      const sectionTitle = sectionContext.title
+      
+      // Check if content starts with a markdown heading
+      const startsWithHeading = /^##?\s+\w/.test(sectionContent)
+      
+      if (!startsWithHeading && sectionTitle) {
+        // Fallback: Add section heading if AI didn't include it
+        const isSubsection = sectionContext.sectionKey?.toString().includes('.')
+        const headingLevel = isSubsection ? '###' : '##'
+        sectionContent = `${headingLevel} ${sectionTitle}\n\n${sectionContent}`
+        warn({ section: sectionTitle }, 'AI did not include section heading - added automatically')
+      }
+      
+      fullContent += sectionContent + '\n\n'
       allCitations.push(...result.citations)
       completedSections++
     }
     
     const avgQualityScore = totalQualityScore / results.length
     
-    onProgress?.('saving', 95, 'Saving generated content...')
+    // Paper type validation - use profile-based validation for contextual accuracy
+    const profileValidation = validatePaperWithProfile(fullContent, paperProfile)
+    
+    if (!profileValidation.valid) {
+      warn({ 
+        paperType: config.paperType, 
+        discipline: paperProfile.discipline.primary,
+        issues: profileValidation.issues 
+      }, 'Profile-based validation issues detected')
+      qualityIssues.push(...profileValidation.issues)
+    }
+    
+    if (profileValidation.warnings.length > 0) {
+      info({ warnings: profileValidation.warnings }, 'Profile validation warnings')
+    }
+    
+    // Log section and citation analysis for debugging
+    info({
+      foundSections: profileValidation.sectionAnalysis.found,
+      missingSections: profileValidation.sectionAnalysis.missing,
+      uniqueSources: profileValidation.citationAnalysis.uniqueSourceCount,
+      requiredSources: profileValidation.citationAnalysis.minimumRequired,
+      citationsAdequate: profileValidation.citationAnalysis.adequate,
+      validationScore: profileValidation.score
+    }, 'Paper profile validation analysis')
+    
+    // Also run legacy validation for comparison during transition
+    const hasOriginalResearch = config.originalResearch?.has_original_research || false
+    const legacyValidation = validatePaperType(fullContent, config.paperType, hasOriginalResearch)
+    
+    if (!legacyValidation.valid && profileValidation.valid) {
+      // Log discrepancy for monitoring - profile validation should be more accurate
+      info({
+        legacyIssues: legacyValidation.issues,
+        profilePassed: true
+      }, 'Legacy validation flagged issues that profile validation passed - profile takes precedence')
+    }
+    
+    onProgress?.('saving', 95, 'Processing citations and saving content...')
+    
+    // Process [CITE: paper_id] markers and replace with formatted citations
+    if (hasCitationMarkers(fullContent)) {
+      info({ markers: fullContent.match(/\[CITE:\s*[a-f0-9-]+\]/gi)?.length || 0 }, 'Processing citation markers')
+      
+      // Get the citation style for this project (project setting > user default > 'apa')
+      const citationStyle = await getProjectCitationStyle(projectId, userId)
+      info({ citationStyle }, 'Using citation style for paper generation')
+      
+      const citationResult = await processAndCleanCitations(fullContent, projectId, citationStyle)
+      
+      fullContent = citationResult.content
+      
+      // Log any citation errors
+      if (citationResult.errors.length > 0) {
+        warn({ errors: citationResult.errors }, 'Some citations could not be processed')
+      }
+      
+      // Add processed citations to allCitations
+      for (const citation of citationResult.citations) {
+        allCitations.push({
+          paperId: citation.paperId,
+          citationText: citation.citationText
+        })
+      }
+      
+      info({ processedCitations: citationResult.citations.length }, 'Citations processed successfully')
+    }
     
     // Create citations map with deterministic keys (paperId + hash for uniqueness)
     const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
@@ -332,6 +566,8 @@ export async function generatePaper(
       outline: typedOutline,
       sections: sectionContexts,
       citations: citationsMap,
+      profile: enhancedProfile,  // Return the enhanced profile with emergent themes
+      themeAnalysis,             // Include theme analysis for transparency
       metrics: {
         papersUsed: allPapers.length,
         sectionsGenerated: completedSections,
@@ -341,15 +577,15 @@ export async function generatePaper(
       }
     }
 
-  } catch (error) {
-    console.error('Pipeline error:', error)
+  } catch (err) {
+    logError({ error: err }, 'Pipeline error')
     
     // Clean up evidence tracker (use sync to avoid nested async issues)
     EvidenceTracker.clearLedgerSync(projectId)
     
     // Classify error for better reporting
-    const classified = classifyError(error)
-    console.error(`Pipeline failed with ${classified.category} error:`, classified.userMessage)
+    const classified = classifyError(err)
+    logError({ category: classified.category, message: classified.userMessage }, 'Pipeline failed')
     
     // Update project status to failed
     await updateResearchProjectStatus(projectId, 'failed' as PaperStatus)

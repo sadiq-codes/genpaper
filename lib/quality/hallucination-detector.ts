@@ -65,7 +65,6 @@ export function extractClaims(text: string): Claim[] {
   // Split into sentences
   const sentenceRegex = /[^.!?]+[.!?]+/g
   let match
-  let offset = 0
   
   while ((match = sentenceRegex.exec(text)) !== null) {
     const sentence = match[0].trim()

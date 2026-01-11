@@ -1,5 +1,6 @@
 import type { PaperTypeKey } from './types';
-import { ai } from '@/lib/ai/vercel-client';
+import type { PaperProfile } from '@/lib/generation/paper-profile-types';
+import { getLanguageModel } from '@/lib/ai/vercel-client';
 
 // Constants for consistent fallbacks
 export const DEFAULT_QUALITY_CRITERIA = [
@@ -58,9 +59,10 @@ interface GeneratedOutline {
 
 /**
  * Generate system prompt for outline creation
+ * Note: Specific section requirements are now profile-driven, not hardcoded here
  */
-export function generateOutlineSystemPrompt(paperType: PaperTypeKey): string {
-  return `You are an expert academic writer creating a research outline for a ${paperType}. Your task is to organize research into DISTINCT sections following academic structure, ensuring each section has a unique purpose and avoids repetition.
+export function generateOutlineSystemPrompt(paperType: PaperTypeKey, hasOriginalResearch: boolean = false): string {
+  const basePrompt = `You are an expert academic writer creating a research outline for a ${paperType}. Your task is to organize research into DISTINCT sections following academic structure, ensuring each section has a unique purpose and avoids repetition.
 
 Focus on creating a clear, logical structure that:
 1. Follows standard academic organization for this type of paper
@@ -68,7 +70,134 @@ Focus on creating a clear, logical structure that:
 3. Distributes content appropriately
 4. Avoids redundancy between sections
 
-Format your response as a valid JSON object following the schema shown in the user prompt.`;
+CRITICAL: If a PAPER PROFILE is provided in the user prompt, you MUST follow its constraints exactly:
+- Use ONLY the sections listed in the MANDATORY STRUCTURE
+- NEVER create sections listed in FORBIDDEN SECTIONS
+- Respect all GENRE RULES provided
+
+The paper profile is determined by analyzing the topic, paper type, and discipline - it contains context-aware requirements that override any generic assumptions.`
+
+  if (hasOriginalResearch) {
+    return `${basePrompt}
+
+NOTE: This paper presents ORIGINAL RESEARCH with data collection. The paper profile will specify the appropriate empirical sections (methodology, results, etc.) - follow those specifications exactly.
+
+The Results section presents the author's original data - do NOT cite external sources for original findings.
+
+Format your response as a valid JSON object following the schema shown in the user prompt.`
+  }
+
+  return `${basePrompt}
+
+Format your response as a valid JSON object following the schema shown in the user prompt.`
+}
+
+export interface OriginalResearchInput {
+  researchQuestion?: string
+  keyFindings?: string
+}
+
+/**
+ * Build profile guidance for outline generation
+ * Converts the paper profile into BINDING constraints that the outline generator MUST follow
+ */
+function buildOutlineProfileGuidance(profile: PaperProfile): string {
+  const sections = profile.structure.appropriateSections
+    .map(s => `- **${s.title}** (key: ${s.key}): ${s.purpose} [${s.minWords}-${s.maxWords} words]`)
+    .join('\n')
+  
+  const inappropriate = profile.structure.inappropriateSections
+    .map(s => `- "${s.name}": ${s.reason}`)
+    .join('\n')
+  
+  const genreRules = profile.genreRules
+    .map(r => `- ${r.rule} (Rationale: ${r.rationale})`)
+    .join('\n')
+  
+  const themes = profile.coverage.requiredThemes.join(', ')
+  
+  // Determine if this paper type needs literature review organizational guidance
+  const needsLitReviewGuidance = profile.paperType === 'literatureReview' || 
+    profile.structure.appropriateSections.some(s => 
+      s.key.toLowerCase().includes('literature') || s.key.toLowerCase().includes('review')
+    )
+  
+  // NOTE: If themeGuidance is provided (from actual literature analysis), it will be appended
+  // to this profile guidance. The theme guidance contains EMERGENT themes from the collected
+  // papers, which should take priority over these generic organizational suggestions.
+  const litReviewOrgGuidance = needsLitReviewGuidance ? `
+
+LITERATURE REVIEW ORGANIZATIONAL APPROACH:
+When creating the outline for the literature review section(s), choose the most appropriate structure:
+
+1. **THEMATIC** - Organize by recurring themes or concepts
+   Best for: Multi-faceted topics with distinct sub-areas
+   Create subsections for each major theme (e.g., "Economic Factors", "Social Factors", "Policy Implications")
+
+2. **CHRONOLOGICAL** - Trace development of ideas over time
+   Best for: Topics with clear historical evolution
+   Create subsections for different time periods or phases of development
+
+3. **METHODOLOGICAL** - Compare different research approaches
+   Best for: Topics studied using diverse methods
+   Create subsections comparing qualitative vs. quantitative findings, or different methodological schools
+
+4. **THEORETICAL** - Organize by competing theories or frameworks
+   Best for: Topics with multiple theoretical perspectives
+   Create subsections for each major theoretical approach
+
+Choose based on what best illuminates the topic. For complex topics, you may combine approaches
+(e.g., thematic overall with chronological development within each theme).
+
+IMPORTANT: If a THEME ANALYSIS FROM COLLECTED LITERATURE section appears below, use those
+EMERGENT THEMES as the basis for your section structure. The themes identified from actual
+literature analysis are more accurate than generic assumptions. Create subsections that
+align with the themes, debates, and organizational approach recommended by the analysis.
+
+Generate meaningful subsection titles that reflect the actual content themes identified from the topic.
+Do NOT use generic titles like "Theme 1" or "Section A" - use descriptive titles.
+` : ''
+
+  const guidance = `
+═══════════════════════════════════════════════════════════════════════════════
+MANDATORY PAPER PROFILE CONSTRAINTS - YOU MUST FOLLOW THESE EXACTLY
+═══════════════════════════════════════════════════════════════════════════════
+
+This is a ${profile.paperType} in ${profile.discipline.primary}.
+
+MANDATORY STRUCTURE - USE ONLY THESE SECTIONS:
+Your outline MUST use sections from this list. Do not invent other sections.
+${sections}
+
+FORBIDDEN SECTIONS - DO NOT CREATE THESE UNDER ANY CIRCUMSTANCES:
+The following sections are INAPPROPRIATE for this paper type and MUST NOT appear:
+${inappropriate || 'None specified'}
+
+If you create any of the forbidden sections, the paper will be REJECTED.
+
+GENRE RULES - INVIOLABLE CONSTRAINTS:
+${genreRules || 'Follow standard academic conventions for this paper type.'}
+
+REQUIRED THEME COVERAGE:
+The paper must address these themes: ${themes || 'As appropriate for the topic'}
+${litReviewOrgGuidance}
+DISCIPLINE CONTEXT:
+- Field: ${profile.discipline.primary}
+- Related fields: ${profile.discipline.related.join(', ')}
+- Pace of change: ${profile.discipline.fieldCharacteristics.paceOfChange}
+- Theory vs Empirical balance: ${profile.discipline.fieldCharacteristics.theoryVsEmpirical}
+- Practitioner relevance: ${profile.discipline.fieldCharacteristics.practitionerRelevance}
+
+SOURCE EXPECTATIONS:
+- Minimum unique sources required: ${profile.sourceExpectations.minimumUniqueSources}
+- Ideal source count: ${profile.sourceExpectations.idealSourceCount}
+- Recency profile: ${profile.sourceExpectations.recencyProfile}
+
+═══════════════════════════════════════════════════════════════════════════════
+CREATE YOUR OUTLINE USING ONLY THE MANDATORY SECTIONS ABOVE
+═══════════════════════════════════════════════════════════════════════════════`
+
+  return guidance
 }
 
 /**
@@ -77,35 +206,71 @@ Format your response as a valid JSON object following the schema shown in the us
 export function generateOutlineUserPrompt(
   paperType: PaperTypeKey, 
   topic: string,
-  sourcePaperIds: string[] = []
+  sourcePaperIds: string[] = [],
+  originalResearch?: OriginalResearchInput,
+  profileGuidance?: string
 ): string {
   const paperIdsList = sourcePaperIds.length > 0 
     ? `AVAILABLE SOURCE PAPER IDs:
 [${sourcePaperIds.map(id => `"${id}"`).join(', ')}]
 
 You MUST distribute these paper IDs among the sections you create, assigning each paper to the section(s) where it is most relevant. Each paper can be assigned to multiple sections if appropriate.`
-    : 'No source papers are available for this outline.';
+    : 'No source papers are available for this outline.'
+
+  // Original research context - provides the research question and findings but does NOT prescribe sections
+  // The paper profile will determine appropriate sections based on discipline and context
+  const originalResearchBlock = originalResearch?.researchQuestion ? `
+ORIGINAL RESEARCH CONTEXT:
+This paper presents ORIGINAL RESEARCH. You must incorporate:
+
+Research Question: "${originalResearch.researchQuestion}"
+${originalResearch.keyFindings ? `Key Findings to Present: "${originalResearch.keyFindings}"` : ''}
+
+The paper profile below specifies which sections are appropriate for presenting this original research.
+For Results/Findings sections: present YOUR data without external citations.
+For Methodology sections: describe YOUR procedures (only cite external sources for established methods you reference).
+` : ''
+
+  // If profile guidance is provided, emphasize it as the primary constraint
+  const profileBlock = profileGuidance ? `
+${profileGuidance}
+
+CRITICAL INSTRUCTION:
+The PAPER PROFILE above is your PRIMARY constraint. You MUST:
+1. Create sections ONLY from the MANDATORY STRUCTURE list
+2. NEVER create sections from the FORBIDDEN SECTIONS list
+3. Follow ALL GENRE RULES exactly
+
+If the profile says a section type is forbidden, DO NOT CREATE IT regardless of what seems "standard".
+The profile is context-aware and knows what is appropriate for this specific paper type and discipline.
+` : ''
 
   return `You are an expert academic writer specializing in the field relevant to the topic: "${topic}". 
 Your task is to generate a logical and conventional outline for a ${paperType}.
 
 ${paperIdsList}
+${originalResearchBlock}
+${profileBlock}
 
 Respond with NOTHING BUT a single, valid JSON object.
 
 The JSON object must contain a "sections" array. Each object in the array must have the following keys:
-* sectionKey: A camelCase identifier for the section (e.g., 'introduction', 'thematicAnalysis')
+* sectionKey: A camelCase identifier for the section (use keys from the MANDATORY STRUCTURE if a profile is provided)
 * title: A descriptive title for the section
-* expectedWords: Your estimated word count for this section
+* expectedWords: Your estimated word count for this section (use ranges from the profile if provided)
 * keyPoints: An array of key objectives or questions this section should address
-* candidatePaperIds: An array of the paper IDs from the list above that are most relevant to this section
+* candidatePaperIds: An array of the MOST RELEVANT paper IDs for this section (MAXIMUM 10-15 papers per section)
 * disciplineContext: A brief explanation of why this section is important in this specific field/discipline
 
-Determine the most appropriate sections and their order based on your expert knowledge of the discipline.
-Consider the conventions and expectations of the field when structuring the outline.
+CRITICAL CONSTRAINT FOR candidatePaperIds:
+- Include ONLY the 10-15 MOST relevant papers per section
+- Do NOT include all available papers - be selective
+- Choose papers that best support the section's key points
+- Quality over quantity - fewer, highly relevant papers are better than many loosely related ones
 
-For example, a theoretical mathematics paper might use theorem-proof structures,
-while a humanities essay might use thematic sections.
+IMPORTANT: If a PAPER PROFILE was provided above, your outline MUST match its structure exactly.
+Do not add sections that are not in the MANDATORY STRUCTURE.
+Do not create ANY section that appears in the FORBIDDEN SECTIONS list.
 
 Your response must be valid JSON that matches this TypeScript type:
 {
@@ -114,7 +279,7 @@ Your response must be valid JSON that matches this TypeScript type:
     title: string;
     expectedWords: number;
     keyPoints: string[];
-    candidatePaperIds: string[];
+    candidatePaperIds: string[];  // MAX 15 papers per section
     disciplineContext: string;
   }>
 }`
@@ -163,7 +328,7 @@ Examples of discipline-specific criteria:
 
 Respond with NOTHING BUT a JSON array of strings, each describing one quality criterion specific to this field and section type.`;
 
-  const model = ai.languageModel('gpt-4o');
+  const model = getLanguageModel();
 
   try {
     const response = await model.doGenerate({
@@ -306,6 +471,9 @@ ${qualityCriteria.map(c => `    "${c}": "How this criterion will be addressed"`)
  * @param paperType - Type of academic paper (researchArticle, review, etc.)
  * @param topic - The research topic or question
  * @param sourcePaperIds - Array of available paper IDs to distribute among sections
+ * @param originalResearch - Optional original research context (research question, key findings)
+ * @param profile - Optional paper profile for contextual guidance
+ * @param themeGuidance - Optional theme analysis guidance from actual literature (Scribbr-aligned)
  * @returns Promise resolving to structured outline with sections and paper assignments
  * 
  * @example
@@ -313,7 +481,8 @@ ${qualityCriteria.map(c => `    "${c}": "How this criterion will be addressed"`)
  * const outline = await generateOutline(
  *   "researchArticle", 
  *   "Impact of AI on Healthcare",
- *   ["paper-1", "paper-2", "paper-3"]
+ *   ["paper-1", "paper-2", "paper-3"],
+ *   { researchQuestion: "How does AI improve diagnostic accuracy?", keyFindings: "AI improved accuracy by 23%" }
  * );
  * // Returns: { sections: [{ sectionKey: "introduction", candidatePaperIds: ["paper-1"], ... }] }
  * ```
@@ -323,12 +492,25 @@ ${qualityCriteria.map(c => `    "${c}": "How this criterion will be addressed"`)
 export async function generateOutline(
   paperType: PaperTypeKey,
   topic: string,
-  sourcePaperIds: string[] = []
+  sourcePaperIds: string[] = [],
+  originalResearch?: OriginalResearchInput,
+  profile?: PaperProfile,
+  themeGuidance?: string
 ): Promise<GeneratedOutline> {
-  const systemPrompt = generateOutlineSystemPrompt(paperType);
-  const userPrompt = generateOutlineUserPrompt(paperType, topic, sourcePaperIds);
+  const hasOriginalResearch = Boolean(originalResearch?.researchQuestion);
+  const systemPrompt = generateOutlineSystemPrompt(paperType, hasOriginalResearch);
+  
+  // Build profile guidance if profile is provided
+  const profileGuidance = profile ? buildOutlineProfileGuidance(profile) : '';
+  
+  // Combine profile guidance with theme guidance if available
+  const combinedGuidance = themeGuidance 
+    ? `${profileGuidance}\n\n${themeGuidance}`
+    : profileGuidance;
+  
+  const userPrompt = generateOutlineUserPrompt(paperType, topic, sourcePaperIds, originalResearch, combinedGuidance);
 
-  const model = ai.languageModel('gpt-4o');
+  const model = getLanguageModel();
 
   const response = await model.doGenerate({
     inputFormat: 'messages',
@@ -371,8 +553,18 @@ export async function generateOutline(
       { role: 'user', content: [{ type: 'text' as const, text: userPrompt }] },
     ],
     temperature: 0.2,
-    maxTokens: 2000, // Increased to handle larger outlines with many papers
+    maxTokens: 4000, // Increased from 2000 to handle outlines with paper IDs
   });
+
+  // Check for truncation (finishReason: "length") before parsing
+  // Note: Cast to string to handle different type definitions across AI SDK versions
+  const finishReason = response.finishReason as string
+  if (finishReason === 'length') {
+    console.error('Outline generation was truncated due to max_tokens limit');
+    console.error('Prompt tokens:', response.usage?.promptTokens);
+    console.error('Completion tokens:', response.usage?.completionTokens);
+    throw new Error('Outline generation was truncated. The response exceeded the token limit. Try reducing the number of source papers.');
+  }
 
   // Try to parse the structured response
   let outline: GeneratedOutline;
@@ -388,6 +580,11 @@ export async function generateOutline(
       throw new Error('No response text from model');
     }
   } catch (parseError) {
+    // Check if this was due to truncation
+    if (finishReason === 'length') {
+      console.error('Outline generation was truncated - JSON incomplete');
+      throw new Error('Outline generation was truncated due to token limit');
+    }
     console.error('Outline generation failed - JSON parsing error');
     console.error('Response text:', response.text);
     console.error('Parse error:', parseError);

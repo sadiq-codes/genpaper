@@ -19,11 +19,46 @@ import {
   PenLine, 
   Trash2,
   ExternalLink,
-  Clock
+  Clock,
+  BookOpen,
+  FlaskConical,
+  GraduationCap,
+  ScrollText,
+  Briefcase,
+  type LucideIcon,
 } from 'lucide-react'
 import { deleteProjectAction } from '@/components/dashboard/actions'
 import { cn } from '@/lib/utils'
-import type { ResearchProjectWithLatestVersion } from '@/types/simplified'
+import type { ResearchProjectWithLatestVersion, PaperTypeKey, GenerationConfig } from '@/types/simplified'
+
+// Paper type display configuration
+const paperTypeConfig: Record<PaperTypeKey, { icon: LucideIcon; label: string; color: string }> = {
+  literatureReview: { 
+    icon: BookOpen, 
+    label: 'Literature Review', 
+    color: 'text-blue-600 bg-blue-50 border-blue-200' 
+  },
+  researchArticle: { 
+    icon: FlaskConical, 
+    label: 'Research Article', 
+    color: 'text-amber-600 bg-amber-50 border-amber-200' 
+  },
+  mastersThesis: { 
+    icon: GraduationCap, 
+    label: "Master's Thesis", 
+    color: 'text-purple-600 bg-purple-50 border-purple-200' 
+  },
+  phdDissertation: { 
+    icon: ScrollText, 
+    label: 'PhD Dissertation', 
+    color: 'text-indigo-600 bg-indigo-50 border-indigo-200' 
+  },
+  capstoneProject: { 
+    icon: Briefcase, 
+    label: 'Capstone Project', 
+    color: 'text-teal-600 bg-teal-50 border-teal-200' 
+  },
+}
 
 interface ProjectCardProps {
   project: ResearchProjectWithLatestVersion
@@ -33,8 +68,26 @@ interface ProjectCardProps {
 
 export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: ProjectCardProps) {
   const router = useRouter()
-  const [isPending, startTransition] = useTransition()
+  const [_isPending, startTransition] = useTransition()
   const [isDeleting, setIsDeleting] = useState(false)
+
+  // Get paper type from project (check both direct field and generation_config)
+  const getPaperType = (): PaperTypeKey | undefined => {
+    if (project.paper_type) return project.paper_type
+    const config = project.generation_config as GenerationConfig | undefined
+    return config?.paper_settings?.paperType || config?.paperType
+  }
+
+  // Check if project has original research
+  const hasOriginalResearch = (): boolean => {
+    if (project.has_original_research) return true
+    const config = project.generation_config as GenerationConfig | undefined
+    return config?.original_research?.has_original_research || false
+  }
+
+  const paperType = getPaperType()
+  const isOriginalResearch = hasOriginalResearch()
+  const typeConfig = paperType ? paperTypeConfig[paperType] : null
 
   const handleClick = () => {
     router.push(`/editor/${project.id}`)
@@ -155,6 +208,30 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
       </CardHeader>
       
       <CardContent className="pt-0 space-y-3">
+        {/* Paper type and original research indicators */}
+        {(typeConfig || isOriginalResearch) && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {typeConfig && (
+              <Badge 
+                variant="outline" 
+                className={cn("text-[10px] px-1.5 py-0 h-5 font-normal gap-1", typeConfig.color)}
+              >
+                <typeConfig.icon className="h-3 w-3" />
+                {typeConfig.label}
+              </Badge>
+            )}
+            {isOriginalResearch && (
+              <Badge 
+                variant="outline" 
+                className="text-[10px] px-1.5 py-0 h-5 font-normal gap-1 text-amber-700 bg-amber-50 border-amber-300"
+              >
+                <FlaskConical className="h-3 w-3" />
+                Original Research
+              </Badge>
+            )}
+          </div>
+        )}
+
         {/* Stats row */}
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <span className="flex items-center gap-1.5">

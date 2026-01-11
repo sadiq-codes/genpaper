@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 interface GenerationProgressProps {
   projectId: string
   topic: string
+  paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
   onComplete: (content: string) => void
   onError: (error: string) => void
   onCancel?: () => void
@@ -50,12 +51,15 @@ const ORDERED_STAGES = ['search', 'outline', 'context', 'generation', 'quality',
 export function GenerationProgress({
   projectId,
   topic,
+  paperType = 'literatureReview',
   onComplete,
   onError,
   onCancel
 }: GenerationProgressProps) {
+  console.log('🎬 GenerationProgress component mounted/rendered for project:', projectId, 'paperType:', paperType)
+  
   const [progress, setProgress] = useState(0)
-  const [currentStage, setCurrentStage] = useState<string>('start')
+  const [_currentStage, setCurrentStage] = useState<string>('start')
   const [message, setMessage] = useState('Starting paper generation...')
   const [stages, setStages] = useState<ProgressStage[]>(
     ORDERED_STAGES.map(id => ({
@@ -73,6 +77,7 @@ export function GenerationProgress({
   
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasCompletedRef = useRef(false)
+  const connectionIdRef = useRef<string | null>(null) // Track which projectId we connected for
 
   // Update stage statuses based on current stage
   const updateStageStatuses = useCallback((activeStage: string) => {
@@ -90,21 +95,45 @@ export function GenerationProgress({
   }, [])
 
   useEffect(() => {
-    if (hasCompletedRef.current) return
+    // Prevent duplicate connections for the same project
+    // But allow new connections if projectId changes
+    if (hasCompletedRef.current) {
+      console.log('⏭️ Skipping EventSource - generation already completed')
+      return
+    }
+    if (connectionIdRef.current === projectId) {
+      console.log('⏭️ Skipping EventSource - already connected for project:', projectId)
+      return
+    }
+    
+    // Close any existing connection before starting new one
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+    
+    connectionIdRef.current = projectId
 
     // Build URL for EventSource
     const params = new URLSearchParams({
       topic,
       projectId,
       length: 'medium',
-      paperType: 'researchArticle'
+      paperType
     })
     
+    console.log('🚀 Starting EventSource connection for project:', projectId)
+    console.log('🔗 EventSource URL:', `/api/generate?${params.toString()}`)
     const eventSource = new EventSource(`/api/generate?${params.toString()}`)
     eventSourceRef.current = eventSource
 
+    eventSource.onopen = () => {
+      console.log('✅ EventSource connection opened for project:', projectId)
+    }
+
     eventSource.onmessage = (event) => {
       try {
+        console.log('📨 SSE message received:', event.data.slice(0, 100))
         const data = JSON.parse(event.data)
         
         switch (data.type) {
@@ -158,7 +187,8 @@ export function GenerationProgress({
       }
     }
 
-    eventSource.onerror = () => {
+    eventSource.onerror = (err) => {
+      console.error('❌ EventSource error for project:', projectId, err)
       if (!hasCompletedRef.current) {
         setError('Connection lost. Please refresh and try again.')
         onError('Connection lost')
@@ -167,8 +197,11 @@ export function GenerationProgress({
     }
 
     return () => {
+      console.log('🔌 Closing EventSource connection for project:', projectId)
       eventSource.close()
       eventSourceRef.current = null
+      // Reset connectionIdRef to allow reconnection after cleanup (important for React Strict Mode)
+      connectionIdRef.current = null
     }
   }, [projectId, topic, onComplete, onError, updateStageStatuses])
 

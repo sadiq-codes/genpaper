@@ -21,7 +21,27 @@ export interface TextChunk {
 }
 
 /**
+ * Fallback token estimation when tiktoken is unavailable
+ * Uses a simple heuristic: ~4 characters per token for English text
+ * This is less accurate but provides a reasonable estimate
+ */
+function estimateTokenCount(text: string): number {
+  // Average of ~4 chars per token for English, slightly higher for mixed content
+  // Also account for whitespace and punctuation which often form separate tokens
+  const words = text.split(/\s+/).filter(w => w.length > 0)
+  const avgCharsPerToken = 4
+  const charBasedEstimate = Math.ceil(text.length / avgCharsPerToken)
+  
+  // Word-based estimate (words often map to 1-2 tokens)
+  const wordBasedEstimate = Math.ceil(words.length * 1.3)
+  
+  // Return the average of both estimates for better accuracy
+  return Math.ceil((charBasedEstimate + wordBasedEstimate) / 2)
+}
+
+/**
  * Get precise token count using tiktoken (reliable implementation)
+ * Falls back to estimation if tiktoken is unavailable (e.g., WASM loading issues)
  */
 export async function getTokenCount(text: string): Promise<number> {
   let encoder: any = null
@@ -31,7 +51,9 @@ export async function getTokenCount(text: string): Promise<number> {
     const tokens = encoder.encode(text)
     return tokens.length
   } catch (error) {
-    throw new Error(`Failed to count tokens with tiktoken: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    // Log warning once and fall back to estimation
+    console.warn(`tiktoken unavailable, using estimation: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    return estimateTokenCount(text)
   } finally {
     // Always free the encoder in finally block to prevent memory leaks
     if (encoder) {

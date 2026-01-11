@@ -321,8 +321,24 @@ export class SectionReviewer {
   }
   
   private static checkCitationCoverage(citations: Array<{ paperId: string }>): number {
-    const citationsPerSection = citations.length / 5 // Assume ~5 sections
-    return Math.min(100, citationsPerSection * 20) // 5 citations per section = 100%
+    // Count unique citations across the paper
+    const uniqueCitations = new Set(citations.map(c => c.paperId)).size
+    
+    // Score based on citation diversity relative to total citations
+    // If all citations are unique (good diversity), score is high
+    // If many duplicate citations (poor diversity), score is lower
+    const diversityRatio = citations.length > 0 
+      ? uniqueCitations / citations.length 
+      : 0
+    
+    // Also consider absolute count - more unique sources is generally better
+    // Score combines diversity (how varied) with breadth (how many)
+    // A paper with 20 unique citations scores higher than one with 5
+    const breadthScore = Math.min(100, uniqueCitations * 5)  // 20 unique = 100
+    const diversityScore = diversityRatio * 100
+    
+    // Weighted: 60% breadth, 40% diversity
+    return Math.round(breadthScore * 0.6 + diversityScore * 0.4)
   }
   
   private static extractFactualClaims(content: string): number {

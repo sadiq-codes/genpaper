@@ -3,7 +3,7 @@
  * Eliminates duplicate data transformation logic between server and client operations
  */
 
-import type { Paper, LibraryPaper, Author } from '@/types/simplified'
+import type { LibraryPaper, Author } from '@/types/simplified'
 import { Tables } from '@/types/supabase'
 
 // Proper types for Supabase relationships

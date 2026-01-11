@@ -120,16 +120,6 @@ export const logError = (error: Error, context: Record<string, unknown> = {}) =>
   }, `Error: ${error.message}`)
 }
 
-// 🆕 User journey tracking for UX optimization
-export const logUserAction = (action: string, userId: string, metadata: Record<string, unknown> = {}) => {
-  logger.info({
-    type: 'user_action',
-    action,
-    user_id: userId,
-    ...metadata
-  }, `User action: ${action}`)
-}
-
 // 🆕 Pipeline stage logging
 interface PipelineStageLog {
   projectId: string
@@ -173,27 +163,6 @@ export const logRAGRetrieval = (log: RAGRetrievalLog) => {
     duration_ms: log.durationMs,
     cache_hit: log.cacheHit
   }, `RAG: ${log.chunksRetrieved} chunks, ${log.claimsRetrieved || 0} claims (${log.durationMs}ms)`)
-}
-
-// 🆕 Quality check logging
-interface QualityCheckLog {
-  projectId: string
-  sectionTitle: string
-  score: number
-  issues: string[]
-  passed: boolean
-}
-
-export const logQualityCheck = (log: QualityCheckLog) => {
-  const level = log.passed ? 'info' : 'warn'
-  logger[level]({
-    type: 'quality_check',
-    project_id: log.projectId,
-    section: log.sectionTitle,
-    score: log.score,
-    issues: log.issues,
-    passed: log.passed
-  }, `Quality: ${log.sectionTitle} scored ${log.score}${log.passed ? '' : ' (FAILED)'}`)
 }
 
 // 🆕 Hallucination detection logging
@@ -249,7 +218,6 @@ export type {
   PDFMetrics,
   PipelineStageLog,
   RAGRetrievalLog,
-  QualityCheckLog,
   HallucinationCheckLog,
   SectionGenerationLog
 }

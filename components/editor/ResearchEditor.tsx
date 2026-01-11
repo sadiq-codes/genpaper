@@ -6,6 +6,7 @@ import { EditorTopNav } from './EditorTopNav'
 import { EditorSidebar } from './sidebar/EditorSidebar'
 import { DocumentEditor } from './document/DocumentEditor'
 import LibraryDrawer from '@/components/ui/library-drawer'
+import { ProjectSettingsModal } from './ProjectSettingsModal'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -15,7 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
+
 import { ChevronLeft, ChevronRight, Menu, X, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import type { 
@@ -35,6 +36,7 @@ interface ResearchEditorProps {
   projectId?: string
   projectTitle?: string
   projectTopic?: string
+  paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
   initialContent?: string
   initialPapers?: ProjectPaper[]
   initialAnalysis?: {
@@ -50,6 +52,7 @@ export function ResearchEditor({
   projectId,
   projectTitle = 'Untitled Document',
   projectTopic,
+  paperType = 'literatureReview',
   initialContent,
   initialPapers = [],
   initialAnalysis,
@@ -60,7 +63,6 @@ export function ResearchEditor({
   const [editor, setEditor] = useState<Editor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeTab, setActiveTab] = useState<'chat' | 'research'>('research')
-  const [autocompleteEnabled, setAutocompleteEnabled] = useState(true)
   
   // Mobile state
   const [isMobile, setIsMobile] = useState(false)
@@ -74,12 +76,18 @@ export function ResearchEditor({
   const [papers, setPapers] = useState<ProjectPaper[]>(initialPapers)
   const [libraryDrawerOpen, setLibraryDrawerOpen] = useState(false)
   
+  // Settings modal state
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false)
+  
   // Analysis state
   const [analysisState, setAnalysisState] = useState<AnalysisState>({
     status: initialAnalysis ? 'complete' : 'idle',
     claims: initialAnalysis?.claims || [],
+    userClaims: [],  // Will be populated when hasOriginalResearch
     gaps: initialAnalysis?.gaps || [],
     synthesis: initialAnalysis?.synthesis || null,
+    positioning: null,
+    hasOriginalResearch: false,
   })
   
   // Remove paper confirmation dialog
@@ -95,6 +103,19 @@ export function ResearchEditor({
   
   // Generation state
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
+  
+  // Debug: Log paperType on mount
+  useEffect(() => {
+    console.log('📝 ResearchEditor mounted with paperType:', paperType)
+  }, [paperType])
+  
+  // Sync isGenerating with prop changes (important for SSR hydration)
+  useEffect(() => {
+    if (initialIsGenerating) {
+      console.log('🔄 Setting isGenerating to true from prop')
+      setIsGenerating(true)
+    }
+  }, [initialIsGenerating])
 
   // Check for mobile on mount and resize
   useEffect(() => {
@@ -211,13 +232,18 @@ export function ResearchEditor({
           allClaims.push(...paperClaims)
         }
 
-        setAnalysisState({
+        setAnalysisState(prev => ({
+          ...prev,
           status: 'complete',
           claims: allClaims,
           gaps: data.gaps || [],
           synthesis: data.analyses?.find((a: AnalysisOutput) => a.analysis_type === 'synthesis') || null,
           lastAnalyzedAt: new Date().toISOString(),
-        })
+          // Preserve or update user claims and positioning from response
+          userClaims: data.userClaims || prev.userClaims || [],
+          positioning: data.positioning || prev.positioning || null,
+          hasOriginalResearch: data.hasOriginalResearch || prev.hasOriginalResearch || false,
+        }))
 
         toast.success('Analysis complete', {
           description: `${allClaims.length} claims extracted, ${(data.gaps || []).length} gaps found`,
@@ -294,7 +320,7 @@ export function ResearchEditor({
   const confirmRemovePaper = useCallback(async (deleteClaims: boolean) => {
     if (!projectId) return
 
-    const { paperId, paperTitle } = removePaperDialog
+    const { paperId } = removePaperDialog
 
     try {
       const response = await fetch(
@@ -505,13 +531,40 @@ export function ResearchEditor({
   // Handle generation completion - update editor content
   const handleGenerationComplete = useCallback((generatedContent: string) => {
     setIsGenerating(false)
-    setContent(generatedContent)
     
     // Update editor if it's ready
     if (editor && !editor.isDestroyed) {
-      // Process the markdown content to HTML
-      const processedContent = processContent(generatedContent, papers)
-      editor.commands.setContent(processedContent)
+      // Process the markdown content to TipTap JSON
+      const { json, isFullDoc } = processContent(generatedContent, papers)
+      
+      if (isFullDoc && json) {
+        // Full document structure from markdown processing
+        editor.commands.setContent(json)
+      } else if (Array.isArray(json) && json.length > 0) {
+        // Content fragment - wrap in doc structure
+        editor.commands.setContent({
+          type: 'doc',
+          content: [{ type: 'paragraph', content: json }]
+        })
+      } else {
+        // Fallback: wrap raw content as plain text node to avoid HTML parsing issues
+        // This handles edge cases where processContent returns empty/invalid json
+        editor.commands.setContent({
+          type: 'doc',
+          content: [{ 
+            type: 'paragraph', 
+            content: [{ type: 'text', text: generatedContent }] 
+          }]
+        })
+      }
+      
+      // IMPORTANT: Save the HTML from editor, not raw markdown
+      // This ensures proper formatting is preserved in the database
+      const htmlContent = editor.getHTML()
+      setContent(htmlContent)
+    } else {
+      // Editor not ready - save raw content as fallback
+      setContent(generatedContent)
     }
     
     toast.success('Paper generated successfully!')
@@ -567,7 +620,8 @@ export function ResearchEditor({
         onExport={handleExport}
         onPublish={() => toast.info('Publish feature coming soon')}
         onHistory={() => toast.info('History feature coming soon')}
-        onSettings={() => toast.info('Settings feature coming soon')}
+        onSettings={() => setSettingsModalOpen(true)}
+        saveStatus={hasUnsavedChanges ? 'unsaved' : 'saved'}
       />
 
       {/* Generation Progress Overlay */}
@@ -575,6 +629,7 @@ export function ResearchEditor({
         <GenerationProgress
           projectId={projectId}
           topic={projectTopic || projectTitle}
+          paperType={paperType}
           onComplete={handleGenerationComplete}
           onError={handleGenerationError}
           onCancel={handleGenerationCancel}
@@ -648,8 +703,6 @@ export function ResearchEditor({
               initialContent={initialContent}
               onUpdate={setContent}
               onEditorReady={setEditor}
-              autocompleteEnabled={autocompleteEnabled}
-              onAutocompleteChange={setAutocompleteEnabled}
               onInsertCitation={() => setActiveTab('research')}
               onAiEdit={handleAiEdit}
               onChat={handleChatFromToolbar}
@@ -657,7 +710,6 @@ export function ResearchEditor({
               projectId={projectId}
               projectTopic={projectTitle}
               papers={papers}
-              claims={analysisState.claims}
             />
           </div>
         </div>
@@ -670,6 +722,15 @@ export function ResearchEditor({
         onAddToProject={handleAddPaperToProject}
         currentProjectId={projectId}
       />
+
+      {/* Project Settings Modal */}
+      {projectId && (
+        <ProjectSettingsModal
+          open={settingsModalOpen}
+          onOpenChange={setSettingsModalOpen}
+          projectId={projectId}
+        />
+      )}
 
       {/* Remove Paper Confirmation Dialog */}
       <Dialog 

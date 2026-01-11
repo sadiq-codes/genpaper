@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { 
   FolderOpen,
   Library,
-  LogOut
+  LogOut,
+  Settings
 } from 'lucide-react'
 import {
   Sidebar,
@@ -35,6 +36,11 @@ const navigation = [
     title: 'Library',
     url: '/library',
     icon: Library,
+  },
+  {
+    title: 'Settings',
+    url: '/settings',
+    icon: Settings,
   },
 ]
 

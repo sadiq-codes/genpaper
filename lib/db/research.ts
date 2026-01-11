@@ -24,13 +24,34 @@ export async function createResearchProject(
   // Ensure profile exists before creating project
   await ensureProfileExists(userId)
   
+  // Extract paper_type from generation config if present
+  const paperType = (generationConfig?.paper_settings as Record<string, unknown>)?.paperType as string | undefined
+  
+  // Validate paperType was successfully extracted
+  if (!paperType) {
+    console.warn('⚠️ paperType extraction failed! Config structure:', JSON.stringify(generationConfig, null, 2))
+    console.warn('⚠️ Expected: generationConfig.paper_settings.paperType')
+    console.warn('⚠️ Falling back to literatureReview - this may be incorrect!')
+  }
+  
+  console.log('📝 Extracted paperType from config:', paperType || '(MISSING - using literatureReview fallback)')
+  
+  // Extract original research fields if present
+  const originalResearch = generationConfig?.original_research as Record<string, unknown> | undefined
+  
   const { data, error } = await supabase
     .from('research_projects')
     .insert({
       user_id: userId,
       topic,
       generation_config: generationConfig,
-      status: 'generating'
+      status: 'generating',
+      // Store paper_type directly in the column for easy access
+      paper_type: paperType || 'literatureReview',
+      // Store original research fields directly
+      has_original_research: originalResearch?.has_original_research || false,
+      research_question: originalResearch?.research_question as string | undefined,
+      key_findings: originalResearch?.key_findings as string | undefined,
     })
     .select()
     .single()
@@ -88,23 +109,46 @@ export async function updateProjectContent(
   
   // Save citations if provided
   if (citations) {
-    const citationInserts = Object.entries(citations).map(([key, citation]) => ({
-      project_id: projectId,
-      paper_id: citation.paperId,
-      citation_number: parseInt(key.replace('citation-', '')) + 1,
-      quote: citation.citationText
-    }))
+    // Deduplicate citations by paper_id to avoid "ON CONFLICT DO UPDATE cannot affect row a second time" error
+    // When the same paper is cited multiple times, we only need one entry per paper
+    const seenPaperIds = new Set<string>()
+    const citationInserts: Array<{
+      project_id: string
+      paper_id: string
+      citation_number: number
+      quote: string
+    }> = []
+    
+    for (const [key, citation] of Object.entries(citations)) {
+      // Skip if we've already seen this paper
+      if (seenPaperIds.has(citation.paperId)) {
+        continue
+      }
+      seenPaperIds.add(citation.paperId)
+      
+      citationInserts.push({
+        project_id: projectId,
+        paper_id: citation.paperId,
+        citation_number: parseInt(key.replace('citation-', '')) + 1,
+        quote: citation.citationText
+      })
+    }
     
     if (citationInserts.length > 0) {
+      // Use upsert to handle cases where citation already exists
+      // onConflict specifies the unique constraint columns
       const { error: citationError } = await supabase
         .from('project_citations')
-        .insert(citationInserts)
+        .upsert(citationInserts, {
+          onConflict: 'project_id,paper_id',
+          ignoreDuplicates: false // Update existing records
+        })
       
       if (citationError) {
         console.warn('⚠️ Failed to save citations:', citationError)
         // Don't throw - content was saved successfully
       } else {
-        console.log(`✅ Saved ${citationInserts.length} citations`)
+        console.log(`✅ Saved ${citationInserts.length} citations (deduplicated from ${Object.keys(citations).length} total)`)
       }
     }
   }

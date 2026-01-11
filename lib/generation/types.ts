@@ -1,6 +1,8 @@
 import type { PaperWithAuthors, GenerationConfig, GenerationProgress } from '@/types/simplified'
-import type { CSLItem } from '@/lib/utils/csl'
 import type { PaperTypeKey } from '@/lib/prompts/types'
+
+// Recency profile type - matches PaperProfile.sourceExpectations.recencyProfile
+export type RecencyProfile = 'cutting-edge' | 'balanced' | 'foundational-heavy'
 
 // Generation types
 export interface EnhancedGenerationOptions {
@@ -16,6 +18,8 @@ export interface EnhancedGenerationOptions {
     fewShot?: boolean
   }
   onProgress?: (progress: GenerationProgress) => void
+  /** Recency profile from paper profile - affects search weighting */
+  recencyProfile?: RecencyProfile
 }
 
 

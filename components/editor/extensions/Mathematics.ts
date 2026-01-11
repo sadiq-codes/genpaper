@@ -50,7 +50,7 @@ export const Mathematics = Node.create({
         throwOnError: false,
         output: 'html',
       })
-    } catch (e) {
+    } catch {
       rendered = `<span class="text-red-500">${latex}</span>`
     }
 

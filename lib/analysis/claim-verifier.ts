@@ -1,5 +1,5 @@
 import 'server-only'
-import { openai } from '@ai-sdk/openai'
+import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { generateObject } from 'ai'
 import { z } from 'zod'
 import { getSB } from '@/lib/supabase/server'
@@ -90,7 +90,7 @@ export async function verifyClaims(
 
     // Use GPT to find evidence for each claim
     const { object } = await generateObject({
-      model: openai('gpt-4o-mini'),
+      model: getLanguageModel(),
       schema: EvidenceMatchSchema,
       prompt: buildVerificationPrompt(claims, paperContext),
       temperature: 0.1,

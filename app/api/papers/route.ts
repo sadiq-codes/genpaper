@@ -3,8 +3,6 @@ import { createClient } from '@/lib/supabase/server'
 import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
 import { z } from 'zod'
 import { shortHash } from '@/lib/utils/hash'
-import { getPaper } from '@/lib/db/papers'
-import { isInLibrary } from '@/lib/db/library'
 
 // Force Node.js runtime for pdf-parse compatibility in tiered-extractor
 export const runtime = 'nodejs'

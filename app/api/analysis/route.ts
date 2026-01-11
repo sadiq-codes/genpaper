@@ -9,8 +9,15 @@ import {
   storeAnalysis,
   getAnalysisForProject,
   getClaimsForPaper,
-  getGapsForProject
+  getGapsForProject,
+  analyzeGapAddressing
 } from '@/lib/analysis'
+import { 
+  extractUserClaims, 
+  analyzeClaimRelationships,
+  generateResearchPositioning 
+} from '@/lib/analysis/user-claim-extractor'
+import type { ExtractedClaim, ResearchPositioning } from '@/components/editor/types'
 
 export const runtime = 'nodejs'
 
@@ -35,7 +42,16 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { projectId, paperIds, topic, analysisType } = body
+    const { 
+      projectId, 
+      paperIds, 
+      topic, 
+      analysisType,
+      // Original research fields
+      hasOriginalResearch,
+      researchQuestion,
+      keyFindings 
+    } = body
 
     if (!projectId || !paperIds || !topic) {
       return NextResponse.json(
@@ -122,6 +138,90 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Original research analysis (when user has original research)
+    if (hasOriginalResearch && researchQuestion) {
+      try {
+        // 1. Extract user's claims from their research inputs
+        const userClaimsResult = await extractUserClaims(
+          researchQuestion,
+          keyFindings || '',
+          topic
+        )
+        results.userClaims = userClaimsResult.claims
+
+        // 2. Get all literature claims for comparison (parallel fetch)
+        const claimResults = await Promise.all(
+          paperIds.slice(0, 10).map(async (paperId: string) => {
+            const paperClaims = await getClaimsForPaper(paperId)
+            return paperClaims.map(c => ({
+              id: c.id || `claim-${paperId}-${Math.random().toString(36).slice(2)}`,
+              paper_id: c.paper_id,
+              claim_text: c.claim_text,
+              evidence_quote: c.evidence_quote,
+              section: c.section,
+              claim_type: c.claim_type,
+              confidence: c.confidence,
+              source: 'literature' as const,
+              relationship_to_user: 'not_analyzed' as const
+            }))
+          })
+        )
+        const allLitClaims: ExtractedClaim[] = claimResults.flat()
+
+        // 3. Analyze relationships between user claims and literature (reused for positioning)
+        let claimRelationships: Awaited<ReturnType<typeof analyzeClaimRelationships>> | null = null
+        
+        if (userClaimsResult.claims.length > 0 && allLitClaims.length > 0) {
+          claimRelationships = await analyzeClaimRelationships(
+            userClaimsResult.claims,
+            allLitClaims
+          )
+          
+          // Apply relationships to literature claims
+          for (const claim of allLitClaims) {
+            const rel = claimRelationships.get(claim.id)
+            if (rel) {
+              claim.relationship_to_user = rel.relationship as ExtractedClaim['relationship_to_user']
+              claim.relationship_explanation = rel.explanation
+            }
+          }
+          
+          results.claimRelationships = Object.fromEntries(claimRelationships)
+        }
+
+        // 4. Analyze how user's research addresses gaps
+        if (userClaimsResult.claims.length > 0) {
+          const gaps = await getGapsForProject(projectId)
+          if (gaps.length > 0) {
+            const gapAddressing = await analyzeGapAddressing(
+              gaps,
+              userClaimsResult.claims.map(c => ({
+                id: c.id,
+                claim_text: c.claim_text,
+                claim_type: c.claim_type
+              }))
+            )
+            results.gapAddressing = gapAddressing
+          }
+        }
+
+        // 5. Generate research positioning (reuse relationships from step 3)
+        if (userClaimsResult.claims.length > 0 && allLitClaims.length > 0 && claimRelationships) {
+          const positioning = await generateResearchPositioning(
+            userClaimsResult.claims,
+            allLitClaims,
+            claimRelationships
+          )
+          results.positioning = positioning
+        }
+
+        results.hasOriginalResearch = true
+      } catch (error) {
+        console.error('Original research analysis failed:', error)
+        results.originalResearchError = error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+
     // Update project analysis status
     await supabase
       .from('research_projects')
@@ -166,16 +266,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
     }
 
-    // Verify project ownership
+    // Verify project ownership and get original research data
     const { data: project, error: projectError } = await supabase
       .from('research_projects')
-      .select('id, user_id, topic')
+      .select('id, user_id, topic, generation_config, has_original_research, research_question, key_findings')
       .eq('id', projectId)
       .single()
 
     if (projectError || !project || project.user_id !== user.id) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
+
+    // Check if project has original research (from DB or generation_config)
+    const genConfig = project.generation_config as Record<string, unknown> | null
+    const originalResearchConfig = genConfig?.original_research as Record<string, unknown> | null
+    const hasOriginalResearch = project.has_original_research || 
+      originalResearchConfig?.has_original_research || false
+    const researchQuestion = project.research_question || 
+      (originalResearchConfig?.research_question as string) || ''
+    const keyFindings = project.key_findings || 
+      (originalResearchConfig?.key_findings as string) || ''
 
     // Get stored analysis
     const analyses = await getAnalysisForProject(
@@ -194,10 +304,58 @@ export async function GET(request: NextRequest) {
 
     const paperIds = projectPapers?.map(p => p.paper_id) || []
 
-    // Get claims for those papers
-    const claims: Record<string, unknown[]> = {}
-    for (const paperId of paperIds.slice(0, 10)) { // Limit to avoid timeout
-      claims[paperId] = await getClaimsForPaper(paperId)
+    // Get claims for those papers (parallel fetch)
+    const claimEntries = await Promise.all(
+      paperIds.slice(0, 10).map(async (paperId: string) => {
+        const paperClaims = await getClaimsForPaper(paperId)
+        return [paperId, paperClaims] as const
+      })
+    )
+    const claims: Record<string, unknown[]> = Object.fromEntries(claimEntries)
+
+    // Include original research data if available
+    // NOTE: This runs LLM calls on every GET request. Consider caching results
+    // in the database during POST to avoid repeated expensive operations.
+    let userClaims: ExtractedClaim[] = []
+    let positioning: ResearchPositioning | null = null
+
+    if (hasOriginalResearch && researchQuestion) {
+      try {
+        // Extract user claims (not cached - runs on each request)
+        const userClaimsResult = await extractUserClaims(
+          researchQuestion,
+          keyFindings,
+          project.topic
+        )
+        userClaims = userClaimsResult.claims
+
+        // Get all literature claims for positioning (parallel fetch)
+        const litClaimResults = await Promise.all(
+          paperIds.slice(0, 10).map(async (paperId: string) => {
+            const paperClaims = await getClaimsForPaper(paperId)
+            return paperClaims.map(c => ({
+              id: c.id || `claim-${paperId}-${Math.random().toString(36).slice(2)}`,
+              paper_id: c.paper_id,
+              claim_text: c.claim_text,
+              evidence_quote: c.evidence_quote,
+              section: c.section,
+              claim_type: c.claim_type,
+              confidence: c.confidence,
+              source: 'literature' as const,
+              relationship_to_user: 'not_analyzed' as const
+            }))
+          })
+        )
+        const allLitClaims: ExtractedClaim[] = litClaimResults.flat()
+
+        // Generate positioning if we have both user claims and literature
+        if (userClaims.length > 0 && allLitClaims.length > 0) {
+          const relationships = await analyzeClaimRelationships(userClaims, allLitClaims)
+          positioning = await generateResearchPositioning(userClaims, allLitClaims, relationships)
+        }
+      } catch (error) {
+        console.error('Failed to generate original research analysis:', error)
+      }
     }
 
     return NextResponse.json({
@@ -206,7 +364,11 @@ export async function GET(request: NextRequest) {
       analyses,
       gaps,
       claims,
-      paper_count: paperIds.length
+      paper_count: paperIds.length,
+      // Original research data
+      hasOriginalResearch,
+      userClaims,
+      positioning
     })
   } catch (error) {
     console.error('Get analysis error:', error)

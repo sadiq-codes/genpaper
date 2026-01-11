@@ -327,6 +327,7 @@ export class GenerationContextService {
     allPapers: PaperWithAuthors[] = []
   ): Promise<SectionContext[]> {
     const sectionContexts: SectionContext[] = []
+    const allPaperIds = allPapers.map(p => p.id)
     
     console.log(`📊 Building section contexts for ${outline.sections.length} sections...`)
     
@@ -336,17 +337,54 @@ export class GenerationContextService {
       let contextChunks: PaperChunk[] = []
       try {
         const startTime = Date.now()
-        contextChunks = await this.getRelevantChunks(
-          topic,
-          ids.length > 0 ? ids : allPapers.map(p => p.id),
-          Math.min(20, Math.max(ids.length * 3, 12)),
-          allPapers
-        )
+        
+        // First try with assigned paper IDs
+        const targetIds = ids.length > 0 ? ids : allPaperIds
+        
+        try {
+          contextChunks = await this.getRelevantChunks(
+            topic,
+            targetIds,
+            Math.min(20, Math.max(targetIds.length * 3, 12)),
+            allPapers
+          )
+        } catch (firstError) {
+          // If assigned papers fail, fall back to ALL papers
+          if (ids.length > 0 && allPaperIds.length > ids.length) {
+            console.warn(`⚠️ Assigned papers for "${section.title}" have no content, trying all papers...`)
+            contextChunks = await this.getRelevantChunks(
+              topic,
+              allPaperIds,
+              Math.min(20, Math.max(allPaperIds.length * 2, 12)),
+              allPapers
+            )
+          } else {
+            throw firstError
+          }
+        }
+        
         const retrievalTime = Date.now() - startTime
         console.log(`📄 Retrieved chunks for "${section.title}" (${contextChunks.length} chunks, ${retrievalTime}ms)`)
       } catch (error) {
         console.warn(`⚠️ No relevant chunks found for section "${section.title}": ${error}`)
-        contextChunks = []
+        
+        // Last resort: create abstract-based chunks for the section
+        const abstractChunks = allPapers
+          .filter(p => p.abstract && p.abstract.trim().length >= 50)
+          .slice(0, 5)
+          .map(p => ({
+            id: `abstract-fallback-${p.id}`,
+            paper_id: p.id,
+            content: `Title: ${p.title}\n\nAbstract: ${p.abstract}`,
+            metadata: { source: 'abstract-fallback-section' },
+            score: 0.4,
+            paper: p
+          }))
+        
+        if (abstractChunks.length > 0) {
+          console.log(`   ↳ Using ${abstractChunks.length} abstract fallbacks for "${section.title}"`)
+          contextChunks = abstractChunks
+        }
       }
       
       // Build section context

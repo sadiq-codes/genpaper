@@ -25,13 +25,21 @@ export interface PromptData {
   
   // Writing task parameters
   targetWords: number
-  minCitations: number
+  minCitations?: number  // Optional - using semantic citation guidance instead of quantitative enforcement
   isRewrite: boolean
   currentText?: string
   
   // Evidence and context (pre-formatted)
   evidenceSnippets: string
   usedEvidenceLedger?: string
+  
+  // Original research context (for empirical papers)
+  hasOriginalResearch?: boolean
+  researchQuestion?: string
+  keyFindings?: string
+  
+  // Paper profile guidance (contextual intelligence from profile generation)
+  profileGuidance?: string
 }
 
 export interface PromptTemplate {
@@ -72,7 +80,7 @@ export class PromptBuilder {
       // Add computed fields
       hasCurrentText: !!data.currentText,
       isFirstDraft: !data.isRewrite,
-      modelName: options.model || 'gpt-4o',
+      modelName: options.model || 'default',
       temperature: options.temperature || 0.4
     }
 
@@ -275,7 +283,8 @@ PREVIOUS SECTIONS SUMMARY:
 {{previousSectionsSummary}}
 
 TARGET LENGTH: {{targetWords}} words
-MINIMUM CITATIONS: {{minCitations}}
+
+CITATION GUIDANCE: Cite whenever you include statistics, findings, theories, methods, or specific claims from sources. Do not cite your own analysis or common knowledge.
 
 AVAILABLE EVIDENCE:
 {{evidenceSnippets}}

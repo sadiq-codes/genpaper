@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { v5 as uuidv5 } from 'uuid'
 
 // Define fixed namespaces for different types of entities

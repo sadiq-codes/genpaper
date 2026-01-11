@@ -38,15 +38,32 @@ export interface UnifiedSearchResult {
   }
 }
 
-// Simple deduplication helper
+// Normalize title for deduplication comparison
+function normalizeTitleForDedup(title: string): string {
+  return title.toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Enhanced deduplication helper - uses DOI and normalized title as primary keys
+// to catch duplicates even when database IDs differ
 function dedupePapers(papers: PaperWithAuthors[]): PaperWithAuthors[] {
-  const seen = new Set<string>()
+  const seenDois = new Set<string>()
+  const seenTitles = new Set<string>()
   const deduped: PaperWithAuthors[] = []
   
   for (const paper of papers) {
-    const key = paper.id || paper.doi || `${paper.title}-${paper.publication_date}`
-    if (!seen.has(key)) {
-      seen.add(key)
+    const normalizedTitle = normalizeTitleForDedup(paper.title)
+    const normalizedDoi = paper.doi?.toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, '').trim()
+    
+    // Check if we've seen this DOI or title before
+    const isDuplicateDoi = normalizedDoi && seenDois.has(normalizedDoi)
+    const isDuplicateTitle = seenTitles.has(normalizedTitle)
+    
+    if (!isDuplicateDoi && !isDuplicateTitle) {
+      if (normalizedDoi) seenDois.add(normalizedDoi)
+      seenTitles.add(normalizedTitle)
       deduped.push(paper)
     }
   }
@@ -127,7 +144,7 @@ export async function unifiedSearch(
     excludePaperIds = [],
     fromYear = 2000,
     localRegion,
-    sources = ['openalex', 'crossref', 'semantic_scholar'],
+    sources = ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
     semanticWeight = DEFAULT_WEIGHTS.semanticWeight,
     authorityWeight = DEFAULT_WEIGHTS.authorityWeight,
     recencyWeight = DEFAULT_WEIGHTS.recencyWeight

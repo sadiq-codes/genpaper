@@ -27,7 +27,7 @@ export interface SearchOptions {
 import { PaperSource } from '@/types/simplified'
 import { XMLParser } from 'fast-xml-parser'
 import pLimit from 'p-limit'
-import { formatDateForAPI, createCanonicalId, deduplicate } from '@/lib/utils/paper-id'
+import { formatDateForAPI, createCanonicalId } from '@/lib/utils/paper-id'
 import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
 
 // OpenAlex publication types - using correct names per API docs
@@ -55,10 +55,59 @@ if (!CONTACT_EMAIL) {
 }
 
 // PDF URL Detection Utilities
+
+// Known paywall domains that will return 403/require tokens
+// These should be filtered out to avoid wasting time on failed downloads
+const PAYWALL_DOMAINS = [
+  'api.elsevier.com',           // Requires API token
+  'api.wiley.com',              // Requires TDM Client Token
+  'onlinelibrary.wiley.com/doi/pdfdirect', // Often requires access
+  'academic.oup.com',           // Oxford - often paywalled
+  'www.aeaweb.org/articles/pdf', // AEA journals - paywalled
+  'pubsonline.informs.org',     // INFORMS - paywalled
+  'www.sciencedirect.com/science/article', // ScienceDirect landing pages
+  'tandfonline.com',            // Taylor & Francis - often paywalled
+  'journals.sagepub.com',       // SAGE - often paywalled
+]
+
+// Landing page patterns that look like PDF URLs but aren't
+const LANDING_PAGE_PATTERNS = [
+  /papers\.ssrn\.com\/sol3\/Delivery\.cfm/i,  // SSRN delivery - returns HTML
+  /dspace\..*\/handle\//i,                     // DSpace repository handles
+  /hdl\.handle\.net\//i,                       // Handle.net redirects
+  /doi\.org\/(?!.*\.pdf)/i,                    // DOI resolvers (not ending in .pdf)
+  /\/abstract\//i,                              // Abstract pages
+  /\/abs\//i,                                   // ArXiv abstract pages (not /pdf/)
+]
+
+/**
+ * Check if URL points to a known paywall domain
+ */
+function isPaywalledUrl(url: string): boolean {
+  if (!url) return false
+  return PAYWALL_DOMAINS.some(domain => url.includes(domain))
+}
+
+/**
+ * Check if URL is a landing page rather than a direct PDF
+ */
+function isLandingPageUrl(url: string): boolean {
+  if (!url) return false
+  return LANDING_PAGE_PATTERNS.some(pattern => pattern.test(url))
+}
+
+/**
+ * Check if URL is likely to be a direct, accessible PDF
+ */
 function isDirectPdfUrl(url: string): boolean {
   if (!url) return false
   
-  // Direct PDF patterns
+  // Reject known paywalls and landing pages
+  if (isPaywalledUrl(url) || isLandingPageUrl(url)) {
+    return false
+  }
+  
+  // Direct PDF patterns - known good sources
   const pdfPatterns = [
     /\.pdf$/i,
     /arxiv\.org\/pdf\//i,
@@ -66,162 +115,36 @@ function isDirectPdfUrl(url: string): boolean {
     /medrxiv\.org\/content\/.*\.full\.pdf/i,
     /researchgate\.net\/.*\.pdf/i,
     /academia\.edu\/.*\.pdf/i,
-    /core\.ac\.uk\/download\/pdf/i,
+    /core\.ac\.uk\/download/i,                  // CORE downloads (may not end in .pdf)
     /europepmc\.org\/.*\.pdf/i,
     /ncbi\.nlm\.nih\.gov\/pmc\/articles\/.*\/pdf/i,
-    /pubmed\.ncbi\.nlm\.nih\.gov\/.*\.pdf/i,
-    /pmc\.ncbi\.nlm\.nih\.gov\/.*\.pdf/i
+    /pmc\.ncbi\.nlm\.nih\.gov\/.*\/pdf/i,
+    /link\.springer\.com\/content\/pdf/i,        // Springer OA PDFs
+    /biomedcentral\.com\/track\/pdf/i,           // BMC PDFs
+    /mdpi\.com\/.*\/pdf/i,                       // MDPI OA PDFs
+    /frontiersin\.org\/.*\/pdf/i,                // Frontiers OA PDFs
+    /plos\.org\/.*\.pdf/i,                       // PLOS OA PDFs
+    /nature\.com\/.*\.pdf/i,                     // Nature (some OA)
+    /doi\.org\/.*\.pdf$/i,                       // DOI resolving to PDF
   ]
   
   return pdfPatterns.some(pattern => pattern.test(url))
 }
 
-// Google Scholar Search Interface (internal)
-interface GoogleScholarResult {
-  title: string
-  authors: string[]
-  venue?: string
-  year?: number
-  citationCount?: number
-  pdfUrl?: string
-  url?: string
-  snippet?: string
-}
-
-// Google Scholar scraping function (not exported - not reliable enough for production)
-async function searchGoogleScholar(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
-  const { limit = 20, fromYear, toYear, fastMode = false } = options
-  
-  // Note: This is a simplified implementation. In production, you might want to use:
-  // 1. SerpAPI (paid service) for reliable Google Scholar access
-  // 2. Scholarly Python library with a proxy service
-  // 3. Custom scraping with proper rate limiting and user agents
-  
-  console.warn('🎓 Google Scholar: Using simplified search (consider SerpAPI for production)')
-  
-  try {
-    // Build search URL with academic-focused parameters
-    let searchQuery = `"${query}" filetype:pdf`
-    
-    if (fromYear) {
-      searchQuery += ` after:${fromYear}`
-    }
-    if (toYear) {
-      searchQuery += ` before:${toYear}`
-    }
-    
-    // Use Google Scholar search URL format
-    const baseUrl = 'https://scholar.google.com/scholar'
-    const params = new URLSearchParams({
-      q: searchQuery,
-      num: Math.min(limit, 20).toString(),
-      as_vis: '1', // Include citations
-      as_sdt: '1,5' // Include patents and citations
-    })
-    
-    const url = `${baseUrl}?${params.toString()}`
-    
-    // Use academic-friendly headers
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (compatible; GenPaper Academic Research Tool; +mailto:' + (CONTACT_EMAIL || 'research@example.com') + ')',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Accept-Encoding': 'gzip, deflate',
-      'Connection': 'keep-alive'
-    }
-    
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), fastMode ? 10_000 : 15_000)
-    
-    try {
-      const response = await fetch(url, { 
-        headers,
-        signal: controller.signal 
-      })
-      
-      if (!response.ok) {
-        console.warn(`Google Scholar returned ${response.status}: ${response.statusText}`)
-        return []
-      }
-      
-      const html = await response.text()
-      
-      // Simple HTML parsing for PDF links (this is a basic implementation)
-      const results = parseGoogleScholarHtml(html)
-      
-             return results.map((result) => ({
-         canonical_id: createCanonicalId(result.title, result.year, undefined, 'google_scholar'),
-         title: result.title,
-         abstract: result.snippet || '',
-         year: result.year || 0,
-         venue: result.venue || '',
-         url: result.url || '',
-         pdf_url: result.pdfUrl || '',
-         citationCount: result.citationCount || 0,
-         authors: result.authors || [],
-         source: 'google_scholar' as const
-       }))
-      
-    } finally {
-      clearTimeout(timeoutId)
-    }
-    
-  } catch (error) {
-    console.warn('Google Scholar search failed:', error)
-    return []
+/**
+ * Filter PDF URL - returns empty string if URL is paywalled or landing page
+ * This prevents attempting downloads that will fail
+ */
+function filterPdfUrl(url: string): string {
+  if (!url) return ''
+  if (isPaywalledUrl(url)) {
+    // Don't log every rejection - too noisy
+    return ''
   }
-}
-
-// Basic HTML parser for Google Scholar results
-function parseGoogleScholarHtml(html: string): GoogleScholarResult[] {
-  const results: GoogleScholarResult[] = []
-  
-  // Extract individual result blocks instead of separate arrays
-  const resultBlocks = html.match(/<div class="gs_r[\s\S]*?<\/div>/g) || []
-  
-  for (const block of resultBlocks.slice(0, 10)) { // Limit to 10 results
-    // Extract title from the block
-    const titleMatch = block.match(/<h3[^>]*class="gs_rt"[^>]*>.*?<\/h3>/i)
-    if (!titleMatch) continue
-    
-    const titleHtml = titleMatch[0]
-    const titleTextMatch = titleHtml.match(/>([^<]+)</g)
-    const title = titleTextMatch ? 
-      titleTextMatch[titleTextMatch.length - 1].replace(/[><]/g, '').trim() : 
-      ''
-    
-    if (!title) continue
-    
-    // Extract PDF URL from the same block
-    const pdfMatch = block.match(/https?:\/\/[^\s"'<>]+\.pdf/i)
-    const pdfUrl = pdfMatch ? pdfMatch[0] : ''
-    
-    // Extract year from citation info (look for patterns like "(2023)" or "- 2023 -")
-    const yearMatch = block.match(/[\(\-\s](\d{4})[\)\-\s]/g)
-    let year = 0
-    if (yearMatch) {
-      const yearStr = yearMatch[yearMatch.length - 1].match(/\d{4}/)
-      year = yearStr ? parseInt(yearStr[0]) : 0
-    }
-    
-    // Extract venue/journal info
-    const venueMatch = block.match(/<div class="gs_a">([^<]+)</i)
-    const venue = venueMatch ? venueMatch[1].split('-')[0].trim() : ''
-    
-    if (pdfUrl && isDirectPdfUrl(pdfUrl)) {
-      results.push({
-        title: title,
-        authors: [], // Would need more complex parsing
-        pdfUrl,
-        url: pdfUrl,
-        year: year || 0, // Use extracted year or 0
-        venue,
-        snippet: '' // Could extract from gs_rs div
-      })
-    }
+  if (isLandingPageUrl(url)) {
+    return ''
   }
-  
-  return results
+  return url
 }
 
 // ArXiv PDF finder
@@ -366,6 +289,16 @@ interface OpenAlexWork {
   primary_location?: {
     source?: { display_name: string }
     landing_page_url?: string
+    pdf_url?: string
+  }
+  best_oa_location?: {
+    pdf_url?: string
+    landing_page_url?: string
+  }
+  open_access?: {
+    is_oa: boolean
+    oa_url?: string
+    oa_status?: string
   }
   cited_by_count?: number
   authorships?: Array<{
@@ -381,6 +314,13 @@ interface OpenAlexResponse {
   }
 }
 
+interface CrossrefLink {
+  URL: string
+  'content-type'?: string
+  'content-version'?: string
+  'intended-application'?: string
+}
+
 interface CrossrefItem {
   title: string | string[]
   published?: { 'date-parts': Array<Array<number>> }
@@ -393,11 +333,13 @@ interface CrossrefItem {
     given?: string
     family?: string
   }>
+  link?: CrossrefLink[]
 }
 
 interface CrossrefResponse {
   message?: {
     items: CrossrefItem[]
+    'total-results'?: number
   }
 }
 
@@ -410,9 +352,12 @@ interface SemanticScholarPaper {
   url?: string
   citationCount?: number
   authors?: Array<{ name: string }>
+  openAccessPdf?: { url: string } | null
+  isOpenAccess?: boolean
 }
 
 interface SemanticScholarResponse {
+  total?: number
   data: SemanticScholarPaper[]
 }
 
@@ -423,10 +368,14 @@ interface CoreWork {
   abstract?: string
   publisher?: string
   downloadUrl?: string
+  sourceFulltextUrls?: string[]
   authors?: Array<{ name: string }>
+  language?: { code: string }
+  documentType?: string
 }
 
 interface CoreResponse {
+  totalHits?: number
   results: CoreWork[]
 }
 
@@ -611,19 +560,33 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
       }
     })
     
-    return data.results?.map((work: OpenAlexWork) => ({
-      canonical_id: createCanonicalId(work.display_name, work.publication_year, work.doi, 'openalex'),
-      title: work.display_name,
-      abstract: work.abstract_inverted_index ? deInvertAbstract(work.abstract_inverted_index) : '',
-      year: work.publication_year || 0,
-      venue: work.primary_location?.source?.display_name,
-      doi: work.doi,
-      url: work.primary_location?.landing_page_url,
-      pdf_url: '', // Normalize - OpenAlex doesn't provide direct PDFs
-      citationCount: work.cited_by_count || 0,
-      authors: work.authorships?.map((a) => a.author?.display_name).filter((name): name is string => Boolean(name)) || [],
-      source: 'openalex' as const
-    })) || []
+    console.log(`📚 OpenAlex returned ${data.results?.length || 0} results (total: ${data.meta?.count || 'unknown'})`)
+    
+    return data.results?.map((work: OpenAlexWork) => {
+      // Extract PDF URL from OpenAlex open access data
+      // Priority: best_oa_location.pdf_url > primary_location.pdf_url > open_access.oa_url
+      // Filter out paywalled/landing page URLs
+      const rawPdfUrl = work.best_oa_location?.pdf_url || 
+                        work.primary_location?.pdf_url || 
+                        work.open_access?.oa_url || 
+                        ''
+      const pdfUrl = filterPdfUrl(rawPdfUrl)
+      
+      return {
+        canonical_id: createCanonicalId(work.display_name, work.publication_year, work.doi, 'openalex'),
+        title: work.display_name,
+        abstract: work.abstract_inverted_index ? deInvertAbstract(work.abstract_inverted_index) : '',
+        year: work.publication_year || 0,
+        venue: work.primary_location?.source?.display_name,
+        doi: work.doi,
+        url: work.primary_location?.landing_page_url,
+        pdf_url: pdfUrl,
+        citationCount: work.cited_by_count || 0,
+        authors: work.authorships?.map((a) => a.author?.display_name).filter((name): name is string => Boolean(name)) || [],
+        source: 'openalex' as const,
+        is_open_access: work.open_access?.is_oa || false
+      }
+    }) || []
   })
 }
 
@@ -651,10 +614,30 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
       }
     })
     
+    console.log(`📚 Crossref returned ${data.message?.items?.length || 0} results (total: ${data.message?.['total-results'] || 'unknown'})`)
+    
     return data.message?.items?.map((item: CrossrefItem) => {
       const title = Array.isArray(item.title) ? item.title[0] : item.title || ''
       const year = item.published?.['date-parts']?.[0]?.[0] || 0
       const doi = item.DOI
+      
+      // Try to extract PDF URL from links array
+      // Look for PDF content-type or intended-application
+      // Filter out paywalled URLs that will fail
+      let pdfUrl = ''
+      if (item.link?.length) {
+        const pdfLink = item.link.find(l => {
+          const url = l.URL || ''
+          // Skip paywalled/landing page URLs
+          if (isPaywalledUrl(url) || isLandingPageUrl(url)) return false
+          return (
+            l['content-type']?.includes('pdf') || 
+            l['intended-application'] === 'text-mining' ||
+            url.endsWith('.pdf')
+          )
+        })
+        pdfUrl = filterPdfUrl(pdfLink?.URL || '')
+      }
       
       return {
         canonical_id: createCanonicalId(title, year, doi, 'crossref'),
@@ -664,7 +647,7 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
         venue: item['container-title']?.[0] || '',
         doi,
         url: item.URL,
-        pdf_url: '', // Normalize - Crossref typically provides publisher URLs, not PDFs
+        pdf_url: pdfUrl,
         citationCount: item['is-referenced-by-count'] || 0,
         authors: item.author?.map((a) => `${a.given || ''} ${a.family || ''}`.trim()).filter(Boolean) || [],
         source: 'crossref' as const
@@ -673,18 +656,18 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
   })
 }
 
-// Semantic Scholar API integration with API key guard
+// Semantic Scholar API integration
+// API key is OPTIONAL - works without it at lower rate limits (100 req/5min vs 1-10 req/sec)
 export async function searchSemanticScholar(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
-  // Guard against missing API key - return empty instead of throwing
-  if (!process.env.SEMANTIC_API_KEY) {
-    console.warn('SEMANTIC_API_KEY not set – skipping Semantic Scholar')
-    return []
-  }
-  
   const { limit = 50, fromYear, toYear, openAccessOnly, fastMode = false } = options
   
+  // Use smaller limit without API key to avoid rate limits
+  const apiKey = process.env.SEMANTIC_API_KEY
+  const effectiveLimit = apiKey ? Math.min(limit, 100) : Math.min(limit, 20)
+  
   return simpleRetry(async () => {
-    let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${limit}&fields=paperId,title,abstract,year,venue,doi,url,citationCount,authors`
+    // Include openAccessPdf field to get direct PDF URLs when available
+    let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${effectiveLimit}&fields=paperId,title,abstract,year,venue,doi,url,citationCount,authors,openAccessPdf,isOpenAccess`
     
     // Build year filter: Semantic Scholar expects format like "2020-2023" or "2020-" or "-2023"
     if (fromYear || toYear) {
@@ -697,12 +680,21 @@ export async function searchSemanticScholar(query: string, options: SearchOption
       url += '&openAccessPdf'
     }
     
+    // Headers - API key is optional, just provides higher rate limits
+    const headers: Record<string, string> = {}
+    if (apiKey) {
+      headers['x-api-key'] = apiKey
+    }
+    
     const data = await fetchJSON<SemanticScholarResponse>(url, {
       fastMode,
-      headers: {
-        'x-api-key': process.env.SEMANTIC_API_KEY!
-      }
+      headers,
+      // Longer timeout without API key since rate limits are stricter
+      timeout: apiKey ? 12_000 : 20_000
     })
+    
+    const authStatus = apiKey ? 'authenticated' : 'unauthenticated'
+    console.log(`📚 Semantic Scholar (${authStatus}) returned ${data.data?.length || 0} results (total: ${data.total || 'unknown'})`)
     
     return data.data?.map((paper: SemanticScholarPaper) => ({
       canonical_id: createCanonicalId(paper.title, paper.year, paper.doi, 'semanticscholar'),
@@ -712,7 +704,7 @@ export async function searchSemanticScholar(query: string, options: SearchOption
       venue: paper.venue,
       doi: paper.doi,
       url: paper.url,
-      pdf_url: '', // Normalize - Semantic Scholar doesn't provide direct PDFs
+      pdf_url: paper.openAccessPdf?.url || '', // Extract PDF URL from openAccessPdf field
       citationCount: paper.citationCount || 0,
       authors: paper.authors?.map(a => a.name) || [],
       source: 'semantic_scholar' as const
@@ -755,6 +747,8 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
       const entries = Array.isArray(parsed.feed?.entry) ? parsed.feed.entry : 
                      parsed.feed?.entry ? [parsed.feed.entry] : []
       
+      console.log(`📚 arXiv returned ${entries.length} results`)
+      
       return entries.map((entry: ArxivEntry): AcademicPaper => {
         const title = entry.title?.replace(/\s+/g, ' ').trim() || ''
         const abstract = entry.summary?.replace(/\s+/g, ' ').trim() || ''
@@ -793,6 +787,7 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
 }
 
 // CORE API integration with API key guard
+// CORE has 200M+ open access papers with direct PDF download URLs
 export async function searchCore(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
   // Guard against missing API key - return empty instead of throwing
   if (!process.env.CORE_API_KEY) {
@@ -803,12 +798,14 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
   const { limit = 50, fromYear, toYear, fastMode = false } = options
   
   return simpleRetry(async () => {
-    let searchQuery = `title:"${query}" OR abstract:"${query}"`
+    // Use simple query format - CORE handles relevance matching well
+    let searchQuery = query
     
+    // Add year filter if specified
     if (fromYear || toYear) {
       const from = fromYear || 1900
       const to = toYear || new Date().getFullYear()
-      searchQuery += ` AND year:[${from} TO ${to}]`
+      searchQuery += ` AND yearPublished>=${from} AND yearPublished<=${to}`
     }
     
     const url = `https://api.core.ac.uk/v3/search/works`
@@ -827,19 +824,32 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
       })
     })
     
-    return data.results?.map((work: CoreWork) => ({
-      canonical_id: createCanonicalId(work.title, work.yearPublished, work.doi, 'core'),
-      title: work.title,
-      abstract: work.abstract || '',
-      year: work.yearPublished || 0,
-      venue: work.publisher,
-      doi: work.doi,
-      url: work.downloadUrl,
-      pdf_url: work.downloadUrl || '', // CORE often provides direct PDFs
-      citationCount: 0,
-      authors: work.authors?.map((a) => a.name).filter(Boolean) || [],
-      source: 'core' as const
-    })) || []
+    console.log(`📚 CORE returned ${data.results?.length || 0} results (total: ${data.totalHits || 'unknown'})`)
+    
+    return data.results?.map((work: CoreWork) => {
+      // Get PDF URL - prefer downloadUrl, fallback to sourceFulltextUrls
+      let pdfUrl = work.downloadUrl || ''
+      if (!pdfUrl && work.sourceFulltextUrls?.length) {
+        // Find first URL that looks like a PDF
+        pdfUrl = work.sourceFulltextUrls.find(url => 
+          url.endsWith('.pdf') || url.includes('/pdf')
+        ) || work.sourceFulltextUrls[0] || ''
+      }
+      
+      return {
+        canonical_id: createCanonicalId(work.title, work.yearPublished, work.doi, 'core'),
+        title: work.title,
+        abstract: work.abstract || '',
+        year: work.yearPublished || 0,
+        venue: work.publisher,
+        doi: work.doi,
+        url: work.downloadUrl || pdfUrl,
+        pdf_url: pdfUrl, // CORE often provides direct PDFs
+        citationCount: 0,
+        authors: work.authors?.map((a) => a.name).filter(Boolean) || [],
+        source: 'core' as const
+      }
+    }) || []
   })
 }
 
@@ -894,7 +904,35 @@ type PdfStrategy = {
   available: boolean
 }
 
+// Convert PMC URL to direct PDF URL
+async function findPmcPdf(url: string): Promise<string | null> {
+  if (!url) return null
+  
+  // Match PMC article URLs like https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3372692
+  // or https://www.ncbi.nlm.nih.gov/pmc/articles/3372692
+  const pmcMatch = url.match(/pmc\/articles\/(?:PMC)?(\d+)/i)
+  if (pmcMatch) {
+    const pmcId = pmcMatch[1]
+    // PMC provides PDF at this URL pattern
+    return `https://www.ncbi.nlm.nih.gov/pmc/articles/PMC${pmcId}/pdf/`
+  }
+  
+  // Match Europe PMC URLs
+  const europePmcMatch = url.match(/europepmc\.org\/articles\/PMC(\d+)/i)
+  if (europePmcMatch) {
+    const pmcId = europePmcMatch[1]
+    return `https://europepmc.org/backend/ptpmcrender.fcgi?accid=PMC${pmcId}&blobtype=pdf`
+  }
+  
+  return null
+}
+
 const pdfStrategies: PdfStrategy[] = [
+  {
+    name: 'PMC',
+    fn: (paper) => findPmcPdf(paper.url || paper.pdf_url || ''),
+    available: true
+  },
   {
     name: 'Unpaywall',
     fn: (paper) => getOpenAccessPdf(paper.doi || ''),
@@ -1029,7 +1067,11 @@ export async function fetchCrossrefReferences(doi: string): Promise<PaperReferen
     }))
     return refs
   } catch (e) {
-    console.warn('Crossref reference fetch failed', e)
+    // Only log unexpected errors, not rate limits or 404s
+    const errorMsg = e instanceof Error ? e.message : String(e)
+    if (!errorMsg.startsWith('429') && !errorMsg.includes('404')) {
+      console.warn('Crossref reference fetch failed:', errorMsg)
+    }
     return []
   }
 }
@@ -1048,7 +1090,11 @@ export async function fetchSemanticScholarReferences(paperIdOrDoi: string): Prom
     }))
     return refs
   } catch (e) {
-    console.warn('Semantic Scholar reference fetch failed', e)
+    // Only log unexpected errors, not rate limits or 404s (paper not found is common)
+    const errorMsg = e instanceof Error ? e.message : String(e)
+    if (!errorMsg.startsWith('429') && !errorMsg.includes('404')) {
+      console.warn('Semantic Scholar reference fetch failed:', errorMsg)
+    }
     return []
   }
 }

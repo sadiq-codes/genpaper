@@ -10,6 +10,12 @@ import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
 
 export type UnifiedPromptData = PromptData
 
+export interface OriginalResearchContext {
+  hasOriginalResearch: boolean
+  researchQuestion?: string
+  keyFindings?: string
+}
+
 export interface BuildPromptOptions extends TemplateOptions {
   targetWords?: number
   forceRewrite?: boolean
@@ -18,6 +24,16 @@ export interface BuildPromptOptions extends TemplateOptions {
   rewriteText?: string
   previousSectionsSummary?: string
   outlineTree?: string
+  // Project context (wired from pipeline)
+  projectTitle?: string
+  projectObjectives?: string
+  paperType?: string // e.g., 'researchArticle', 'literatureReview'
+  topic?: string
+  // Original research context (for empirical papers)
+  originalResearch?: OriginalResearchContext
+  // Paper profile guidance (contextual intelligence from profile generation)
+  profileGuidance?: string
+  // Note: minSourcesRequired removed - we now use semantic citation guidance instead of quantitative enforcement
 }
 
 /**
@@ -48,8 +64,8 @@ async function generatePromptData(
   context: SectionContext,
   options: BuildPromptOptions
 ): Promise<UnifiedPromptData> {
-  // Project-level metadata (defaults until service integration)
-  const projectData = await getProjectData()
+  // Project-level metadata (from options or defaults)
+  const projectData = getProjectData(options)
 
   // Document structure and prior coherence (defaults until service integration)
   const outlineTree = options.outlineTree || await buildOutlineTree()
@@ -66,15 +82,78 @@ async function generatePromptData(
     .slice()
     .sort((a, b) => (b.score || 0) - (a.score || 0))
 
-  // Pre-calculate distinct papers for calibration
-  const distinctPapers = new Set(workingChunks.map(c => (c as any).paper_id)).size
+  // Pre-calculate distinct papers - count papers with meaningful content
+  // RELAXED THRESHOLDS: Allow papers with just 1 chunk of 200+ chars (including abstracts)
+  // This enables using abstract-only papers for citations when full-text isn't available
+  // Previous thresholds (500 chars, 2 chunks) excluded 90%+ of collected papers
+  const MIN_CHUNK_LENGTH = 200
+  const MIN_CHUNKS_FOR_USABLE = 1
+  
+  const paperChunkCounts = new Map<string, number>()
+  const allPaperIds = new Set<string>()
+  
+  for (const chunk of workingChunks) {
+    const paperId = (chunk as any).paper_id
+    const content: string = (chunk as any).content || ''
+    
+    if (paperId) {
+      allPaperIds.add(paperId)
+      // Only count substantial chunks (not just short abstracts)
+      if (content.length >= MIN_CHUNK_LENGTH) {
+        paperChunkCounts.set(paperId, (paperChunkCounts.get(paperId) || 0) + 1)
+      }
+    }
+  }
+  
+  // Usable papers = papers with at least MIN_CHUNKS_FOR_USABLE substantial chunks
+  const usablePaperIds = [...paperChunkCounts.entries()]
+    .filter(([_, count]) => count >= MIN_CHUNKS_FOR_USABLE)
+    .map(([paperId, _]) => paperId)
+  
+  const totalDistinctPapers = allPaperIds.size
+  const usablePapers = usablePaperIds.length
+  
+  console.log(`📊 Content availability: ${usablePapers}/${totalDistinctPapers} papers have substantial content (≥${MIN_CHUNKS_FOR_USABLE} chunks with ≥${MIN_CHUNK_LENGTH} chars)`)
+  
+  // FALLBACK: If usability is still below 30%, apply emergency relaxed thresholds
+  // This ensures we use SOMETHING even if most papers only have very short content
+  let finalUsablePapers = usablePapers
+  // Note: finalUsablePaperIds reserved for future use (e.g., filtering chunks by usable papers)
+  let _finalUsablePaperIds = usablePaperIds
+  
+  if (totalDistinctPapers > 0 && usablePapers / totalDistinctPapers < 0.3) {
+    console.warn(`⚠️ Low content coverage: only ${usablePapers} of ${totalDistinctPapers} papers meet standard thresholds`)
+    console.warn(`   Applying emergency fallback: including all papers with ANY content`)
+    
+    // Emergency fallback: include any paper with at least 1 chunk of 50+ chars
+    const EMERGENCY_MIN_CHUNK_LENGTH = 50
+    const emergencyPaperIds: string[] = []
+    
+    for (const chunk of workingChunks) {
+      const paperId = (chunk as any).paper_id
+      const content: string = (chunk as any).content || ''
+      
+      if (paperId && content.length >= EMERGENCY_MIN_CHUNK_LENGTH && !emergencyPaperIds.includes(paperId)) {
+        emergencyPaperIds.push(paperId)
+      }
+    }
+    
+    if (emergencyPaperIds.length > usablePapers) {
+      console.log(`   Emergency fallback recovered ${emergencyPaperIds.length - usablePapers} additional papers`)
+      finalUsablePapers = emergencyPaperIds.length
+      _finalUsablePaperIds = emergencyPaperIds
+    }
+  }
 
-  // Calibrate citations to evidence diversity (prevent padding when evidence is limited)
-  const dynamicTarget = Math.ceil(distinctPapers * 0.4) // 40% of distinct sources
-  const minCitations = Math.max(
-    2, // Lower floor when distinct sources < 4
-    Math.min(distinctPapers, dynamicTarget) // Don't exceed available sources
-  )
+  // Use final usable papers count (after fallback) for citation calibration
+  const distinctPapers = finalUsablePapers
+
+  // Note: We no longer enforce minimum citation counts quantitatively.
+  // Instead, the LLM is instructed semantically on WHEN to cite (statistics, findings, theories, etc.)
+  // This produces more natural, contextually appropriate citations.
+  // See skeleton.yaml for the semantic citation checklist.
+  
+  console.log(`📊 Evidence availability: usablePapers=${distinctPapers}, totalPapers=${totalDistinctPapers}`)
 
   // Filter out already-used evidence from cross-section memory
   const { EvidenceTracker } = await import('@/lib/services/evidence-tracker')
@@ -98,15 +177,24 @@ async function generatePromptData(
   const upstreamDedupQuality = uniqueContentHashes.size / Math.max(1, freshChunks.length)
   console.log(`   - Upstream dedup quality: ${(upstreamDedupQuality * 100).toFixed(1)}% unique`)
 
+  // Calculate evidence limits for prompt size management
+  // We provide diverse evidence to the LLM; it decides semantically when to cite
+  // Upper bound: 35 snippets to balance prompt size with source diversity
+  const MAX_SNIPPETS = Math.min(35, Math.max(totalDistinctPapers, freshChunks.length))
+  
+  // MAX_PER_PAPER: limit chunks per paper to encourage source diversity
+  // 2 chunks per paper is a good balance - enough context without over-representing any source
+  const MAX_PER_PAPER = 2
+  
+  console.log(`📊 Evidence limits: MAX_SNIPPETS=${MAX_SNIPPETS}, MAX_PER_PAPER=${MAX_PER_PAPER}`)
+
   // Light sampling if upstream dedup is good (>90% unique), otherwise apply full dedupe
   let distinctChunks: typeof freshChunks = []
   
   if (upstreamDedupQuality > 0.9) {
     // Light sampling - trust upstream deduplication
     console.log(`   - Using light sampling (upstream dedup is effective)`)
-    const MAX_SNIPPETS = 8
     const perPaper = new Map<string, number>()
-    const MAX_PER_PAPER = 2
     
     for (const chunk of freshChunks) {
       const pid = (chunk as any).paper_id || 'unknown'
@@ -120,8 +208,6 @@ async function generatePromptData(
   } else {
     // Full deduplication needed
     console.log(`   - Applying full prompt-level deduplication`)
-    const MAX_SNIPPETS = 8
-    const MAX_PER_PAPER = 2
     const seen = new Set<string>()
     const perPaper = new Map<string, number>()
 
@@ -151,10 +237,15 @@ async function generatePromptData(
 
   // Build new contextual data for repetition reduction
   const alreadyCovered = await buildAlreadyCoveredList()
-  const sectionPurpose = await buildSectionPurpose(context.title || String(context.sectionKey))
+  const topic = options.topic || projectData.title
+  const paperType = options.paperType || 'researchArticle'
+  const sectionPurpose = await buildSectionPurpose(context.title || String(context.sectionKey), topic, paperType)
   const exclusions = await buildExclusions(previousSummary)
   const usedEvidenceLedger = await buildUsedEvidenceLedger()
-  const { requiredPoints, qualityCriteria } = await buildPlanningData(context.title || String(context.sectionKey))
+  const { requiredPoints, qualityCriteria } = await buildPlanningData(context.title || String(context.sectionKey), topic, paperType)
+
+  // Original research context (if provided)
+  const originalResearch = options.originalResearch
 
   return {
     paperTitle: projectData.title,
@@ -168,11 +259,17 @@ async function generatePromptData(
     requiredPoints,
     qualityCriteria,
     targetWords,
-    minCitations,
+    // minCitations removed - using semantic citation guidance instead of quantitative enforcement
     isRewrite: Boolean(currentText) || Boolean(options.forceRewrite),
     currentText: currentText || undefined,
     evidenceSnippets,
-    usedEvidenceLedger
+    usedEvidenceLedger,
+    // Original research fields for empirical papers
+    hasOriginalResearch: originalResearch?.hasOriginalResearch || false,
+    researchQuestion: originalResearch?.researchQuestion,
+    keyFindings: originalResearch?.keyFindings,
+    // Paper profile guidance (contextual intelligence)
+    profileGuidance: options.profileGuidance || undefined
   }
 }
 
@@ -180,37 +277,27 @@ async function generatePromptData(
 
 /**
  * Build already covered claims list from previous sections
+ * Returns empty string when no project service is available.
+ * Note: This is a placeholder - full implementation requires project service integration.
  */
 async function buildAlreadyCoveredList(): Promise<string> {
-  // TODO: Replace with ProjectService.getApprovedClaims(projectId)
-  const approvedSections = [] as Array<{ title: string; keyPoints?: string[] }>
-  if (!approvedSections.length) {
-    return ''
-  }
-
-  const coveredItems: string[] = []
-  for (const section of approvedSections) {
-    if (section.keyPoints?.length) {
-      coveredItems.push(...section.keyPoints.map(point => `• ${section.title}: ${point}`))
-    }
-  }
-
-  return coveredItems.slice(0, 10).join('\n') // Limit to top 10 items
+  // Returns empty string - callers should provide this via options when available
+  return ''
 }
 
 /**
  * Build section purpose guidance using quality criteria generation
  */
-async function buildSectionPurpose(sectionTitle: string): Promise<string> {
+async function buildSectionPurpose(sectionTitle: string, topic: string, paperType: string): Promise<string> {
   try {
     // Import generators for quality criteria generation
     const { generateQualityCriteria } = await import('@/lib/prompts/generators')
     
     // Generate discipline-specific quality criteria
     const qualityCriteria = await generateQualityCriteria(
-      'Research Paper', // TODO: Get actual topic from context
+      topic,
       sectionTitle,
-      'researchArticle' // TODO: Get actual paper type from context  
+      paperType as any
     )
     
     // Convert criteria to purpose statement
@@ -276,7 +363,7 @@ async function buildUsedEvidenceLedger(): Promise<string> {
 /**
  * Build planning data (required points and quality criteria) using section planning
  */
-async function buildPlanningData(sectionTitle: string): Promise<{
+async function buildPlanningData(sectionTitle: string, topic: string, paperType: string): Promise<{
   requiredPoints: string
   qualityCriteria: string
 }> {
@@ -286,9 +373,9 @@ async function buildPlanningData(sectionTitle: string): Promise<{
     
     // Generate quality criteria for this section
     const criteria = await generateQualityCriteria(
-      'Research Paper', // TODO: Get actual topic from context
+      topic,
       sectionTitle,
-      'researchArticle' // TODO: Get actual paper type from context
+      paperType as any
     )
     
     // Format for template display
@@ -312,36 +399,22 @@ async function buildPlanningData(sectionTitle: string): Promise<{
 }
 
 /**
- * Get project metadata (title, objectives)
+ * Get project metadata (title, objectives) from options or defaults
  */
-async function getProjectData(): Promise<{ title: string; objectives: string }> {
-  // TODO: Wire via a service (e.g., ProjectService) — for now, return meaningful defaults
-  const project = null as unknown as { title?: string; description?: string; metadata?: any } | null
-  if (!project) {
-    // Return meaningful defaults instead of empty strings to provide context
-    return {
-      title: 'Research Paper',
-      objectives: 'Conduct systematic investigation and analysis of the research topic with evidence-based conclusions.'
-    }
-  }
-  
-  // Extract objectives from description or metadata
-  const objectives = project.metadata?.objectives || 
-    project.description?.substring(0, 200) + '...' ||
-    'Systematic investigation and analysis of the research topic.'
-  
+function getProjectData(options: BuildPromptOptions): { title: string; objectives: string } {
   return {
-    title: project.title || 'Research Paper',
-    objectives
+    title: options.projectTitle || options.topic || 'Research Paper',
+    objectives: options.projectObjectives || 
+      `Conduct systematic investigation and analysis of ${options.topic || 'the research topic'} with evidence-based conclusions.`
   }
 }
 
 /**
  * Build a text representation of the document outline tree
+ * Returns a generic academic paper structure as fallback.
+ * Callers should provide outline via options.outlineTree when available.
  */
 async function buildOutlineTree(): Promise<string> {
-  // TODO: This should be passed via context instead of hardcoded
-  // For now, return a more generic structure until outline is passed properly
   return `• Introduction
 • Literature Review  
 • Methodology
@@ -351,11 +424,12 @@ async function buildOutlineTree(): Promise<string> {
 }
 
 /**
- * Get summaries of all approved sections before the current one
+ * Get summaries of all approved sections before the current one.
+ * Uses EvidenceTracker to infer section progress when project service is unavailable.
+ * Callers can provide summaries via options.previousSectionsSummary for richer context.
  */
 async function buildPreviousSectionsSummary(currentSectionKey?: string): Promise<string> {
-  // TODO: Replace with ProjectService.getApprovedSections(projectId)
-  // For now, check if we have any completed sections from evidence tracker
+  // Use EvidenceTracker to infer section progress from evidence usage
   const { EvidenceTracker } = await import('@/lib/services/evidence-tracker')
   const stats = EvidenceTracker.getUsageStats()
   
@@ -405,22 +479,20 @@ function generateBasicSectionSummary(sectionTitle: string, chunkCount: number): 
 /**
  * Build section path (e.g., "Methods → Data Collection → Survey Design")
  */
+/**
+ * Build section path for navigation context.
+ * Returns just the current section title as fallback.
+ * Full hierarchical path requires project service integration.
+ */
 async function buildSectionPath(currentSectionTitle: string): Promise<string> {
-  // TODO: Replace with ProjectService.getSection(sectionId)
-  const section = { title: currentSectionTitle } as { title: string }
-  const path = [section.title]
-  
-  // Walk up the parent chain
-  // Parent chain omitted without DB access
-  
-  return path.join(' → ')
+  return currentSectionTitle
 }
 
 /**
- * Get current text for rewrite operations
+ * Get current text for rewrite operations.
+ * Returns null as fallback - callers should provide via options.rewriteText.
  */
 async function getCurrentText(): Promise<string | null> {
-  // TODO: Replace with ProjectService.getSectionContent(sectionId)
   return null
 }
 

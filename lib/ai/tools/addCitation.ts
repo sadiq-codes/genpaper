@@ -1,3 +1,17 @@
+/**
+ * @deprecated This tool-based citation approach has been replaced by the two-pass
+ * citation system in lib/citations/post-processor.ts
+ * 
+ * The new approach uses [CITE: paper_id] markers in AI output, which are then
+ * post-processed into formatted citations. This is more reliable because:
+ * 1. AI doesn't need to invoke tools mid-generation
+ * 2. Citation formatting is deterministic
+ * 3. No race conditions with streaming
+ * 
+ * This file is kept for reference and potential future use cases where
+ * real-time tool calling might be beneficial.
+ */
+
 import z from 'zod'
 import { tool } from 'ai'
 import { AsyncLocalStorage } from 'async_hooks'
