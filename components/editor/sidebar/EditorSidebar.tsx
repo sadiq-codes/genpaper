@@ -66,11 +66,11 @@ export function EditorSidebar({
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
               activeTab === 'chat' 
-                ? "bg-background shadow-sm text-red-600 font-caveat text-lg" 
+                ? "bg-background shadow-sm text-primary font-caveat text-lg" 
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
-            <MessageSquare className={cn("h-4 w-4", activeTab === 'chat' ? "text-red-600" : "")} />
+            <MessageSquare className={cn("h-4 w-4", activeTab === 'chat' ? "text-primary" : "")} />
             <span>Chat</span>
           </button>
           <button

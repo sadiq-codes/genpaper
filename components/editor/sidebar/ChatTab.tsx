@@ -48,7 +48,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             {message.citations.map((citation) => (
               <span 
                 key={citation.id}
-                className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs text-blue-700 border border-blue-200"
+                className="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-700 border border-gray-300"
               >
                 {citation.authors[0]?.split(' ').pop()}, {citation.year}
               </span>

@@ -188,7 +188,7 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
         return <FileText className="h-4 w-4 text-muted-foreground" />
       case 'uploading':
       case 'processing':
-        return <LoadingSpinner size="sm" className="h-4 w-4 text-blue-500" />
+        return <LoadingSpinner size="sm" className="h-4 w-4 text-gray-1000" />
       case 'success':
         return <CheckCircle className="h-4 w-4 text-green-500" />
       case 'error':
@@ -202,7 +202,7 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
         return 'border-muted'
       case 'uploading':
       case 'processing':
-        return 'border-blue-200 bg-blue-50'
+        return 'border-gray-300 bg-gray-100'
       case 'success':
         return 'border-green-200 bg-green-50'
       case 'error':

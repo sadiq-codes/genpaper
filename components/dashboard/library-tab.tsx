@@ -1,18 +1,21 @@
-'use client'
+"use client"
 
-import LibraryManager from '@/components/LibraryManager'
+import { Suspense } from "react"
+import LibraryManager from "@/components/LibraryManager"
 
 export function LibraryTab() {
   return (
-    <div className="space-y-6">
-      <div className="space-y-1">
-        <h2 className="text-2xl font-bold tracking-tight">Research Library</h2>
-        <p className="text-muted-foreground">
-          Manage your papers, sources, and research materials
-        </p>
-      </div>
-      
-      <LibraryManager />
+    <div className="w-full">
+      <Suspense
+        fallback={
+          <div className="animate-pulse space-y-4">
+            <div className="h-12 bg-muted rounded-lg" />
+            <div className="h-96 bg-muted rounded-lg" />
+          </div>
+        }
+      >
+        <LibraryManager />
+      </Suspense>
     </div>
   )
 }

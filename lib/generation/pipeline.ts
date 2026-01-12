@@ -11,8 +11,8 @@ import { EvidenceTracker } from '@/lib/services/evidence-tracker'
 import { sanitizeTopic } from '@/lib/utils/prompt-safety'
 import { classifyError, CancellationError } from '@/lib/generation/errors'
 import { warn, error as logError, info } from '@/lib/utils/logger'
-import { processAndCleanCitations, hasCitationMarkers } from '@/lib/citations/post-processor'
-import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
+// Citation markers [CITE: paper_id] are kept in markdown - UI renders them
+// We only need cleanRemainingArtifacts to remove any leaked tool syntax
 import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
 import { extractThemes, mergeThemeAnalysisIntoProfile, buildThemeGuidanceForOutline } from '@/lib/generation/theme-extraction'
 import type { PaperProfile, ThemeAnalysis } from '@/lib/generation/paper-profile-types'
@@ -508,50 +508,44 @@ export async function generatePaper(
       }, 'Legacy validation flagged issues that profile validation passed - profile takes precedence')
     }
     
-    onProgress?.('saving', 95, 'Processing citations and saving content...')
+    onProgress?.('saving', 95, 'Extracting citations and saving content...')
     
-    // Process [CITE: paper_id] markers and replace with formatted citations
-    if (hasCitationMarkers(fullContent)) {
-      info({ markers: fullContent.match(/\[CITE:\s*[a-f0-9-]+\]/gi)?.length || 0 }, 'Processing citation markers')
-      
-      // Get the citation style for this project (project setting > user default > 'apa')
-      const citationStyle = await getProjectCitationStyle(projectId, userId)
-      info({ citationStyle }, 'Using citation style for paper generation')
-      
-      const citationResult = await processAndCleanCitations(fullContent, projectId, citationStyle)
-      
-      fullContent = citationResult.content
-      
-      // Log any citation errors
-      if (citationResult.errors.length > 0) {
-        warn({ errors: citationResult.errors }, 'Some citations could not be processed')
+    // Extract [CITE: paper_id] markers but DON'T replace them
+    // Content is saved as markdown with citation markers intact
+    // The UI renders them as formatted citations (e.g., "Smith et al., 2024")
+    const citationMatches = fullContent.match(/\[CITE:\s*([a-f0-9-]+)\]/gi) || []
+    const citedPaperIds = new Set<string>()
+    
+    for (const match of citationMatches) {
+      const paperIdMatch = match.match(/\[CITE:\s*([a-f0-9-]+)\]/i)
+      if (paperIdMatch) {
+        citedPaperIds.add(paperIdMatch[1])
       }
-      
-      // Add processed citations to allCitations
-      for (const citation of citationResult.citations) {
-        allCitations.push({
-          paperId: citation.paperId,
-          citationText: citation.citationText
-        })
-      }
-      
-      info({ processedCitations: citationResult.citations.length }, 'Citations processed successfully')
     }
     
-    // Create citations map with deterministic keys (paperId + hash for uniqueness)
+    info({ citationCount: citedPaperIds.size }, 'Extracted unique citations from content')
+    
+    // Clean non-citation artifacts (leaked tool syntax, etc.) but KEEP [CITE: ...] markers
+    const { cleanNonCitationArtifacts } = await import('@/lib/citations/post-processor')
+    fullContent = cleanNonCitationArtifacts(fullContent)
+    
+    // Build citations map from extracted paper IDs
     const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
-    allCitations.forEach((citation) => {
-      // Create deterministic key from paperId and citation text
-      const textHash = citation.citationText.slice(0, 20).replace(/\W/g, '').toLowerCase()
-      const key = `${citation.paperId.slice(0, 8)}-${textHash || 'cite'}`
-      // Handle duplicates by appending count
-      let finalKey = key
-      let counter = 1
-      while (citationsMap[finalKey]) {
-        finalKey = `${key}-${counter}`
-        counter++
+    let citationNum = 1
+    for (const paperId of citedPaperIds) {
+      citationsMap[`cite-${citationNum}`] = {
+        paperId,
+        citationText: `[CITE: ${paperId}]` // Store the marker as the "text" for backwards compat
       }
-      citationsMap[finalKey] = citation
+      citationNum++
+    }
+    
+    // Also add any citations collected during generation
+    allCitations.forEach((citation) => {
+      if (!citedPaperIds.has(citation.paperId)) {
+        citationsMap[`cite-${citationNum}`] = citation
+        citationNum++
+      }
     })
     
     await updateProjectContent(projectId, fullContent.trim(), citationsMap)

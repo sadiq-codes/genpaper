@@ -1,10 +1,12 @@
-'use client'
+"use client"
 
-import { useRef } from 'react'
-import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { FileUp, Library } from 'lucide-react'
-import { toast } from 'sonner'
+import type React from "react"
+
+import { useRef } from "react"
+import { useRouter } from "next/navigation"
+import { Button } from "@/components/ui/button"
+import { FileUp, Library } from "lucide-react"
+import { toast } from "sonner"
 
 export function QuickActions() {
   const router = useRouter()
@@ -18,29 +20,26 @@ export function QuickActions() {
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (file.type !== 'application/pdf') {
-      toast.error('Please select a PDF file')
+    if (file.type !== "application/pdf") {
+      toast.error("Please select a PDF file")
       return
     }
 
-    // For now, show a toast that this feature will create a project from the PDF
-    toast.info('PDF import coming soon', {
-      description: 'This will extract paper details and create a project automatically.'
+    toast.info("PDF import coming soon", {
+      description: "This will extract paper details and create a project automatically.",
     })
 
-    // Reset the input
     if (fileInputRef.current) {
-      fileInputRef.current.value = ''
+      fileInputRef.current.value = ""
     }
   }
 
   const handleFromLibrary = () => {
-    router.push('/library')
+    router.push("/library")
   }
 
   return (
-    <div className="flex items-center justify-center gap-3">
-      {/* Hidden file input */}
+    <div className="flex items-center justify-center gap-2 flex-wrap">
       <input
         ref={fileInputRef}
         type="file"
@@ -49,20 +48,12 @@ export function QuickActions() {
         className="hidden"
       />
 
-      <Button 
-        variant="outline" 
-        className="gap-2 h-10 px-4"
-        onClick={handleImportPDF}
-      >
+      <Button variant="outline" size="sm" className="gap-2 bg-transparent" onClick={handleImportPDF}>
         <FileUp className="h-4 w-4" />
         Import PDF
       </Button>
 
-      <Button 
-        variant="outline" 
-        className="gap-2 h-10 px-4"
-        onClick={handleFromLibrary}
-      >
+      <Button variant="outline" size="sm" className="gap-2 bg-transparent" onClick={handleFromLibrary}>
         <Library className="h-4 w-4" />
         From Library
       </Button>

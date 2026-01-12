@@ -1,35 +1,39 @@
-'use client'
+"use client"
 
-import { useEffect, useState } from 'react'
-import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { 
-  Sparkles, 
-  BookOpen, 
-  Zap, 
-  Users, 
-  CheckCircle, 
+import { useEffect, useState } from "react"
+import Link from "next/link"
+import { Button } from "@/components/ui/button"
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Sparkles,
+  BookOpen,
+  Zap,
+  Users,
+  CheckCircle,
   ArrowRight,
   FileText,
   Search,
-  Quote,
   Brain,
   Clock,
-  Shield
-} from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
-import type { User } from '@supabase/supabase-js'
-import { LoadingSpinner } from '@/components/ui/loading-spinner'
+  Shield,
+  Menu,
+  X,
+} from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
+import type { User } from "@supabase/supabase-js"
+import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
 export default function LandingPage() {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const supabase = createClient()
 
   useEffect(() => {
     const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
       setUser(user)
       setLoading(false)
     }
@@ -42,84 +46,175 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-
-      {/* Hero Section */}
-      <section className="relative">
-        <div className="bg-gradient-to-br from-gray-50 via-gray-100 to-gray-200 relative overflow-hidden">
-          <div className="absolute inset-0 bg-white/40"></div>
-          
-          {/* Abstract AI Graphic */}
-          <div className="absolute inset-0 flex items-center justify-center opacity-10">
-            <div className="relative">
-              <div className="grid grid-cols-6 gap-8">
-                {Array.from({ length: 24 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-2 h-2 bg-gray-600 rounded-full animate-pulse"
-                    style={{ animationDelay: `${i * 0.1}s` }}
-                  ></div>
-                ))}
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-md border-b border-border">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <Link href="/" className="flex items-center space-x-2 group">
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                <Sparkles className="h-5 w-5 text-primary-foreground" />
               </div>
-              <svg className="absolute inset-0 w-full h-full" viewBox="0 0 300 200">
-                <path
-                  d="M20,20 L280,60 M60,40 L240,120 M40,80 L260,40 M80,160 L220,80 M120,30 L180,150"
-                  stroke="rgb(75 85 99)"
-                  strokeWidth="1"
-                  fill="none"
-                  opacity="0.3"
-                />
-              </svg>
+              <span className="text-xl font-bold text-foreground">GenPaper</span>
+            </Link>
+
+            <div className="hidden md:flex items-center space-x-8">
+              <a
+                href="#features"
+                className="text-muted-foreground hover:text-foreground transition-colors text-sm font-medium"
+              >
+                Features
+              </a>
+              <a
+                href="#benefits"
+                className="text-muted-foreground hover:text-foreground transition-colors text-sm font-medium"
+              >
+                How it Works
+              </a>
+              {user ? (
+                <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-6" asChild>
+                  <Link href="/projects">
+                    Dashboard
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Link>
+                </Button>
+              ) : (
+                <>
+                  <Link
+                    href="/login"
+                    className="text-muted-foreground hover:text-foreground transition-colors text-sm font-medium"
+                  >
+                    Sign In
+                  </Link>
+                  <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-6" asChild>
+                    <Link href="/signup">Get Started</Link>
+                  </Button>
+                </>
+              )}
             </div>
+
+            <button
+              className="md:hidden p-2 rounded-lg hover:bg-muted transition-colors"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? (
+                <X className="h-6 w-6 text-foreground" />
+              ) : (
+                <Menu className="h-6 w-6 text-foreground" />
+              )}
+            </button>
           </div>
 
-          <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
-            <div className="text-center">
-              <h1 className="text-4xl sm:text-6xl font-bold text-gray-900 mb-6 leading-tight">
-                From topic to
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-gray-700 to-gray-900"> finished paper</span>
-                — effortlessly
-              </h1>
-              <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto leading-relaxed">
-                GenPaper helps you write well-structured, properly cited research papers in minutes — with sources you can trust.
-              </p>
-              
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
+          {mobileMenuOpen && (
+            <div className="md:hidden py-4 border-t border-border">
+              <div className="flex flex-col space-y-4">
+                <a
+                  href="#features"
+                  className="text-muted-foreground hover:text-foreground transition-colors font-medium px-2 py-2"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  Features
+                </a>
+                <a
+                  href="#benefits"
+                  className="text-muted-foreground hover:text-foreground transition-colors font-medium px-2 py-2"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  How it Works
+                </a>
                 {user ? (
-                  <>
-                    <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
-                      <Link href="/projects">
-                        Go to Projects
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Link>
-                    </Button>
-                  </>
+                  <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg" asChild>
+                    <Link href="/projects">
+                      Dashboard
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Link>
+                  </Button>
                 ) : (
                   <>
-                    <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
+                    <Link
+                      href="/login"
+                      className="text-muted-foreground hover:text-foreground transition-colors font-medium px-2 py-2"
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      Sign In
+                    </Link>
+                    <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg" asChild>
+                      <Link href="/signup">Get Started</Link>
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </nav>
+
+      <section className="relative pt-24">
+        <div className="bg-background relative overflow-hidden min-h-[85vh] flex items-center pt-8">
+          <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 w-full">
+            <div className="text-center" style={{ animation: "fade-in-up 0.8s ease-out" }}>
+              <div className="mb-8 flex justify-center">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-accent/10 border border-accent/20">
+                  <Zap className="h-4 w-4 text-accent" />
+                  <span className="text-sm font-medium text-accent">Powered by AI</span>
+                </div>
+              </div>
+
+              <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-foreground mb-6 leading-[1.2] tracking-tight">
+                Write better research papers in minutes
+              </h1>
+
+              <p className="text-lg sm:text-xl text-muted-foreground mb-12 max-w-2xl mx-auto leading-relaxed">
+                GenPaper helps you create well-structured, properly cited papers — with sources you can trust. From
+                topic to finished paper, effortlessly.
+              </p>
+
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
+                {user ? (
+                  <Button
+                    size="lg"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg shadow-lg transition-all duration-300 hover:shadow-xl"
+                    asChild
+                  >
+                    <Link href="/projects">
+                      Start New Paper
+                      <ArrowRight className="ml-2 h-5 w-5" />
+                    </Link>
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      size="lg"
+                      className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg shadow-lg transition-all duration-300 hover:shadow-xl"
+                      asChild
+                    >
                       <Link href="/signup">
                         Start Free Trial
-                        <ArrowRight className="ml-2 h-4 w-4" />
+                        <ArrowRight className="ml-2 h-5 w-5" />
                       </Link>
                     </Button>
-                    <Button size="lg" variant="outline" className="px-8 py-3" asChild>
+                    <Button
+                      size="lg"
+                      variant="outline"
+                      className="px-8 py-6 text-base rounded-lg border border-border text-foreground hover:bg-muted transition-all duration-300 bg-transparent"
+                      asChild
+                    >
                       <Link href="/login">Sign In</Link>
                     </Button>
                   </>
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-gray-600">
+              <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-green-500" />
-                  <span>Focus on ideas, not formatting</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-green-500" />
+                  <CheckCircle className="w-4 h-4 text-accent" />
                   <span>No credit card required</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-green-500" />
-                  <span>Perfect for essays, reports, theses</span>
+                  <CheckCircle className="w-4 h-4 text-accent" />
+                  <span>Instant results</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-accent" />
+                  <span>Perfect citations</span>
                 </div>
               </div>
             </div>
@@ -127,87 +222,84 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-24 bg-background">
+      <section id="features" className="py-24 bg-muted/30 scroll-mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">
-              Everything you need for research excellence
-            </h2>
-            <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              Comprehensive tools designed to streamline your research workflow from discovery to publication.
+            <h2 className="text-4xl font-bold text-foreground mb-4">Everything for research excellence</h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+              Comprehensive AI-powered tools designed to streamline your academic writing workflow.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            <Card className="border-2 hover:border-gray-300 transition-colors">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
-                  <Brain className="h-6 w-6 text-gray-600" />
+                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
+                  <Brain className="h-6 w-6 text-accent" />
                 </div>
-                <CardTitle>Write Full Papers in Minutes</CardTitle>
-                <CardDescription>
-                  Just enter your topic. GenPaper writes a high-quality, citation-ready paper — including introduction, literature review, results, and conclusion.
+                <CardTitle className="text-foreground">Write Full Papers</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Just enter your topic. GenPaper writes complete papers with introduction, analysis, and conclusion.
                 </CardDescription>
               </CardHeader>
             </Card>
 
-            <Card className="border-2 hover:border-gray-300 transition-colors">
+            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
-                  <Search className="h-6 w-6 text-gray-600" />
+                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
+                  <Search className="h-6 w-6 text-accent" />
                 </div>
-                <CardTitle>Find Trusted Sources Instantly</CardTitle>
-                <CardDescription>
-                  Get relevant papers from real journals, handpicked by smart search — no more digging through confusing search results.
+                <CardTitle className="text-foreground">Find Trusted Sources</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Access real academic papers and journals. No more unreliable search results.
                 </CardDescription>
               </CardHeader>
             </Card>
 
-            <Card className="border-2 hover:border-gray-300 transition-colors">
+            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
-                  <Quote className="h-6 w-6 text-gray-600" />
+                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
+                  <FileText className="h-6 w-6 text-accent" />
                 </div>
-                <CardTitle>Cite Without Headaches</CardTitle>
-                <CardDescription>
-                  Citations are generated for you in APA, MLA, or Chicago — with correct formatting, every time.
+                <CardTitle className="text-foreground">Perfect Citations</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Automatic APA, MLA, and Chicago formatting — correct every time.
                 </CardDescription>
               </CardHeader>
             </Card>
 
-            <Card className="border-2 hover:border-gray-300 transition-colors">
+            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
-                  <BookOpen className="h-6 w-6 text-gray-600" />
+                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
+                  <BookOpen className="h-6 w-6 text-accent" />
                 </div>
-                <CardTitle>Keep Everything in One Place</CardTitle>
-                <CardDescription>
-                  Save, organize, and revisit your papers and sources — automatically sorted and easy to find.
+                <CardTitle className="text-foreground">Organize Everything</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Save, organize, and revisit all your papers and sources in one place.
                 </CardDescription>
               </CardHeader>
             </Card>
 
-            <Card className="border-2 hover:border-gray-300 transition-colors">
+            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
-                  <Clock className="h-6 w-6 text-gray-600" />
+                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
+                  <Clock className="h-6 w-6 text-accent" />
                 </div>
-                <CardTitle>Track Your Progress</CardTitle>
-                <CardDescription>
-                  Go back to any draft. GenPaper keeps versions of your work so you never lose a thing.
+                <CardTitle className="text-foreground">Version History</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Go back to any draft. GenPaper keeps all versions safe and organized.
                 </CardDescription>
               </CardHeader>
             </Card>
 
-            <Card className="border-2 hover:border-gray-300 transition-colors">
+            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center mb-4">
-                  <Shield className="h-6 w-6 text-gray-600" />
+                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
+                  <Shield className="h-6 w-6 text-accent" />
                 </div>
-                <CardTitle>Private, Always Yours</CardTitle>
-                <CardDescription>
-                  Your work stays private and secure. GenPaper never shares or trains on your content.
+                <CardTitle className="text-foreground">Private & Secure</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  Your work stays private. We never share or train on your content.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -215,78 +307,80 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Benefits Section */}
-      <section className="py-24 bg-muted/50">
+      <section id="benefits" className="py-24 bg-background scroll-mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
             <div>
-              <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-6">
-                Transform your writing workflow
-              </h2>
+              <h2 className="text-4xl font-bold text-foreground mb-6">Focus on your ideas</h2>
               <p className="text-lg text-muted-foreground mb-8">
-                Join students and researchers who have simplified their academic writing with GenPaper&apos;s easy-to-use tools.
+                Let GenPaper handle the technical work while you focus on what matters most — your research and
+                arguments.
               </p>
-              
+
               <div className="space-y-6">
                 <div className="flex items-start gap-4">
-                  <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0 mt-1">
-                    <Zap className="h-4 w-4 text-gray-600" />
+                  <div className="w-10 h-10 bg-accent/15 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                    <Zap className="h-5 w-5 text-accent" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-foreground mb-2">Focus on Ideas, Not Formatting</h3>
-                    <p className="text-muted-foreground">Let GenPaper handle structure, citations, and formatting while you focus on your research and arguments.</p>
+                    <h3 className="font-semibold text-foreground mb-2">Save Hours of Work</h3>
+                    <p className="text-muted-foreground">Generate complete research papers in minutes, not days.</p>
                   </div>
                 </div>
-                
+
                 <div className="flex items-start gap-4">
-                  <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0 mt-1">
-                    <FileText className="h-4 w-4 text-gray-600" />
+                  <div className="w-10 h-10 bg-accent/15 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                    <Users className="h-5 w-5 text-accent" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-foreground mb-2">No Stress Over Finding Sources</h3>
-                    <p className="text-muted-foreground">Reliable papers are included automatically — no more hours spent searching through databases.</p>
+                    <h3 className="font-semibold text-foreground mb-2">For Any Assignment</h3>
+                    <p className="text-muted-foreground">
+                      Essays, reports, literature reviews, theses — GenPaper adapts to your needs.
+                    </p>
                   </div>
                 </div>
-                
+
                 <div className="flex items-start gap-4">
-                  <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0 mt-1">
-                    <Users className="h-4 w-4 text-gray-600" />
+                  <div className="w-10 h-10 bg-accent/15 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                    <Shield className="h-5 w-5 text-accent" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-foreground mb-2">Perfect for Any Assignment</h3>
-                    <p className="text-muted-foreground">Essays, reports, literature reviews, theses — GenPaper adapts to whatever you&apos;re writing.</p>
+                    <h3 className="font-semibold text-foreground mb-2">Trustworthy & Transparent</h3>
+                    <p className="text-muted-foreground">
+                      All sources are verified. You can see exactly where information comes from.
+                    </p>
                   </div>
                 </div>
               </div>
             </div>
-            
+
             <div className="relative">
-              <div className="bg-gradient-to-br from-gray-600 to-gray-800 rounded-2xl p-8 text-white">
+              <div className="bg-gradient-to-br from-primary/5 to-accent/5 rounded-2xl p-8 border border-border">
                 <div className="space-y-6">
-                  <div className="bg-white/20 rounded-lg p-4">
+                  <div className="bg-background/80 backdrop-blur-sm rounded-lg p-4 border border-border">
                     <div className="flex items-center gap-3 mb-3">
-                      <div className="w-3 h-3 bg-green-400 rounded-full"></div>
-                      <span className="text-sm opacity-90">AI Analysis Complete</span>
+                      <div className="w-3 h-3 bg-accent rounded-full"></div>
+                      <span className="text-sm font-medium text-foreground">Research Complete</span>
                     </div>
-                    <div className="bg-white/10 rounded h-2 mb-2">
-                      <div className="bg-green-400 h-2 rounded w-full"></div>
+                    <div className="bg-muted rounded-full h-2 mb-2 overflow-hidden">
+                      <div className="bg-accent h-2 rounded-full w-full"></div>
                     </div>
-                    <p className="text-sm opacity-75">Found 47 relevant sources</p>
+                    <p className="text-sm text-muted-foreground">Found 47 relevant sources</p>
                   </div>
-                  
-                  <div className="bg-white/20 rounded-lg p-4">
+
+                  <div className="bg-background/80 backdrop-blur-sm rounded-lg p-4 border border-border">
                     <div className="flex items-center gap-3 mb-3">
-                      <div className="w-3 h-3 bg-gray-400 rounded-full animate-pulse"></div>
-                      <span className="text-sm opacity-90">Generating Citations...</span>
+                      <div className="w-3 h-3 bg-accent rounded-full animate-pulse"></div>
+                      <span className="text-sm font-medium text-foreground">Formatting...</span>
                     </div>
-                    <div className="bg-white/10 rounded h-2 mb-2">
-                      <div className="bg-gray-400 h-2 rounded w-3/4 animate-pulse"></div>
+                    <div className="bg-muted rounded-full h-2 mb-2 overflow-hidden">
+                      <div className="bg-accent h-2 rounded-full w-3/4 animate-pulse"></div>
                     </div>
-                    <p className="text-sm opacity-75">Processing APA format</p>
+                    <p className="text-sm text-muted-foreground">Processing APA format</p>
                   </div>
-                  
+
                   <div className="text-center pt-4">
-                    <p className="text-sm opacity-90">Your research assistant is working...</p>
+                    <p className="text-sm text-muted-foreground">Your paper will be ready shortly...</p>
                   </div>
                 </div>
               </div>
@@ -295,69 +389,98 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-24 bg-background">
+      <section className="py-24 bg-muted/30">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-6">
-            {user ? "Ready to continue writing?" : "Ready to write your best paper yet?"}
+          <h2 className="text-4xl font-bold text-foreground mb-6">
+            {user ? "Ready to continue?" : "Start writing smarter today"}
           </h2>
-          <p className="text-xl text-muted-foreground mb-8">
-            {user ? "Pick up where you left off or start a new project." : "No setup, no stress. Just start writing."}
+          <p className="text-lg text-muted-foreground mb-12">
+            {user
+              ? "Pick up where you left off or start a new project."
+              : "No setup required. Free to start — no credit card needed."}
           </p>
-          
+
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
             {user ? (
               <>
-                <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
-                  <Link href="/generate">
+                <Button
+                  size="lg"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg shadow-lg transition-all duration-300"
+                  asChild
+                >
+                  <Link href="/projects">
                     Start New Paper
-                    <ArrowRight className="ml-2 h-4 w-4" />
+                    <ArrowRight className="ml-2 h-5 w-5" />
                   </Link>
                 </Button>
-                <Button size="lg" variant="outline" className="px-8 py-3" asChild>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="px-8 py-6 text-base rounded-lg border border-border text-foreground hover:bg-muted transition-all duration-300 bg-transparent"
+                  asChild
+                >
                   <Link href="/projects">View Projects</Link>
                 </Button>
               </>
             ) : (
               <>
-                <Button size="lg" className="bg-gray-900 hover:bg-gray-800 text-white px-8 py-3" asChild>
+                <Button
+                  size="lg"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg shadow-lg transition-all duration-300"
+                  asChild
+                >
                   <Link href="/signup">
-                    Write Your First Paper with GenPaper
-                    <ArrowRight className="ml-2 h-4 w-4" />
+                    Write Your First Paper
+                    <ArrowRight className="ml-2 h-5 w-5" />
                   </Link>
                 </Button>
-                <Button size="lg" variant="outline" className="px-8 py-3" asChild>
-                  <Link href="/login">Sign In to Continue</Link>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="px-8 py-6 text-base rounded-lg border border-border text-foreground hover:bg-muted transition-all duration-300 bg-transparent"
+                  asChild
+                >
+                  <Link href="/login">Sign In</Link>
                 </Button>
               </>
             )}
           </div>
-          
+
           <p className="text-sm text-muted-foreground">
-            {user ? "All your work is automatically saved and organized." : "It's free — no credit card, no complicated setup • Free 14-day trial • Cancel anytime"}
+            {user ? "All work is automatically saved." : "Join thousands of researchers worldwide"}
           </p>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t bg-muted/30">
+      <footer className="border-t border-border bg-background">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="flex flex-col md:flex-row justify-between items-center">
-            <div className="flex items-center space-x-2 mb-4 md:mb-0">
-              <Sparkles className="h-6 w-6 text-primary" />
-              <span className="text-lg font-bold">GenPaper</span>
-              <span className="text-sm text-muted-foreground ml-2">AI-Powered Research Assistant</span>
+            <div className="flex items-center space-x-3 mb-4 md:mb-0">
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                <Sparkles className="h-5 w-5 text-primary-foreground" />
+              </div>
+              <div>
+                <span className="text-lg font-bold text-foreground block">GenPaper</span>
+                <span className="text-xs text-muted-foreground">AI-Powered Research Assistant</span>
+              </div>
             </div>
-            
+
             <div className="flex items-center space-x-6 text-sm text-muted-foreground">
-              <a href="#" className="hover:text-foreground transition-colors">Privacy Policy</a>
-              <a href="#" className="hover:text-foreground transition-colors">Terms of Service</a>
-              <a href="#" className="hover:text-foreground transition-colors">Support</a>
+              <a href="#" className="hover:text-foreground transition-colors">
+                Privacy
+              </a>
+              <a href="#" className="hover:text-foreground transition-colors">
+                Terms
+              </a>
+              <a href="#" className="hover:text-foreground transition-colors">
+                Support
+              </a>
             </div>
           </div>
-          
-          <div className="border-t mt-8 pt-8 text-center text-sm text-muted-foreground">
-            <p>&copy; 2024 GenPaper. All rights reserved. Built for researchers, by researchers.</p>
+
+          <div className="border-t border-border mt-8 pt-8 text-center text-sm text-muted-foreground">
+            <p>&copy; 2025 GenPaper. Built for researchers, by researchers.</p>
           </div>
         </div>
       </footer>

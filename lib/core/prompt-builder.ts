@@ -205,7 +205,8 @@ Provide specific, actionable feedback on:
         id: i + 1,
         paper_id: chunk.paper_id,
         title: chunk.title || 'Source',
-        content: chunk.content.slice(0, 500) + (chunk.content.length > 500 ? '...' : '')
+        // Tag content with paper_id so AI knows which ID to use for [CITE: paper_id]
+        content: `[CONTEXT FROM: ${chunk.paper_id}] ${chunk.content.slice(0, 500)}${chunk.content.length > 500 ? '...' : ''}`
       })),
       null,
       2

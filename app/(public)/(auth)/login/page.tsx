@@ -74,7 +74,7 @@ function LoginPageContent() {
             <div className="flex items-center justify-center mb-8">
               <div className="flex items-center space-x-2">
                 <Sparkles className="h-8 w-8 text-primary" />
-                <span className="text-2xl font-bold">GenPaper</span>
+                <span className="text-2xl font-bold text-gray-900">GenPaper</span>
               </div>
             </div>
 
@@ -144,14 +144,14 @@ function LoginPageContent() {
               <Button 
                 type="submit"
                 disabled={loading}
-                className="w-full h-11 bg-gray-900 hover:bg-gray-800 text-white"
+                className="w-full h-11 bg-primary hover:bg-primary/90 text-white"
               >
                 {loading ? "Signing in..." : "Enter Workspace"}
               </Button>
             </form>
 
             <div className="text-center mb-6">
-              <a href="#" className="text-sm text-gray-600 hover:text-gray-800">
+              <a href="#" className="text-sm text-gray-500 hover:text-primary">
                 Forgot your password?
               </a>
             </div>
@@ -159,7 +159,7 @@ function LoginPageContent() {
             <div className="text-center pt-6 border-t border-border">
               <p className="text-sm text-muted-foreground">
                 Don&apos;t have an account?{" "}
-                <Link href="/signup" className="text-gray-600 hover:text-gray-800 font-medium">
+                <Link href="/signup" className="text-primary hover:text-primary/80 font-medium">
                   Start free trial
                 </Link>
               </p>

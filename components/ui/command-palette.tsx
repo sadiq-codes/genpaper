@@ -196,7 +196,7 @@ export default function CommandPalette({
                       variant="ghost"
                       className={`w-full justify-start h-auto p-3 ${
                         index === selectedIndex 
-                          ? 'bg-blue-50 text-blue-700 border-blue-200' 
+                          ? 'bg-gray-100 text-gray-700 border-gray-300' 
                           : 'hover:bg-gray-50'
                       }`}
                       onClick={command.action}

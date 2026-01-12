@@ -92,7 +92,7 @@ export default function SignupPage() {
           <div className="flex items-center justify-center mb-6">
             <div className="flex items-center space-x-2">
               <Sparkles className="h-8 w-8 text-primary" />
-              <span className="text-2xl font-bold">GenPaper</span>
+              <span className="text-2xl font-bold text-gray-900">GenPaper</span>
             </div>
           </div>
           
@@ -141,7 +141,7 @@ export default function SignupPage() {
             <div className="flex items-center justify-center mb-8">
               <div className="flex items-center space-x-2">
                 <Sparkles className="h-8 w-8 text-primary" />
-                <span className="text-2xl font-bold">GenPaper</span>
+                <span className="text-2xl font-bold text-gray-900">GenPaper</span>
               </div>
             </div>
 
@@ -245,7 +245,7 @@ export default function SignupPage() {
               <Button 
                 type="submit"
                 disabled={loading}
-                className="w-full h-11 bg-gray-900 hover:bg-gray-800 text-white"
+                className="w-full h-11 bg-primary hover:bg-primary/90 text-white"
               >
                 {loading ? "Creating account..." : "Start Free Trial"}
               </Button>
@@ -254,7 +254,7 @@ export default function SignupPage() {
             <div className="text-center pt-6 border-t border-border mb-6">
               <p className="text-sm text-muted-foreground">
                 Already have an account?{" "}
-                <Link href="/login" className="text-gray-600 hover:text-gray-800 font-medium">
+                <Link href="/login" className="text-primary hover:text-primary/80 font-medium">
                   Sign in
                 </Link>
               </p>
@@ -263,9 +263,9 @@ export default function SignupPage() {
             <div className="text-center">
               <p className="text-xs text-muted-foreground">
                 By creating an account, you agree to our{" "}
-                <a href="#" className="text-gray-600 hover:text-gray-800">Terms of Service</a>{" "}
+                <a href="#" className="text-gray-500 hover:text-primary">Terms of Service</a>{" "}
                 and{" "}
-                <a href="#" className="text-gray-600 hover:text-gray-800">Privacy Policy</a>
+                <a href="#" className="text-gray-500 hover:text-primary">Privacy Policy</a>
               </p>
             </div>
           </div>

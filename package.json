@@ -88,7 +88,6 @@
     "lowlight": "^3.3.0",
     "lucide-react": "^0.511.0",
     "markdown-it": "^14.1.0",
-    "marked": "^15.0.12",
     "mustache": "^4.2.0",
     "natural": "^8.1.0",
     "next": "^15.4.6",
@@ -108,6 +107,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
     "server-only": "^0.0.1",
     "sonner": "^2.0.3",
     "swr": "^2.3.3",
@@ -119,6 +119,7 @@
     "tippy.js": "^6.3.7",
     "tldjs": "^2.3.1",
     "ulid": "^3.0.1",
+    "unified": "^11.0.5",
     "uuid": "^11.1.0",
     "zod": "^3.25.62"
   },

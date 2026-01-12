@@ -28,6 +28,7 @@ import { GhostText } from '../extensions/GhostText'
 import { SlashCommands } from '../extensions/SlashCommands'
 import { useSmartCompletion } from '../hooks/useSmartCompletion'
 import { processContent, hasMarkdownFormatting } from '../utils/content-processor'
+import { editorToMarkdown } from '../utils/tiptap-to-markdown'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
 
@@ -82,7 +83,7 @@ export function DocumentEditor({
   // Track if initial content has been set
   const [hasSetInitialContent, setHasSetInitialContent] = useState(false)
   
-  // Process content helper function - converts markdown to TipTap-compatible format
+  // Process content helper function - converts markdown to TipTap JSON
   const processInitialContent = useCallback((content: string, papersList: ProjectPaper[]) => {
     // If no content or empty, use default
     if (!content || content.trim() === '') {
@@ -91,74 +92,50 @@ export function DocumentEditor({
     
     const trimmedContent = content.trim()
     
-    // Check if content is already proper HTML (saved by editor's getHTML())
-    // Proper HTML starts with tags AND contains proper heading tags (not raw ##)
-    const htmlTagPattern = /^<(h[1-6]|p|div|ul|ol|blockquote|pre|table)[^>]*>/i
-    const looksLikeHtml = htmlTagPattern.test(trimmedContent)
-    const hasProperHeadings = /<h[1-6][^>]*>/.test(content)
+    // Check if content looks like HTML (legacy data)
+    const looksLikeHtml = /^<(h[1-6]|p|div|ul|ol|blockquote|pre|table)[^>]*>/i.test(trimmedContent)
     
-    // Check for markdown patterns anywhere in the content
-    const hasRawMarkdownHeadings = /^#{1,6}\s+/m.test(content) || />##?\s+[^<]/.test(content)
-    const hasRawMarkdownFormatting = /\*\*[^*]+\*\*/.test(content) || /\*[^*]+\*/.test(content)
-    
-    if (looksLikeHtml && hasProperHeadings && !hasRawMarkdownHeadings) {
-      // Content is properly formatted HTML - use directly
-      return content
-    }
-    
-    if (looksLikeHtml && (hasRawMarkdownHeadings || hasRawMarkdownFormatting)) {
-      // Corrupted content: HTML with unprocessed markdown inside
-      // e.g., <p>## Introduction...</p> - markdown wasn't converted
+    if (looksLikeHtml) {
+      // Legacy HTML content - extract text and try to recover markdown
       const textContent = content
-        .replace(/<br\s*\/?>/gi, '\n') // Convert br to newlines
-        .replace(/<\/p>/gi, '\n\n') // Convert paragraph closes to double newlines
-        .replace(/<\/h[1-6]>/gi, '\n\n') // Convert heading closes to double newlines
-        .replace(/<[^>]+>/g, '') // Remove all other HTML tags
-        .replace(/&nbsp;/g, ' ') // Convert nbsp to spaces
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/h[1-6]>/gi, '\n\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&amp;/g, '&')
-        .replace(/\n{3,}/g, '\n\n') // Collapse multiple newlines
+        .replace(/\s*(#{1,6})\s+/g, '\n\n$1 ')
+        .replace(/\n{3,}/g, '\n\n')
         .trim()
       
-      if (textContent && hasMarkdownFormatting(textContent)) {
+      if (textContent) {
         try {
           const { json, isFullDoc } = processContent(textContent, papersList)
           if (isFullDoc && json) {
+            console.log('[DocumentEditor] Recovered markdown from legacy HTML')
             return json
           }
         } catch (err) {
-          console.error('Failed to re-process corrupted HTML content:', err)
+          console.error('Failed to process legacy HTML content:', err)
         }
       }
+      // If recovery failed, let TipTap try to parse the HTML directly
+      return content
     }
     
-    // Content is pure markdown (from AI generation or database) - process it
-    if (hasMarkdownFormatting(trimmedContent)) {
-      try {
-        const { json, isFullDoc } = processContent(trimmedContent, papersList)
-        if (isFullDoc && json) {
-          return json
-        }
-      } catch (err) {
-        console.error('Failed to process markdown content:', err)
+    // Content is markdown - process through AST pipeline
+    try {
+      const { json, isFullDoc } = processContent(trimmedContent, papersList)
+      if (isFullDoc && json) {
+        return json
       }
+    } catch (err) {
+      console.error('Failed to process markdown content:', err)
     }
     
-    // Fallback: if content looks like plain text without HTML, wrap it properly
-    if (!looksLikeHtml) {
-      // Try to process as markdown anyway - might have subtle formatting
-      try {
-        const { json, isFullDoc } = processContent(trimmedContent, papersList)
-        if (isFullDoc && json) {
-          return json
-        }
-      } catch {
-        // Ignore and fall through
-      }
-    }
-    
-    // Final fallback: return as-is (TipTap will handle plain text)
+    // Final fallback: return as plain text for TipTap to handle
     return content
   }, [])
 
@@ -183,7 +160,7 @@ export function DocumentEditor({
       Link.configure({
         openOnClick: false,
         HTMLAttributes: {
-          class: 'text-blue-600 hover:text-blue-800 underline cursor-pointer',
+          class: 'text-gray-600 hover:text-gray-800 underline cursor-pointer',
         },
       }),
       Image.configure({
@@ -243,7 +220,9 @@ export function DocumentEditor({
       },
     },
     onUpdate: ({ editor }) => {
-      onUpdate?.(editor.getHTML())
+      // Save as markdown, not HTML
+      const markdown = editorToMarkdown(editor)
+      onUpdate?.(markdown)
     },
     onCreate: ({ editor }) => {
       onEditorReady?.(editor)

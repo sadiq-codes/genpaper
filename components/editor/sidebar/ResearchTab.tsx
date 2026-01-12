@@ -69,7 +69,7 @@ interface ResearchTabProps {
 const claimTypeConfig: Record<AllClaimTypes, { icon: typeof Lightbulb; color: string; label: string }> = {
   // Literature claim types
   finding: { icon: Lightbulb, color: 'text-green-600 bg-green-50 border-green-200', label: 'Finding' },
-  method: { icon: Beaker, color: 'text-blue-600 bg-blue-50 border-blue-200', label: 'Method' },
+  method: { icon: Beaker, color: 'text-gray-600 bg-gray-100 border-gray-300', label: 'Method' },
   limitation: { icon: AlertTriangle, color: 'text-orange-600 bg-orange-50 border-orange-200', label: 'Limitation' },
   future_work: { icon: Sparkles, color: 'text-purple-600 bg-purple-50 border-purple-200', label: 'Future Work' },
   background: { icon: BookOpen, color: 'text-gray-600 bg-gray-50 border-gray-200', label: 'Background' },
@@ -82,7 +82,7 @@ const claimTypeConfig: Record<AllClaimTypes, { icon: typeof Lightbulb; color: st
 // Relationship badge config
 const relationshipConfig: Record<ClaimRelationship, { color: string; label: string; emoji: string }> = {
   supports: { color: 'text-green-700 bg-green-100 border-green-300', label: 'Supports', emoji: '🟢' },
-  extends: { color: 'text-blue-700 bg-blue-100 border-blue-300', label: 'Extends', emoji: '🔵' },
+  extends: { color: 'text-gray-700 bg-gray-200 border-gray-400', label: 'Extends', emoji: '🔵' },
   contradicts: { color: 'text-red-700 bg-red-100 border-red-300', label: 'Contradicts', emoji: '🔴' },
   unrelated: { color: 'text-gray-600 bg-gray-100 border-gray-300', label: 'Unrelated', emoji: '⚪' },
   not_analyzed: { color: 'text-gray-500 bg-gray-50 border-gray-200', label: '', emoji: '' },
@@ -621,33 +621,35 @@ export function ResearchTab({
             open={openSections.papers} 
             onOpenChange={() => toggleSection('papers')}
           >
-            <CollapsibleTrigger className="w-full">
-              <SectionHeader 
-                title="Papers" 
-                count={papers.length}
-                isOpen={openSections.papers}
-                icon={FileText}
-                action={
-                  <TooltipProvider delayDuration={300}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onOpenLibrary()
-                          }}
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Add papers</TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                }
-              />
+            <CollapsibleTrigger asChild>
+              <div className="cursor-pointer">
+                <SectionHeader 
+                  title="Papers" 
+                  count={papers.length}
+                  isOpen={openSections.papers}
+                  icon={FileText}
+                  action={
+                    <TooltipProvider delayDuration={300}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onOpenLibrary()
+                            }}
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Add papers</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  }
+                />
+              </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="pl-6 pr-2 py-2 space-y-1.5">
@@ -675,14 +677,16 @@ export function ResearchTab({
             open={openSections.claims} 
             onOpenChange={() => toggleSection('claims')}
           >
-            <CollapsibleTrigger className="w-full">
-              <SectionHeader 
-                title="Claims" 
-                count={claims.length + (userClaims?.length || 0)}
-                isOpen={openSections.claims}
-                icon={Lightbulb}
-                isLoading={isLoading}
-              />
+            <CollapsibleTrigger asChild>
+              <div className="cursor-pointer">
+                <SectionHeader 
+                  title="Claims" 
+                  count={claims.length + (userClaims?.length || 0)}
+                  isOpen={openSections.claims}
+                  icon={Lightbulb}
+                  isLoading={isLoading}
+                />
+              </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="pl-6 pr-2 py-2 space-y-3">
@@ -759,14 +763,16 @@ export function ResearchTab({
             open={openSections.gaps} 
             onOpenChange={() => toggleSection('gaps')}
           >
-            <CollapsibleTrigger className="w-full">
-              <SectionHeader 
-                title="Research Gaps" 
-                count={gaps.length}
-                isOpen={openSections.gaps}
-                icon={AlertTriangle}
-                isLoading={isLoading}
-              />
+            <CollapsibleTrigger asChild>
+              <div className="cursor-pointer">
+                <SectionHeader 
+                  title="Research Gaps" 
+                  count={gaps.length}
+                  isOpen={openSections.gaps}
+                  icon={AlertTriangle}
+                  isLoading={isLoading}
+                />
+              </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="pl-6 pr-2 py-2 space-y-1.5">
@@ -794,17 +800,19 @@ export function ResearchTab({
               open={openSections.positioning} 
               onOpenChange={() => toggleSection('positioning')}
             >
-              <CollapsibleTrigger className="w-full">
-                <SectionHeader 
-                  title="Positioning" 
-                  count={
-                    (positioning.novelty?.length || 0) + 
-                    (positioning.alignments?.length || 0) + 
-                    (positioning.divergences?.length || 0)
-                  }
-                  isOpen={openSections.positioning || false}
-                  icon={Sparkles}
-                />
+              <CollapsibleTrigger asChild>
+                <div className="cursor-pointer">
+                  <SectionHeader 
+                    title="Positioning" 
+                    count={
+                      (positioning.novelty?.length || 0) + 
+                      (positioning.alignments?.length || 0) + 
+                      (positioning.divergences?.length || 0)
+                    }
+                    isOpen={openSections.positioning || false}
+                    icon={Sparkles}
+                  />
+                </div>
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="pl-6 pr-2 py-2 space-y-3">
@@ -885,14 +893,16 @@ export function ResearchTab({
             open={openSections.insights} 
             onOpenChange={() => toggleSection('insights')}
           >
-            <CollapsibleTrigger className="w-full">
-              <SectionHeader 
-                title="Insights" 
-                count={synthesis?.structured_output?.key_insights?.length || 0}
-                isOpen={openSections.insights}
-                icon={Sparkles}
-                isLoading={isLoading}
-              />
+            <CollapsibleTrigger asChild>
+              <div className="cursor-pointer">
+                <SectionHeader 
+                  title="Insights" 
+                  count={synthesis?.structured_output?.key_insights?.length || 0}
+                  isOpen={openSections.insights}
+                  icon={Sparkles}
+                  isLoading={isLoading}
+                />
+              </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="pl-6 pr-2 py-2">
