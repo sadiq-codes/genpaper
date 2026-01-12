@@ -91,7 +91,7 @@
     "markdown-it": "^14.1.0",
     "mustache": "^4.2.0",
     "natural": "^8.1.0",
-    "next": "^15.4.6",
+    "next": "15.4.10",
     "openai": "^4.103.0",
     "p-limit": "^6.2.0",
     "parse-author": "^2.0.0",
