@@ -2,26 +2,35 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { ProjectPaper } from '../types'
-// Pre-import content processor to avoid async issues in commands
 import { processContent } from '../utils/content-processor'
+import { getCitationManager } from '../services/CitationManager'
 
 // Types for ghost text state
 export interface GhostTextState {
-  text: string | null
+  // Raw text with [CITE: id] markers - used for accept/processing
+  rawText: string | null
+  // Display text with formatted citations - used for rendering
+  displayText: string | null
+  // Citation metadata for display styling and CitationManager integration
   citations: GhostTextCitation[]
+  // Papers for content processing
   papers: ProjectPaper[]
+  // Cursor position where ghost text appears
   position: number | null
 }
 
 export interface GhostTextCitation {
   paperId: string
-  marker: string
-  startOffset: number
-  endOffset: number
-  attrs: {
+  marker: string       // Original [CITE: id] marker
+  formatted: string    // Formatted display text (Smith et al., 2024)
+  // Positions in display text (for rendering)
+  displayStartOffset: number
+  displayEndOffset: number
+  // Paper metadata for CitationManager
+  paper?: {
     id: string
-    authors: string[]
     title: string
+    authors: string[]
     year: number
     journal?: string
     doi?: string
@@ -37,8 +46,17 @@ declare module '@tiptap/core' {
     ghostText: {
       /**
        * Set ghost text suggestion at current cursor position
+       * @param rawText - Text with [CITE: id] markers (for processing on accept)
+       * @param displayText - Text with formatted citations (for display)
+       * @param citations - Citation metadata array
+       * @param papers - Project papers for content processing
        */
-      setGhostText: (text: string, citations?: GhostTextCitation[], papers?: ProjectPaper[]) => ReturnType
+      setGhostText: (
+        rawText: string,
+        displayText: string,
+        citations?: GhostTextCitation[],
+        papers?: ProjectPaper[]
+      ) => ReturnType
       /**
        * Accept and insert the ghost text
        */
@@ -52,42 +70,45 @@ declare module '@tiptap/core' {
 }
 
 // Safely render ghost text content using DOM API (XSS-safe)
+// Uses displayText with formatted citations highlighted
 function renderGhostTextContent(
   container: HTMLElement,
-  text: string,
+  displayText: string,
   citations: GhostTextCitation[]
 ): void {
-  // Clear container
   container.textContent = ''
 
   if (citations.length === 0) {
-    container.textContent = text
+    container.textContent = displayText
     return
   }
 
-  const sortedCitations = [...citations].sort((a, b) => a.startOffset - b.startOffset)
+  // Sort citations by display position
+  const sortedCitations = [...citations].sort(
+    (a, b) => a.displayStartOffset - b.displayStartOffset
+  )
   let lastEnd = 0
 
   for (const citation of sortedCitations) {
     // Add text before citation
-    if (citation.startOffset > lastEnd) {
+    if (citation.displayStartOffset > lastEnd) {
       container.appendChild(
-        document.createTextNode(text.slice(lastEnd, citation.startOffset))
+        document.createTextNode(displayText.slice(lastEnd, citation.displayStartOffset))
       )
     }
 
-    // Add citation with special styling
+    // Add formatted citation with special styling
     const citationSpan = document.createElement('span')
     citationSpan.className = 'ghost-text-citation'
-    citationSpan.textContent = citation.marker
+    citationSpan.textContent = citation.formatted
     container.appendChild(citationSpan)
 
-    lastEnd = citation.endOffset
+    lastEnd = citation.displayEndOffset
   }
 
   // Add remaining text after last citation
-  if (lastEnd < text.length) {
-    container.appendChild(document.createTextNode(text.slice(lastEnd)))
+  if (lastEnd < displayText.length) {
+    container.appendChild(document.createTextNode(displayText.slice(lastEnd)))
   }
 }
 
@@ -104,7 +125,8 @@ export const GhostText = Extension.create({
         state: {
           init(): GhostTextState {
             return {
-              text: null,
+              rawText: null,
+              displayText: null,
               citations: [],
               papers: [],
               position: null
@@ -116,7 +138,8 @@ export const GhostText = Extension.create({
             const setGhostText = tr.getMeta('setGhostText')
             if (setGhostText) {
               return {
-                text: setGhostText.text,
+                rawText: setGhostText.rawText,
+                displayText: setGhostText.displayText,
                 citations: setGhostText.citations || [],
                 papers: setGhostText.papers || [],
                 position: tr.selection.from
@@ -126,7 +149,8 @@ export const GhostText = Extension.create({
             const clearGhostText = tr.getMeta('clearGhostText')
             if (clearGhostText) {
               return {
-                text: null,
+                rawText: null,
+                displayText: null,
                 citations: [],
                 papers: [],
                 position: null
@@ -134,9 +158,10 @@ export const GhostText = Extension.create({
             }
 
             // Clear ghost text if document changed (user typed something)
-            if (tr.docChanged && value.text) {
+            if (tr.docChanged && value.rawText) {
               return {
-                text: null,
+                rawText: null,
+                displayText: null,
                 citations: [],
                 papers: [],
                 position: null
@@ -146,7 +171,8 @@ export const GhostText = Extension.create({
             // Clear if selection moved away from ghost text position
             if (value.position !== null && tr.selection.from !== value.position) {
               return {
-                text: null,
+                rawText: null,
+                displayText: null,
                 citations: [],
                 papers: [],
                 position: null
@@ -158,10 +184,10 @@ export const GhostText = Extension.create({
         },
 
         props: {
-          // Render ghost text as decoration
+          // Render ghost text as decoration using displayText
           decorations(state) {
             const pluginState = ghostTextPluginKey.getState(state)
-            if (!pluginState?.text || pluginState.position === null) {
+            if (!pluginState?.displayText || pluginState.position === null) {
               return DecorationSet.empty
             }
 
@@ -173,10 +199,10 @@ export const GhostText = Extension.create({
                 span.className = 'ghost-text'
                 span.setAttribute('data-ghost-text', 'true')
                 
-                // Use safe DOM rendering
+                // Render using displayText (formatted citations)
                 renderGhostTextContent(
                   span,
-                  pluginState.text || '',
+                  pluginState.displayText || '',
                   pluginState.citations
                 )
                 
@@ -191,7 +217,7 @@ export const GhostText = Extension.create({
           // Handle keyboard events
           handleKeyDown(view, event) {
             const pluginState = ghostTextPluginKey.getState(view.state)
-            if (!pluginState?.text) {
+            if (!pluginState?.rawText) {
               return false
             }
 
@@ -225,10 +251,15 @@ export const GhostText = Extension.create({
   addCommands() {
     return {
       setGhostText:
-        (text: string, citations: GhostTextCitation[] = [], papers: ProjectPaper[] = []) =>
+        (
+          rawText: string,
+          displayText: string,
+          citations: GhostTextCitation[] = [],
+          papers: ProjectPaper[] = []
+        ) =>
         ({ tr, dispatch }) => {
           if (dispatch) {
-            tr.setMeta('setGhostText', { text, citations, papers })
+            tr.setMeta('setGhostText', { rawText, displayText, citations, papers })
             dispatch(tr)
           }
           return true
@@ -238,12 +269,12 @@ export const GhostText = Extension.create({
         () =>
         ({ editor, tr, dispatch }) => {
           const pluginState = ghostTextPluginKey.getState(editor.state)
-          if (!pluginState?.text || pluginState.position === null) {
+          if (!pluginState?.rawText || pluginState.position === null) {
             return false
           }
 
           // Capture all needed data before any state changes
-          const { text, citations, papers, position } = pluginState
+          const { rawText, citations, papers, position } = pluginState
 
           if (dispatch) {
             // Clear ghost text state FIRST
@@ -251,10 +282,25 @@ export const GhostText = Extension.create({
             dispatch(tr)
           }
 
-          // Now synchronously process and insert content
-          // Using pre-imported processContent - no async needed
+          // Pre-populate CitationManager cache with optimistic data
+          // This ensures citations render immediately after insert
+          const citationManager = getCitationManager()
+          for (const citation of citations) {
+            if (citation.paper) {
+              citationManager.setOptimistic(citation.paperId, {
+                id: citation.paper.id,
+                title: citation.paper.title,
+                authors: citation.paper.authors,
+                year: citation.paper.year,
+                journal: citation.paper.journal,
+                doi: citation.paper.doi,
+              } as ProjectPaper)
+            }
+          }
+
+          // Process rawText (with [CITE: id] markers) through unified pipeline
           try {
-            const { json: processedContent, isFullDoc } = processContent(text, papers)
+            const { json: processedContent, isFullDoc } = processContent(rawText, papers)
 
             if (isFullDoc && processedContent.content) {
               // Full document - insert the content array
@@ -262,47 +308,14 @@ export const GhostText = Extension.create({
             } else if (Array.isArray(processedContent) && processedContent.length > 0) {
               // Content fragment - insert directly
               editor.chain().focus().insertContentAt(position, processedContent).run()
-            } else if (citations.length === 0) {
-              // Fallback: simple text insert
-              editor.chain().focus().insertContentAt(position, text).run()
             } else {
-              // Fallback with citations from API
-              const contentParts: Array<{type: string; text?: string; attrs?: GhostTextCitation['attrs']}> = []
-              let lastEnd = 0
-
-              const sortedCitations = [...citations].sort(
-                (a, b) => a.startOffset - b.startOffset
-              )
-
-              for (const citation of sortedCitations) {
-                if (citation.startOffset > lastEnd) {
-                  contentParts.push({
-                    type: 'text',
-                    text: text.slice(lastEnd, citation.startOffset)
-                  })
-                }
-
-                contentParts.push({
-                  type: 'citation',
-                  attrs: citation.attrs
-                })
-
-                lastEnd = citation.endOffset
-              }
-
-              if (lastEnd < text.length) {
-                contentParts.push({
-                  type: 'text',
-                  text: text.slice(lastEnd)
-                })
-              }
-
-              editor.chain().focus().insertContentAt(position, contentParts).run()
+              // Fallback: simple text insert (no citations to process)
+              editor.chain().focus().insertContentAt(position, rawText).run()
             }
           } catch (error) {
             // If content processing fails, insert as plain text
             console.error('Ghost text content processing error:', error)
-            editor.chain().focus().insertContentAt(position, text).run()
+            editor.chain().focus().insertContentAt(position, rawText).run()
           }
 
           return true
@@ -320,7 +333,6 @@ export const GhostText = Extension.create({
     }
   },
 
-  // Add keyboard shortcuts
   addKeyboardShortcuts() {
     return {
       // Ctrl/Cmd + Space is handled externally to trigger generation
@@ -337,5 +349,5 @@ export function getGhostTextState(editor: { state: { doc: unknown } }): GhostTex
 // Helper to check if ghost text is active
 export function hasGhostText(editor: { state: { doc: unknown } }): boolean {
   const state = getGhostTextState(editor)
-  return !!state?.text
+  return !!state?.rawText
 }

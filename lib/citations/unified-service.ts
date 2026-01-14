@@ -15,7 +15,8 @@ import type { CSLItem } from '@/lib/utils/csl'
 // Types
 // ============================================================================
 
-export type CitationStyle = 'apa' | 'mla' | 'chicago' | 'ieee' | 'harvard'
+// CitationStyle now accepts any CSL style ID string
+export type CitationStyle = string
 
 export interface PaperMetadata {
   id: string
@@ -331,9 +332,11 @@ export function getStylePreview(style: CitationStyle): string {
 
 /**
  * Validate citation style string
+ * Now accepts any non-empty CSL style ID
  */
 export function isValidCitationStyle(style: string): style is CitationStyle {
-  return ['apa', 'mla', 'chicago', 'ieee', 'harvard'].includes(style)
+  // Accept any non-empty string up to 100 chars as a valid CSL style ID
+  return typeof style === 'string' && style.length > 0 && style.length <= 100
 }
 
 /**

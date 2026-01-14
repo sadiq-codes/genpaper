@@ -21,11 +21,9 @@ import {
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
-import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
 export default function LandingPage() {
   const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const supabase = createClient()
 
@@ -35,14 +33,9 @@ export default function LandingPage() {
         data: { user },
       } = await supabase.auth.getUser()
       setUser(user)
-      setLoading(false)
     }
     getUser()
   }, [supabase.auth])
-
-  if (loading) {
-    return <LoadingSpinner fullScreen />
-  }
 
   return (
     <div className="min-h-screen bg-background">

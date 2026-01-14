@@ -22,6 +22,8 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { Undo, Redo } from 'lucide-react'
 import { FloatingToolbar } from './FloatingToolbar'
+import { CitationPopover } from '../CitationPopover'
+import { CitationUpdater } from '../CitationUpdater'
 import { Citation } from '../extensions/Citation'
 import { Mathematics } from '../extensions/Mathematics'
 import { GhostText } from '../extensions/GhostText'
@@ -334,6 +336,8 @@ export function DocumentEditor({
           onChat={onChat}
         />
         <EditorContent editor={editor} className="h-full" />
+        <CitationPopover editor={editor} projectId={projectId} />
+        <CitationUpdater editor={editor} />
       </div>
 
       {/* Math Input Dialog */}

@@ -615,7 +615,16 @@ kbd {
 
 /* Citation styling in editor */
 .citation-inline {
-  @apply text-gray-600 hover:text-gray-800 cursor-pointer;
+  @apply text-primary hover:text-primary/80 cursor-pointer transition-colors select-text;
+}
+
+.citation-inline:hover {
+  @apply underline;
+}
+
+/* Selected citation in editor */
+.ProseMirror .citation-inline.ProseMirror-selectednode {
+  @apply ring-2 ring-primary ring-offset-1 rounded bg-primary/10;
 }
 
 /* Editor accent color for Chat tab */

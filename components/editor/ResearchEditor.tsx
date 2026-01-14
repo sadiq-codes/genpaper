@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import type { Editor } from "@tiptap/react"
 import { EditorTopNav } from "./EditorTopNav"
 import { EditorSidebar } from "./sidebar/EditorSidebar"
@@ -32,6 +32,15 @@ import { cn } from "@/lib/utils"
 import { processContent } from "./utils/content-processor"
 import { editorToMarkdown } from "./utils/tiptap-to-markdown"
 import { GenerationProgress } from "./GenerationProgress"
+import { 
+  useCitationManagerConfig, 
+  useCitationPrefetch, 
+  extractCitationIdsFromEditor,
+  type CitationStyle 
+} from "./hooks/useCitationManager"
+
+// CitationStyleType now accepts any CSL style ID string
+export type CitationStyleType = string
 
 interface ResearchEditorProps {
   projectId?: string
@@ -45,6 +54,7 @@ interface ResearchEditorProps {
     gaps: ResearchGap[]
     synthesis: AnalysisOutput | null
   }
+  citationStyle?: string
   onSave?: (content: string) => void
   isGenerating?: boolean
 }
@@ -57,6 +67,7 @@ export function ResearchEditor({
   initialContent,
   initialPapers = [],
   initialAnalysis,
+  citationStyle = "apa",
   onSave,
   isGenerating: initialIsGenerating = false,
 }: ResearchEditorProps) {
@@ -79,6 +90,9 @@ export function ResearchEditor({
 
   // Settings modal state
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
+  
+  // Citation style state - can be updated from settings modal
+  const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
 
   // Analysis state
   const [analysisState, setAnalysisState] = useState<AnalysisState>({
@@ -622,6 +636,22 @@ export function ResearchEditor({
     />
   )
 
+  // Configure CitationManager with project context
+  // Returns true when configured (has valid projectId)
+  // Uses currentCitationStyle which can be updated from settings modal
+  const isCitationManagerConfigured = useCitationManagerConfig(projectId, currentCitationStyle)
+  
+  // Extract citation IDs from editor content for prefetching
+  // Note: content is intentionally in deps to trigger re-extraction when document changes
+  const citationIds = useMemo(() => {
+    if (!editor) return []
+    return extractCitationIdsFromEditor(editor.getJSON())
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, content])
+  
+  // Prefetch all citations in document (waits for configuration)
+  useCitationPrefetch(citationIds, citationIds.length > 0, isCitationManagerConfigured)
+
   return (
     <div className="h-screen w-full flex flex-col rounded-3xl border-2 border-foreground/10 overflow-hidden bg-background">
       {/* Top Navigation */}
@@ -727,7 +757,12 @@ export function ResearchEditor({
 
       {/* Project Settings Modal */}
       {projectId && (
-        <ProjectSettingsModal open={settingsModalOpen} onOpenChange={setSettingsModalOpen} projectId={projectId} />
+        <ProjectSettingsModal 
+          open={settingsModalOpen} 
+          onOpenChange={setSettingsModalOpen} 
+          projectId={projectId}
+          onCitationStyleChange={(style) => setCurrentCitationStyle(style as CitationStyleType)}
+        />
       )}
 
       {/* Remove Paper Confirmation Dialog */}

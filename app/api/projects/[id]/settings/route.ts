@@ -53,6 +53,8 @@ export async function GET(
     const effectiveStyle = await getProjectCitationStyle(projectId, user.id)
     
     return NextResponse.json({
+      // Return citationStyle in camelCase (what frontend expects)
+      citationStyle: effectiveStyle,
       settings: {
         citation_style: project.citation_style, // Project-specific (null = use default)
         effective_citation_style: effectiveStyle // Actual style being used
@@ -96,13 +98,14 @@ export async function PATCH(
     }
     
     const body = await request.json()
-    const { citation_style } = body
+    // Support both citationStyle (camelCase from frontend) and citation_style (snake_case)
+    const citationStyle = body.citationStyle ?? body.citation_style
     
-    // citation_style can be null (use default) or a valid style
-    if (citation_style !== null && citation_style !== undefined) {
-      if (!isValidCitationStyle(citation_style)) {
+    // citationStyle can be null (use default) or a valid style
+    if (citationStyle !== null && citationStyle !== undefined) {
+      if (!isValidCitationStyle(citationStyle)) {
         return NextResponse.json(
-          { error: 'Invalid citation style. Must be one of: apa, mla, chicago, ieee, harvard, or null to use default' },
+          { error: 'Invalid citation style. Must be a non-empty string (CSL style ID).' },
           { status: 400 }
         )
       }
@@ -111,7 +114,7 @@ export async function PATCH(
     const result = await updateProjectCitationStyle(
       projectId,
       user.id,
-      citation_style as CitationStyle | null
+      citationStyle as CitationStyle | null
     )
     
     if (!result.success) {
@@ -127,7 +130,7 @@ export async function PATCH(
     return NextResponse.json({
       success: true,
       settings: {
-        citation_style: citation_style,
+        citation_style: citationStyle,
         effective_citation_style: effectiveStyle
       }
     })

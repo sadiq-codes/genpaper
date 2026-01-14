@@ -293,14 +293,20 @@ export function useSmartCompletion({
       // Final check before updating editor
       if (signal.aborted || !editor || editor.isDestroyed) return
 
-      if (data.suggestion) {
-        // Convert API citations to ghost text citations
-        // The API now returns paper metadata with each citation
+      // API returns:
+      // - suggestion: raw text with [CITE: id] markers (for processing)
+      // - displaySuggestion: formatted text (for display)
+      // - citations: array with positions in both formats
+      if (data.suggestion && data.displaySuggestion) {
+        // Convert API citations to ghost text format
         const ghostCitations: GhostTextCitation[] = (data.citations || []).map((c: {
           paperId: string
           marker: string
-          startOffset: number
-          endOffset: number
+          formatted: string
+          displayStartOffset: number
+          displayEndOffset: number
+          rawStartOffset: number
+          rawEndOffset: number
           paper?: {
             id: string
             title: string
@@ -309,25 +315,32 @@ export function useSmartCompletion({
             doi?: string
             venue?: string
           }
-        }) => {
-          return {
-            paperId: c.paperId,
-            marker: c.marker,
-            startOffset: c.startOffset,
-            endOffset: c.endOffset,
-            attrs: {
-              id: c.paperId,
-              authors: c.paper?.authors || [],
-              title: c.paper?.title || '',
-              year: c.paper?.year || 0,
-              journal: c.paper?.venue,
-              doi: c.paper?.doi
-            }
-          }
-        })
+        }) => ({
+          paperId: c.paperId,
+          marker: c.marker,
+          formatted: c.formatted,
+          displayStartOffset: c.displayStartOffset,
+          displayEndOffset: c.displayEndOffset,
+          paper: c.paper ? {
+            id: c.paper.id,
+            title: c.paper.title,
+            authors: c.paper.authors,
+            year: c.paper.year,
+            journal: c.paper.venue,
+            doi: c.paper.doi
+          } : undefined
+        }))
 
-        // Set ghost text with papers for content processing on accept
-        editor.commands.setGhostText(data.suggestion, ghostCitations, currentPapers)
+        // Set ghost text with both raw (for accept) and display (for rendering)
+        editor.commands.setGhostText(
+          data.suggestion,        // rawText with [CITE: id] markers
+          data.displaySuggestion, // displayText with formatted citations
+          ghostCitations,
+          currentPapers
+        )
+      } else if (data.suggestion) {
+        // Fallback: no displaySuggestion (shouldn't happen with new API)
+        editor.commands.setGhostText(data.suggestion, data.suggestion, [], currentPapers)
       }
     } catch (error: unknown) {
       // Ignore all abort errors (including cleanup aborts)

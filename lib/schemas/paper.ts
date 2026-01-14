@@ -13,7 +13,12 @@ export const PaperDTOSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
   source: z.string().max(50).optional(),
   citation_count: z.number().int().min(0).optional(),
-  authors: z.array(z.string().min(1).max(100)).optional()
+  authors: z.array(z.string().min(1).max(100)).optional(),
+  // Additional bibliographic fields for complete citations
+  volume: z.string().max(50).optional(),
+  issue: z.string().max(50).optional(),
+  pages: z.string().max(50).optional(),
+  publisher: z.string().max(200).optional()
 })
 
 /**

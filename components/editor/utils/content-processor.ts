@@ -45,6 +45,8 @@ export function paperToCitationAttrs(paper: ProjectPaper): CitationAttributes {
   }
 }
 
+
+
 /**
  * Check if text contains markdown formatting
  */
@@ -164,7 +166,7 @@ export function processPlainTextWithCitations(
       }
     }
 
-    // Add citation node - paper lookup is optional, UI will fetch if needed
+    // Add citation node with paper info if available
     const paper = paperLookup[paperId]
     result.push({
       type: 'citation',

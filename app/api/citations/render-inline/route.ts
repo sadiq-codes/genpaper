@@ -11,10 +11,11 @@ import { citationLogger } from '@/lib/utils/citation-logger'
  */
 
 // Schema for inline rendering request
+// style accepts any CSL style ID string (e.g., 'apa', 'ieee', 'nature', 'chicago-author-date')
 const RenderInlineSchema = z.object({
   projectId: z.string().uuid(),
   citeKeys: z.array(z.string().min(1)).min(1).max(100), // Limit to 100 citations per request
-  style: z.enum(['apa', 'mla', 'chicago', 'ieee']).default('apa')
+  style: z.string().min(1).max(100).default('apa') // Any CSL style ID
 })
 
 export async function GET(request: NextRequest) {
@@ -72,8 +73,8 @@ export async function GET(request: NextRequest) {
     try {
       const timer = citationLogger.startTimer()
       
-      // Render citations using CitationService
-      const renderedCitations = await CitationService.renderInlineMultiple({
+      // Render citations with paper info using optimized method
+      const results = await CitationService.renderInlineWithPaperInfo({
         projectId: validProjectId,
         citeKeys: validCiteKeys,
         style: validStyle
@@ -90,19 +91,20 @@ export async function GET(request: NextRequest) {
         renderType: 'inline'
       })
 
-      // Success response
+      // Success response with paper info included
       return NextResponse.json({
         success: true,
         data: {
           projectId: validProjectId,
           style: validStyle,
-          citations: validCiteKeys.map((citeKey, index) => ({
-            citeKey,
-            rendered: renderedCitations[index] || '',
-            found: !!renderedCitations[index]
+          citations: results.map(r => ({
+            citeKey: r.citeKey,
+            rendered: r.rendered,
+            found: !!r.rendered,
+            paper: r.paper  // Include paper info to eliminate separate API calls
           })),
           total: validCiteKeys.length,
-          rendered: renderedCitations.filter(c => c.length > 0).length
+          rendered: results.filter(r => r.rendered.length > 0).length
         }
       })
 
@@ -173,26 +175,27 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // Render citations using CitationService
-      const renderedCitations = await CitationService.renderInlineMultiple({
+      // Render citations with paper info using optimized method
+      const results = await CitationService.renderInlineWithPaperInfo({
         projectId,
         citeKeys,
         style
       })
 
-      // Success response
+      // Success response with paper info included
       return NextResponse.json({
         success: true,
         data: {
           projectId,
           style,
-          citations: citeKeys.map((citeKey, index) => ({
-            citeKey,
-            rendered: renderedCitations[index] || '',
-            found: !!renderedCitations[index]
+          citations: results.map(r => ({
+            citeKey: r.citeKey,
+            rendered: r.rendered,
+            found: !!r.rendered,
+            paper: r.paper  // Include paper info to eliminate separate API calls
           })),
           total: citeKeys.length,
-          rendered: renderedCitations.filter(c => c.length > 0).length
+          rendered: results.filter(r => r.rendered.length > 0).length
         }
       })
 

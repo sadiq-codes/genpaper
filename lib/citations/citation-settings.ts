@@ -158,10 +158,11 @@ export async function validatePaperInProject(
 ): Promise<boolean> {
   const supabase = await getSB()
   
+  // Papers are linked to projects via project_citations table
   const { data, error } = await supabase
-    .from('research_project_papers')
+    .from('project_citations')
     .select('paper_id')
-    .eq('research_project_id', projectId)
+    .eq('project_id', projectId)
     .eq('paper_id', paperId)
     .single()
   
@@ -185,10 +186,11 @@ export async function validatePapersInProject(
   
   const supabase = await getSB()
   
+  // Papers are linked to projects via project_citations table
   const { data, error } = await supabase
-    .from('research_project_papers')
+    .from('project_citations')
     .select('paper_id')
-    .eq('research_project_id', projectId)
+    .eq('project_id', projectId)
     .in('paper_id', paperIds)
   
   if (error) {

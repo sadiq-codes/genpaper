@@ -477,7 +477,12 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
     },
     source: `academic_search_${paper.source}`,
     citation_count: paper.citationCount,
-    authors: (paper.authors && paper.authors.length > 0) ? paper.authors : ['Unknown']
+    authors: (paper.authors && paper.authors.length > 0) ? paper.authors : ['Unknown'],
+    // Additional bibliographic fields for complete citations
+    volume: paper.volume || undefined,
+    issue: paper.issue || undefined,
+    pages: paper.pages || undefined,
+    publisher: paper.publisher || undefined
   }
 }
 

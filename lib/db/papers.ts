@@ -540,12 +540,18 @@ export async function ingestPaper(
 export async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
   const supabase = await getSB()
   
-  // Metadata column removed from schema; ignore any inbound metadata
-  
   // Generate embedding from title + abstract before inserting
   // This is required because the database has a NOT NULL constraint on the embedding column
   const text = `${paperData.title}\n${paperData.abstract || ''}`
   const [embedding] = await generateEmbeddings([text])
+  
+  // Store additional bibliographic fields in metadata JSONB column
+  // These are needed for complete citation generation (volume, issue, pages, publisher)
+  const metadata: Record<string, unknown> = {}
+  if (paperData.volume) metadata.volume = paperData.volume
+  if (paperData.issue) metadata.issue = paperData.issue
+  if (paperData.pages) metadata.pages = paperData.pages
+  if (paperData.publisher) metadata.publisher = paperData.publisher
   
   // Insert paper metadata with embedding and authors
   const { data, error } = await supabase
@@ -560,7 +566,8 @@ export async function createPaperMetadata(paperData: PaperDTO): Promise<string> 
       pdf_url: paperData.pdf_url,
       source: paperData.source || 'unknown',
       citation_count: paperData.citation_count || 0,
-      embedding: embedding // Generate embedding immediately to satisfy NOT NULL constraint
+      embedding: embedding, // Generate embedding immediately to satisfy NOT NULL constraint
+      metadata: Object.keys(metadata).length > 0 ? metadata : null // Store bibliographic fields
     })
     .select('id')
     .single()

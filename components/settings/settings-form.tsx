@@ -3,57 +3,22 @@
 import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Loader2, Check } from 'lucide-react'
 import { toast } from 'sonner'
-
-type CitationStyle = 'apa' | 'mla' | 'chicago' | 'ieee' | 'harvard'
+import { CitationStyleSelector } from '@/components/editor/CitationStyleSelector'
+import { getStyleById } from '@/lib/citations/csl-styles'
 
 interface SettingsFormProps {
-  initialCitationStyle: CitationStyle
+  initialCitationStyle: string
 }
 
-const citationStyleOptions: { value: CitationStyle; label: string; example: string }[] = [
-  { 
-    value: 'apa', 
-    label: 'APA (7th Edition)', 
-    example: '(Smith et al., 2023)' 
-  },
-  { 
-    value: 'mla', 
-    label: 'MLA (9th Edition)', 
-    example: '(Smith et al.)' 
-  },
-  { 
-    value: 'chicago', 
-    label: 'Chicago (17th Edition)', 
-    example: '(Smith et al. 2023)' 
-  },
-  { 
-    value: 'ieee', 
-    label: 'IEEE', 
-    example: '[1]' 
-  },
-  { 
-    value: 'harvard', 
-    label: 'Harvard', 
-    example: '(Smith et al., 2023)' 
-  },
-]
-
 export function SettingsForm({ initialCitationStyle }: SettingsFormProps) {
-  const [citationStyle, setCitationStyle] = useState<CitationStyle>(initialCitationStyle)
+  const [citationStyle, setCitationStyle] = useState<string>(initialCitationStyle || 'apa')
   const [isSaving, setIsSaving] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
 
-  const handleStyleChange = (value: CitationStyle) => {
+  const handleStyleChange = (value: string) => {
     setCitationStyle(value)
     setHasChanges(value !== initialCitationStyle)
   }
@@ -71,8 +36,9 @@ export function SettingsForm({ initialCitationStyle }: SettingsFormProps) {
         throw new Error('Failed to save preferences')
       }
 
+      const styleInfo = getStyleById(citationStyle)
       toast.success('Settings saved', {
-        description: `Default citation style set to ${citationStyleOptions.find(o => o.value === citationStyle)?.label}`,
+        description: `Default citation style set to ${styleInfo?.shortName || styleInfo?.name || citationStyle}`,
       })
       setHasChanges(false)
     } catch (error) {
@@ -83,7 +49,7 @@ export function SettingsForm({ initialCitationStyle }: SettingsFormProps) {
     }
   }
 
-  const selectedStyle = citationStyleOptions.find(o => o.value === citationStyle)
+  const selectedStyle = getStyleById(citationStyle)
 
   return (
     <div className="space-y-6">
@@ -99,26 +65,12 @@ export function SettingsForm({ initialCitationStyle }: SettingsFormProps) {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="citation-style">Default Style</Label>
-            <Select
-              value={citationStyle}
-              onValueChange={(value) => handleStyleChange(value as CitationStyle)}
-            >
-              <SelectTrigger id="citation-style" className="w-full max-w-md">
-                <SelectValue placeholder="Select a citation style" />
-              </SelectTrigger>
-              <SelectContent>
-                {citationStyleOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    <div className="flex items-center justify-between w-full gap-4">
-                      <span>{option.label}</span>
-                      <span className="text-muted-foreground text-xs">
-                        {option.example}
-                      </span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="max-w-md">
+              <CitationStyleSelector
+                value={citationStyle}
+                onValueChange={handleStyleChange}
+              />
+            </div>
           </div>
 
           {/* Preview */}
@@ -127,7 +79,7 @@ export function SettingsForm({ initialCitationStyle }: SettingsFormProps) {
               <p className="text-muted-foreground text-xs mb-2 font-medium">Example in-text citation:</p>
               <p className="text-foreground">
                 Research shows significant findings in this area{' '}
-                <span className="font-semibold text-primary">{selectedStyle.example}</span>.
+                <span className="font-semibold text-primary">{selectedStyle.inlineExample}</span>.
               </p>
             </div>
           )}

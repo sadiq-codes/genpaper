@@ -10,7 +10,7 @@ import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
-import type { Root, Content, PhrasingContent, Text, Emphasis, Strong, InlineCode, Link, Delete, Break, Image } from 'mdast'
+import type { Root, Content, PhrasingContent, Text, Emphasis, Strong, InlineCode, Link, Delete, Image } from 'mdast'
 import type { CitationAttributes } from '../extensions/Citation'
 import type { ProjectPaper } from '../types'
 
@@ -73,6 +73,8 @@ function paperToCitationAttrs(paper: ProjectPaper): CitationAttributes {
   }
 }
 
+
+
 /**
  * Split text containing citation markers into text nodes and citation nodes
  * Citation nodes only store the paper ID - the UI fetches and displays paper details
@@ -103,9 +105,7 @@ function splitTextWithCitations(
       }
     }
 
-    // Add citation node with just the paper ID
-    // If paper info is available, include it for immediate rendering
-    // Otherwise, the UI will fetch it
+    // Add citation node with paper info if available
     const paper = lookup[paperId]
     parts.push({
       type: 'citation',

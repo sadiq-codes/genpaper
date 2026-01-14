@@ -11,58 +11,25 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Loader2, Check } from 'lucide-react'
 import { toast } from 'sonner'
-
-type CitationStyle = 'apa' | 'mla' | 'chicago' | 'ieee' | 'harvard'
+import { CitationStyleSelector } from './CitationStyleSelector'
+import { getStyleById } from '@/lib/citations/csl-styles'
 
 interface ProjectSettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
+  onCitationStyleChange?: (style: string) => void
 }
-
-const citationStyleOptions: { value: CitationStyle; label: string; example: string }[] = [
-  { 
-    value: 'apa', 
-    label: 'APA (7th Edition)', 
-    example: '(Smith et al., 2023)' 
-  },
-  { 
-    value: 'mla', 
-    label: 'MLA (9th Edition)', 
-    example: '(Smith et al.)' 
-  },
-  { 
-    value: 'chicago', 
-    label: 'Chicago (17th Edition)', 
-    example: '(Smith et al. 2023)' 
-  },
-  { 
-    value: 'ieee', 
-    label: 'IEEE', 
-    example: '[1]' 
-  },
-  { 
-    value: 'harvard', 
-    label: 'Harvard', 
-    example: '(Smith et al., 2023)' 
-  },
-]
 
 export function ProjectSettingsModal({
   open,
   onOpenChange,
   projectId,
+  onCitationStyleChange,
 }: ProjectSettingsModalProps) {
-  const [citationStyle, setCitationStyle] = useState<CitationStyle | null>(null)
+  const [citationStyle, setCitationStyle] = useState<string>('apa')
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
 
@@ -98,9 +65,14 @@ export function ProjectSettingsModal({
         throw new Error('Failed to save settings')
       }
 
+      const styleInfo = getStyleById(citationStyle)
       toast.success('Settings saved', {
-        description: `Citation style set to ${citationStyleOptions.find(o => o.value === citationStyle)?.label}`,
+        description: `Citation style set to ${styleInfo?.shortName || styleInfo?.name || citationStyle}`,
       })
+      
+      // Notify parent component of the change so it can update CitationManager
+      onCitationStyleChange?.(citationStyle)
+      
       onOpenChange(false)
     } catch (error) {
       console.error('Failed to save settings:', error)
@@ -110,7 +82,7 @@ export function ProjectSettingsModal({
     }
   }
 
-  const selectedStyle = citationStyleOptions.find(o => o.value === citationStyle)
+  const selectedStyle = getStyleById(citationStyle)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -131,26 +103,10 @@ export function ProjectSettingsModal({
             {/* Citation Style */}
             <div className="space-y-3">
               <Label htmlFor="citation-style">Citation Style</Label>
-              <Select
-                value={citationStyle || 'apa'}
-                onValueChange={(value) => setCitationStyle(value as CitationStyle)}
-              >
-                <SelectTrigger id="citation-style" className="w-full">
-                  <SelectValue placeholder="Select a citation style" />
-                </SelectTrigger>
-                <SelectContent>
-                  {citationStyleOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      <div className="flex items-center justify-between w-full gap-4">
-                        <span>{option.label}</span>
-                        <span className="text-muted-foreground text-xs">
-                          {option.example}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <CitationStyleSelector
+                value={citationStyle}
+                onValueChange={setCitationStyle}
+              />
               
               {/* Preview */}
               {selectedStyle && (
@@ -158,7 +114,7 @@ export function ProjectSettingsModal({
                   <p className="text-muted-foreground text-xs mb-1">Preview:</p>
                   <p>
                     Research shows significant findings in this area{' '}
-                    <span className="font-medium text-primary">{selectedStyle.example}</span>.
+                    <span className="font-medium text-primary">{selectedStyle.inlineExample}</span>.
                   </p>
                 </div>
               )}

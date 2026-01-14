@@ -11,6 +11,11 @@ export interface AcademicPaper {
   citationCount: number
   authors?: string[]
   source: PaperSource
+  // Additional bibliographic fields for complete citations
+  volume?: string
+  issue?: string
+  pages?: string
+  publisher?: string
 }
 
 export interface SearchOptions {
@@ -287,13 +292,17 @@ interface OpenAlexWork {
   doi?: string
   abstract_inverted_index?: Record<string, number[]>
   primary_location?: {
-    source?: { display_name: string }
+    source?: { 
+      display_name: string
+      publisher?: string
+    }
     landing_page_url?: string
     pdf_url?: string
   }
   best_oa_location?: {
     pdf_url?: string
     landing_page_url?: string
+    host_type?: string
   }
   open_access?: {
     is_oa: boolean
@@ -304,6 +313,17 @@ interface OpenAlexWork {
   authorships?: Array<{
     author?: { display_name: string }
   }>
+  // Bibliographic details
+  biblio?: {
+    volume?: string
+    issue?: string
+    first_page?: string
+    last_page?: string
+  }
+  // For books/chapters
+  host_venue?: {
+    publisher?: string
+  }
 }
 
 interface OpenAlexResponse {
@@ -334,6 +354,11 @@ interface CrossrefItem {
     family?: string
   }>
   link?: CrossrefLink[]
+  // Additional bibliographic fields
+  volume?: string
+  issue?: string
+  page?: string
+  publisher?: string
 }
 
 interface CrossrefResponse {
@@ -572,6 +597,11 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
                         ''
       const pdfUrl = filterPdfUrl(rawPdfUrl)
       
+      // Extract pages from first_page and last_page
+      const pages = work.biblio?.first_page && work.biblio?.last_page
+        ? `${work.biblio.first_page}-${work.biblio.last_page}`
+        : work.biblio?.first_page || undefined
+
       return {
         canonical_id: createCanonicalId(work.display_name, work.publication_year, work.doi, 'openalex'),
         title: work.display_name,
@@ -584,7 +614,12 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
         citationCount: work.cited_by_count || 0,
         authors: work.authorships?.map((a) => a.author?.display_name).filter((name): name is string => Boolean(name)) || [],
         source: 'openalex' as const,
-        is_open_access: work.open_access?.is_oa || false
+        is_open_access: work.open_access?.is_oa || false,
+        // Additional bibliographic fields for complete citations
+        volume: work.biblio?.volume || undefined,
+        issue: work.biblio?.issue || undefined,
+        pages,
+        publisher: work.primary_location?.source?.publisher || work.host_venue?.publisher || undefined
       }
     }) || []
   })
@@ -650,7 +685,12 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
         pdf_url: pdfUrl,
         citationCount: item['is-referenced-by-count'] || 0,
         authors: item.author?.map((a) => `${a.given || ''} ${a.family || ''}`.trim()).filter(Boolean) || [],
-        source: 'crossref' as const
+        source: 'crossref' as const,
+        // Additional bibliographic fields for complete citations
+        volume: item.volume || undefined,
+        issue: item.issue || undefined,
+        pages: item.page || undefined,
+        publisher: item.publisher || undefined
       }
     }) || []
   })

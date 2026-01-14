@@ -237,15 +237,23 @@ export function buildCSLFromPaper(paper: PaperWithAuthors | Record<string, any>)
     author: finalAuthors
   }
 
+  // Extract bibliographic fields from paper or metadata (fallback)
+  const metadata = paper.metadata as Record<string, unknown> | undefined
+  const volume = paper.volume || (metadata?.volume as string | undefined)
+  const issue = paper.issue || (metadata?.issue as string | undefined)
+  const pages = paper.pages || (metadata?.pages as string | undefined)
+  const publisher = (metadata?.publisher as string | undefined)
+
   // Add optional fields only if they exist
   if (paper.venue) csl['container-title'] = paper.venue
   if (issued) csl.issued = issued
   if (paper.doi) csl.DOI = paper.doi
   if (paper.url || paper.pdf_url) csl.URL = paper.url || paper.pdf_url
   if (paper.abstract) csl.abstract = paper.abstract
-  if (paper.volume) csl.volume = paper.volume
-  if (paper.issue) csl.issue = paper.issue
-  if (paper.pages) csl.page = paper.pages
+  if (volume) csl.volume = volume
+  if (issue) csl.issue = issue
+  if (pages) csl.page = pages
+  if (publisher) csl.publisher = publisher
 
   return csl
 }

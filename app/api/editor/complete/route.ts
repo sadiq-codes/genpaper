@@ -41,13 +41,18 @@ interface CitationInSuggestion {
   paperId: string
   marker: string           // Original marker [CITE: id]
   formatted: string        // Formatted (Smith et al., 2023)
-  startOffset: number
-  endOffset: number
+  // Positions in the DISPLAY text (formattedSuggestion)
+  displayStartOffset: number
+  displayEndOffset: number
+  // Positions in the RAW text (rawSuggestion) 
+  rawStartOffset: number
+  rawEndOffset: number
   paper?: PaperMetadata
 }
 
 interface CompletionResponse {
-  suggestion: string       // Text with formatted citations
+  suggestion: string       // Text with [CITE: id] markers (for accept/processing)
+  displaySuggestion: string // Text with formatted citations (for display)
   citations: CitationInSuggestion[]
   contextHint: string
   ragInfo?: {
@@ -358,29 +363,42 @@ export async function POST(request: NextRequest) {
 
     // Extract and process citation markers
     const papers = ragContextToPaperMetadata(ragContext)
-    // Note: extractCitationMarkers is used by processCitationMarkersSync internally
     
-    // Build citations array with paper metadata
+    // Keep the raw suggestion with [CITE: id] markers for the accept path
+    const rawSuggestion = suggestion
+    
+    // Process markers to get formatted display version
+    const processResult = processCitationMarkersSync(suggestion, papers, citationStyle)
+    const formattedSuggestion = processResult.content
+    
+    // Build citations array with positions in BOTH formats
     const citations: CitationInSuggestion[] = []
     
-    // Process markers and format citations
-    const processResult = processCitationMarkersSync(suggestion, papers, citationStyle)
-    
-    // Track citation positions in the formatted text
-    let formattedSuggestion = processResult.content
+    // Track positions by finding markers in raw and formatted in display
+    // We need to account for the length difference as we process
+    let rawOffset = 0
+    let displayOffset = 0
     
     for (const citation of processResult.citations) {
-      // Find position of formatted citation in result
-      const formattedPos = formattedSuggestion.indexOf(citation.formatted)
+      // Find position of marker in raw text (starting from last position)
+      const rawPos = rawSuggestion.indexOf(citation.marker, rawOffset)
+      // Find position of formatted citation in display text
+      const displayPos = formattedSuggestion.indexOf(citation.formatted, displayOffset)
       
       citations.push({
         paperId: citation.paperId,
         marker: citation.marker,
         formatted: citation.formatted,
-        startOffset: formattedPos >= 0 ? formattedPos : 0,
-        endOffset: formattedPos >= 0 ? formattedPos + citation.formatted.length : 0,
+        rawStartOffset: rawPos >= 0 ? rawPos : 0,
+        rawEndOffset: rawPos >= 0 ? rawPos + citation.marker.length : 0,
+        displayStartOffset: displayPos >= 0 ? displayPos : 0,
+        displayEndOffset: displayPos >= 0 ? displayPos + citation.formatted.length : 0,
         paper: citation.paper
       })
+      
+      // Update offsets for next search
+      if (rawPos >= 0) rawOffset = rawPos + citation.marker.length
+      if (displayPos >= 0) displayOffset = displayPos + citation.formatted.length
     }
 
     // Log invalid paper IDs (AI hallucinated or used wrong ID)
@@ -389,7 +407,8 @@ export async function POST(request: NextRequest) {
     }
 
     const response: CompletionResponse = {
-      suggestion: formattedSuggestion,
+      suggestion: rawSuggestion,           // Original text with [CITE: id] markers (for processing)
+      displaySuggestion: formattedSuggestion, // Display text with formatted citations
       citations,
       contextHint,
       ragInfo: {

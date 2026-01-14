@@ -109,14 +109,26 @@ export function FloatingToolbar({
   return (
     <BubbleMenu
       editor={editor}
-      shouldShow={({ editor: editorInstance }) => {
-        // Save selection whenever bubble menu visibility is computed
-        const { from, to } = editorInstance.state.selection
-        if (from !== to) {
-          selectionRef.current = { from, to }
-        }
-        // Show menu when there's a selection
-        return !editorInstance.state.selection.empty
+      shouldShow={({ state }) => {
+        const { from, to } = state.selection
+        
+        // Don't show for empty selections
+        if (from === to) return false
+        
+        // Don't show when a citation node is selected (let CitationPopover handle it)
+        const node = state.doc.nodeAt(from)
+        if (node?.type.name === 'citation') return false
+        
+        // Also check if we're in a NodeSelection of a citation
+        // NodeSelection has a 'node' property
+        const selection = state.selection as { node?: { type: { name: string } } }
+        if (selection.node?.type.name === 'citation') return false
+        
+        // Save selection for later use
+        selectionRef.current = { from, to }
+        
+        // Show menu when there's a text selection
+        return true
       }}
       options={{ placement: 'top' }}
       className="flex items-center gap-0.5 p-1.5 bg-background border border-border rounded-lg shadow-lg"

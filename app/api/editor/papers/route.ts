@@ -1,9 +1,13 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
+import { CitationService } from '@/lib/citations/immediate-bibliography'
 
 /**
  * POST /api/editor/papers
  * Add a paper to a research project
+ * 
+ * Papers are linked to projects via the project_citations table.
+ * This also generates CSL JSON for proper citation rendering.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -46,31 +50,44 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
     }
 
-    // Check if already added
+    // Check if already added to project_citations
     const { data: existing } = await supabase
-      .from('research_project_papers')
+      .from('project_citations')
       .select('id')
-      .eq('research_project_id', projectId)
+      .eq('project_id', projectId)
       .eq('paper_id', paperId)
       .single()
 
     if (existing) {
+      // Paper already in project - return success with paper data
+      const projectPaper = {
+        id: paper.id,
+        title: paper.title || 'Untitled',
+        authors: paper.authors || [],
+        year: paper.publication_date 
+          ? new Date(paper.publication_date).getFullYear() 
+          : new Date().getFullYear(),
+        abstract: paper.abstract || undefined,
+        journal: paper.venue || undefined,
+        doi: paper.doi || undefined,
+      }
       return NextResponse.json(
-        { error: 'Paper already in project', paper },
+        { error: 'Paper already in project', paper: projectPaper },
         { status: 409 }
       )
     }
 
-    // Add paper to project
-    const { error: insertError } = await supabase
-      .from('research_project_papers')
-      .insert({
-        research_project_id: projectId,
-        paper_id: paperId,
+    // Add paper to project via CitationService.add
+    // This creates the project_citations entry with proper CSL JSON
+    try {
+      await CitationService.add({
+        projectId,
+        sourceRef: { paperId },
+        reason: 'Added to project library'
       })
-
-    if (insertError) {
-      console.error('Error adding paper to project:', insertError)
+      console.log(`[Editor Papers] Added paper ${paperId} to project ${projectId} with CSL JSON`)
+    } catch (citationError) {
+      console.error('Error adding paper to project:', citationError)
       return NextResponse.json(
         { error: 'Failed to add paper to project' },
         { status: 500 }
@@ -148,11 +165,11 @@ export async function DELETE(request: NextRequest) {
       .select('id', { count: 'exact', head: true })
       .eq('paper_id', paperId)
 
-    // Remove paper from project
+    // Remove paper from project (delete from project_citations)
     const { error: deleteError } = await supabase
-      .from('research_project_papers')
+      .from('project_citations')
       .delete()
-      .eq('research_project_id', projectId)
+      .eq('project_id', projectId)
       .eq('paper_id', paperId)
 
     if (deleteError) {

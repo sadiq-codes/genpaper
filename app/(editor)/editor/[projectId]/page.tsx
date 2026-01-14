@@ -164,6 +164,9 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     ? { claims, gaps, synthesis }
     : undefined
 
+  // Get citation style - project setting > user default > 'apa'
+  const citationStyle = project.citation_style || 'apa'
+
   // Determine if we need to show generation progress
   // Show if newly created AND status is 'generating' AND no content yet
   const shouldShowGeneration = isNewlyCreated && 
@@ -207,6 +210,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         initialContent={project.content || undefined}
         initialPapers={papers}
         initialAnalysis={initialAnalysis}
+        citationStyle={citationStyle}
         onSave={undefined}
         isGenerating={shouldShowGeneration}
       />

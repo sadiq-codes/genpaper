@@ -341,10 +341,11 @@ export class CitationService {
     let paperError: any = null
     
     // First try with paper_authors join
+    // Include all fields needed for complete CSL JSON (doi, url, metadata with volume/issue/pages/publisher)
     const { data: paperWithAuthors, error: joinError } = await supabase
     .from('papers')
     .select(`
-      id, title, doi, pdf_url, venue, publication_date, created_at, authors,
+      id, title, doi, url, pdf_url, venue, publication_date, created_at, authors, abstract, metadata,
       paper_authors(
         ordinal,
         authors(id, name)
@@ -361,7 +362,7 @@ export class CitationService {
       
       const { data: simplePaper, error: simpleError } = await supabase
         .from('papers')
-        .select('id, title, doi, pdf_url, venue, publication_date, created_at, authors')
+        .select('id, title, doi, url, pdf_url, venue, publication_date, created_at, authors, abstract, metadata')
         .eq('id', paperId)
         .single()
       
@@ -517,10 +518,11 @@ export class CitationService {
   }
 
   // New method matching the task requirements
+  // style accepts any CSL style ID string
   static async renderInlineMultiple(params: {
     projectId: string
     citeKeys: string[]
-    style: 'apa' | 'mla' | 'chicago' | 'ieee'
+    style: string
   }): Promise<string[]> {
     const supabase = await getSB()
     
@@ -528,54 +530,263 @@ export class CitationService {
       return []
     }
     
-    // Fetch citations for the given citeKeys in this project
-    const { data: citations, error } = await supabase
+    // The editor passes paper IDs as citeKeys.
+    // First try to get CSL JSON from project_citations (where it's properly stored)
+    // Fall back to building from papers table metadata if not found
+    
+    // Query project_citations for CSL JSON (added via add_citation_unified RPC)
+    const { data: projectCitations, error: citationError } = await supabase
       .from('project_citations')
-      .select('cite_key, csl_json, first_seen_order')
+      .select('paper_id, csl_json, first_seen_order')
       .eq('project_id', params.projectId)
-      .in('cite_key', params.citeKeys)
-      .order('first_seen_order')
+      .in('paper_id', params.citeKeys)
     
-    if (error) {
-      throw new Error(`Failed to fetch citations: ${error.message}`)
+    if (citationError) {
+      console.warn(`Failed to fetch project citations: ${citationError.message}`)
     }
     
-    if (!citations || citations.length === 0) {
-      // Return empty strings for missing citations
-      return params.citeKeys.map(() => '')
+    // Build map of paper_id -> csl_json from project_citations
+    const citationCslMap = new Map<string, { csl_json: CSLItem | null; order: number }>()
+    for (const citation of projectCitations || []) {
+      if (citation.paper_id) {
+        citationCslMap.set(citation.paper_id, {
+          csl_json: citation.csl_json as CSLItem | null,
+          order: citation.first_seen_order || 0
+        })
+      }
     }
     
-    // Create a map for quick lookup
-    interface CitationRecord {
-      cite_key: string
-      csl_json: CSLItem
-      first_seen_order: number
+    // For papers not in project_citations (or missing csl_json), fetch from papers table
+    const missingPaperIds = params.citeKeys.filter(id => {
+      const citation = citationCslMap.get(id)
+      return !citation || !citation.csl_json
+    })
+    
+    // Fetch paper metadata for fallback CSL generation
+    const paperMetadataMap = new Map<string, {
+      title: string
+      authors: string[]
+      year: number | null
+    }>()
+    
+    if (missingPaperIds.length > 0) {
+      // Note: papers table uses publication_date, not year
+      const { data: papers, error: papersError } = await supabase
+        .from('papers')
+        .select('id, title, authors, publication_date')
+        .in('id', missingPaperIds)
+      
+      if (papersError) {
+        console.warn(`Failed to fetch papers: ${papersError.message}`)
+      }
+      
+      for (const paper of papers || []) {
+        const year = paper.publication_date ? new Date(paper.publication_date).getFullYear() : null
+        paperMetadataMap.set(paper.id, {
+          title: paper.title || 'Untitled',
+          authors: paper.authors || [],
+          year
+        })
+      }
     }
-    const citationMap = new Map(citations.map((c: CitationRecord) => [c.cite_key, c]))
     
     // Render each citation in the requested order
     const rendered: string[] = []
-    for (const citeKey of params.citeKeys) {
-      const citation = citationMap.get(citeKey) as CitationRecord | undefined
-      if (!citation) {
-        rendered.push('') // Missing citation
-        continue
-      }
+    for (let i = 0; i < params.citeKeys.length; i++) {
+      const paperId = params.citeKeys[i]
       
       try {
-        const formatted = formatInlineCitation(
-          citation.csl_json,
-          params.style,
-          citation.first_seen_order
-        )
+        // First try CSL JSON from project_citations
+        const citation = citationCslMap.get(paperId)
+        let cslJson = citation?.csl_json
+        
+        if (!cslJson) {
+          // Fall back to building CSL from paper metadata
+          const paperMeta = paperMetadataMap.get(paperId)
+          if (paperMeta) {
+            cslJson = {
+              type: 'article',
+              title: paperMeta.title,
+              author: paperMeta.authors.map(name => {
+                // Parse "Last, First" or "First Last" format
+                if (name.includes(',')) {
+                  const [family, given] = name.split(',').map(s => s.trim())
+                  return { family, given }
+                }
+                const parts = name.trim().split(/\s+/)
+                if (parts.length === 1) {
+                  return { family: parts[0] }
+                }
+                return { 
+                  family: parts[parts.length - 1], 
+                  given: parts.slice(0, -1).join(' ') 
+                }
+              }),
+              issued: paperMeta.year ? { 'date-parts': [[paperMeta.year]] } : undefined
+            } as CSLItem
+          }
+        }
+        
+        if (!cslJson) {
+          rendered.push('') // No data available
+          continue
+        }
+        
+        const citationOrder = citation?.order || (i + 1)
+        const formatted = formatInlineCitation(cslJson, params.style, citationOrder)
         rendered.push(formatted)
       } catch (err) {
-        console.error(`Failed to format citation ${citeKey}:`, err)
-        rendered.push(`[Error: ${citeKey}]`)
+        console.error(`Failed to format citation ${paperId}:`, err)
+        rendered.push(`[Error: ${paperId.slice(0, 8)}]`)
       }
     }
     
     return rendered
+  }
+
+  /**
+   * Render inline citations with paper info - optimized for editor loading
+   * Returns both rendered citation text AND paper metadata in a single call
+   */
+  static async renderInlineWithPaperInfo(params: {
+    projectId: string
+    citeKeys: string[]
+    style: string
+  }): Promise<Array<{
+    citeKey: string
+    rendered: string
+    paper: {
+      id: string
+      title: string
+      authors: string[]
+      year: number | null
+      journal?: string
+      doi?: string
+    } | null
+  }>> {
+    const supabase = await getSB()
+    
+    if (params.citeKeys.length === 0) {
+      return []
+    }
+    
+    // Query project_citations for CSL JSON
+    const { data: projectCitations } = await supabase
+      .from('project_citations')
+      .select('paper_id, csl_json, first_seen_order')
+      .eq('project_id', params.projectId)
+      .in('paper_id', params.citeKeys)
+    
+    const citationCslMap = new Map<string, { csl_json: CSLItem | null; order: number }>()
+    for (const citation of projectCitations || []) {
+      if (citation.paper_id) {
+        citationCslMap.set(citation.paper_id, {
+          csl_json: citation.csl_json as CSLItem | null,
+          order: citation.first_seen_order || 0
+        })
+      }
+    }
+    
+    // Fetch paper metadata for all papers (needed for both CSL fallback and paper info)
+    // Note: papers table uses publication_date, not year
+    // Include all fields needed for complete citation display
+    const { data: papers, error: papersError } = await supabase
+      .from('papers')
+      .select('id, title, authors, publication_date, venue, doi, url, metadata')
+      .in('id', params.citeKeys)
+    
+    if (papersError) {
+      console.error('[CitationService] Failed to fetch papers:', papersError.message)
+    }
+    
+    const paperMap = new Map<string, {
+      id: string
+      title: string
+      authors: string[]
+      year: number | null
+      journal?: string
+      doi?: string
+      url?: string
+    }>()
+    
+    for (const paper of papers || []) {
+      const year = paper.publication_date ? new Date(paper.publication_date).getFullYear() : null
+      paperMap.set(paper.id, {
+        id: paper.id,
+        title: paper.title || 'Untitled',
+        authors: paper.authors || [],
+        year,
+        journal: paper.venue,
+        doi: paper.doi,
+        url: paper.url,
+      })
+    }
+    
+    // Render each citation and include paper info
+    const results: Array<{
+      citeKey: string
+      rendered: string
+      paper: {
+        id: string
+        title: string
+        authors: string[]
+        year: number | null
+        journal?: string
+        doi?: string
+      } | null
+    }> = []
+    
+    for (let i = 0; i < params.citeKeys.length; i++) {
+      const paperId = params.citeKeys[i]
+      const paperInfo = paperMap.get(paperId) || null
+      
+      try {
+        // First try CSL JSON from project_citations
+        const citation = citationCslMap.get(paperId)
+        let cslJson = citation?.csl_json
+        
+        if (!cslJson && paperInfo) {
+          // Fall back to building CSL from paper metadata
+          cslJson = {
+            type: 'article',
+            title: paperInfo.title,
+            author: paperInfo.authors.map(name => {
+              if (name.includes(',')) {
+                const [family, given] = name.split(',').map(s => s.trim())
+                return { family, given }
+              }
+              const parts = name.trim().split(/\s+/)
+              if (parts.length === 1) {
+                return { family: parts[0] }
+              }
+              return { 
+                family: parts[parts.length - 1], 
+                given: parts.slice(0, -1).join(' ') 
+              }
+            }),
+            issued: paperInfo.year ? { 'date-parts': [[paperInfo.year]] } : undefined
+          } as CSLItem
+        }
+        
+        const citationOrder = citation?.order || (i + 1)
+        const formatted = cslJson ? formatInlineCitation(cslJson, params.style, citationOrder) : ''
+        
+        results.push({
+          citeKey: paperId,
+          rendered: formatted,
+          paper: paperInfo
+        })
+      } catch (err) {
+        console.error(`Failed to format citation ${paperId}:`, err)
+        results.push({
+          citeKey: paperId,
+          rendered: `[Error: ${paperId.slice(0, 8)}]`,
+          paper: paperInfo
+        })
+      }
+    }
+    
+    return results
   }
 
   static async renderBibliography(projectId: string, style: keyof typeof BIBLIOGRAPHY_STYLES = 'apa'): Promise<BibliographyResult> {
@@ -589,6 +800,60 @@ export class CitationService {
    */
   static async suggest(_projectId: string, _context: string): Promise<string[]> {
     return []
+  }
+
+  /**
+   * Backfill CSL JSON for papers in a project that are missing it.
+   * This is useful for existing projects where papers were added before
+   * the CSL JSON generation was integrated.
+   */
+  static async backfillProjectCitations(projectId: string): Promise<{
+    processed: number
+    errors: string[]
+  }> {
+    const supabase = await getSB()
+    const errors: string[] = []
+    let processed = 0
+    
+    // Get all citations in the project - papers are linked via project_citations table
+    const { data: existingCitations, error: citError } = await supabase
+      .from('project_citations')
+      .select('paper_id, csl_json')
+      .eq('project_id', projectId)
+    
+    if (citError) {
+      throw new Error(`Failed to fetch project citations: ${citError.message}`)
+    }
+    
+    // Filter to papers with null csl_json
+    const papersToProcess = (existingCitations || [])
+      .filter(c => c.paper_id && !c.csl_json)
+      .map(c => c.paper_id)
+    
+    if (papersToProcess.length === 0) {
+      return { processed: 0, errors: [] }
+    }
+    
+    // Process each paper that needs CSL JSON
+    for (const paperId of papersToProcess) {
+      if (!paperId) continue
+      
+      try {
+        // Use CitationService.add which generates and stores CSL JSON
+        // This will update existing citation via ON CONFLICT
+        await this.add({
+          projectId,
+          sourceRef: { paperId },
+          reason: 'Backfill: CSL JSON migration'
+        })
+        processed++
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        errors.push(`Paper ${paperId}: ${errMsg}`)
+      }
+    }
+    
+    return { processed, errors }
   }
 
   /**
@@ -759,7 +1024,12 @@ export class CitationService {
 
 // Citations fully unified - no legacy compatibility needed
 
-export function formatInlineCitation(cslJson: CSLItem, style: string, number: number): string {
+export function formatInlineCitation(cslJson: CSLItem | null | undefined, style: string, number: number): string {
+  // Handle null/undefined cslJson
+  if (!cslJson) {
+    return `[${number}]` // Fallback to numbered citation
+  }
+  
   const authors = cslJson.author || []
   const year = cslJson.issued?.['date-parts']?.[0]?.[0] || 'n.d.'
 
