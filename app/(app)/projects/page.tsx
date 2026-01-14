@@ -6,7 +6,6 @@ import { ProjectInput } from "@/components/projects/project-input"
 import { QuickActions } from "@/components/projects/quick-actions"
 import { ProjectCard } from "@/components/projects/project-card"
 import { EmptyState } from "@/components/projects/empty-state"
-import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
@@ -115,33 +114,37 @@ export default function ProjectsPage() {
       <PageHeader title="Projects" />
 
       <div className="flex-1 overflow-y-auto">
-        <section className="py-10 md:py-12 px-4">
-          <div className="max-w-3xl mx-auto text-center space-y-6">
-            <div className="space-y-2">
-              <h1 className="text-3xl md:text-4xl font-bold tracking-tight">What do you want to research?</h1>
-              <p className="text-muted-foreground text-sm md:text-base">
-                Start a new project or explore your existing research
+        {/* Hero Section - Generous spacing for focus */}
+        <section className="py-12 md:py-16 lg:py-20 px-4">
+          <div className="max-w-3xl mx-auto text-center space-y-8">
+            {/* Heading */}
+            <div className="space-y-3">
+              <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight">
+                What do you want to research?
+              </h1>
+              <p className="text-muted-foreground text-sm md:text-base max-w-xl mx-auto">
+                Describe your topic and we&apos;ll help you discover papers, synthesize findings, and write your research
               </p>
             </div>
 
-            <div className="space-y-4 pt-2">
+            {/* Input & Actions */}
+            <div className="space-y-6 pt-2">
               <ProjectInput />
               <QuickActions />
             </div>
           </div>
         </section>
 
-        <div className="px-6">
-          <Separator />
-        </div>
+        {/* Projects Section */}
+        <section className="border-t bg-muted/30">
+          <div className="py-8 md:py-10 px-6">
+            <div className="max-w-6xl mx-auto space-y-6">
+              <h2 className="text-lg font-semibold">Your Projects</h2>
 
-        <section className="flex-1 py-8 px-6">
-          <div className="max-w-6xl mx-auto space-y-6">
-            <h2 className="text-lg font-semibold">Your Projects</h2>
-
-            <Suspense fallback={<ProjectsGridSkeleton />}>
-              <ProjectsGrid />
-            </Suspense>
+              <Suspense fallback={<ProjectsGridSkeleton />}>
+                <ProjectsGrid />
+              </Suspense>
+            </div>
           </div>
         </section>
       </div>

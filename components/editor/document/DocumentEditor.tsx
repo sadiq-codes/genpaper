@@ -290,7 +290,13 @@ export function DocumentEditor({
         throwOnError: false,
       })
     } catch {
-      return `<span class="text-red-500">${mathLatex}</span>`
+      // Escape user input to prevent XSS in error fallback
+      const escaped = mathLatex
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+      return `<span class="text-red-500">${escaped}</span>`
     }
   }
 

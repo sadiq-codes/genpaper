@@ -57,6 +57,8 @@ interface ResearchEditorProps {
   citationStyle?: string
   onSave?: (content: string) => void
   isGenerating?: boolean
+  /** Write mode - user wants to write themselves, papers found in background */
+  isWriteMode?: boolean
 }
 
 export function ResearchEditor({
@@ -70,6 +72,7 @@ export function ResearchEditor({
   citationStyle = "apa",
   onSave,
   isGenerating: initialIsGenerating = false,
+  isWriteMode = false,
 }: ResearchEditorProps) {
   // Editor state
   const [editor, setEditor] = useState<Editor | null>(null)
@@ -141,6 +144,25 @@ export function ResearchEditor({
     window.addEventListener("resize", checkMobile)
     return () => window.removeEventListener("resize", checkMobile)
   }, [])
+
+  // Write mode: Show welcome toast and trigger background paper search
+  useEffect(() => {
+    if (!isWriteMode || !projectId || !projectTopic) return
+    
+    // Show welcome message
+    toast.success("Ready to write!", {
+      description: "Start writing your paper. We're finding relevant sources in the background.",
+      duration: 5000,
+    })
+
+    // TODO: Trigger background paper search based on projectTopic
+    // This would call an API endpoint that:
+    // 1. Searches for papers based on the topic
+    // 2. Adds them to the project asynchronously
+    // 3. The sidebar would update as papers are found
+    // For now, papers will be empty until user adds them manually from library
+    
+  }, [isWriteMode, projectId, projectTopic])
 
   // Auto-run analysis on mount if papers exist but no analysis
   useEffect(() => {

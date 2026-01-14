@@ -5,13 +5,14 @@ import type { ProjectPaper, ExtractedClaim, ResearchGap, AnalysisOutput } from '
 
 interface EditorPageProps {
   params: Promise<{ projectId: string }>
-  searchParams: Promise<{ created?: string }>
+  searchParams: Promise<{ created?: string; write?: string }>
 }
 
 export default async function EditorPage({ params, searchParams }: EditorPageProps) {
   const { projectId } = await params
-  const { created } = await searchParams
+  const { created, write } = await searchParams
   const isNewlyCreated = created === '1'
+  const isWriteMode = write === '1'
   const supabase = await createClient()
   
   // Get user
@@ -169,7 +170,9 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
 
   // Determine if we need to show generation progress
   // Show if newly created AND status is 'generating' AND no content yet
-  const shouldShowGeneration = isNewlyCreated && 
+  // Never show generation progress in write mode - user wants blank document
+  const shouldShowGeneration = !isWriteMode && 
+    isNewlyCreated && 
     project.status === 'generating' && 
     !project.content
 
@@ -189,10 +192,11 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
   })()
 
   // Debug logging for generation state
-  if (isNewlyCreated) {
+  if (isNewlyCreated || isWriteMode) {
     console.log('📋 Editor page loaded for new project:', {
       projectId,
       isNewlyCreated,
+      isWriteMode,
       projectStatus: project.status,
       hasContent: !!project.content,
       shouldShowGeneration,
@@ -213,6 +217,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         citationStyle={citationStyle}
         onSave={undefined}
         isGenerating={shouldShowGeneration}
+        isWriteMode={isWriteMode}
       />
     </div>
   )

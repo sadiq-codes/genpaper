@@ -1,25 +1,41 @@
 import { createClient } from '@/lib/supabase/server'
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
+import { z } from 'zod'
+import {
+  requireAuth,
+  parseBody,
+  badRequest,
+  success,
+  handleError,
+  UuidSchema,
+} from '@/lib/api/helpers'
 
-interface SaveRequest {
-  projectId: string
-  content: string
-}
+// ============================================================================
+// Validation Schema
+// ============================================================================
+
+const SaveBodySchema = z.object({
+  projectId: UuidSchema,
+  content: z.string(),
+})
+
+// ============================================================================
+// POST - Save document content
+// ============================================================================
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Verify user is authenticated
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const user = await requireAuth()
+
+    const body = await request.json()
+    const bodyResult = parseBody(body, SaveBodySchema)
+    if (!bodyResult.success) {
+      return badRequest(bodyResult.error)
     }
 
-    const body: SaveRequest = await request.json()
-    const { projectId, content } = body
+    const { projectId, content } = bodyResult.data
 
-    // Update project content in research_projects table
+    const supabase = await createClient()
     const { error: updateError } = await supabase
       .from('research_projects')
       .update({ 
@@ -31,16 +47,11 @@ export async function POST(request: NextRequest) {
 
     if (updateError) {
       console.error('Save error:', updateError)
-      return NextResponse.json({ error: 'Failed to save' }, { status: 500 })
+      throw updateError
     }
 
-    return NextResponse.json({ success: true })
-
+    return success({ success: true })
   } catch (error) {
-    console.error('Save error:', error)
-    return NextResponse.json(
-      { error: 'Failed to save document' },
-      { status: 500 }
-    )
+    return handleError(error, 'Save error')
   }
 }

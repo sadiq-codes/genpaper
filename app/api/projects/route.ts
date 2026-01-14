@@ -1,139 +1,132 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
+import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { getUserResearchProjects, deleteResearchProject, createResearchProject } from '@/lib/db/research'
+import {
+  requireAuth,
+  parseQuery,
+  parseBody,
+  badRequest,
+  notFound,
+  success,
+  handleError,
+  PaginationSchema,
+  UuidSchema,
+} from '@/lib/api/helpers'
 
+// ============================================================================
+// Validation Schemas
+// ============================================================================
+
+const GetQuerySchema = PaginationSchema
+
+const PostBodySchema = z.object({
+  topic: z.string().min(1, 'Topic is required').min(10, 'Topic must be at least 10 characters'),
+  paperType: z.enum(['researchArticle', 'literatureReview', 'capstoneProject', 'mastersThesis', 'phdDissertation']).default('literatureReview'),
+  selectedPapers: z.array(z.string()).optional(),
+  hasOriginalResearch: z.boolean().optional().default(false),
+  keyFindings: z.string().optional(),
+  generationMode: z.enum(['generate', 'write']).optional().default('generate'),
+}).refine(
+  (data) => !data.hasOriginalResearch || (data.keyFindings && data.keyFindings.trim().length >= 10),
+  { message: 'Key findings are required (at least 10 characters) when original research is enabled', path: ['keyFindings'] }
+)
+
+const DeleteQuerySchema = z.object({
+  projectId: UuidSchema,
+})
+
+// ============================================================================
 // GET - Retrieve user's research projects
+// ============================================================================
+
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const user = await requireAuth()
+
+    const queryResult = parseQuery(request, GetQuerySchema)
+    if (!queryResult.success) {
+      return badRequest(queryResult.error)
     }
 
-    const url = new URL(request.url)
-    const limitParam = url.searchParams.get('limit')
-    const offsetParam = url.searchParams.get('offset')
-
-    const limit = limitParam ? parseInt(limitParam) : 20
-    const offset = offsetParam ? parseInt(offsetParam) : 0
-
+    const { limit, offset } = queryResult.data
     const projects = await getUserResearchProjects(user.id, limit, offset)
 
-    return NextResponse.json({
+    return success({
       projects,
       total: projects.length,
       limit,
-      offset
+      offset,
     })
-
   } catch (error) {
-    console.error('Error in projects GET API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return handleError(error, 'Error in projects GET API')
   }
 }
 
+// ============================================================================
 // POST - Create a new research project
+// ============================================================================
+
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const user = await requireAuth()
 
     const body = await request.json()
-    const { 
-      topic, 
-      paperType, 
-      selectedPapers,
-      // Original research support
-      hasOriginalResearch,
-      keyFindings,
-    } = body
-
-    if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
-      return NextResponse.json({ error: 'Topic/Research question is required' }, { status: 400 })
+    const bodyResult = parseBody(body, PostBodySchema)
+    if (!bodyResult.success) {
+      return badRequest(bodyResult.error)
     }
 
-    // Validate key findings if original research is enabled
-    if (hasOriginalResearch) {
-      if (!keyFindings || typeof keyFindings !== 'string' || keyFindings.trim().length < 10) {
-        return NextResponse.json(
-          { error: 'Key findings are required (at least 10 characters)' }, 
-          { status: 400 }
-        )
-      }
-    }
+    const { topic, paperType, selectedPapers, hasOriginalResearch, keyFindings, generationMode } = bodyResult.data
 
-    // Create generation config
+    // Build generation config
     const generationConfig: Record<string, unknown> = {
-      paper_settings: {
-        paperType: paperType || 'researchArticle'
-      }
+      paper_settings: { paperType },
+      generation_mode: generationMode,
     }
 
     // Add original research data if provided
-    // The main topic input serves as the research question for empirical papers
     if (hasOriginalResearch) {
       generationConfig.original_research = {
         has_original_research: true,
-        research_question: topic.trim(), // Main input IS the research question
+        research_question: topic.trim(),
         key_findings: keyFindings?.trim(),
       }
     }
 
     // Add selected papers if provided
-    if (selectedPapers && Array.isArray(selectedPapers) && selectedPapers.length > 0) {
+    if (selectedPapers && selectedPapers.length > 0) {
       generationConfig.library_papers_used = selectedPapers
     }
 
-    const project = await createResearchProject(
-      user.id,
-      topic.trim(),
-      generationConfig
-    )
+    const project = await createResearchProject(user.id, topic.trim(), generationConfig)
 
-    return NextResponse.json({
+    return success({
       project,
-      message: 'Project created successfully'
+      message: 'Project created successfully',
     })
-
   } catch (error) {
-    console.error('Error in projects POST API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return handleError(error, 'Error in projects POST API')
   }
 }
 
+// ============================================================================
 // DELETE - Delete a research project
+// ============================================================================
+
 export async function DELETE(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const user = await requireAuth()
+
+    const queryResult = parseQuery(request, DeleteQuerySchema)
+    if (!queryResult.success) {
+      return badRequest(queryResult.error)
     }
 
-    const url = new URL(request.url)
-    const projectId = url.searchParams.get('projectId')
-    
-    if (!projectId) {
-      return NextResponse.json({ error: 'Project ID is required' }, { status: 400 })
-    }
+    const { projectId } = queryResult.data
 
     // Verify ownership
+    const supabase = await createClient()
     const { data: project, error } = await supabase
       .from('research_projects')
       .select('id')
@@ -142,18 +135,13 @@ export async function DELETE(request: NextRequest) {
       .single()
 
     if (error || !project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+      return notFound('Project not found')
     }
 
     await deleteResearchProject(projectId)
 
-    return NextResponse.json({ success: true })
-
+    return success({ success: true })
   } catch (error) {
-    console.error('Error in projects DELETE API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return handleError(error, 'Error in projects DELETE API')
   }
-} 
+}

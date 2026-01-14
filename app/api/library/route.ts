@@ -1,124 +1,136 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { NextRequest } from 'next/server'
+import { z } from 'zod'
 import { 
   getUserLibraryPapers, 
   addPaperToLibrary, 
   removePaperFromLibrary
 } from '@/lib/db/library'
+import {
+  getAuthenticatedUser,
+  unauthorized,
+  badRequest,
+  serverError,
+  success,
+  parseQuery,
+  parseBody,
+  UuidSchema,
+  SortOrderSchema,
+} from '@/lib/api/helpers'
 
+// ============================================================================
+// Validation Schemas
+// ============================================================================
+
+const GetQuerySchema = z.object({
+  search: z.string().optional(),
+  collection: z.string().optional(),
+  source: z.string().optional(),
+  sortBy: z.enum(['added_at', 'title', 'publication_date', 'citation_count']).default('added_at'),
+  sortOrder: SortOrderSchema,
+  paperId: z.string().optional(),
+  id: z.string().optional(),
+})
+
+const PostBodySchema = z.object({
+  paperId: z.string().min(1, 'Paper ID is required'),
+  collectionId: z.string().optional(),
+})
+
+const DeleteQuerySchema = z.object({
+  id: UuidSchema,
+})
+
+// ============================================================================
 // GET - Retrieve user's library papers
+// ============================================================================
+
 export async function GET(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const user = await getAuthenticatedUser()
+    if (!user) return unauthorized()
+
+    const queryResult = parseQuery(request, GetQuerySchema)
+    if (!queryResult.success) {
+      return badRequest(queryResult.error)
     }
 
-    const url = new URL(request.url)
-    const search = url.searchParams.get('search')
-    const collection = url.searchParams.get('collection')
-    const source = url.searchParams.get('source')
-    const sortBy = url.searchParams.get('sortBy') || 'added_at'
-    const sortOrder = url.searchParams.get('sortOrder') || 'desc'
-    const paperId = url.searchParams.get('paperId')
-    const id = url.searchParams.get('id')
+    const { search, collection, source, sortBy, sortOrder, paperId, id } = queryResult.data
 
     // If querying specific paper
     if (paperId || id) {
       const targetId = paperId || id
       const papers = await getUserLibraryPapers(user.id, {
-        search: targetId || undefined,
-        sortBy: sortBy as any,
-        sortOrder: sortOrder as 'asc' | 'desc'
+        search: targetId,
+        sortBy,
+        sortOrder,
       })
       
       const paper = papers.find(p => p.paper_id === targetId || p.id === targetId)
-      return NextResponse.json({ paper })
+      return success({ paper })
     }
 
     const papers = await getUserLibraryPapers(user.id, {
       search: search || undefined,
       collectionId: collection || undefined,
       source: source || undefined,
-      sortBy: sortBy as any,
-      sortOrder: sortOrder as 'asc' | 'desc'
+      sortBy,
+      sortOrder,
     })
 
-    return NextResponse.json({ papers })
+    return success({ papers })
 
   } catch (error) {
     console.error('Error in library GET API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return serverError()
   }
 }
 
+// ============================================================================
 // POST - Add paper to library
+// ============================================================================
+
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const user = await getAuthenticatedUser()
+    if (!user) return unauthorized()
 
     const body = await request.json()
-    const { paperId, collectionId } = body as { paperId?: string, collectionId?: string }
-
-    if (!paperId) {
-      return NextResponse.json({ error: 'Paper ID is required' }, { status: 400 })
+    const bodyResult = parseBody(body, PostBodySchema)
+    if (!bodyResult.success) {
+      return badRequest(bodyResult.error)
     }
 
+    const { paperId, collectionId } = bodyResult.data
     const libraryPaper = await addPaperToLibrary(user.id, paperId, collectionId)
 
-    return NextResponse.json({ 
-      success: true,
-      libraryPaper 
-    })
+    return success({ success: true, libraryPaper })
 
   } catch (error) {
     console.error('Error in library POST API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return serverError()
   }
 }
 
+// ============================================================================
 // DELETE - Remove paper from library
+// ============================================================================
+
 export async function DELETE(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const user = await getAuthenticatedUser()
+    if (!user) return unauthorized()
+
+    const queryResult = parseQuery(request, DeleteQuerySchema)
+    if (!queryResult.success) {
+      return badRequest(queryResult.error)
     }
 
-    const url = new URL(request.url)
-    const libraryPaperId = url.searchParams.get('id')
+    await removePaperFromLibrary(queryResult.data.id)
 
-    if (!libraryPaperId) {
-      return NextResponse.json({ error: 'Library paper ID is required' }, { status: 400 })
-    }
-
-    await removePaperFromLibrary(libraryPaperId, user.id)
-
-    return NextResponse.json({ success: true })
+    return success({ success: true })
 
   } catch (error) {
     console.error('Error in library DELETE API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return serverError()
   }
 }

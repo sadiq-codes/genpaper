@@ -58,15 +58,14 @@ export async function addPaperToLibrary(
 }
 
 export async function removePaperFromLibrary(
-  userId: string,
-  paperId: string
+  libraryPaperId: string
 ): Promise<void> {
   const supabase = await getSB()
+  // RLS policy ensures user can only delete their own library entries
   const { error } = await supabase
     .from('library_papers')
     .delete()
-    .eq('user_id', userId)
-    .eq('paper_id', paperId)
+    .eq('id', libraryPaperId)
 
   if (error) throw error
 }

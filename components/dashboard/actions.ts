@@ -40,6 +40,7 @@ export async function createProjectAction(
   // Main input serves as topic (for reviews) or research question (for empirical papers)
   const topic = formData.get('topic') as string
   const paperType = formData.get('paperType') as string
+  const generationMode = formData.get('generationMode') as string || 'generate'
   const selectedPapers = formData.getAll('selectedPapers') as string[]
   
   // Original research support
@@ -50,6 +51,7 @@ export async function createProjectAction(
   console.log('📝 createProjectAction received:', {
     topic: topic?.substring(0, 50),
     paperType,
+    generationMode,
     hasOriginalResearch,
     selectedPapersCount: selectedPapers.length
   })
@@ -76,10 +78,14 @@ export async function createProjectAction(
   }
 
   try {
+    const isWriteMode = generationMode === 'write'
+    
     const generationConfig = {
       paper_settings: {
         paperType // No fallback - we've validated it exists
       },
+      // Track generation mode for the editor to handle appropriately
+      generation_mode: generationMode,
       // Include original research data in config (for empirical papers)
       // The main topic input serves as the research question for empirical papers
       ...(hasOriginalResearch && {
@@ -95,8 +101,15 @@ export async function createProjectAction(
     const project = await createResearchProject(user.id, topic.trim(), generationConfig)
     
     revalidatePath('/projects')
-    // Redirect to editor with success hint to show toast
-    redirect(`/editor/${project.id}?created=1`)
+    
+    // Redirect to editor
+    // - For 'generate' mode: created=1 triggers paper generation
+    // - For 'write' mode: write=1 skips generation, opens blank editor
+    if (isWriteMode) {
+      redirect(`/editor/${project.id}?write=1`)
+    } else {
+      redirect(`/editor/${project.id}?created=1`)
+    }
   } catch (error) {
     // Allow Next.js redirect control flow errors to propagate without logging
     if (
