@@ -299,8 +299,13 @@ export async function createChunksForPaper(
     const embeddings = await generateEmbeddings(chunkTexts)
     
     // Extract metadata for each chunk (section type, citations, etc.)
+    // Pass overlapLength to ensure section detection uses new content, not overlap prefix
     const metadataList = extractMetadataForChunks(
-      chunks.map((c, idx) => ({ content: c.content, chunk_index: idx }))
+      chunks.map((c, idx) => ({ 
+        content: c.content, 
+        chunk_index: idx,
+        overlapLength: c.metadata?.overlapLength ?? 0
+      }))
     )
 
     // Insert chunks into database with embeddings and metadata

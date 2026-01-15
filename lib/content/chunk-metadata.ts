@@ -129,14 +129,16 @@ const CONCLUSION_PATTERNS = [
  * 
  * @param content - The chunk content to analyze
  * @param chunkIndex - Position in document (lower = earlier)
+ * @param overlapLength - Length of overlap prefix to skip for section detection (default: 0)
  * @returns Extracted metadata
  */
-export function extractChunkMetadata(content: string, chunkIndex: number = 0): ChunkMetadata {
+export function extractChunkMetadata(content: string, chunkIndex: number = 0, overlapLength: number = 0): ChunkMetadata {
   const trimmedContent = content.trim()
   const lowerContent = trimmedContent.toLowerCase()
   
-  // Detect section type
-  const section_type = detectSectionType(trimmedContent, chunkIndex)
+  // FIX #3: Detect section type from content AFTER overlap prefix
+  // This prevents overlap from previous sections from mislabeling the current chunk
+  const section_type = detectSectionType(trimmedContent, chunkIndex, overlapLength)
   
   // Check for citations
   const has_citations = CITATION_PATTERNS.some(pattern => pattern.test(trimmedContent))
@@ -169,10 +171,18 @@ export function extractChunkMetadata(content: string, chunkIndex: number = 0): C
 
 /**
  * Detect section type from chunk content.
+ * 
+ * @param content - Full chunk content (may include overlap prefix)
+ * @param chunkIndex - Position in document
+ * @param overlapLength - Length of overlap prefix to skip (default: 0)
  */
-function detectSectionType(content: string, chunkIndex: number): SectionType | null {
-  // Check first 200 chars for section headers
-  const headerRegion = content.slice(0, 200)
+function detectSectionType(content: string, chunkIndex: number, overlapLength: number = 0): SectionType | null {
+  // FIX #3: Skip overlap prefix when detecting section headers
+  // This prevents "In conclusion..." from a previous section being detected as conclusion
+  const newContent = overlapLength > 0 ? content.slice(overlapLength) : content
+  
+  // Check first 200 chars of NEW content (after overlap) for section headers
+  const headerRegion = newContent.slice(0, 200)
   
   for (const [sectionType, patterns] of Object.entries(SECTION_PATTERNS)) {
     for (const pattern of patterns) {
@@ -294,9 +304,9 @@ const STOP_WORDS = new Set([
  * Batch extract metadata for multiple chunks.
  */
 export function extractMetadataForChunks(
-  chunks: Array<{ content: string; chunk_index?: number }>
+  chunks: Array<{ content: string; chunk_index?: number; overlapLength?: number }>
 ): ChunkMetadata[] {
   return chunks.map((chunk, idx) => 
-    extractChunkMetadata(chunk.content, chunk.chunk_index ?? idx)
+    extractChunkMetadata(chunk.content, chunk.chunk_index ?? idx, chunk.overlapLength ?? 0)
   )
 }

@@ -5,7 +5,8 @@ import {
   createEmptyResult,
   type RetrievedChunk,
   type BaseRetrievalResult,
-  type SearchMode
+  type SearchMode,
+  type EvidenceStrength
 } from './base-retrieval'
 import { ChunkRetriever } from './chunk-retriever'
 import { ContextBuilder } from './context-builder'
@@ -137,16 +138,20 @@ let contextBuilderInstance: ContextBuilder | null = null
 
 function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
   // Create or update retriever with current params
+  // TUNED: Reduced filtering aggression for more synthesis material
   const config = {
     mode: params.mode || 'hybrid',
     vectorWeight: params.vectorWeight || 0.7,
-    minScore: params.minScore || 0.15,
+    // REDUCED from 0.15 to 0.1: Let more chunks through
+    minScore: params.minScore || 0.1,
     retrieveLimit: 100,
-    finalLimit: params.limit || 20,
+    // INCREASED default from 20 to 25
+    finalLimit: params.limit || 25,
     useCitationBoost: params.useCitationBoost ?? true,
     useReranking: params.useReranking ?? true,
     rerankTopK: params.rerankTopK || 30,
-    maxPerPaper: 5
+    // INCREASED from 5 to 6: More context per paper
+    maxPerPaper: 6
   }
   
   if (!retrieverInstance) {
@@ -162,7 +167,9 @@ function getContextBuilder(params: GenerationRetrievalParams): ContextBuilder {
   const config = {
     maxTokens: params.maxTokens || 8000,
     sentenceMinScore: params.sentenceMinScore || 0.3,
-    enableCompression: params.useCompression ?? true,
+    // DISABLED BY DEFAULT: Compression strips context needed for natural citations
+    // Only enable as emergency fallback when context exceeds model limits
+    enableCompression: params.useCompression ?? false,
     includeCitations: true,
     groupByPaper: false
   }
@@ -191,7 +198,8 @@ export class GenerationContextService {
       paperIds, 
       limit = 20, 
       minScore = 0.2,
-      useCompression = true
+      // DISABLED BY DEFAULT: Compression strips context needed for natural citations
+      useCompression = false
     } = params
     
     if (!query.trim() || paperIds.length === 0) {
@@ -345,11 +353,14 @@ export class GenerationContextService {
     })
     
     // Convert to PaperChunk format with deterministic IDs
+    // Add evidence_strength based on chunk source
     let allChunks: PaperChunk[] = result.chunks.map((chunk, index) => ({
       ...chunk,
       id: chunk.id || createDeterministicChunkId(chunk.paper_id, chunk.content, index),
       paper: allPapers.find(p => p.id === chunk.paper_id),
-      metadata: { source: 'generation_context_service', score: chunk.score }
+      metadata: { source: 'generation_context_service', score: chunk.score },
+      // Default to full_text for database chunks (they come from PDF ingestion)
+      evidence_strength: (chunk.evidence_strength || 'full_text') as EvidenceStrength
     }))
     
     // Validate chunk content
@@ -372,7 +383,9 @@ export class GenerationContextService {
           content: `Title: ${p.title}\n\nAbstract: ${p.abstract}`,
           metadata: { source: 'abstract-fallback' },
           score: 0.5,
-          paper: p
+          paper: p,
+          // Mark as abstract-only evidence - LLM should not make strong claims from abstracts
+          evidence_strength: 'abstract' as EvidenceStrength
         }))
 
       if (abstractChunks.length === 0) {
@@ -443,10 +456,11 @@ export class GenerationContextService {
         const targetIds = ids.length > 0 ? ids : allPaperIds
         
         try {
+          // INCREASED limits: More material for synthesis (was 20 → 25, was 12 → 15)
           contextChunks = await this.getRelevantChunks(
             `${section.title}: ${(section.keyPoints || []).join('. ')}`,
             targetIds,
-            Math.min(20, Math.max(targetIds.length * 3, 12)),
+            Math.min(25, Math.max(targetIds.length * 3, 15)),
             allPapers
           )
         } catch (firstError) {
@@ -455,7 +469,7 @@ export class GenerationContextService {
             contextChunks = await this.getRelevantChunks(
               topic,
               allPaperIds,
-              Math.min(20, Math.max(allPaperIds.length * 2, 12)),
+              Math.min(25, Math.max(allPaperIds.length * 2, 15)),
               allPapers
             )
           } else {
@@ -478,7 +492,9 @@ export class GenerationContextService {
             content: `Title: ${p.title}\n\nAbstract: ${p.abstract}`,
             metadata: { source: 'abstract-fallback-section' },
             score: 0.4,
-            paper: p
+            paper: p,
+            // Mark as abstract-only evidence
+            evidence_strength: 'abstract' as EvidenceStrength
           }))
         
         if (abstractChunks.length > 0) {
@@ -496,7 +512,9 @@ export class GenerationContextService {
           id: c.id,
           paper_id: c.paper_id,
           content: c.content,
-          score: c.score
+          score: c.score,
+          // Include evidence strength for LLM to weight appropriately
+          evidence_strength: c.evidence_strength || 'full_text'
         })),
         expectedWords: section.expectedWords
       }

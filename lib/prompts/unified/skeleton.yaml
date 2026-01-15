@@ -403,6 +403,13 @@ user: |-
   
   ### Evidence Context (use each snippet at most once)
   Each snippet is tagged with [CONTEXT FROM: paper_id]. Use the paper_id in your [CITE: paper_id] markers.
+  
+  **EVIDENCE STRENGTH GUIDE:**
+  Each snippet includes an "evidence_strength" field - use this to calibrate your claims:
+  - `full_text`: Strong evidence from the full paper. You can quote, paraphrase, and make confident claims.
+  - `abstract`: From abstract only. Use cautiously - say "According to..." or "The authors report..." rather than making strong assertions.
+  - `title_only`: Minimal evidence. Only mention the paper exists; do NOT make substantive claims about its content.
+  
   ```json
   {{evidenceSnippets}}
   ```

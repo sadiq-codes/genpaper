@@ -87,9 +87,6 @@ describe('Unified Template - Coherence Testing', () => {
     console.log('\n📊 Quality Metrics:')
     batchResults.forEach((result, idx) => {
       console.log(`  Section ${idx + 1}: ${result.wordCount} words, quality: ${result.quality_score}/100`)
-      if (result.driftCheck) {
-        console.log(`    Drift check: ${result.driftCheck.isDrift ? '⚠️ Warning' : '✅ Pass'} (similarity: ${result.driftCheck.similarity.toFixed(2)})`)
-      }
     })
   })
 
@@ -163,15 +160,12 @@ describe('Unified Template - Coherence Testing', () => {
       ]
     }
     
-    // Generate with drift detection enabled
+    // Generate section
     const result = await generateFullSection(mainContext, 500)
     
-    expect(result.driftCheck).toBeDefined()
-    
-    // For a new project, drift check should pass (no previous sections)
-    if (result.driftCheck) {
-      console.log(`\n📊 Drift Detection: similarity=${result.driftCheck.similarity.toFixed(2)}, drift=${result.driftCheck.isDrift}`)
-    }
+    // Basic quality check
+    expect(result.qualityScore).toBeGreaterThan(0)
+    console.log(`\n📊 Quality Score: ${result.qualityScore}`)
   })
 })
 

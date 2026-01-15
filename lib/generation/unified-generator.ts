@@ -1,7 +1,7 @@
 import 'server-only'
 import { streamText } from 'ai'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
-import { buildUnifiedPrompt, checkTopicDrift, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
+import { buildUnifiedPrompt, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
 import type { SectionContext } from '@/lib/prompts/types'
 import { extractCitationMarkers, cleanNonCitationArtifacts } from '@/lib/citations/post-processor'
 // DEDUPLICATION NOTES:
@@ -21,7 +21,6 @@ import { extractCitationMarkers, cleanNonCitationArtifacts } from '@/lib/citatio
  * Features:
  * - Single template scales from sentence → section → paper  
  * - Coherence through rolling summaries
- * - Automatic topic drift detection
  * - Sentence-level streaming
  * - Basic quality metrics (comprehensive assessment in pipeline)
  */
@@ -36,9 +35,6 @@ export interface UnifiedGenerationConfig {
   context: SectionContext
   options?: BuildPromptOptions
   
-  // Quality controls
-  enableDriftDetection?: boolean
-  
   // Stream tracking
   onStreamEvent?: (event: StreamEvent) => void
 }
@@ -48,11 +44,6 @@ export interface UnifiedGenerationResult {
   citations: Array<{ paperId: string; citationText: string }>
   tokensUsed: number
   generationTime: number
-  driftCheck?: {
-    similarity: number
-    passed: boolean
-    warning?: string
-  }
   qualityScore: number
 }
 
@@ -63,10 +54,9 @@ function calculateBasicQualityScore(params: {
   content: string
   citations: Array<{ paperId: string; citationText: string }>
   targetWords: number
-  driftSimilarity: number
   minCitationsExpected?: number
 }): number {
-  const { content, citations, targetWords, driftSimilarity, minCitationsExpected } = params
+  const { content, citations, targetWords, minCitationsExpected } = params
   
   const wordCount = content.split(' ').length
   const lengthScore = Math.min(100, (wordCount / targetWords) * 100)
@@ -76,10 +66,8 @@ function calculateBasicQualityScore(params: {
   const citationTarget = minCitationsExpected || Math.max(citations.length, 1)
   const citationScore = Math.min(100, (citations.length / citationTarget) * 100)
   
-  const driftScore = driftSimilarity * 100
-  
   // Basic calculation - comprehensive quality assessment handled by pipeline
-  return Math.round((lengthScore + citationScore + driftScore) / 3)
+  return Math.round((lengthScore + citationScore) / 2)
 }
 
 // Helper to resolve generation options with defaults
@@ -110,7 +98,6 @@ export async function generateWithUnifiedTemplate(
   const {
     context,
     options = {},
-    enableDriftDetection = true,
     onStreamEvent
   } = config
 
@@ -196,34 +183,12 @@ export async function generateWithUnifiedTemplate(
   // Clean any artifacts that shouldn't be in output (but keep [CITE:] markers for pipeline)
   fullContent = cleanNonCitationArtifacts(fullContent)
   
-  let driftCheck: UnifiedGenerationResult['driftCheck']
-
-  if (enableDriftDetection) {
-    progress('drift_check', 55, 'Checking topic drift...')
-    const originalTopic = context.title || String(context.sectionKey)
-    // Compare generated content against original topic/section title summary
-    const rawDriftCheck = await checkTopicDrift(fullContent, originalTopic)
-    
-    driftCheck = {
-      similarity: rawDriftCheck.similarity,
-      passed: !rawDriftCheck.isDrift,
-      warning: rawDriftCheck.warning
-    }
-    
-    if (!driftCheck.passed) {
-      progress('drift_check', 60, `⚠️ Topic drift detected: ${driftCheck.warning}`)
-    } else {
-      progress('drift_check', 60, '✅ Content stays on topic')
-    }
-  }
-
   // Quality score now self-calibrates based on actual citations generated
   // We no longer enforce minimum citation counts - semantic guidance handles this
   const qualityScore = calculateBasicQualityScore({
     content: fullContent,
     citations: collectedCitations,
     targetWords: options.targetWords || 300,
-    driftSimilarity: driftCheck?.similarity || 1.0,
     minCitationsExpected: Math.max(collectedCitations.length, 1)  // Self-calibrating
   })
 
@@ -231,10 +196,9 @@ export async function generateWithUnifiedTemplate(
 
   return {
     content: fullContent,
-    citations: collectedCitations, // Use collected citations from tool results
+    citations: collectedCitations,
     tokensUsed,
     generationTime: (Date.now() - startTime) / 1000,
-    driftCheck,
     qualityScore,
   }
 }

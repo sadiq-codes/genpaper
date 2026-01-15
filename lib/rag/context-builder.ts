@@ -39,7 +39,10 @@ export interface ContextConfig {
 export const DEFAULT_CONTEXT_CONFIG: ContextConfig = {
   maxTokens: 8000,
   sentenceMinScore: 0.3,
-  enableCompression: true,
+  // DISABLED BY DEFAULT: Compression strips surrounding context needed for natural citations
+  // LLM loses ability to paraphrase and synthesize when it only sees isolated sentences
+  // Only enable as emergency fallback when context would exceed model limits
+  enableCompression: false,
   includeCitations: true,
   groupByPaper: false,
   tokensPerChar: 0.25 // ~4 chars per token for English

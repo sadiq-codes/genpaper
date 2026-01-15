@@ -199,13 +199,23 @@ Provide specific, actionable feedback on:
   }
 
   // Pure utility functions (no I/O)
-  static formatEvidenceSnippets(chunks: Array<{ content: string; paper_id: string; title?: string }>): string {
+  static formatEvidenceSnippets(chunks: Array<{ 
+    content: string
+    paper_id: string
+    title?: string
+    evidence_strength?: 'full_text' | 'abstract' | 'title_only'
+  }>): string {
     return JSON.stringify(
       chunks.slice(0, 10).map((chunk) => ({
         // Note: Removed numeric "id" field to prevent AI from confusing snippet numbers with paper_id
         // The paper_id is the ONLY identifier that should be used in [CITE: paper_id] markers
         paper_id: chunk.paper_id,
         title: chunk.title || 'Source',
+        // Evidence strength helps LLM weight citations appropriately
+        // - full_text: Can make strong claims, quote directly
+        // - abstract: Use cautiously, avoid strong claims ("According to...")
+        // - title_only: Mention existence only, no substantive claims
+        evidence_strength: chunk.evidence_strength || 'full_text',
         // Tag content with paper_id so AI knows which ID to use for [CITE: paper_id]
         content: `[CONTEXT FROM: ${chunk.paper_id}] ${chunk.content.slice(0, 500)}${chunk.content.length > 500 ? '...' : ''}`
       })),

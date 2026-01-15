@@ -178,6 +178,355 @@ async function findResearchGatePdf(): Promise<string | null> {
   return null
 }
 
+// DOI Resolver - follows redirects from doi.org to find final URL
+// This is cheap (~200-400ms) and often yields direct PDF locations
+async function resolveDoi(doi: string): Promise<string | null> {
+  if (!doi) return null
+  
+  // Clean the DOI - remove URL prefix if present
+  const cleanDoi = doi.replace(/^https?:\/\/doi\.org\//i, '').trim()
+  if (!cleanDoi) return null
+  
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000)
+    
+    try {
+      // Follow redirects but don't download body - just get final URL
+      const response = await fetch(`https://doi.org/${cleanDoi}`, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: {
+          'User-Agent': 'GenPaper Academic Research Tool',
+          'Accept': 'application/pdf,text/html,*/*'
+        }
+      })
+      
+      const finalUrl = response.url
+      
+      // Check if the final URL looks like a direct PDF
+      if (finalUrl && isDirectPdfUrl(finalUrl)) {
+        console.log(`✅ DOI resolver found direct PDF: ${finalUrl}`)
+        return finalUrl
+      }
+      
+      // Try to extract PDF from the landing page URL using pattern matching
+      const pdfFromUrl = tryExtractPdfFromLandingUrl(finalUrl)
+      if (pdfFromUrl) {
+        console.log(`✅ DOI resolver extracted PDF URL: ${pdfFromUrl}`)
+        return pdfFromUrl
+      }
+      
+      return null
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  } catch (error) {
+    // Don't spam logs for expected failures
+    if (error instanceof Error && error.name !== 'AbortError') {
+      console.warn('DOI resolution failed:', error.message)
+    }
+    return null
+  }
+}
+
+// Try to convert a landing page URL into a direct PDF URL using known patterns
+function tryExtractPdfFromLandingUrl(url: string): string | null {
+  if (!url) return null
+  
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.toLowerCase()
+    const path = parsed.pathname
+    
+    // Springer/Nature: /article/... -> /content/pdf/...
+    if ((host.includes('link.springer.com') || host.includes('nature.com')) && path.includes('/article/')) {
+      const pdfUrl = url.replace('/article/', '/content/pdf/') + '.pdf'
+      return pdfUrl
+    }
+    
+    // MDPI: /htm -> /pdf
+    if (host.includes('mdpi.com') && path.includes('/htm')) {
+      return url.replace('/htm', '/pdf')
+    }
+    
+    // Frontiers: Add /pdf to article URL
+    if (host.includes('frontiersin.org') && path.includes('/articles/')) {
+      return url + '/pdf'
+    }
+    
+    // PLoS: /article -> /article/file?id=...&type=printable
+    if (host.includes('plos.org') || host.includes('journals.plos.org')) {
+      const doiMatch = path.match(/10\.\d+\/[^\s\/]+/)
+      if (doiMatch) {
+        return `https://journals.plos.org/plosone/article/file?id=${doiMatch[0]}&type=printable`
+      }
+    }
+    
+    // Wiley: /doi/... -> /doi/pdf/...
+    if (host.includes('onlinelibrary.wiley.com') && path.includes('/doi/') && !path.includes('/pdf/')) {
+      return url.replace('/doi/', '/doi/pdf/')
+    }
+    
+    // Taylor & Francis: /doi/full/ -> /doi/pdf/
+    if (host.includes('tandfonline.com') && path.includes('/doi/full/')) {
+      return url.replace('/doi/full/', '/doi/pdf/')
+    }
+    
+    // SAGE: /doi/... -> /doi/pdf/...
+    if (host.includes('journals.sagepub.com') && path.includes('/doi/') && !path.includes('/pdf/')) {
+      return url.replace('/doi/', '/doi/pdf/')
+    }
+    
+    // Cambridge University Press: Add /pdf
+    if (host.includes('cambridge.org') && path.includes('/article/')) {
+      return url + '/pdf'
+    }
+    
+    // Oxford Academic: /doi/... -> /doi/.../pdf
+    if (host.includes('academic.oup.com') && !path.endsWith('/pdf')) {
+      return url + '/pdf'
+    }
+    
+    // BMC/BioMed Central: /articles/ -> /track/pdf/
+    if (host.includes('biomedcentral.com') && path.includes('/articles/')) {
+      return url.replace('/articles/', '/track/pdf/')
+    }
+    
+    // ScienceDirect: article page -> pdfft (may require OA)
+    if (host.includes('sciencedirect.com') && path.includes('/article/')) {
+      // ScienceDirect PDF URLs use a different pattern - pii based
+      const piiMatch = path.match(/pii\/([A-Z0-9]+)/i)
+      if (piiMatch) {
+        return `https://www.sciencedirect.com/science/article/pii/${piiMatch[1]}/pdfft`
+      }
+    }
+    
+    // IEEE Xplore: /document/ -> /stampPDF.jsp
+    if (host.includes('ieeexplore.ieee.org') && path.includes('/document/')) {
+      const docIdMatch = path.match(/\/document\/(\d+)/)
+      if (docIdMatch) {
+        return `https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=${docIdMatch[1]}`
+      }
+    }
+    
+    // ACM DL: /doi/ -> /doi/pdf/
+    if (host.includes('dl.acm.org') && path.includes('/doi/') && !path.includes('/pdf/')) {
+      return url.replace('/doi/', '/doi/pdf/')
+    }
+    
+    // arXiv: /abs/ -> /pdf/
+    if (host.includes('arxiv.org') && path.includes('/abs/')) {
+      return url.replace('/abs/', '/pdf/') + '.pdf'
+    }
+    
+    // bioRxiv/medRxiv: Add .full.pdf
+    if ((host.includes('biorxiv.org') || host.includes('medrxiv.org')) && !path.includes('.pdf')) {
+      return url + '.full.pdf'
+    }
+    
+    return null
+  } catch {
+    return null
+  }
+}
+
+// Deterministic URL builders for known open access patterns
+// These are pure string transforms - very fast
+function buildKnownPdfPatterns(paper: AcademicPaper): string[] {
+  const candidates: string[] = []
+  const url = paper.url || ''
+  const doi = paper.doi || ''
+  
+  try {
+    if (url) {
+      const parsed = new URL(url)
+      const host = parsed.hostname.toLowerCase()
+      
+      // arXiv patterns
+      if (host.includes('arxiv.org')) {
+        const arxivIdMatch = url.match(/arxiv\.org\/(?:abs|pdf)\/(\d+\.\d+)/i) || 
+                            url.match(/arxiv\.org\/(?:abs|pdf)\/([a-z-]+\/\d+)/i)
+        if (arxivIdMatch) {
+          candidates.push(`https://arxiv.org/pdf/${arxivIdMatch[1]}.pdf`)
+        }
+      }
+      
+      // PMC patterns
+      if (host.includes('ncbi.nlm.nih.gov') || host.includes('pmc')) {
+        const pmcMatch = url.match(/PMC(\d+)/i) || url.match(/pmc\/articles\/(\d+)/i)
+        if (pmcMatch) {
+          const pmcId = pmcMatch[1].replace(/^PMC/i, '')
+          candidates.push(`https://www.ncbi.nlm.nih.gov/pmc/articles/PMC${pmcId}/pdf/`)
+          candidates.push(`https://europepmc.org/backend/ptpmcrender.fcgi?accid=PMC${pmcId}&blobtype=pdf`)
+        }
+      }
+      
+      // Springer OA
+      if (host.includes('link.springer.com') || host.includes('nature.com')) {
+        const pdfUrl = tryExtractPdfFromLandingUrl(url)
+        if (pdfUrl) candidates.push(pdfUrl)
+      }
+      
+      // MDPI (always OA)
+      if (host.includes('mdpi.com')) {
+        const pdfUrl = url.replace('/htm', '/pdf')
+        if (pdfUrl !== url) candidates.push(pdfUrl)
+      }
+      
+      // Frontiers (always OA)
+      if (host.includes('frontiersin.org')) {
+        candidates.push(url + '/pdf')
+      }
+      
+      // PLoS (always OA)
+      if (host.includes('plos.org') || host.includes('journals.plos.org')) {
+        const pdfUrl = tryExtractPdfFromLandingUrl(url)
+        if (pdfUrl) candidates.push(pdfUrl)
+      }
+      
+      // bioRxiv/medRxiv
+      if (host.includes('biorxiv.org') || host.includes('medrxiv.org')) {
+        if (!url.includes('.pdf')) {
+          candidates.push(url + '.full.pdf')
+        }
+      }
+      
+      // BMC
+      if (host.includes('biomedcentral.com')) {
+        const pdfUrl = url.replace('/articles/', '/track/pdf/')
+        if (pdfUrl !== url) candidates.push(pdfUrl)
+      }
+    }
+    
+    // DOI-based patterns (if we have a DOI but couldn't extract from URL)
+    if (doi && candidates.length === 0) {
+      const cleanDoi = doi.replace(/^https?:\/\/doi\.org\//i, '')
+      
+      // Unpaywall API will be called separately - no fake URL
+      // But we can try some known DOI-to-PDF patterns
+      
+      // PubMed Central via DOI
+      if (cleanDoi.startsWith('10.1371/')) {
+        // PLoS DOIs
+        candidates.push(`https://journals.plos.org/plosone/article/file?id=${cleanDoi}&type=printable`)
+      }
+      
+      if (cleanDoi.startsWith('10.3389/')) {
+        // Frontiers DOIs - need article URL
+      }
+      
+      if (cleanDoi.startsWith('10.3390/')) {
+        // MDPI DOIs
+        const mdpiMatch = cleanDoi.match(/10\.3390\/(\w+)(\d+)/)
+        if (mdpiMatch) {
+          candidates.push(`https://www.mdpi.com/${mdpiMatch[1]}/${mdpiMatch[2]}/pdf`)
+        }
+      }
+    }
+    
+  } catch {
+    // URL parsing failed, skip pattern building
+  }
+  
+  return candidates
+}
+
+// Fast pattern-based PDF finder (runs before slower API calls)
+async function findPdfByKnownPatterns(paper: AcademicPaper): Promise<string | null> {
+  const candidates = buildKnownPdfPatterns(paper)
+  
+  // Quickly verify first candidate that looks valid
+  for (const candidate of candidates) {
+    if (isDirectPdfUrl(candidate)) {
+      // Quick HEAD request to verify it exists (don't download full PDF)
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 3000)
+        
+        try {
+          const response = await fetch(candidate, {
+            method: 'HEAD',
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'GenPaper Academic Research Tool',
+              'Accept': 'application/pdf'
+            }
+          })
+          
+          if (response.ok) {
+            const contentType = response.headers.get('content-type') || ''
+            if (contentType.includes('pdf') || contentType.includes('octet-stream')) {
+              console.log(`✅ Pattern-based PDF found: ${candidate}`)
+              return candidate
+            }
+          }
+        } finally {
+          clearTimeout(timeoutId)
+        }
+      } catch {
+        // Try next candidate
+      }
+    }
+  }
+  
+  return null
+}
+
+// CORE API lookup by DOI - CORE has 200M+ open access papers with direct download URLs
+async function findCorePdf(doi: string): Promise<string | null> {
+  if (!doi || !process.env.CORE_API_KEY) return null
+  
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000)
+    
+    try {
+      // Clean DOI
+      const cleanDoi = doi.replace(/^https?:\/\/doi\.org\//i, '').trim()
+      
+      // CORE API v3 - search by DOI
+      const response = await fetch('https://api.core.ac.uk/v3/search/works', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.CORE_API_KEY}`
+        },
+        body: JSON.stringify({
+          q: `doi:"${cleanDoi}"`,
+          limit: 1
+        })
+      })
+      
+      if (!response.ok) return null
+      
+      const data = await response.json()
+      
+      if (data.results && data.results.length > 0) {
+        const work = data.results[0]
+        const pdfUrl = work.downloadUrl || 
+          (work.sourceFulltextUrls?.find((url: string) => url.endsWith('.pdf') || url.includes('/pdf')) || 
+           work.sourceFulltextUrls?.[0])
+        
+        if (pdfUrl && isDirectPdfUrl(pdfUrl)) {
+          console.log(`✅ CORE API found PDF: ${pdfUrl}`)
+          return pdfUrl
+        }
+      }
+      
+      return null
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name !== 'AbortError') {
+      console.warn('CORE PDF lookup failed:', error.message)
+    }
+    return null
+  }
+}
+
 // bioRxiv PDF finder
 async function findBiorxivPdf(title: string): Promise<string | null> {
   try {
@@ -967,17 +1316,40 @@ async function findPmcPdf(url: string): Promise<string | null> {
   return null
 }
 
+// PDF Strategies ordered by speed and reliability (cheap first)
+// Strategy ordering matters: we want to minimize latency while maximizing success
 const pdfStrategies: PdfStrategy[] = [
+  // Tier 1: Cheap pattern-based (pure string transforms + quick HEAD check)
+  {
+    name: 'KnownPatterns',
+    fn: (paper) => findPdfByKnownPatterns(paper),
+    available: true
+  },
+  // Tier 1: PMC pattern matching (cheap)
   {
     name: 'PMC',
     fn: (paper) => findPmcPdf(paper.url || paper.pdf_url || ''),
     available: true
   },
+  // Tier 2: DOI resolution (single redirect follow, ~200-400ms)
+  {
+    name: 'DOI-Resolver',
+    fn: (paper) => resolveDoi(paper.doi || ''),
+    available: true
+  },
+  // Tier 2: Unpaywall API (reliable, ~500ms)
   {
     name: 'Unpaywall',
     fn: (paper) => getOpenAccessPdf(paper.doi || ''),
     available: true
   },
+  // Tier 2: CORE API (200M+ OA papers, ~500ms) - only if API key available
+  {
+    name: 'CORE',
+    fn: (paper) => findCorePdf(paper.doi || ''),
+    available: !!process.env.CORE_API_KEY
+  },
+  // Tier 3: Title-based searches (slower, ~1-2s each)
   {
     name: 'ArXiv',
     fn: (paper) => findArxivPdf(paper.title),
@@ -993,6 +1365,7 @@ const pdfStrategies: PdfStrategy[] = [
     fn: (paper) => findMedrxivPdf(paper.title),
     available: true
   },
+  // Disabled strategies
   {
     name: 'ResearchGate',
     fn: () => findResearchGatePdf(),
@@ -1030,7 +1403,8 @@ async function enrichPdf(paper: AcademicPaper): Promise<AcademicPaper> {
 export async function enhancePdfUrls(papers: AcademicPaper[]): Promise<AcademicPaper[]> {
   console.log(`🔍 Enhancing PDF URLs for ${papers.length} papers...`)
   
-  const limit = pLimit(3) // Limit concurrent requests
+  // Increased concurrency for better throughput - strategies hit different hosts
+  const limit = pLimit(5)
   
   const enhancements = await Promise.allSettled(
     papers.map(paper => limit(() => enrichPdf(paper)))
@@ -1038,21 +1412,24 @@ export async function enhancePdfUrls(papers: AcademicPaper[]): Promise<AcademicP
   
   // Collect successful enhancements
   const enhanced: AcademicPaper[] = []
-  for (const result of enhancements) {
+  for (let i = 0; i < enhancements.length; i++) {
+    const result = enhancements[i]
     if (result.status === 'fulfilled') {
       enhanced.push(result.value)
     } else {
       console.warn('PDF enhancement failed:', result.reason)
       // Add the original paper if enhancement failed
-      const originalIndex = enhancements.indexOf(result)
-      if (originalIndex >= 0 && originalIndex < papers.length) {
-        enhanced.push(papers[originalIndex])
-      }
+      enhanced.push(papers[i])
     }
   }
   
   const pdfCount = enhanced.filter((p: AcademicPaper) => isDirectPdfUrl(p.pdf_url || '')).length
-  console.log(`📄 PDF Enhancement: ${pdfCount}/${enhanced.length} papers now have direct PDF access`)
+  const noPdfCount = enhanced.filter((p: AcademicPaper) => !p.pdf_url).length
+  
+  console.log(`📄 PDF Enhancement: ${pdfCount}/${enhanced.length} papers have direct PDF access`)
+  if (noPdfCount > 0) {
+    console.log(`⚠️ ${noPdfCount} papers have no PDF available (will use abstract/metadata only)`)
+  }
   
   return enhanced
 }

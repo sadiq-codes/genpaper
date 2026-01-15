@@ -1,7 +1,6 @@
 import 'server-only'
 import type { SectionContext, PaperTypeKey } from '../types'
 import { PromptService, type PromptData, type TemplateOptions, type BuiltPrompt } from '@/lib/prompts/prompt-service'
-import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
 
 /**
  * Unified prompt builder that assembles contextual PromptData and delegates
@@ -71,11 +70,11 @@ async function generatePromptData(
   const outlineTree = options.outlineTree || await buildOutlineTree()
   const previousSummary = options.previousSectionsSummary || await buildPreviousSectionsSummary(context.title || String(context.sectionKey))
 
-  // Section path uses provided title when available
-  const sectionPath = await buildSectionPath(context.title || String(context.sectionKey))
+  // Section path uses provided title (hierarchical path requires project service integration)
+  const sectionPath = context.title || String(context.sectionKey)
 
-  // Current text (for rewrites) - default none
-  const currentText = options.rewriteText ?? await getCurrentText()
+  // Current text for rewrites - only provided via options
+  const currentText = options.rewriteText ?? null
 
   // Use provided context chunks only; no hidden retrieval here
   const workingChunks = (context.contextChunks || [])
@@ -160,70 +159,27 @@ async function generatePromptData(
   const freshChunks = EvidenceTracker.filterUnusedEvidence(workingChunks)
   
   console.log(`📊 Evidence filtering: ${workingChunks.length} total → ${freshChunks.length} unused chunks`)
-  console.log(`📊 Deduplication metrics:`)
-  console.log(`   - Cross-section filter removed: ${workingChunks.length - freshChunks.length} chunks`)
-  
-  // Check if chunks are already well-deduplicated upstream (from rag-retrieval.ts)
-  const uniqueContentHashes = new Set<string>()
-  for (const chunk of freshChunks) {
-    const content = chunk.content || ''
-    if (content.trim().length >= 30) {
-      const hash = content.slice(0, 80).toLowerCase().replace(/\s+/g, ' ') + 
-                   content.slice(-80).toLowerCase().replace(/\s+/g, ' ')
-      uniqueContentHashes.add(hash)
-    }
-  }
-  
-  const upstreamDedupQuality = uniqueContentHashes.size / Math.max(1, freshChunks.length)
-  console.log(`   - Upstream dedup quality: ${(upstreamDedupQuality * 100).toFixed(1)}% unique`)
 
-  // Calculate evidence limits for prompt size management
-  // We provide diverse evidence to the LLM; it decides semantically when to cite
-  // Upper bound: 35 snippets to balance prompt size with source diversity
+  // SIMPLIFIED: Evidence selection with per-paper limits only
+  // Upstream deduplication (chunk-retriever.ts) already handles content-level dedup
+  // We just apply per-paper limits for source diversity
   const MAX_SNIPPETS = Math.min(35, Math.max(totalDistinctPapers, freshChunks.length))
-  
-  // MAX_PER_PAPER: limit chunks per paper to encourage source diversity
-  // 2 chunks per paper is a good balance - enough context without over-representing any source
   const MAX_PER_PAPER = 2
   
   console.log(`📊 Evidence limits: MAX_SNIPPETS=${MAX_SNIPPETS}, MAX_PER_PAPER=${MAX_PER_PAPER}`)
 
-  // Light sampling if upstream dedup is good (>90% unique), otherwise apply full dedupe
-  let distinctChunks: typeof freshChunks = []
+  // Simple per-paper limiting - trust upstream deduplication
+  const distinctChunks: typeof freshChunks = []
+  const perPaper = new Map<string, number>()
   
-  if (upstreamDedupQuality > 0.9) {
-    // Light sampling - trust upstream deduplication
-    console.log(`   - Using light sampling (upstream dedup is effective)`)
-    const perPaper = new Map<string, number>()
+  for (const chunk of freshChunks) {
+    const pid = chunk.paper_id || 'unknown'
+    const count = perPaper.get(pid) || 0
+    if (count >= MAX_PER_PAPER) continue
     
-    for (const chunk of freshChunks) {
-      const pid = chunk.paper_id || 'unknown'
-      const count = perPaper.get(pid) || 0
-      if (count >= MAX_PER_PAPER) continue
-      
-      distinctChunks.push(chunk)
-      perPaper.set(pid, count + 1)
-      if (distinctChunks.length >= MAX_SNIPPETS) break
-    }
-  } else {
-    // Full deduplication needed
-    console.log(`   - Applying full prompt-level deduplication`)
-    const seen = new Set<string>()
-    const perPaper = new Map<string, number>()
-
-    for (const chunk of freshChunks) {
-      const pid = chunk.paper_id || 'unknown'
-      const content = chunk.content || ''
-      if (!content || content.trim().length < 30) continue
-      const key = `${pid}::${content.slice(0, 80).toLowerCase().replace(/\s+/g, ' ')}::${content.slice(-80).toLowerCase().replace(/\s+/g, ' ')}`
-      if (seen.has(key)) continue
-      const count = perPaper.get(pid) || 0
-      if (count >= MAX_PER_PAPER) continue
-      distinctChunks.push(chunk)
-      seen.add(key)
-      perPaper.set(pid, count + 1)
-      if (distinctChunks.length >= MAX_SNIPPETS) break
-    }
+    distinctChunks.push(chunk)
+    perPaper.set(pid, count + 1)
+    if (distinctChunks.length >= MAX_SNIPPETS) break
   }
 
   // JSON-format evidence for the template
@@ -236,7 +192,8 @@ async function generatePromptData(
   const targetWords = options.targetWords ? baseWords : Math.min(baseWords, dynamicWords)
 
   // Build new contextual data for repetition reduction
-  const alreadyCovered = await buildAlreadyCoveredList()
+  // Note: alreadyCovered is empty until project service integration provides claim tracking
+  const alreadyCovered = ''
   const topic = options.topic || projectData.title
   const paperType = options.paperType || 'researchArticle'
   const sectionPurpose = await buildSectionPurpose(context.title || String(context.sectionKey), topic, paperType)
@@ -274,16 +231,6 @@ async function generatePromptData(
 }
 
 // Template loading is fully handled by PromptService
-
-/**
- * Build already covered claims list from previous sections
- * Returns empty string when no project service is available.
- * Note: This is a placeholder - full implementation requires project service integration.
- */
-async function buildAlreadyCoveredList(): Promise<string> {
-  // Returns empty string - callers should provide this via options when available
-  return ''
-}
 
 /**
  * Build section purpose guidance using quality criteria generation
@@ -476,108 +423,8 @@ function generateBasicSectionSummary(sectionTitle: string, chunkCount: number): 
   }
 }
 
-/**
- * Build section path (e.g., "Methods → Data Collection → Survey Design")
- */
-/**
- * Build section path for navigation context.
- * Returns just the current section title as fallback.
- * Full hierarchical path requires project service integration.
- */
-async function buildSectionPath(currentSectionTitle: string): Promise<string> {
-  return currentSectionTitle
-}
-
-/**
- * Get current text for rewrite operations.
- * Returns null as fallback - callers should provide via options.rewriteText.
- */
-async function getCurrentText(): Promise<string | null> {
-  return null
-}
-
-/**
- * Get expected word count for a section
- */
-// getExpectedWords removed; targetWords now comes from options/context
-
-/**
- * Generate a 35-word summary of section content
- */
-async function _generateSectionSummary(content: string): Promise<string> {
-  // Simple extractive summary for now
-  // In production, this would use AI summarization
-  
-  const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 20)
-  if (sentences.length === 0) return 'Content summary not available.'
-  
-  // Take first sentence and truncate to ~35 words
-  const firstSentence = sentences[0].trim()
-  const words = firstSentence.split(' ')
-  
-  if (words.length <= 35) {
-    return firstSentence + '.'
-  } else {
-    return words.slice(0, 35).join(' ') + '...'
-  }
-}
-
-/**
- * Check for topic drift using embedding similarity
- * Uses semantic embeddings for accurate drift detection
- */
-export async function checkTopicDrift(
-  newContent: string,
-  previousSummary: string,
-  threshold: number = 0.65
-): Promise<{ isDrift: boolean; similarity: number; warning?: string }> {
-  
-  // Skip check if either text is too short
-  if (newContent.length < 50 || previousSummary.length < 50) {
-    return { isDrift: false, similarity: 1.0 }
-  }
-  
-  try {
-    // Use embedding-based similarity for accurate drift detection
-    const { generateEmbeddings } = await import('@/lib/utils/embedding')
-    const { cosineSimilarity } = await import('@/lib/rag/base-retrieval')
-    
-    // Generate embeddings for both texts
-    const [newEmbedding, prevEmbedding] = await generateEmbeddings([
-      newContent.slice(0, 2000), // Limit to avoid token issues
-      previousSummary.slice(0, 2000)
-    ])
-    
-    // Calculate cosine similarity
-    const similarity = cosineSimilarity(newEmbedding, prevEmbedding)
-    const isDrift = similarity < threshold
-    
-    return {
-      isDrift,
-      similarity,
-      warning: isDrift ? 
-        `Topic drift detected (semantic similarity: ${similarity.toFixed(2)}). The new content may not align well with previous sections.` :
-        undefined
-    }
-  } catch (error) {
-    // Fallback to simple Jaccard if embeddings fail
-    console.warn('Embedding-based drift check failed, using fallback:', error)
-    const similarity = jaccardSimilarity(newContent, previousSummary, { minWordLength: 3, minUnionSize: 1 })
-    const isDrift = similarity < threshold
-    
-    return {
-      isDrift,
-      similarity,
-      warning: isDrift ? 
-        `Possible topic drift detected (similarity: ${similarity.toFixed(2)}).` :
-        undefined
-    }
-  }
-}
-
-/**
- * Clear template cache (for development/testing)
- */
-// No template cache in this module anymore
-
-// Removed unused getProjectSummaryForDrift placeholder to satisfy linter
+// Removed placeholder functions:
+// - buildSectionPath: was just returning input, now inlined
+// - getCurrentText: was returning null, now inlined  
+// - _generateSectionSummary: unused
+// - buildAlreadyCoveredList: was returning empty string, now inlined

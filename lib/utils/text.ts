@@ -17,6 +17,8 @@ export interface TextChunk {
     charCount: number
     isOverlap?: boolean
     tokenCount?: number
+    /** Length of overlap prefix in characters (for metadata extraction) */
+    overlapLength?: number
   }
 }
 
@@ -108,9 +110,23 @@ export async function chunkByTokens(
     const segmentTokens = await getTokenCount(segment)
     
     if (segmentTokens <= maxTokens) {
-      // Segment fits in one chunk
-      const chunkContent = overlapContent + (overlapContent ? ' ' : '') + segment
-      const totalTokens = await getTokenCount(chunkContent)
+      // FIX #2: Only add overlap if it fits within maxTokens budget
+      let chunkContent = segment
+      let totalTokens = segmentTokens
+      let overlapLen = 0
+      
+      if (overlapContent) {
+        const withOverlap = overlapContent + ' ' + segment
+        const withOverlapTokens = await getTokenCount(withOverlap)
+        
+        if (withOverlapTokens <= maxTokens) {
+          // Overlap fits within budget
+          chunkContent = withOverlap
+          totalTokens = withOverlapTokens
+          overlapLen = overlapContent.length + 1 // +1 for the space
+        }
+        // else: skip overlap for this chunk to stay within budget
+      }
       
       const chunkId = createDeterministicChunkId(paperId, chunkContent.trim(), position)
       chunks.push({
@@ -121,7 +137,8 @@ export async function chunkByTokens(
           wordCount: chunkContent.trim().split(/\s+/).length,
           charCount: chunkContent.length,
           tokenCount: totalTokens,
-          isOverlap: !!overlapContent
+          isOverlap: overlapLen > 0,
+          overlapLength: overlapLen // FIX #3: Track overlap length for metadata extraction
         }
       })
       position += segment.length
@@ -132,6 +149,7 @@ export async function chunkByTokens(
       
       let currentChunk = overlapContent
       let currentTokens = overlapContent ? await getTokenCount(overlapContent) : 0
+      let currentOverlapLen = overlapContent ? overlapContent.length : 0
       
       for (const sentence of sentences) {
         const sentenceTokens = await getTokenCount(sentence)
@@ -149,15 +167,27 @@ export async function chunkByTokens(
                 wordCount: currentChunk.trim().split(/\s+/).length,
                 charCount: currentChunk.length,
                 tokenCount: currentTokens,
-                isOverlap: !!overlapContent
+                isOverlap: currentOverlapLen > 0,
+                overlapLength: currentOverlapLen
               }
             })
             position += currentChunk.length
             
             // Prepare overlap for next chunk
             overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
-            currentChunk = overlapContent + (overlapContent ? ' ' : '') + sentence
-            currentTokens = await getTokenCount(currentChunk)
+            
+            // FIX #2: Only add overlap if it fits within budget
+            const newOverlapTokens = overlapContent ? await getTokenCount(overlapContent) : 0
+            if (newOverlapTokens + sentenceTokens <= maxTokens && overlapContent) {
+              currentChunk = overlapContent + ' ' + sentence
+              currentTokens = await getTokenCount(currentChunk)
+              currentOverlapLen = overlapContent.length + 1
+            } else {
+              // Skip overlap to stay within budget
+              currentChunk = sentence
+              currentTokens = sentenceTokens
+              currentOverlapLen = 0
+            }
           } else {
             // Current chunk too small, just add the sentence
             currentChunk += (currentChunk ? ' ' : '') + sentence
@@ -170,23 +200,61 @@ export async function chunkByTokens(
         }
       }
       
-      // Add final chunk if it has content
-      if (currentChunk.trim() && currentTokens >= minChunkTokens) {
-        const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
-        chunks.push({
-          id: chunkId,
-          content: currentChunk.trim(),
-          position,
-          metadata: {
-            wordCount: currentChunk.trim().split(/\s+/).length,
-            charCount: currentChunk.length,
-            tokenCount: currentTokens,
-            isOverlap: !!overlapContent
+      // FIX #1: Handle final chunk - don't drop content below minChunkTokens
+      if (currentChunk.trim()) {
+        if (currentTokens >= minChunkTokens) {
+          // Normal case: chunk meets minimum size
+          const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
+          chunks.push({
+            id: chunkId,
+            content: currentChunk.trim(),
+            position,
+            metadata: {
+              wordCount: currentChunk.trim().split(/\s+/).length,
+              charCount: currentChunk.length,
+              tokenCount: currentTokens,
+              isOverlap: currentOverlapLen > 0,
+              overlapLength: currentOverlapLen
+            }
+          })
+          
+          // Prepare overlap for next segment
+          overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
+        } else if (chunks.length > 0) {
+          // FIX #1: Merge small tail with previous chunk instead of dropping
+          const prevChunk = chunks[chunks.length - 1]
+          const mergedContent = prevChunk.content + ' ' + currentChunk.trim()
+          const mergedTokens = await getTokenCount(mergedContent)
+          
+          // Update previous chunk with merged content
+          prevChunk.content = mergedContent
+          prevChunk.metadata = {
+            ...prevChunk.metadata,
+            wordCount: mergedContent.split(/\s+/).length,
+            charCount: mergedContent.length,
+            tokenCount: mergedTokens
           }
-        })
-        
-        // Prepare overlap for next segment
-        overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
+          
+          // Prepare overlap from merged content
+          overlapContent = await createTokenOverlap(mergedContent, overlapTokens)
+        } else {
+          // FIX #1: First chunk is small - keep it anyway (don't lose content)
+          const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
+          chunks.push({
+            id: chunkId,
+            content: currentChunk.trim(),
+            position,
+            metadata: {
+              wordCount: currentChunk.trim().split(/\s+/).length,
+              charCount: currentChunk.length,
+              tokenCount: currentTokens,
+              isOverlap: currentOverlapLen > 0,
+              overlapLength: currentOverlapLen
+            }
+          })
+          
+          overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
+        }
       }
     }
   }

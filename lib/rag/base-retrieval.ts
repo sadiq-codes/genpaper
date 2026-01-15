@@ -19,6 +19,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 export type SearchMode = 'hybrid' | 'vector' | 'keyword'
 
+/** Evidence quality indicator for distinguishing source types */
+export type EvidenceStrength = 'full_text' | 'abstract' | 'title_only'
+
 export interface RetrievedChunk {
   id?: string
   paper_id: string
@@ -30,6 +33,13 @@ export interface RetrievedChunk {
   vector_score?: number
   /** Keyword/BM25 score */
   keyword_score?: number
+  /** 
+   * Evidence quality indicator - helps LLM weight citations appropriately
+   * - 'full_text': From PDF/full paper content (strongest)
+   * - 'abstract': From paper abstract only (weaker)  
+   * - 'title_only': Just title available (weakest, avoid strong claims)
+   */
+  evidence_strength?: EvidenceStrength
 }
 
 export interface PaperMetadata {

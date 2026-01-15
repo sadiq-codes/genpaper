@@ -8,27 +8,26 @@ export interface ReviewResult {
   issues: string[]
   recommendations: string[]
   quality: {
-    clarity: number
-    scope_adherence: number
     evidence_coverage: number
     duplication_check: number
+    citation_diversity: number
   }
 }
 
-export interface PaperLevelReview {
-  overall_score: number
-  argument_coherence: number
-  section_distinctness: number
-  citation_coverage: number
-  issues: string[]
-  recommendations: string[]
-  ready_for_submission: boolean
-}
+
 
 /**
- * Section Quality Reviewer
+ * Section Quality Reviewer (Simplified)
  * 
- * Provides automated quality checks for generated sections to approach reviewer-grade outputs
+ * Focuses on verifiable quality metrics only:
+ * - Citation count and diversity
+ * - Internal duplication detection
+ * - Length requirements
+ * 
+ * Removed: Heuristic-based checks that produce false positives
+ * - Clarity keyword counting (having "therefore" doesn't mean clear writing)
+ * - Scope adherence via keyword blocklists (too many false positives)
+ * - Section-specific keyword requirements (cargo cult checking)
  */
 export class SectionReviewer {
   
@@ -50,37 +49,39 @@ export class SectionReviewer {
     const citationCount = citations.length
     const distinctSources = new Set(citations.map(c => c.paperId)).size
     
-    // Quality checks (all synchronous operations)
-    const clarity = this.checkClarity(content)
-    const scopeAdherence = this.checkScopeAdherence(sectionKey, content)
-    const evidenceCoverage = this.checkEvidenceCoverage(content, citations, contextChunks)
+    // Quality checks - only verifiable metrics
+    const evidenceCoverage = this.checkEvidenceCoverage(citationCount, contextChunks.length)
     const duplicationCheck = this.checkDuplication(content)
+    const citationDiversity = this.checkCitationDiversity(citations, contextChunks)
     
-    // Length checks
-    if (wordCount < targetWords * 0.7) {
+    // Length checks (verifiable, actionable)
+    if (wordCount < targetWords * 0.6) {
       issues.push(`Section too short: ${wordCount} words (target: ${targetWords})`)
       recommendations.push('Expand with more detailed analysis and evidence')
-    } else if (wordCount > targetWords * 1.3) {
+    } else if (wordCount > targetWords * 1.5) {
       issues.push(`Section too long: ${wordCount} words (target: ${targetWords})`)
       recommendations.push('Focus content and remove redundant information')
     }
     
-    // Citation checks
-    if (citationCount < 3) {
-      issues.push(`Insufficient citations: ${citationCount} (minimum: 3)`)
+    // Citation checks (verifiable, actionable)
+    if (citationCount < 2) {
+      issues.push(`Insufficient citations: ${citationCount} (minimum: 2)`)
       recommendations.push('Add more supporting evidence from provided sources')
     }
     
-    if (distinctSources < Math.min(3, contextChunks.length)) {
+    if (distinctSources < Math.min(2, contextChunks.length) && contextChunks.length >= 2) {
       issues.push(`Limited source diversity: ${distinctSources} distinct sources`)
       recommendations.push('Draw evidence from more diverse sources')
     }
     
-    // Section-specific checks
-    this.addSectionSpecificChecks(sectionKey, content, issues, recommendations)
+    // Duplication check (verifiable)
+    if (duplicationCheck < 60) {
+      issues.push('High internal repetition detected')
+      recommendations.push('Reduce redundant phrasing within the section')
+    }
     
-    const averageQuality = (clarity + scopeAdherence + evidenceCoverage + duplicationCheck) / 4
-    const passed = issues.length === 0 && averageQuality >= 70
+    const averageQuality = (evidenceCoverage + duplicationCheck + citationDiversity) / 3
+    const passed = issues.length === 0 && averageQuality >= 60
     
     return {
       section: sectionKey,
@@ -89,142 +90,70 @@ export class SectionReviewer {
       issues,
       recommendations,
       quality: {
-        clarity,
-        scope_adherence: scopeAdherence,
         evidence_coverage: evidenceCoverage,
-        duplication_check: duplicationCheck
+        duplication_check: duplicationCheck,
+        citation_diversity: citationDiversity
       }
     }
+  }
+  
+  
+  /**
+   * Check evidence coverage based on citation density
+   */
+  private static checkEvidenceCoverage(
+    citationCount: number,
+    availableChunks: number
+  ): number {
+    if (availableChunks === 0) return 50 // No chunks available, neutral score
+    
+    // Score based on how many available sources are being used
+    const utilizationRate = citationCount / Math.max(1, availableChunks)
+    
+    // Good: using 30%+ of available sources
+    // Okay: using 15-30%
+    // Poor: using <15%
+    if (utilizationRate >= 0.3) return 100
+    if (utilizationRate >= 0.15) return 70
+    if (utilizationRate >= 0.05) return 50
+    return 30
   }
   
   /**
-   * Review paper-level coherence and argument flow
+   * Check citation diversity - are we citing different sources or repeating the same one?
    */
-  static reviewPaperLevel(
-    sections: Array<{ key: SectionKey; content: string; citations: Array<{ paperId: string }> }>,
-    allCitations: Array<{ paperId: string; citationText: string }>
-  ): PaperLevelReview {
-    const issues: string[] = []
-    const recommendations: string[] = []
-    
-    // Check argument coherence across sections
-    const argumentCoherence = this.checkArgumentCoherence(sections)
-    
-    // Check section distinctness (overlap detection)
-    const sectionDistinctness = this.checkSectionDistinctness(sections)
-    
-    // Check citation coverage vs distinct sources
-    const citationCoverage = this.checkCitationCoverage(allCitations)
-    
-    // Paper-level issues
-    if (argumentCoherence < 70) {
-      issues.push('Weak argument flow between sections')
-      recommendations.push('Strengthen logical connections and transitions between sections')
-    }
-    
-    if (sectionDistinctness < 70) {
-      issues.push('High content overlap between sections')
-      recommendations.push('Ensure each section covers distinct aspects without repetition')
-    }
-    
-    if (citationCoverage < 70) {
-      issues.push('Uneven citation distribution across sections')
-      recommendations.push('Balance evidence usage across all sections')
-    }
-    
-    const overallScore = (argumentCoherence + sectionDistinctness + citationCoverage) / 3
-    const readyForSubmission = issues.length === 0 && overallScore >= 75
-    
-    return {
-      overall_score: Math.round(overallScore),
-      argument_coherence: argumentCoherence,
-      section_distinctness: sectionDistinctness,
-      citation_coverage: citationCoverage,
-      issues,
-      recommendations,
-      ready_for_submission: readyForSubmission
-    }
-  }
-  
-  private static checkClarity(content: string): number {
-    // Simple heuristics for clarity
-    const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 10)
-    const avgWordsPerSentence = content.split(/\s+/).length / sentences.length
-    const hasGoodStructure = content.includes('##') || content.includes('###')
-    
-    let score = 100
-    
-    // Penalize overly long sentences
-    if (avgWordsPerSentence > 25) score -= 20
-    
-    // Reward good structure
-    if (hasGoodStructure) score += 10
-    
-    // Check for clarity indicators
-    const clarityWords = ['therefore', 'however', 'furthermore', 'in contrast', 'specifically']
-    const clarityCount = clarityWords.filter(word => content.toLowerCase().includes(word)).length
-    score += Math.min(20, clarityCount * 5)
-    
-    return Math.max(0, Math.min(100, score))
-  }
-  
-  private static checkScopeAdherence(sectionKey: SectionKey, content: string): number {
-    const contentLower = content.toLowerCase()
-    let score = 100
-    
-    // Section-specific scope violations
-    if (sectionKey === 'methodology') {
-      if (contentLower.includes('result') || contentLower.includes('finding')) {
-        score -= 30 // Methods shouldn't discuss results
-      }
-      if (contentLower.includes('background') || contentLower.includes('motivation')) {
-        score -= 20 // Methods shouldn't repeat background
-      }
-    } else if (sectionKey === 'results') {
-      if (contentLower.includes('interpretation') || contentLower.includes('implication')) {
-        score -= 25 // Results shouldn't interpret findings
-      }
-    } else if (sectionKey === 'discussion') {
-      if (contentLower.includes('methodology') || contentLower.includes('procedure')) {
-        score -= 20 // Discussion shouldn't restate methods
-      }
-    }
-    
-    return Math.max(0, Math.min(100, score))
-  }
-  
-  private static checkEvidenceCoverage(
-    content: string,
-    citations: Array<{ paperId: string; citationText: string }>,
-    contextChunks: Array<{ paper_id: string; content: string }>
+  private static checkCitationDiversity(
+    citations: Array<{ paperId: string }>,
+    contextChunks: Array<{ paper_id: string }>
   ): number {
-    const factualClaims = this.extractFactualClaims(content)
-    const citationDensity = citations.length / Math.max(1, factualClaims)
-    const sourceUtilization = citations.length / Math.max(1, contextChunks.length)
+    if (citations.length === 0) return 30
     
-    // Good evidence coverage: 1 citation per 2-3 factual claims, use 30%+ of available sources
-    let score = 0
+    const uniqueCited = new Set(citations.map(c => c.paperId)).size
+    const availableSources = new Set(contextChunks.map(c => c.paper_id)).size
     
-    if (citationDensity >= 0.33) score += 50
-    else if (citationDensity >= 0.2) score += 30
-    else score += 10
+    // Diversity = unique citations / total citations
+    const diversityRatio = uniqueCited / citations.length
     
-    if (sourceUtilization >= 0.3) score += 50
-    else if (sourceUtilization >= 0.15) score += 30
-    else score += 10
+    // Coverage = unique cited / available sources
+    const coverageRatio = availableSources > 0 ? uniqueCited / availableSources : 0
     
-    return Math.min(100, score)
+    // Weight: 60% diversity (don't repeat same source), 40% coverage (use different sources)
+    return Math.round(diversityRatio * 60 + coverageRatio * 40)
   }
   
+  /**
+   * Check for internal duplication using n-gram overlap
+   */
   private static checkDuplication(content: string): number {
-    // Simple n-gram overlap detection
     const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 20)
-    const nGramSize = 4
+    if (sentences.length < 3) return 100 // Not enough content to check
+    
+    const nGramSize = 5
     const nGrams = new Set<string>()
     let duplicateCount = 0
     
     for (const sentence of sentences) {
-      const words = sentence.toLowerCase().split(/\s+/)
+      const words = sentence.toLowerCase().split(/\s+/).filter(w => w.length > 2)
       for (let i = 0; i <= words.length - nGramSize; i++) {
         const nGram = words.slice(i, i + nGramSize).join(' ')
         if (nGrams.has(nGram)) {
@@ -235,130 +164,73 @@ export class SectionReviewer {
       }
     }
     
-    const duplicationRate = duplicateCount / Math.max(1, nGrams.size)
-    const score = Math.max(0, 100 - (duplicationRate * 200))
+    if (nGrams.size === 0) return 100
     
-    return Math.round(score)
+    const duplicationRate = duplicateCount / nGrams.size
+    // 0% duplication = 100 score, 10% duplication = 0 score
+    return Math.round(Math.max(0, 100 - (duplicationRate * 1000)))
   }
   
-  private static addSectionSpecificChecks(
-    sectionKey: SectionKey,
-    content: string,
-    issues: string[],
-    recommendations: string[]
-  ): void {
-    const contentLower = content.toLowerCase()
-    
-    switch (sectionKey) {
-      case 'introduction':
-        if (!contentLower.includes('research question') && !contentLower.includes('objective')) {
-          issues.push('Introduction lacks clear research questions or objectives')
-          recommendations.push('Add explicit research questions and study objectives')
-        }
-        break
-        
-      case 'methodology':
-        if (!contentLower.includes('procedure') && !contentLower.includes('method')) {
-          issues.push('Methodology section lacks procedural details')
-          recommendations.push('Include detailed methodological procedures and approaches')
-        }
-        break
-        
-      case 'results':
-        if (!contentLower.includes('finding') && !contentLower.includes('result')) {
-          issues.push('Results section lacks clear findings')
-          recommendations.push('Present specific findings and outcomes clearly')
-        }
-        break
-        
-      case 'discussion':
-        if (!contentLower.includes('limitation') && !contentLower.includes('future')) {
-          issues.push('Discussion lacks limitations or future work')
-          recommendations.push('Address study limitations and suggest future research directions')
-        }
-        break
-    }
-  }
-  
-  private static checkArgumentCoherence(
-    sections: Array<{ key: SectionKey; content: string }>
-  ): number {
-    // Simple coherence check based on transition words and concept continuity
-    let coherenceScore = 100
-    
-    for (let i = 1; i < sections.length; i++) {
-      const currentContent = sections[i].content.toLowerCase()
-      
-      // Look for transition indicators
-      const transitionWords = ['building on', 'following', 'based on', 'as shown', 'given these']
-      const hasTransition = transitionWords.some(word => currentContent.includes(word))
-      
-      if (!hasTransition) coherenceScore -= 15
-    }
-    
-    return Math.max(0, Math.min(100, coherenceScore))
-  }
-  
+  /**
+   * Check section distinctness - do sections repeat each other?
+   */
   private static checkSectionDistinctness(
     sections: Array<{ key: SectionKey; content: string }>
   ): number {
-    const overlapThreshold = 0.15 // 15% overlap is concerning
+    if (sections.length < 2) return 100
+    
     let maxOverlap = 0
     
     for (let i = 0; i < sections.length; i++) {
       for (let j = i + 1; j < sections.length; j++) {
-        const overlap = this.calculateTextOverlap(sections[i].content, sections[j].content)
+        const overlap = this.calculateNgramOverlap(sections[i].content, sections[j].content)
         maxOverlap = Math.max(maxOverlap, overlap)
       }
     }
     
-    if (maxOverlap > overlapThreshold) {
-      const score = Math.max(0, 100 - (maxOverlap * 500)) // Heavy penalty for overlap
-      return Math.round(score)
-    }
-    
-    return 100
+    // 0% overlap = 100 score, 20% overlap = 0 score
+    return Math.round(Math.max(0, 100 - (maxOverlap * 500)))
   }
   
+  /**
+   * Check citation coverage across the paper
+   */
   private static checkCitationCoverage(citations: Array<{ paperId: string }>): number {
-    // Count unique citations across the paper
+    if (citations.length === 0) return 0
+    
     const uniqueCitations = new Set(citations.map(c => c.paperId)).size
     
-    // Score based on citation diversity relative to total citations
-    // If all citations are unique (good diversity), score is high
-    // If many duplicate citations (poor diversity), score is lower
-    const diversityRatio = citations.length > 0 
-      ? uniqueCitations / citations.length 
-      : 0
+    // Score based on both diversity and breadth
+    const diversityRatio = uniqueCitations / citations.length
+    const breadthScore = Math.min(100, uniqueCitations * 5) // 20 unique = 100
     
-    // Also consider absolute count - more unique sources is generally better
-    // Score combines diversity (how varied) with breadth (how many)
-    // A paper with 20 unique citations scores higher than one with 5
-    const breadthScore = Math.min(100, uniqueCitations * 5)  // 20 unique = 100
-    const diversityScore = diversityRatio * 100
-    
-    // Weighted: 60% breadth, 40% diversity
-    return Math.round(breadthScore * 0.6 + diversityScore * 0.4)
+    return Math.round(breadthScore * 0.6 + diversityRatio * 100 * 0.4)
   }
   
-  private static extractFactualClaims(content: string): number {
-    // Simple heuristic: sentences with numbers, specific terms, or research findings
-    const sentences = content.split(/[.!?]+/)
-    const factualSentences = sentences.filter(s => 
-      /\b\d+%?\b/.test(s) || // Contains numbers
-      /\b(found|showed|demonstrated|indicated|revealed)\b/i.test(s) || // Research verbs
-      /\b(significant|correlation|effect|impact)\b/i.test(s) // Research terms
-    )
-    return factualSentences.length
-  }
-  
-  private static calculateTextOverlap(text1: string, text2: string): number {
-    const words1 = new Set(text1.toLowerCase().split(/\s+/).filter(w => w.length > 3))
-    const words2 = new Set(text2.toLowerCase().split(/\s+/).filter(w => w.length > 3))
+  /**
+   * Calculate n-gram based overlap between two texts
+   * More accurate than word-set overlap for detecting actual repetition
+   */
+  private static calculateNgramOverlap(text1: string, text2: string): number {
+    const nGramSize = 4
     
-    const intersection = new Set([...words1].filter(x => words2.has(x)))
-    const union = new Set([...words1, ...words2])
+    const getNgrams = (text: string): Set<string> => {
+      const words = text.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+      const ngrams = new Set<string>()
+      for (let i = 0; i <= words.length - nGramSize; i++) {
+        ngrams.add(words.slice(i, i + nGramSize).join(' '))
+      }
+      return ngrams
+    }
     
-    return union.size > 0 ? intersection.size / union.size : 0
+    const ngrams1 = getNgrams(text1)
+    const ngrams2 = getNgrams(text2)
+    
+    if (ngrams1.size === 0 || ngrams2.size === 0) return 0
+    
+    const intersection = new Set([...ngrams1].filter(x => ngrams2.has(x)))
+    const smallerSet = Math.min(ngrams1.size, ngrams2.size)
+    
+    return intersection.size / smallerSet
   }
 }

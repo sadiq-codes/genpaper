@@ -81,6 +81,9 @@ export interface OutlineConfig {
   maxTokens?: number;
 }
 
+/** Evidence quality indicator for distinguishing source types */
+export type EvidenceStrength = 'full_text' | 'abstract' | 'title_only';
+
 // TASK 4: Section Drafting Types
 export interface SectionContext {
   sectionKey: SectionKey;
@@ -90,6 +93,13 @@ export interface SectionContext {
     paper_id: string;
     content: string;
     score?: number;
+    /** 
+     * Evidence quality indicator - helps LLM weight citations appropriately
+     * - 'full_text': From PDF/full paper content (strongest)
+     * - 'abstract': From paper abstract only (weaker)  
+     * - 'title_only': Just title available (weakest, avoid strong claims)
+     */
+    evidence_strength?: EvidenceStrength;
   }>;
   expectedWords?: number;
   keyPoints?: string[];

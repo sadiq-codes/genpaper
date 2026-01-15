@@ -54,14 +54,18 @@ export interface RetrievalConfig {
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   mode: 'hybrid',
   vectorWeight: 0.7,
-  minScore: 0.15,
+  // REDUCED from 0.15 to 0.1: Let more chunks through, trust LLM to filter
+  // Over-aggressive filtering leaves sections with too few sources for synthesis
+  minScore: 0.1,
   retrieveLimit: 100,
-  finalLimit: 20,
+  // INCREASED from 20 to 25: More material for synthesis
+  finalLimit: 25,
   useCitationBoost: true,
   citationBoostFactor: 0.1,
   useReranking: true,
   rerankTopK: 30,
-  maxPerPaper: 5
+  // INCREASED from 5 to 6: More context per source for deeper understanding
+  maxPerPaper: 6
 }
 
 export interface RetrievalRequest {

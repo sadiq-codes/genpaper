@@ -102,8 +102,17 @@ export async function POST(request: NextRequest) {
       }, { status: 404 })
     }
 
-    // Use existing PDF URL or construct from DOI
-    const pdfUrl = paper.pdf_url || `https://www.unpaywall.org/pdf/${doi}`
+    // Only proceed if we have a valid PDF URL - don't use fake fallback URLs
+    // The fake `https://www.unpaywall.org/pdf/${doi}` URL doesn't actually serve PDFs
+    if (!paper.pdf_url) {
+      return NextResponse.json({
+        success: false,
+        error: 'No PDF URL available for this paper. PDF enrichment should be done during search.',
+        status: 'pdf_unavailable'
+      }, { status: 404 })
+    }
+    
+    const pdfUrl = paper.pdf_url
 
     try {
       const text = await getOrExtractFullText({ pdfUrl, paperId, ocr: true, timeoutMs: 60000 })

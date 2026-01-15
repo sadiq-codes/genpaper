@@ -591,21 +591,16 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
       }
     }
     
-    // Step 3: Prepare content chunks from title and abstract
-    const contentChunks: string[] = []
+    // Step 3: Collect all content (title, abstract, PDF text)
+    // SIMPLIFIED: No separate abstract chunking - createChunksForPaper handles all content uniformly
+    const contentParts: string[] = []
     
-    // Always include title as a chunk for title-based matching
-    contentChunks.push(paperDTO.title)
+    // Always include title for title-based matching
+    contentParts.push(paperDTO.title)
     
+    // Add abstract if available
     if (paperDTO.abstract) {
-      // Use sentence-aware chunking for better retrieval
-      // Use token-based chunking for abstract
-      const { chunkByTokens } = await import('@/lib/utils/text')
-      const abstractChunks = await chunkByTokens(paperDTO.abstract, paperId, {
-        maxTokens: 200,
-        preserveParagraphs: false
-      })
-      contentChunks.push(...abstractChunks.map(chunk => chunk.content))
+      contentParts.push(paperDTO.abstract)
     }
     
     // Step 4: Check for PDF content and extract if needed
@@ -614,7 +609,7 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
         // Use unified processor with actual paperId
         const text = await getOrExtractFullText({ pdfUrl: paperDTO.pdf_url, paperId, ocr: true, timeoutMs: 60000 })
         if (text && text.length > 100) {
-          contentChunks.push(text)
+          contentParts.push(text)
           console.log(`✅ Added full-text content (${text.length} chars)`)
         } else {
           console.warn('PDF extraction returned no usable text content')
@@ -624,8 +619,9 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
       }
     }
     
-    // Step 5: Create chunks for the paper
-    const finalChunkCount = await createChunksForPaper(paperId, contentChunks.join('\n\n'))
+    // Step 5: Create chunks using unified chunker (same settings for all content types)
+    // This eliminates the separate abstract chunking path for consistency
+    const finalChunkCount = await createChunksForPaper(paperId, contentParts.join('\n\n'))
     console.log(`📚 Ingested paper with ${finalChunkCount} chunks: ${paperDTO.title}`)
 
     // Create ingested paper object with database ID and enhanced PDF URLs

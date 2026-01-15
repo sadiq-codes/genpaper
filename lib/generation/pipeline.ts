@@ -5,7 +5,7 @@ import { generateOutline, type OriginalResearchInput } from '@/lib/prompts/gener
 import { generateMultipleSectionsUnified } from '@/lib/generation/unified-generator'
 import { GenerationContextService } from '@/lib/rag/generation-context'
 import { SectionReviewer } from '@/lib/quality/section-reviewer'
-import { validatePaperType } from '@/lib/quality/paper-type-validator'
+// Legacy validatePaperType removed - using profile-based validation only
 import { fourGramOverlapRatio } from '@/lib/utils/overlap'
 import { EvidenceTracker } from '@/lib/services/evidence-tracker'
 import { sanitizeTopic } from '@/lib/utils/prompt-safety'
@@ -396,7 +396,11 @@ export async function generatePaper(
               forceRewrite: true,
               rewriteText: result.content,
               previousSectionsSummary: prevSummary,
-              outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n')
+              outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n'),
+              // Preserve profile guidance during rewrite to maintain paper type rules
+              profileGuidance,
+              paperType: config.paperType,
+              topic: sanitizedTopic
             }
           })
         } catch (rewriteError) {
@@ -405,8 +409,9 @@ export async function generatePaper(
       }
       
       // Track evidence usage for cross-section memory (centralized here to avoid duplication)
+      // Use async tracking with DB persistence for cross-session deduplication
       if (sectionContext.contextChunks && sectionContext.contextChunks.length > 0) {
-        EvidenceTracker.trackBulkUsageSync(sectionContext.contextChunks, sectionContext.title, projectId)
+        await EvidenceTracker.trackBulkUsage(sectionContext.contextChunks, sectionContext.title, projectId)
       }
       
       // Log citation feedback for RAG improvement (non-blocking)
@@ -444,24 +449,71 @@ export async function generatePaper(
         totalQualityScore += 75
       }
       
-      // Hallucination detection - verify claims are grounded in evidence
+      // Citation verification - verify that cited papers actually support the claims
+      // This is BLOCKING - if citations fail verification, we regenerate with feedback
       try {
-        const { quickHallucinationCheck } = await import('@/lib/quality/hallucination-detector')
-        const hallucinationCheck = await quickHallucinationCheck(
+        const { verifySectionCitations, buildCitationFeedback } = await import('@/lib/quality/citation-verifier')
+        const citationReport = await verifySectionCitations(
+          sectionContext.title,
           result.content,
           sectionContext.contextChunks || []
         )
         
-        if (!hallucinationCheck.passed) {
-          const ungroundedPct = ((1 - hallucinationCheck.score) * 100).toFixed(0)
-          warn({ section: sectionContext.title, ungroundedPct }, 'Hallucination warning: claims may be ungrounded')
-          qualityIssues.push(`${sectionContext.title}: ${ungroundedPct}% potentially ungrounded claims`)
-          // Reduce quality score based on hallucination score
-          totalQualityScore -= (1 - hallucinationCheck.score) * 15
+        if (!citationReport.passed && citationReport.totalCitations > 0) {
+          warn({ 
+            section: sectionContext.title, 
+            verified: citationReport.verifiedCitations,
+            failed: citationReport.failedCitations.length,
+            score: (citationReport.score * 100).toFixed(0) + '%'
+          }, 'Citation verification failed - regenerating section')
+          
+          // Build feedback about which citations failed
+          const citationFeedback = buildCitationFeedback(citationReport)
+          
+          // Regenerate with citation feedback
+          try {
+            const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
+            const regenerated = await generateWithUnifiedTemplate({
+              context: sectionContext,
+              options: {
+                temperature: config.temperature || 0.2,
+                maxTokens: perSectionTokens,
+                forceRewrite: true,
+                rewriteText: result.content,
+                previousSectionsSummary: citationFeedback,
+                outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n'),
+                // Preserve profile guidance during rewrite to maintain paper type rules
+                profileGuidance,
+                paperType: config.paperType,
+                topic: sanitizedTopic
+              }
+            })
+            
+            // Verify the regenerated content
+            const recheck = await verifySectionCitations(
+              sectionContext.title,
+              regenerated.content,
+              sectionContext.contextChunks || []
+            )
+            
+            if (recheck.passed || recheck.score > citationReport.score) {
+              result = regenerated
+              info({ section: sectionContext.title, newScore: (recheck.score * 100).toFixed(0) + '%' }, 'Section regenerated with improved citations')
+            } else {
+              warn({ section: sectionContext.title }, 'Regeneration did not improve citations - keeping original')
+              qualityIssues.push(`${sectionContext.title}: Some citations could not be verified`)
+            }
+          } catch (regenError) {
+            warn({ section: sectionContext.title, error: regenError }, 'Citation-based regeneration failed')
+            qualityIssues.push(`${sectionContext.title}: Citation verification issues detected`)
+          }
         }
+        
+        // Adjust quality score based on citation verification
+        totalQualityScore += citationReport.score * 10 // Bonus for verified citations
       } catch (err) {
-        // Don't fail on hallucination check errors - it's an enhancement
-        warn({ section: sectionContext.title, error: err }, 'Hallucination check failed')
+        // Don't fail pipeline on citation verification errors
+        warn({ section: sectionContext.title, error: err }, 'Citation verification failed')
       }
       
       // Verify section has proper markdown heading (prompt now instructs AI to include it)
@@ -512,59 +564,37 @@ export async function generatePaper(
       validationScore: profileValidation.score
     }, 'Paper profile validation analysis')
     
-    // Also run legacy validation for comparison during transition
-    const hasOriginalResearch = config.originalResearch?.has_original_research || false
-    const legacyValidation = validatePaperType(fullContent, config.paperType, hasOriginalResearch)
-    
-    if (!legacyValidation.valid && profileValidation.valid) {
-      // Log discrepancy for monitoring - profile validation should be more accurate
-      info({
-        legacyIssues: legacyValidation.issues,
-        profilePassed: true
-      }, 'Legacy validation flagged issues that profile validation passed - profile takes precedence')
-    }
-    
-    onProgress?.('saving', 95, 'Extracting citations and saving content...')
-    
-    // Extract [CITE: paper_id] markers but DON'T replace them
-    // Content is saved as markdown with citation markers intact
-    // The UI renders them as formatted citations (e.g., "Smith et al., 2024")
-    const citationMatches = fullContent.match(/\[CITE:\s*([a-f0-9-]+)\]/gi) || []
-    const citedPaperIds = new Set<string>()
-    
-    for (const match of citationMatches) {
-      const paperIdMatch = match.match(/\[CITE:\s*([a-f0-9-]+)\]/i)
-      if (paperIdMatch) {
-        citedPaperIds.add(paperIdMatch[1])
-      }
-    }
-    
-    info({ citationCount: citedPaperIds.size }, 'Extracted unique citations from content')
+    onProgress?.('saving', 95, 'Saving content...')
     
     // Clean non-citation artifacts (leaked tool syntax, etc.) but KEEP [CITE: ...] markers
+    // Content is saved as markdown with citation markers intact
+    // The UI renders them as formatted citations (e.g., "Smith et al., 2024")
     const { cleanNonCitationArtifacts } = await import('@/lib/citations/post-processor')
     fullContent = cleanNonCitationArtifacts(fullContent)
     
-    // Build citations map from extracted paper IDs
+    // Build citations map from allCitations (already collected during section generation)
+    // No need to re-extract from content - unified-generator already did that
+    const citedPaperIds = new Set(allCitations.map(c => c.paperId))
     const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
-    let citationNum = 1
-    for (const paperId of citedPaperIds) {
-      citationsMap[`cite-${citationNum}`] = {
-        paperId,
-        citationText: `[CITE: ${paperId}]` // Store the marker as the "text" for backwards compat
+    
+    for (const citation of allCitations) {
+      // Deduplicate by paperId
+      const key = `cite-${citation.paperId}`
+      if (!citationsMap[key]) {
+        citationsMap[key] = {
+          paperId: citation.paperId,
+          citationText: citation.citationText
+        }
       }
-      citationNum++
     }
     
-    // Also add any citations collected during generation
-    allCitations.forEach((citation) => {
-      if (!citedPaperIds.has(citation.paperId)) {
-        citationsMap[`cite-${citationNum}`] = citation
-        citationNum++
-      }
-    })
+    info({ citationCount: citedPaperIds.size }, 'Citations collected from sections')
     
     await updateProjectContent(projectId, fullContent.trim(), citationsMap)
+    
+    // Flush evidence tracker to ensure all usage is persisted to database
+    // This enables cross-session deduplication for resumable generation
+    await EvidenceTracker.flush(projectId)
     
     onProgress?.('complete', 100, 'Paper generation completed successfully', {
       totalWords: fullContent.split(' ').length,

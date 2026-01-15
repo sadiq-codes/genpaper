@@ -12,17 +12,27 @@ import { info, warn, error as logError } from '@/lib/utils/logger'
 import type { 
   PaperProfile, 
   ProfileGenerationInput,
-  ProfileValidationResult,
-  SectionProfile 
+  ProfileValidationResult
 } from './paper-profile-types'
 import { getPaperProfilePrompt, PAPER_PROFILE_JSON_SCHEMA } from './paper-profile-prompts'
+
+/** Maximum retry attempts for profile generation */
+const MAX_PROFILE_RETRIES = 2
+
+/** Delay between retries in ms */
+const RETRY_DELAY_MS = 1000
 
 /**
  * Generate a comprehensive paper profile for the given topic and paper type.
  * This is the main entry point for the paper intelligence system.
  * 
+ * Includes retry logic - if the LLM fails, we retry before failing.
+ * No fallback profile: if profile generation fails after retries, the pipeline should fail
+ * because a degraded profile produces a degraded paper.
+ * 
  * @param input - Topic, paper type, and optional context
  * @returns A complete PaperProfile to guide generation
+ * @throws Error if profile generation fails after all retries
  */
 export async function generatePaperProfile(
   input: ProfileGenerationInput
@@ -40,57 +50,83 @@ export async function generatePaperProfile(
   
   const model = getLanguageModel()
   
-  try {
-    const response = await model.doGenerate({
-      inputFormat: 'messages',
-      mode: {
-        type: 'object-json',
-        schema: PAPER_PROFILE_JSON_SCHEMA
-      },
-      prompt: [
-        { role: 'system', content: prompt.system },
-        { role: 'user', content: [{ type: 'text', text: prompt.user }] }
-      ],
-      temperature: 0.3,  // Lower temperature for consistency
-      maxTokens: 4000
-    })
-    
-    if (!response.text) {
-      throw new Error('No response text from model')
+  let lastError: Error | undefined
+  
+  for (let attempt = 0; attempt <= MAX_PROFILE_RETRIES; attempt++) {
+    try {
+      if (attempt > 0) {
+        warn({ attempt, maxRetries: MAX_PROFILE_RETRIES }, 'Retrying paper profile generation')
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+      }
+      
+      const response = await model.doGenerate({
+        inputFormat: 'messages',
+        mode: {
+          type: 'object-json',
+          schema: PAPER_PROFILE_JSON_SCHEMA
+        },
+        prompt: [
+          { role: 'system', content: prompt.system },
+          { role: 'user', content: [{ type: 'text', text: prompt.user }] }
+        ],
+        temperature: 0.3,  // Lower temperature for consistency
+        maxTokens: 4000
+      })
+      
+      if (!response.text) {
+        throw new Error('No response text from model')
+      }
+      
+      const rawProfile = JSON.parse(response.text)
+      
+      // Add metadata and validate
+      const profile: PaperProfile = {
+        ...rawProfile,
+        generatedAt: new Date().toISOString(),
+        topic,
+        paperType,
+        hasOriginalResearch: hasOriginalResearch || false
+      }
+      
+      // Validate and apply sensible defaults
+      const validatedProfile = validateAndEnrichProfile(profile)
+      
+      info({
+        discipline: validatedProfile.discipline.primary,
+        sectionCount: validatedProfile.structure.appropriateSections.length,
+        inappropriateSectionCount: validatedProfile.structure.inappropriateSections.length,
+        minSources: validatedProfile.sourceExpectations.minimumUniqueSources,
+        recencyProfile: validatedProfile.sourceExpectations.recencyProfile,
+        qualityCriteriaCount: validatedProfile.qualityCriteria.length,
+        requiredThemes: validatedProfile.coverage.requiredThemes.length,
+        attempt: attempt > 0 ? attempt + 1 : undefined
+      }, 'Paper profile generated successfully')
+      
+      return validatedProfile
+      
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      
+      logError({ 
+        error: lastError.message, 
+        attempt: attempt + 1, 
+        maxRetries: MAX_PROFILE_RETRIES + 1,
+        topic: topic.slice(0, 100), 
+        paperType 
+      }, 'Paper profile generation attempt failed')
+      
+      // Don't retry on certain errors (e.g., invalid input)
+      if (lastError.message.includes('Invalid') || lastError.message.includes('400')) {
+        break
+      }
     }
-    
-    const rawProfile = JSON.parse(response.text)
-    
-    // Add metadata and validate
-    const profile: PaperProfile = {
-      ...rawProfile,
-      generatedAt: new Date().toISOString(),
-      topic,
-      paperType,
-      hasOriginalResearch: hasOriginalResearch || false
-    }
-    
-    // Validate and apply sensible defaults
-    const validatedProfile = validateAndEnrichProfile(profile)
-    
-    info({
-      discipline: validatedProfile.discipline.primary,
-      sectionCount: validatedProfile.structure.appropriateSections.length,
-      inappropriateSectionCount: validatedProfile.structure.inappropriateSections.length,
-      minSources: validatedProfile.sourceExpectations.minimumUniqueSources,
-      recencyProfile: validatedProfile.sourceExpectations.recencyProfile,
-      qualityCriteriaCount: validatedProfile.qualityCriteria.length,
-      requiredThemes: validatedProfile.coverage.requiredThemes.length
-    }, 'Paper profile generated successfully')
-    
-    return validatedProfile
-    
-  } catch (error) {
-    logError({ error, topic, paperType }, 'Failed to generate paper profile')
-    
-    // Return a fallback profile rather than failing completely
-    return getFallbackProfile(input)
   }
+  
+  // All retries exhausted - fail explicitly
+  const errorMessage = `Paper profile generation failed after ${MAX_PROFILE_RETRIES + 1} attempts: ${lastError?.message || 'Unknown error'}`
+  logError({ topic: topic.slice(0, 100), paperType, lastError: lastError?.message }, errorMessage)
+  
+  throw new Error(errorMessage)
 }
 
 /**
@@ -167,332 +203,7 @@ function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
   return profile
 }
 
-/**
- * Get a fallback profile when generation fails.
- * This provides reasonable defaults based on paper type.
- */
-function getFallbackProfile(input: ProfileGenerationInput): PaperProfile {
-  const { topic, paperType, hasOriginalResearch } = input
-  
-  warn({ topic, paperType }, 'Using fallback paper profile')
-  
-  const isLitReview = paperType === 'literatureReview'
-  const isEmpirical = hasOriginalResearch || paperType === 'researchArticle'
-  
-  const baseSections: SectionProfile[] = [
-    {
-      key: 'introduction',
-      title: 'Introduction',
-      purpose: 'Establish context, significance, and objectives',
-      minWords: 400,
-      maxWords: 800,
-      citationExpectation: 'moderate',
-      keyElements: ['Background context', 'Research significance', 'Paper objectives', 'Scope definition']
-    }
-  ]
-  
-  if (isLitReview) {
-    baseSections.push(
-      {
-        key: 'searchMethodology',
-        title: 'Search Methodology',
-        purpose: 'Describe the literature search process',
-        minWords: 300,
-        maxWords: 600,
-        citationExpectation: 'light',
-        keyElements: ['Databases searched', 'Search terms', 'Inclusion/exclusion criteria', 'Selection process']
-      },
-      {
-        key: 'thematicAnalysis',
-        title: 'Thematic Analysis',
-        purpose: 'Synthesize literature by themes',
-        minWords: 1500,
-        maxWords: 3000,
-        citationExpectation: 'heavy',
-        keyElements: ['Theme identification', 'Cross-source synthesis', 'Critical analysis']
-      },
-      {
-        key: 'researchGaps',
-        title: 'Research Gaps and Future Directions',
-        purpose: 'Identify what remains unknown',
-        minWords: 400,
-        maxWords: 800,
-        citationExpectation: 'moderate',
-        keyElements: ['Gap identification', 'Future research suggestions']
-      }
-    )
-  } else if (isEmpirical) {
-    baseSections.push(
-      {
-        key: 'literatureReview',
-        title: 'Literature Review',
-        purpose: 'Establish theoretical framework and identify research gap - this is background, NOT the main content',
-        minWords: 500,
-        maxWords: 1000,
-        citationExpectation: 'heavy',
-        keyElements: ['Theoretical framework', 'Key prior studies', 'Research gap justification', 'Hypotheses derivation']
-      },
-      {
-        key: 'methodology',
-        title: 'Methodology',
-        purpose: 'Describe YOUR empirical research design - sample, variables, data collection, analysis',
-        minWords: 800,
-        maxWords: 1500,
-        citationExpectation: 'light',
-        keyElements: [
-          'Sample description (N=?, selection criteria, demographics)',
-          'Variables (DV, IVs, controls with operational definitions)',
-          'Data collection procedures',
-          'Analytical approach (statistical methods, tests used)',
-          'Validity and reliability measures'
-        ]
-      },
-      {
-        key: 'results',
-        title: 'Results',
-        purpose: 'Present YOUR original findings - statistics, tables, hypothesis outcomes',
-        minWords: 600,
-        maxWords: 1200,
-        citationExpectation: 'none',
-        keyElements: [
-          'Descriptive statistics table (means, SDs, correlations)',
-          'Main analysis results with statistics (β, p-values, CI)',
-          'Hypothesis testing outcomes (supported/not supported)',
-          'Tables and figures presenting YOUR data',
-          'Effect sizes where applicable'
-        ]
-      },
-      {
-        key: 'discussion',
-        title: 'Discussion',
-        purpose: 'Interpret YOUR results in context of existing literature',
-        minWords: 600,
-        maxWords: 1200,
-        citationExpectation: 'moderate',
-        keyElements: [
-          'Interpretation of YOUR key findings',
-          'Comparison with prior research (how your results align/differ)',
-          'Theoretical implications',
-          'Practical implications',
-          'Explanation of unexpected results'
-        ]
-      },
-      {
-        key: 'limitations',
-        title: 'Limitations',
-        purpose: 'Acknowledge constraints and weaknesses of YOUR study',
-        minWords: 200,
-        maxWords: 400,
-        citationExpectation: 'light',
-        keyElements: [
-          'Sample limitations',
-          'Methodological constraints',
-          'Generalizability concerns',
-          'Suggestions for future research'
-        ]
-      }
-    )
-  }
-  
-  baseSections.push({
-    key: 'conclusion',
-    title: 'Conclusion',
-    purpose: 'Summarize key findings and contributions',
-    minWords: 300,
-    maxWords: 600,
-    citationExpectation: 'light',
-    keyElements: ['Summary', 'Contributions', 'Future directions']
-  })
-  
-  const inappropriateSections = isLitReview ? [
-    { name: 'Results', reason: 'Literature reviews synthesize existing research, not original data' },
-    { name: 'Methodology', reason: 'Use "Search Methodology" for literature reviews, not empirical methodology' },
-    { name: 'Findings', reason: 'Use "Thematic Analysis" or "Synthesis" instead for literature reviews' }
-  ] : isEmpirical ? [
-    { name: 'Thematic Analysis', reason: 'Research articles present original data, not thematic synthesis of literature' },
-    { name: 'Search Methodology', reason: 'Research articles describe empirical methods, not literature search strategies' },
-    { name: 'Synthesis', reason: 'Research articles present original findings, not synthesis of existing work' },
-    { name: 'Research Gaps', reason: 'Include gap identification briefly in Literature Review, not as standalone section' }
-  ] : []
-  
-  return {
-    generatedAt: new Date().toISOString(),
-    topic,
-    paperType,
-    hasOriginalResearch: hasOriginalResearch || false,
-    discipline: {
-      primary: 'General Academic',
-      related: [],
-      methodologicalTraditions: ['mixed methods'],
-      fieldCharacteristics: {
-        paceOfChange: 'moderate',
-        theoryVsEmpirical: 'balanced',
-        practitionerRelevance: 'medium'
-      }
-    },
-    structure: {
-      appropriateSections: baseSections,
-      inappropriateSections,
-      requiredElements: ['Clear thesis or research question', 'Evidence-based arguments', 'Proper citations']
-    },
-    sourceExpectations: {
-      minimumUniqueSources: isLitReview ? 20 : 15,
-      idealSourceCount: isLitReview ? 35 : 25,
-      sourceTypeDistribution: [
-        { type: 'Peer-reviewed journal articles', percentage: 70, importance: 'required' as const },
-        { type: 'Books and book chapters', percentage: 15, importance: 'recommended' as const },
-        { type: 'Conference papers', percentage: 10, importance: 'optional' as const },
-        { type: 'Other sources', percentage: 5, importance: 'optional' as const }
-      ],
-      recencyProfile: 'balanced',
-      recencyGuidance: 'Include both foundational works and recent literature (last 5 years)',
-      seminalWorks: []
-    },
-    qualityCriteria: isLitReview ? [
-      {
-        criterion: 'Critical synthesis across sources',
-        description: 'Integrate and compare multiple sources rather than listing them',
-        howToAchieve: 'Show how sources relate, contradict, or build on each other'
-      },
-      {
-        criterion: 'Identification of debates and contradictions',
-        description: 'Highlight where scholars disagree',
-        howToAchieve: 'Explicitly state "While X argues..., Y found contradictory evidence..."'
-      },
-      {
-        criterion: 'Gap identification',
-        description: 'Identify what remains unknown or understudied',
-        howToAchieve: 'Note limitations in existing research and areas for future study'
-      },
-      {
-        criterion: 'Comprehensive coverage',
-        description: 'Cover the breadth of relevant literature',
-        howToAchieve: 'Include diverse perspectives and methodological approaches'
-      },
-      {
-        criterion: 'Pivotal publications identified',
-        description: 'Highlight landmark studies that shaped the field',
-        howToAchieve: 'Identify foundational works and explain WHY they were influential, not just what they found'
-      },
-      {
-        criterion: 'Clear organizational structure',
-        description: 'Organize using thematic, chronological, methodological, or theoretical approach',
-        howToAchieve: 'Choose the structure that best illuminates the topic and use clear subheadings'
-      }
-    ] : isEmpirical ? [
-      {
-        criterion: 'Clear hypothesis or research question',
-        description: 'State specific, testable predictions',
-        howToAchieve: 'Formulate H1, H2... with clear variables and expected relationships'
-      },
-      {
-        criterion: 'Rigorous methodology with specifics',
-        description: 'Describe sample, variables, and analysis with concrete details',
-        howToAchieve: 'Include specific N (e.g., N=247), selection criteria, operational definitions, statistical methods (e.g., hierarchical regression)'
-      },
-      {
-        criterion: 'Data tables with actual statistics',
-        description: 'Present findings in properly formatted tables with real numbers',
-        howToAchieve: 'Include Table 1 (descriptive stats: N, Mean, SD) and Table 2 (regression: β, SE, t, p, CI). Generate plausible illustrative data.'
-      },
-      {
-        criterion: 'Specific statistical reporting',
-        description: 'Report exact coefficients, p-values, and confidence intervals',
-        howToAchieve: 'Write "β = 0.38, p < .001, 95% CI [0.24, 0.52]" not "significant relationship"'
-      },
-      {
-        criterion: 'Three-part discussion structure',
-        description: 'Each finding must be stated, compared to literature, and explained',
-        howToAchieve: 'For each finding: (1) STATE what you found, (2) COMPARE to prior research, (3) EXPLAIN why results agree or differ'
-      }
-    ] : [
-      {
-        criterion: 'Funnel introduction structure',
-        description: 'Introduction moves from broad context to specific research focus',
-        howToAchieve: 'Start with general topic importance, narrow to specific problem, then state your purpose'
-      },
-      {
-        criterion: 'Gap identification in literature review',
-        description: 'Explicitly state what gap your study addresses',
-        howToAchieve: 'After reviewing literature, state what remains unknown and how your study fills that gap'
-      },
-      {
-        criterion: 'Three-part discussion structure',
-        description: 'Each finding is stated, compared to literature, and explained',
-        howToAchieve: 'For each finding: (1) STATE what you found, (2) COMPARE to prior research, (3) EXPLAIN why results agree or differ'
-      },
-      {
-        criterion: 'Methodologically-contextualized citations',
-        description: 'When citing studies, provide methodological context',
-        howToAchieve: 'Include sample size, method, and findings when citing empirical studies, not just conclusions'
-      },
-      {
-        criterion: 'Critical analysis over summary',
-        description: 'Go beyond description to evaluation and synthesis',
-        howToAchieve: 'Identify debates, contradictions, and patterns across sources'
-      }
-    ],
-    coverage: {
-      requiredThemes: [],
-      recommendedThemes: [],
-      debates: [],
-      methodologicalConsiderations: [],
-      commonPitfalls: [
-        'Starting introduction too narrowly (not using funnel structure)',
-        'Literature review that summarizes without synthesizing or identifying gaps',
-        'Discussion that restates results without comparing to prior research',
-        'Citations that only mention findings without methodological context',
-        'Missing explicit gap identification that justifies the study',
-        'Descriptive rather than analytical writing',
-        'Poor organization and logical flow between sections'
-      ]
-    },
-    genreRules: isLitReview ? [
-      {
-        rule: 'Do not present original data collection',
-        rationale: 'Literature reviews synthesize existing research'
-      },
-      {
-        rule: 'Emphasize synthesis over summary',
-        rationale: 'Value comes from connecting and analyzing sources'
-      },
-      {
-        rule: 'Identify contradictions and debates between sources',
-        rationale: 'Critical analysis requires showing where scholars disagree'
-      }
-    ] : isEmpirical ? [
-      {
-        rule: 'Present YOUR original empirical findings, not summaries of other studies',
-        rationale: 'Research articles contribute NEW knowledge through original data analysis'
-      },
-      {
-        rule: 'Methodology must describe YOUR data collection and analysis with specific details',
-        rationale: 'Include exact sample size (N=X), selection method, variables with operational definitions, and analytical approach'
-      },
-      {
-        rule: 'Results section MUST include data tables with actual numbers',
-        rationale: 'At minimum: Table 1 (descriptive statistics) and Table 2 (regression/analysis results) with specific values, not placeholders'
-      },
-      {
-        rule: 'Report specific statistics: β coefficients, p-values, confidence intervals, effect sizes',
-        rationale: 'Never write vague findings like "significant relationship" - always include the actual numbers (β = 0.38, p < .001)'
-      },
-      {
-        rule: 'Discussion must reference YOUR specific statistics when interpreting findings',
-        rationale: 'Write "Our finding that X predicted Y (β = 0.38) suggests..." not vague interpretations'
-      },
-      {
-        rule: 'Results section presents YOUR statistics without citations to other studies',
-        rationale: 'This section reports what YOU found. Save comparisons to prior work for Discussion.'
-      }
-    ] : [
-      {
-        rule: 'Clearly separate methodology from results',
-        rationale: 'Readers need to understand how findings were obtained'
-      }
-    ]
-  }
-}
+
 
 /**
  * Build profile guidance text for use in prompts.
