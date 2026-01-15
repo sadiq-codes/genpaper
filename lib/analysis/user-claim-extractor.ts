@@ -2,7 +2,6 @@ import 'server-only'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { generateObject } from 'ai'
 import { z } from 'zod'
-import { generateEmbeddings } from '@/lib/utils/embedding'
 import type { ExtractedClaim, ClaimRelationship } from '@/components/editor/types'
 
 /**
@@ -90,13 +89,11 @@ export async function extractUserClaims(
       relationship_to_user: undefined, // Not applicable for user's own claims
     }))
 
-    // Generate embeddings for semantic comparison
-    if (claims.length > 0) {
-      const claimTexts = claims.map(c => c.claim_text)
-      const embeddings = await generateEmbeddings(claimTexts)
-      
-      // Note: We don't store these in the claim object but could use them for comparison
-    }
+    // TODO: Consider generating embeddings for semantic comparison with literature claims
+    // if (claims.length > 0) {
+    //   const claimTexts = claims.map(c => c.claim_text)
+    //   const embeddings = await generateEmbeddings(claimTexts)
+    // }
 
     return {
       claims,

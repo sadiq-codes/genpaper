@@ -362,7 +362,7 @@ export class CitationService {
       
       const { data: simplePaper, error: simpleError } = await supabase
         .from('papers')
-        .select('id, title, doi, url, pdf_url, venue, publication_date, created_at, authors, abstract, metadata')
+        .select('id, title, doi, url, pdf_url, venue, publication_date, created_at, authors, abstract')
         .eq('id', paperId)
         .single()
       
@@ -692,7 +692,7 @@ export class CitationService {
     // Include all fields needed for complete citation display
     const { data: papers, error: papersError } = await supabase
       .from('papers')
-      .select('id, title, authors, publication_date, venue, doi, url, metadata')
+      .select('id, title, authors, publication_date, venue, doi, url')
       .in('id', params.citeKeys)
     
     if (papersError) {

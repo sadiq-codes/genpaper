@@ -46,7 +46,6 @@ import type {
   ResearchGap, 
   AnalysisOutput,
   AnalysisState,
-  ClaimType,
   GapType,
   AllClaimTypes,
   ClaimRelationship,

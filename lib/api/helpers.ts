@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import type { User } from '@supabase/supabase-js'
-import { AppError, isAppError } from '@/lib/errors'
+import { isAppError } from '@/lib/errors'
 
 // ============================================================================
 // Auth Helpers

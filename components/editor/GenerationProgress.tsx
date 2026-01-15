@@ -62,8 +62,9 @@ export function GenerationProgress({
   const [error, setError] = useState<string | null>(null)
   const [papersFound, setPapersFound] = useState<number>(0)
   const [currentSection, setCurrentSection] = useState<string | null>(null)
-  const [sectionsCompleted, setSectionsCompleted] = useState(0)
-  const [totalSections, setTotalSections] = useState(0)
+  // Section tracking - used for parsing progress messages
+  const [_sectionsCompleted, setSectionsCompleted] = useState(0)
+  const [_totalSections, setTotalSections] = useState(0)
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasCompletedRef = useRef(false)
@@ -168,7 +169,7 @@ export function GenerationProgress({
       eventSourceRef.current = null
       connectionIdRef.current = null
     }
-  }, [projectId, topic, onComplete, onError, updateStageStatuses])
+  }, [projectId, topic, paperType, onComplete, onError, updateStageStatuses])
 
   const handleCancel = useCallback(() => {
     if (eventSourceRef.current) {
@@ -230,7 +231,7 @@ export function GenerationProgress({
 
           {/* Stage List */}
           <div className="space-y-1.5">
-            {stages.map((stage, index) => (
+            {stages.map((stage) => (
               <div
                 key={stage.id}
                 className={cn(

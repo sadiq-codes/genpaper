@@ -1,32 +1,81 @@
-import { LibraryPaper, LibraryFilters } from '@/types/simplified'
+import { LibraryPaper, LibraryFilters, PaperWithAuthors } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
-// Legacy browser client import removed - use API endpoints for client operations
-// CSL utilities no longer needed
-// Simplified library utilities - no longer need complex author joins
+import { 
+  PaperRow,
+  LibraryPaperRow, 
+  extractAuthors 
+} from '@/lib/supabase/types'
 
-interface SimplifiedPaper {
-  id: string
-  title: string
-  abstract?: string
-  authors?: string[]
-  publication_date?: string
-  venue?: string
-  doi?: string
-  url?: string
-  pdf_url?: string
-  source?: string
-  citation_count?: number
-  created_at: string
-  [key: string]: unknown
+// ============================================================================
+// Types
+// ============================================================================
+
+/** Raw result from library_papers with joined paper */
+interface LibraryPaperWithJoinedPaper extends LibraryPaperRow {
+  paper: PaperRow
 }
 
-// Browser-side client now imported from centralized location
+/** Extended LibraryPaper with author_names for display */
+interface LibraryPaperWithAuthors extends Omit<LibraryPaper, 'paper'> {
+  paper: PaperWithAuthors
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Convert null to undefined for optional fields.
+ * Database uses null, but application types use undefined for optional fields.
+ */
+function nullToUndefined<T>(value: T | null): T | undefined {
+  return value === null ? undefined : value
+}
+
+/**
+ * Transform a library paper with joined paper data to the application format.
+ * Handles author array extraction and adds author_names for backward compatibility.
+ * 
+ * Note: Generated Supabase types show some required fields as nullable (user_id, paper_id)
+ * because the types file is outdated. We assert these are non-null as they are NOT NULL in the schema.
+ */
+function transformLibraryPaper(item: LibraryPaperWithJoinedPaper): LibraryPaperWithAuthors {
+  const paper = item.paper
+  const authors = extractAuthors(paper)
+  
+  return {
+    id: item.id,
+    user_id: item.user_id!, // NOT NULL in schema
+    paper_id: item.paper_id!, // NOT NULL in schema
+    notes: nullToUndefined(item.notes),
+    added_at: item.added_at,
+    paper: {
+      id: paper.id,
+      title: paper.title,
+      abstract: nullToUndefined(paper.abstract),
+      publication_date: nullToUndefined(paper.publication_date),
+      venue: nullToUndefined(paper.venue),
+      doi: nullToUndefined(paper.doi),
+      url: nullToUndefined(paper.url),
+      pdf_url: nullToUndefined(paper.pdf_url),
+      source: nullToUndefined(paper.source),
+      citation_count: nullToUndefined(paper.citation_count),
+      created_at: paper.created_at,
+      authors: authors.map((name: string) => ({ id: '', name })),
+      author_names: authors,
+    }
+  }
+}
+
+// ============================================================================
+// CRUD Operations
+// ============================================================================
 
 export async function addPaperToLibrary(
   userId: string,
   paperId: string,
   notes?: string
-): Promise<LibraryPaper> {
+): Promise<LibraryPaperWithAuthors> {
   const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_papers')
@@ -43,18 +92,7 @@ export async function addPaperToLibrary(
 
   if (error) throw error
 
-  // Transform with simplified schema
-  const paper = data.paper as SimplifiedPaper
-  const authors = Array.isArray(paper.authors) ? paper.authors : []
-  
-  return {
-    ...data,
-    paper: {
-      ...paper,
-      authors: authors.map((name: string) => ({ id: '', name })),
-      author_names: authors
-    }
-  }
+  return transformLibraryPaper(data as LibraryPaperWithJoinedPaper)
 }
 
 export async function removePaperFromLibrary(
@@ -83,12 +121,16 @@ export async function updateLibraryPaperNotes(
   if (error) throw error
 }
 
+// ============================================================================
+// Query Operations
+// ============================================================================
+
 export async function getUserLibraryPapers(
   userId: string,
   filters: LibraryFilters = {},
   limit = 20,
   offset = 0
-): Promise<LibraryPaper[]> {
+): Promise<LibraryPaperWithAuthors[]> {
   const supabase = await getSB()
   let query = supabase
     .from('library_papers')
@@ -127,26 +169,15 @@ export async function getUserLibraryPapers(
 
   if (error) throw error
 
-  // Transform with simplified schema
-  return (data || []).map(item => {
-    const paper = item.paper as any
-    const authors = Array.isArray(paper.authors) ? paper.authors : []
-    
-    return {
-      ...item,
-      paper: {
-        ...paper,
-        authors: authors.map((name: string) => ({ id: '', name })),
-        author_names: authors
-      }
-    }
-  })
+  return (data || []).map(item => 
+    transformLibraryPaper(item as LibraryPaperWithJoinedPaper)
+  )
 }
 
 export async function getLibraryPaper(
   userId: string,
   paperId: string
-): Promise<LibraryPaper | null> {
+): Promise<LibraryPaperWithAuthors | null> {
   const supabase = await getSB()
   const { data, error } = await supabase
     .from('library_papers')
@@ -161,18 +192,7 @@ export async function getLibraryPaper(
   if (error && error.code !== 'PGRST116') throw error
   if (!data) return null
 
-  // Transform with simplified schema
-  const paper = data.paper as SimplifiedPaper
-  const authors = Array.isArray(paper.authors) ? paper.authors : []
-  
-  return {
-    ...data,
-    paper: {
-      ...paper,
-      authors: authors.map((name: string) => ({ id: '', name })),
-      author_names: authors
-    }
-  }
+  return transformLibraryPaper(data as LibraryPaperWithJoinedPaper)
 }
 
 export async function isInLibrary(
@@ -191,13 +211,11 @@ export async function isInLibrary(
   return !!data
 }
 
-// Collection management functions removed - collections are now simple text fields in library_papers
+// ============================================================================
+// Batch Operations
+// ============================================================================
 
-// Tag management functions removed - tags are now stored as text arrays in library_papers.tags
-
-// Legacy clientLibraryOperations removed - use API endpoints instead
-
-export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]> {
+export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaperWithAuthors[]> {
   const supabase = await getSB()
   
   if (!paperIds || paperIds.length === 0) {
@@ -205,11 +223,11 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
   }
 
   // Separate UUIDs from deterministic IDs
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const uuids = paperIds.filter(id => uuidRegex.test(id));
-  const deterministicIds = paperIds.filter(id => !uuidRegex.test(id));
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const uuids = paperIds.filter(id => uuidRegex.test(id))
+  const deterministicIds = paperIds.filter(id => !uuidRegex.test(id))
 
-  const promises = [];
+  const promises = []
 
   // Query for standard UUIDs directly
   if (uuids.length > 0) {
@@ -219,8 +237,8 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
         *,
         paper:papers(*)
       `)
-      .in('paper_id', uuids);
-    promises.push(query);
+      .in('paper_id', uuids)
+    promises.push(query)
   }
 
   // For deterministic IDs, first find their UUIDs, then query
@@ -229,16 +247,16 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
       const { data: mapping, error: mappingError } = await supabase
         .from('papers')
         .select('id')
-        .in('deterministic_id', deterministicIds);
+        .in('deterministic_id', deterministicIds)
       
       if (mappingError) {
-        console.error('Error fetching deterministic ID mappings:', mappingError);
-        return { data: [], error: mappingError };
+        console.error('Error fetching deterministic ID mappings:', mappingError)
+        return { data: [], error: mappingError }
       }
 
-      const foundUuids = mapping.map(m => m.id);
+      const foundUuids = mapping.map(m => m.id)
       if (foundUuids.length === 0) {
-        return { data: [], error: null };
+        return { data: [], error: null }
       }
 
       return supabase
@@ -247,46 +265,38 @@ export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaper[]
           *,
           paper:papers(*)
         `)
-        .in('paper_id', foundUuids);
-    })();
-    promises.push(promise);
+        .in('paper_id', foundUuids)
+    })()
+    promises.push(promise)
   }
 
-  const results = await Promise.all(promises);
+  const results = await Promise.all(promises)
 
-  const papers: LibraryPaper[] = [];
-  const seenIds = new Set<string>();
+  const papers: LibraryPaperWithAuthors[] = []
+  const seenIds = new Set<string>()
 
   for (const result of results) {
     if (result.error) {
-      console.error('Error fetching papers by ID:', result.error);
-      // Decide if you want to throw or just continue
+      console.error('Error fetching papers by ID:', result.error)
     }
     if (result.data) {
       for (const item of result.data) {
-        // Transform with simplified schema
-        const paper = item.paper as any
-        const authors = Array.isArray(paper.authors) ? paper.authors : []
-        
-        const transformed = {
-          ...item,
-          paper: {
-            ...paper,
-            authors: authors.map((name: string) => ({ id: '', name })),
-            author_names: authors
-          }
-        }
+        const transformed = transformLibraryPaper(item as LibraryPaperWithJoinedPaper)
         
         if (!seenIds.has(transformed.id)) {
-          papers.push(transformed);
-          seenIds.add(transformed.id);
+          papers.push(transformed)
+          seenIds.add(transformed.id)
         }
       }
     }
   }
 
-  return papers;
+  return papers
 }
+
+// ============================================================================
+// Stats & Activity
+// ============================================================================
 
 export async function getRecentActivity(userId: string, limit = 5) {
   const supabase = await getSB()
@@ -307,4 +317,4 @@ export async function getLibraryStats(userId: string) {
 
   if (error) throw error
   return data
-} 
+}

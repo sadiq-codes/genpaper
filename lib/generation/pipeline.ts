@@ -14,6 +14,7 @@ import { warn, error as logError, info } from '@/lib/utils/logger'
 // Citation markers [CITE: paper_id] are kept in markdown - UI renders them
 // We only need cleanRemainingArtifacts to remove any leaked tool syntax
 import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
+import { logSectionCitations } from '@/lib/rag/relevance-feedback'
 import { extractThemes, mergeThemeAnalysisIntoProfile, buildThemeGuidanceForOutline } from '@/lib/generation/theme-extraction'
 import type { PaperProfile, ThemeAnalysis } from '@/lib/generation/paper-profile-types'
 import type { PaperStatus, OriginalResearchConfig } from '@/types/simplified'
@@ -406,6 +407,21 @@ export async function generatePaper(
       // Track evidence usage for cross-section memory (centralized here to avoid duplication)
       if (sectionContext.contextChunks && sectionContext.contextChunks.length > 0) {
         EvidenceTracker.trackBulkUsageSync(sectionContext.contextChunks, sectionContext.title, projectId)
+      }
+      
+      // Log citation feedback for RAG improvement (non-blocking)
+      // This tracks which chunks were actually cited to improve future retrieval
+      if (sectionContext.contextChunks && sectionContext.contextChunks.length > 0) {
+        logSectionCitations(
+          projectId,
+          sectionContext.sectionKey,
+          result.content,
+          sectionContext.contextChunks,
+          sectionContext.title
+        ).catch(err => {
+          // Non-critical - don't fail pipeline on feedback logging errors
+          warn({ section: sectionContext.title, error: err }, 'Citation feedback logging failed')
+        })
       }
       
       // Comprehensive section quality review (pipeline-level assessment)

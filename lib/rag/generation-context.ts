@@ -1,14 +1,14 @@
 import 'server-only'
 import { 
-  searchChunks, 
   fetchPaperMetadata, 
-  deduplicateChunks,
-  balanceChunks,
   normalizeScore,
   createEmptyResult,
   type RetrievedChunk,
-  type BaseRetrievalResult
+  type BaseRetrievalResult,
+  type SearchMode
 } from './base-retrieval'
+import { ChunkRetriever } from './chunk-retriever'
+import { ContextBuilder } from './context-builder'
 import { getContentStatus, ensureBulkContentIngestion } from '@/lib/content'
 import { getPapersByIds } from '@/lib/db/library'
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
@@ -23,14 +23,16 @@ import type { GeneratedOutline, SectionContext } from '@/lib/prompts/types'
 /**
  * Generation Context Retrieval Service
  * 
- * Specialized RAG retrieval for paper generation pipeline.
+ * High-level RAG retrieval for paper generation pipeline.
+ * Uses ChunkRetriever and ContextBuilder internally.
+ * 
  * Features:
  * - 5-minute TTL caching with superset strategy
- * - Batch processing for multi-section generation
- * - Cross-paper chunk balancing
+ * - Hybrid search (vector + keyword) with RRF
+ * - Cross-encoder reranking (Cohere, when available)
+ * - Sentence-level chunk compression
  * - Content ingestion and status checking
  * - Abstract fallbacks for papers without chunks
- * - No claims retrieval (not needed for generation)
  */
 
 // =============================================================================
@@ -42,11 +44,36 @@ export interface GenerationRetrievalParams {
   paperIds: string[]
   limit?: number
   minScore?: number
+  /** Search mode: 'hybrid' (default), 'vector', or 'keyword' */
+  mode?: SearchMode
+  /** Weight for vector search in hybrid mode (0-1, default 0.7) */
+  vectorWeight?: number
+  /** Whether to boost results by citation history (default true) */
+  useCitationBoost?: boolean
+  /** Enable cross-encoder reranking (default true if API key available) */
+  useReranking?: boolean
+  /** Number of candidates to rerank (default 30) */
+  rerankTopK?: number
+  /** Enable sentence-level compression (default true) */
+  useCompression?: boolean
+  /** Minimum sentence relevance score for compression (default 0.3) */
+  sentenceMinScore?: number
+  /** Token budget for context (default 8000) */
+  maxTokens?: number
 }
 
 export interface GenerationRetrievalResult extends BaseRetrievalResult {
   scores: number[]
   totalResults: number
+  /** Formatted context string (when compression enabled) */
+  formattedContext?: string
+  metrics?: {
+    retrievalTimeMs: number
+    rerankTimeMs: number
+    compressionRatio: number
+    wasReranked: boolean
+    wasCompressed: boolean
+  }
 }
 
 export interface PaperChunk extends RetrievedChunk {
@@ -64,13 +91,12 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>()
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
-const CACHE_MAX_SIZE = 100 // Maximum number of cache entries
+const CACHE_MAX_SIZE = 100
 
 function getCacheKey(params: GenerationRetrievalParams): string {
-  const { query, paperIds } = params
+  const { query, paperIds, mode = 'hybrid', useCitationBoost = true } = params
   const paperIdsStr = paperIds.slice().sort().join(',')
-  // Exclude limit/minScore for better cache reuse
-  return `gen:${query}:${paperIdsStr}`
+  return `gen:${mode}:${useCitationBoost ? 'boost' : 'noboost'}:${query}:${paperIdsStr}`
 }
 
 function cleanupCache(): void {
@@ -88,17 +114,12 @@ function cleanupCache(): void {
   }
 }
 
-/**
- * Evict oldest entries if cache exceeds max size (LRU-style eviction)
- */
 function evictIfNeeded(): void {
   if (cache.size <= CACHE_MAX_SIZE) return
   
-  // Sort entries by timestamp (oldest first)
   const entries = Array.from(cache.entries())
     .sort((a, b) => a[1].timestamp - b[1].timestamp)
   
-  // Remove oldest entries until we're under the limit
   const toRemove = cache.size - CACHE_MAX_SIZE
   for (let i = 0; i < toRemove; i++) {
     cache.delete(entries[i][0])
@@ -108,16 +129,70 @@ function evictIfNeeded(): void {
 }
 
 // =============================================================================
+// SHARED RETRIEVER INSTANCE
+// =============================================================================
+
+let retrieverInstance: ChunkRetriever | null = null
+let contextBuilderInstance: ContextBuilder | null = null
+
+function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
+  // Create or update retriever with current params
+  const config = {
+    mode: params.mode || 'hybrid',
+    vectorWeight: params.vectorWeight || 0.7,
+    minScore: params.minScore || 0.15,
+    retrieveLimit: 100,
+    finalLimit: params.limit || 20,
+    useCitationBoost: params.useCitationBoost ?? true,
+    useReranking: params.useReranking ?? true,
+    rerankTopK: params.rerankTopK || 30,
+    maxPerPaper: 5
+  }
+  
+  if (!retrieverInstance) {
+    retrieverInstance = new ChunkRetriever(config)
+  } else {
+    retrieverInstance.setConfig(config)
+  }
+  
+  return retrieverInstance
+}
+
+function getContextBuilder(params: GenerationRetrievalParams): ContextBuilder {
+  const config = {
+    maxTokens: params.maxTokens || 8000,
+    sentenceMinScore: params.sentenceMinScore || 0.3,
+    enableCompression: params.useCompression ?? true,
+    includeCitations: true,
+    groupByPaper: false
+  }
+  
+  if (!contextBuilderInstance) {
+    contextBuilderInstance = new ContextBuilder(config)
+  } else {
+    contextBuilderInstance.setConfig(config)
+  }
+  
+  return contextBuilderInstance
+}
+
+// =============================================================================
 // MAIN SERVICE
 // =============================================================================
 
 export class GenerationContextService {
   /**
-   * Retrieve context for paper generation
-   * Uses caching to avoid redundant searches across sections
+   * Retrieve context for paper generation.
+   * Uses ChunkRetriever with reranking and ContextBuilder for compression.
    */
   static async retrieve(params: GenerationRetrievalParams): Promise<GenerationRetrievalResult> {
-    const { query, paperIds, limit = 20, minScore = 0.2 } = params
+    const { 
+      query, 
+      paperIds, 
+      limit = 20, 
+      minScore = 0.2,
+      useCompression = true
+    } = params
     
     if (!query.trim() || paperIds.length === 0) {
       return { ...createEmptyResult(), scores: [], totalResults: 0 }
@@ -128,49 +203,80 @@ export class GenerationContextService {
     const cached = cache.get(cacheKey)
     
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      console.log(`🎯 Cache HIT for generation query: "${query.slice(0, 50)}..."`)
+      console.log(`🎯 Cache HIT: "${query.slice(0, 50)}..."`)
       return this.applyFiltering(cached.result, limit, minScore)
     }
     
-    console.log(`🔍 Cache MISS for generation query: "${query.slice(0, 50)}..."`)
+    console.log(`🔍 Cache MISS: "${query.slice(0, 50)}..."`)
     
-    // Perform retrieval with generous limits for caching
-    const supersetLimit = Math.max(limit * 3, 100)
-    const supersetMinScore = 0.1
+    const startTime = Date.now()
     
-    const chunks = await searchChunks(query, {
-      paperIds,
-      limit: supersetLimit,
-      minScore: supersetMinScore
+    // Use ChunkRetriever for retrieval + reranking
+    const retriever = getRetriever({
+      ...params,
+      limit: Math.max(limit * 3, 100), // Retrieve superset for caching
+      minScore: 0.1
+    })
+    
+    const retrievalResult = await retriever.retrieve({
+      query,
+      paperIds
     })
     
     // Get paper metadata
-    const uniquePaperIds = [...new Set(chunks.map(c => c.paper_id))]
+    const uniquePaperIds = [...new Set(retrievalResult.chunks.map(c => c.paper_id))]
     const papers = await fetchPaperMetadata(uniquePaperIds)
     
-    const result: GenerationRetrievalResult = {
-      chunks,
-      papers,
-      hasContent: chunks.length > 0,
-      scores: chunks.map(c => normalizeScore(c.score)),
-      totalResults: chunks.length
+    // Optionally compress context
+    let formattedContext: string | undefined
+    let compressionRatio = 1.0
+    let wasCompressed = false
+    
+    if (useCompression && retrievalResult.chunks.length > 0) {
+      const builder = getContextBuilder(params)
+      const builtContext = await builder.buildContext(
+        retrievalResult.chunks,
+        query,
+        papers
+      )
+      formattedContext = builtContext.formattedContext
+      compressionRatio = builtContext.metrics.compressionRatio
+      wasCompressed = builtContext.wasCompressed
     }
+    
+    const result: GenerationRetrievalResult = {
+      chunks: retrievalResult.chunks,
+      papers,
+      hasContent: retrievalResult.chunks.length > 0,
+      scores: retrievalResult.chunks.map(c => normalizeScore(c.score)),
+      totalResults: retrievalResult.totalRetrieved,
+      formattedContext,
+      metrics: {
+        retrievalTimeMs: retrievalResult.metrics.retrievalTimeMs,
+        rerankTimeMs: retrievalResult.metrics.rerankTimeMs,
+        compressionRatio,
+        wasReranked: retrievalResult.wasReranked,
+        wasCompressed
+      }
+    }
+    
+    const totalTime = Date.now() - startTime
+    console.log(`✅ Retrieved ${retrievalResult.chunks.length} chunks ` +
+      `(${retrievalResult.wasReranked ? 'reranked, ' : ''}` +
+      `${wasCompressed ? `${(compressionRatio * 100).toFixed(0)}% compressed, ` : ''}` +
+      `${totalTime}ms)`)
     
     // Cache the superset result
     cache.set(cacheKey, { result, timestamp: Date.now() })
-    
-    // Evict oldest entries if cache exceeds max size
     evictIfNeeded()
-    
-    // Also cleanup expired entries periodically
     cleanupCache()
     
     return this.applyFiltering(result, limit, minScore)
   }
   
   /**
-   * Get relevant chunks with content ingestion support
-   * This is the main entry point that handles content availability
+   * Get relevant chunks with content ingestion support.
+   * Main entry point that handles content availability.
    */
   static async getRelevantChunks(
     topic: string,
@@ -211,10 +317,8 @@ export class GenerationContextService {
         author_names: lp.paper.authors?.map(a => a.name) || []
       } as PaperWithAuthors))
       
-      // Try to ingest content
       await ensureBulkContentIngestion(papers)
       
-      // Verify ingestion success
       const retryStatus = await getContentStatus(paperIds)
       papersWithContent = paperIds.filter(id => {
         const status = retryStatus.get(id)
@@ -231,12 +335,13 @@ export class GenerationContextService {
     
     console.log(`📊 Content availability: ${papersWithContent.length}/${paperIds.length} papers`)
     
-    // Retrieve chunks using caching
+    // Retrieve chunks
     const result = await this.retrieve({
       query: topic,
       paperIds: papersWithContent,
       limit: Math.max(chunkLimit * 2, 60),
-      minScore: 0.15
+      minScore: 0.15,
+      useCompression: false // Don't compress for getRelevantChunks
     })
     
     // Convert to PaperChunk format with deterministic IDs
@@ -247,7 +352,7 @@ export class GenerationContextService {
       metadata: { source: 'generation_context_service', score: chunk.score }
     }))
     
-    // Validate chunk content (relaxed thresholds)
+    // Validate chunk content
     allChunks = allChunks.filter(chunk => {
       const content = chunk.content.trim()
       return content.length >= 30 &&
@@ -255,7 +360,7 @@ export class GenerationContextService {
              !/^[\d\s.,-]+$/.test(content)
     })
     
-    // If no chunks found, use abstracts as fallback
+    // Abstract fallback
     if (allChunks.length === 0) {
       console.warn('⚠️ No relevant chunks found. Using paper abstracts as fallback.')
       const abstractChunks = allPapers
@@ -280,7 +385,7 @@ export class GenerationContextService {
       return abstractChunks
     }
     
-    // Validate final content quality
+    // Quality check
     const avgScore = allChunks.reduce((sum, chunk) => sum + normalizeScore(chunk.score), 0) / allChunks.length
     if (avgScore < 0.18) {
       throw new ContentQualityError(
@@ -289,16 +394,15 @@ export class GenerationContextService {
       )
     }
     
-    // Deduplicate and balance
-    const deduplicated = deduplicateChunks(allChunks)
-    const balanced = balanceChunks(deduplicated, chunkLimit, chunkLimit)
+    // Final limit (dedup and balance already done by ChunkRetriever)
+    const finalChunks = allChunks.slice(0, chunkLimit)
     
-    console.log(`✅ Final: ${balanced.length} chunks after dedup and balancing`)
-    return balanced
+    console.log(`✅ Final: ${finalChunks.length} chunks`)
+    return finalChunks
   }
   
   /**
-   * Apply downstream filtering to cached results
+   * Apply downstream filtering to cached results.
    */
   private static applyFiltering(
     result: GenerationRetrievalResult,
@@ -318,8 +422,7 @@ export class GenerationContextService {
   }
   
   /**
-   * Build contexts for all sections in an outline
-   * Main entry point for section context building in generation pipeline
+   * Build contexts for all sections in an outline.
    */
   static async buildContexts(
     outline: GeneratedOutline,
@@ -337,19 +440,16 @@ export class GenerationContextService {
       let contextChunks: PaperChunk[] = []
       try {
         const startTime = Date.now()
-        
-        // First try with assigned paper IDs
         const targetIds = ids.length > 0 ? ids : allPaperIds
         
         try {
           contextChunks = await this.getRelevantChunks(
-            topic,
+            `${section.title}: ${(section.keyPoints || []).join('. ')}`,
             targetIds,
             Math.min(20, Math.max(targetIds.length * 3, 12)),
             allPapers
           )
         } catch (firstError) {
-          // If assigned papers fail, fall back to ALL papers
           if (ids.length > 0 && allPaperIds.length > ids.length) {
             console.warn(`⚠️ Assigned papers for "${section.title}" have no content, trying all papers...`)
             contextChunks = await this.getRelevantChunks(
@@ -368,7 +468,7 @@ export class GenerationContextService {
       } catch (error) {
         console.warn(`⚠️ No relevant chunks found for section "${section.title}": ${error}`)
         
-        // Last resort: create abstract-based chunks for the section
+        // Abstract fallback
         const abstractChunks = allPapers
           .filter(p => p.abstract && p.abstract.trim().length >= 50)
           .slice(0, 5)
@@ -387,13 +487,13 @@ export class GenerationContextService {
         }
       }
       
-      // Build section context
       const context: SectionContext = {
         sectionKey: section.sectionKey,
         title: section.title,
         keyPoints: section.keyPoints || [],
         candidatePaperIds: section.candidatePaperIds || [],
         contextChunks: contextChunks.map(c => ({
+          id: c.id,
           paper_id: c.paper_id,
           content: c.content,
           score: c.score
@@ -409,19 +509,27 @@ export class GenerationContextService {
   }
   
   /**
-   * Clear cache (for testing or memory management)
+   * Clear cache (for testing or memory management).
    */
   static clearCache(): void {
     cache.clear()
   }
   
   /**
-   * Get cache stats (for monitoring)
+   * Get cache stats (for monitoring).
    */
   static getCacheStats(): { size: number; keys: string[] } {
     return {
       size: cache.size,
       keys: Array.from(cache.keys())
     }
+  }
+  
+  /**
+   * Reset retriever instances (for testing).
+   */
+  static resetInstances(): void {
+    retrieverInstance = null
+    contextBuilderInstance = null
   }
 }

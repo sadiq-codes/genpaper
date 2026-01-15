@@ -57,6 +57,9 @@ async function ProjectsGrid() {
 
   const paperCountMap = new Map<string, Set<string>>()
   for (const row of citations || []) {
+    // Skip rows with null project_id or paper_id
+    if (!row.project_id || !row.paper_id) continue
+    
     if (!paperCountMap.has(row.project_id)) {
       paperCountMap.set(row.project_id, new Set())
     }
@@ -65,7 +68,9 @@ async function ProjectsGrid() {
 
   const allPaperIds = new Set<string>()
   for (const row of citations || []) {
-    allPaperIds.add(row.paper_id)
+    if (row.paper_id) {
+      allPaperIds.add(row.paper_id)
+    }
   }
 
   const { data: claims, error: claimError } = await supabase

@@ -49,6 +49,23 @@ function getAcademicHeaders(url: string): Record<string, string> {
     headers['Cache-Control'] = 'no-cache'
   }
   
+  // MDPI requires referer from their own domain
+  if (url.includes('mdpi.com')) {
+    headers['Referer'] = 'https://www.mdpi.com/'
+    headers['Origin'] = 'https://www.mdpi.com'
+  }
+  
+  // Springer/Nature OA PDFs need referer
+  if (url.includes('link.springer.com') || url.includes('nature.com')) {
+    const domain = new URL(url).origin
+    headers['Referer'] = domain + '/'
+  }
+  
+  // Frontiers.org
+  if (url.includes('frontiersin.org')) {
+    headers['Referer'] = 'https://www.frontiersin.org/'
+  }
+  
   return headers
 }
 

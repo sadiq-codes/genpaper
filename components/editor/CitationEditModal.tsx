@@ -124,8 +124,10 @@ export function CitationEditModal({
     }
   }, [open, initialData, fetchCitationData])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const populateForm = (csl: CSLItem | any) => {
+  // CSL data from API may have lowercase variants (doi vs DOI, url vs URL)
+  type CSLData = CSLItem & { doi?: string; url?: string }
+  
+  const populateForm = (csl: CSLData) => {
     setTitle(csl.title || '')
     setAuthors(
       csl.author?.length > 0 

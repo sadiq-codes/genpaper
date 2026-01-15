@@ -1,5 +1,5 @@
 import 'server-only'
-import type { SectionContext } from '../types'
+import type { SectionContext, PaperTypeKey } from '../types'
 import { PromptService, type PromptData, type TemplateOptions, type BuiltPrompt } from '@/lib/prompts/prompt-service'
 import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
 
@@ -93,8 +93,8 @@ async function generatePromptData(
   const allPaperIds = new Set<string>()
   
   for (const chunk of workingChunks) {
-    const paperId = (chunk as any).paper_id
-    const content: string = (chunk as any).content || ''
+    const paperId = chunk.paper_id
+    const content = chunk.content || ''
     
     if (paperId) {
       allPaperIds.add(paperId)
@@ -130,8 +130,8 @@ async function generatePromptData(
     const emergencyPaperIds: string[] = []
     
     for (const chunk of workingChunks) {
-      const paperId = (chunk as any).paper_id
-      const content: string = (chunk as any).content || ''
+      const paperId = chunk.paper_id
+      const content = chunk.content || ''
       
       if (paperId && content.length >= EMERGENCY_MIN_CHUNK_LENGTH && !emergencyPaperIds.includes(paperId)) {
         emergencyPaperIds.push(paperId)
@@ -166,7 +166,7 @@ async function generatePromptData(
   // Check if chunks are already well-deduplicated upstream (from rag-retrieval.ts)
   const uniqueContentHashes = new Set<string>()
   for (const chunk of freshChunks) {
-    const content: string = (chunk as any).content || ''
+    const content = chunk.content || ''
     if (content.trim().length >= 30) {
       const hash = content.slice(0, 80).toLowerCase().replace(/\s+/g, ' ') + 
                    content.slice(-80).toLowerCase().replace(/\s+/g, ' ')
@@ -197,7 +197,7 @@ async function generatePromptData(
     const perPaper = new Map<string, number>()
     
     for (const chunk of freshChunks) {
-      const pid = (chunk as any).paper_id || 'unknown'
+      const pid = chunk.paper_id || 'unknown'
       const count = perPaper.get(pid) || 0
       if (count >= MAX_PER_PAPER) continue
       
@@ -212,8 +212,8 @@ async function generatePromptData(
     const perPaper = new Map<string, number>()
 
     for (const chunk of freshChunks) {
-      const pid = (chunk as any).paper_id || 'unknown'
-      const content: string = (chunk as any).content || ''
+      const pid = chunk.paper_id || 'unknown'
+      const content = chunk.content || ''
       if (!content || content.trim().length < 30) continue
       const key = `${pid}::${content.slice(0, 80).toLowerCase().replace(/\s+/g, ' ')}::${content.slice(-80).toLowerCase().replace(/\s+/g, ' ')}`
       if (seen.has(key)) continue
@@ -297,7 +297,7 @@ async function buildSectionPurpose(sectionTitle: string, topic: string, paperTyp
     const qualityCriteria = await generateQualityCriteria(
       topic,
       sectionTitle,
-      paperType as any
+      paperType as PaperTypeKey
     )
     
     // Convert criteria to purpose statement
@@ -375,7 +375,7 @@ async function buildPlanningData(sectionTitle: string, topic: string, paperType:
     const criteria = await generateQualityCriteria(
       topic,
       sectionTitle,
-      paperType as any
+      paperType as PaperTypeKey
     )
     
     // Format for template display

@@ -19,14 +19,12 @@ import { getSB } from '@/lib/supabase/server'
 import type { 
   ThemeAnalysis,
   ThemeExtractionInput,
-  EmergentTheme,
-  ScholarlyDebate,
-  LiteratureGap,
-  PivotalPaper,
-  MethodologicalApproach,
-  OrganizationSuggestion,
   PaperProfile
 } from './paper-profile-types'
+
+// Note: These types are defined in paper-profile-types and shape the ThemeAnalysis output
+// EmergentTheme, ScholarlyDebate, LiteratureGap, PivotalPaper, 
+// MethodologicalApproach, OrganizationSuggestion
 import type { PaperWithAuthors } from '@/types/simplified'
 
 // ──────────────────────────────────────────────────────────────────────────────

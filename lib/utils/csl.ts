@@ -1,4 +1,3 @@
-import type { Database } from '@/types/supabase'
 import z from 'zod'
 
 export interface CSLAuthor {
@@ -30,10 +29,12 @@ export interface CSLItem {
   note?: string
 }
 
-// Paper type from database  
-type DbAuthor = Database['public']['Tables']['authors']['Row']
-
-// Enhanced interface for papers with authors (compatible with database structure)
+/**
+ * Paper with authors in any supported format.
+ * The buildCSLFromPaper function handles multiple author formats:
+ * 1. JSONB string array: ["John Smith", "Jane Doe"]
+ * 2. Relational join: [{ ordinal: 1, author: { name: "John Smith" } }]
+ */
 export interface PaperWithAuthors {
   id: string
   title: string
@@ -50,10 +51,7 @@ export interface PaperWithAuthors {
   source?: string | null
   citation_count?: number | null
   created_at: string
-  authors: Array<{
-    ordinal: number
-    author: DbAuthor
-  }>
+  authors: unknown[] // Can be string[], CSLAuthor[], or relational format
 }
 
 // Consolidated venue classification constants

@@ -6,6 +6,7 @@
  */
 
 import { getSB } from '@/lib/supabase/server'
+import { getServiceClient } from '@/lib/supabase/service'
 import { chunkByTokens, normalizeText, type TokenChunkOptions } from '@/lib/utils/text'
 import { collisionResistantHash } from '@/lib/utils/hash'
 import { ContentRetrievalError, IngestionError, ChunkingError } from './errors'
@@ -191,6 +192,9 @@ export async function createChunksForPaper(
 
   try {
     const supabase = await getSB()
+    // Use service client for paper_chunks writes to bypass RLS
+    // (RLS requires service_role for INSERT/UPDATE/DELETE on paper_chunks)
+    const serviceClient = getServiceClient()
 
     // Fetch existing chunks to detect content changes via hash
     const { data: existingChunks, error: checkError } = await supabase
@@ -218,7 +222,7 @@ export async function createChunksForPaper(
 
     // Content changed; delete previous chunks before writing new ones
     if (existingChunks && existingChunks.length > 0) {
-      const { error: deleteError } = await supabase
+      const { error: deleteError } = await serviceClient
         .from('paper_chunks')
         .delete()
         .eq('paper_id', paperId)
@@ -229,21 +233,23 @@ export async function createChunksForPaper(
 
     // Handle short content: ensure at least one chunk for short abstracts
     if (normalizedContent.length < 100) {
-      const supabase = await getSB()
       const { createDeterministicChunkId } = await import('@/lib/utils/deterministic-id')
       const { generateEmbeddings } = await import('@/lib/utils/embedding')
+      const { extractChunkMetadata } = await import('./chunk-metadata')
 
       const [embedding] = await generateEmbeddings([normalizedContent])
       const chunkId = createDeterministicChunkId(paperId, normalizedContent, 0)
+      const metadata = extractChunkMetadata(normalizedContent, 0)
 
-      const { error } = await supabase
+      const { error } = await serviceClient
         .from('paper_chunks')
         .upsert({
           id: chunkId,
           paper_id: paperId,
           chunk_index: 0,
           content: normalizedContent,
-          embedding
+          embedding,
+          metadata
         }, {
           onConflict: 'id',
           ignoreDuplicates: true
@@ -287,19 +293,27 @@ export async function createChunksForPaper(
 
     // Generate embeddings for all chunks
     const { generateEmbeddings } = await import('@/lib/utils/embedding')
+    const { extractMetadataForChunks } = await import('./chunk-metadata')
+    
     const chunkTexts = chunks.map(chunk => chunk.content)
     const embeddings = await generateEmbeddings(chunkTexts)
+    
+    // Extract metadata for each chunk (section type, citations, etc.)
+    const metadataList = extractMetadataForChunks(
+      chunks.map((c, idx) => ({ content: c.content, chunk_index: idx }))
+    )
 
-    // Insert chunks into database with embeddings
+    // Insert chunks into database with embeddings and metadata
     const chunkData = chunks.map((chunk, index) => ({
       id: chunk.id,
       paper_id: paperId,
       chunk_index: index,
       content: chunk.content,
-      embedding: embeddings[index]
+      embedding: embeddings[index],
+      metadata: metadataList[index]
     }))
     
-    let { error } = await supabase
+    let { error } = await serviceClient
       .from('paper_chunks')
       .upsert(chunkData, {
         onConflict: 'id',

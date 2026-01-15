@@ -1,22 +1,23 @@
 import 'server-only'
 import { getSB } from '@/lib/supabase/server'
-import { generateEmbeddings } from '@/lib/utils/embedding'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
- * Base RAG Retrieval Service
+ * Base RAG Utilities
  * 
- * Provides shared utilities for RAG retrieval used by both
- * paper generation and editor autocomplete contexts.
+ * Shared types and utilities for RAG retrieval.
  * 
- * Specialized services extend this with:
- * - GenerationContext: Caching, batch processing for multi-section generation
- * - EditorContext: Claims retrieval, citation verification for autocomplete
+ * For retrieval, use:
+ * - ChunkRetriever: Focused retrieval with reranking and multi-query support
+ * - ContextBuilder: Context compression and formatting
+ * - GenerationContextService: High-level API with caching for generation pipeline
  */
 
 // =============================================================================
 // SHARED TYPES
 // =============================================================================
+
+export type SearchMode = 'hybrid' | 'vector' | 'keyword'
 
 export interface RetrievedChunk {
   id?: string
@@ -25,6 +26,10 @@ export interface RetrievedChunk {
   score: number
   chunk_index?: number
   metadata?: Record<string, unknown>
+  /** Vector similarity score (0-1) */
+  vector_score?: number
+  /** Keyword/BM25 score */
+  keyword_score?: number
 }
 
 export interface PaperMetadata {
@@ -34,12 +39,6 @@ export interface PaperMetadata {
   year: number
   doi?: string
   venue?: string
-}
-
-export interface BaseRetrievalOptions {
-  paperIds: string[]
-  limit?: number
-  minScore?: number
 }
 
 export interface BaseRetrievalResult {
@@ -114,54 +113,50 @@ export function createEmptyResult(): BaseRetrievalResult {
   }
 }
 
-// =============================================================================
-// BASE RETRIEVAL FUNCTIONS
-// =============================================================================
-
 /**
- * Search paper chunks using vector similarity
+ * Reciprocal Rank Fusion for combining multiple result sets.
+ * Used for multi-query RAG or client-side result merging.
+ * 
+ * @param resultSets - Array of result sets to merge
+ * @param k - RRF constant (default 60)
+ * @returns Merged and re-ranked chunks
  */
-export async function searchChunks(
-  query: string,
-  options: BaseRetrievalOptions
-): Promise<RetrievedChunk[]> {
-  const { paperIds, limit = 20, minScore = 0.2 } = options
+export function reciprocalRankFusion(
+  resultSets: RetrievedChunk[][],
+  k: number = 60
+): RetrievedChunk[] {
+  const scoreMap = new Map<string, { chunk: RetrievedChunk; rrfScore: number }>()
   
-  if (!query.trim() || paperIds.length === 0) {
-    return []
+  for (const results of resultSets) {
+    for (let rank = 0; rank < results.length; rank++) {
+      const chunk = results[rank]
+      const key = chunk.id || `${chunk.paper_id}:${chunk.content.slice(0, 50)}`
+      
+      const existing = scoreMap.get(key)
+      const rrfContribution = 1 / (k + rank + 1)
+      
+      if (existing) {
+        existing.rrfScore += rrfContribution
+        // Keep the higher individual score
+        if (chunk.score > existing.chunk.score) {
+          existing.chunk = chunk
+        }
+      } else {
+        scoreMap.set(key, { 
+          chunk: { ...chunk }, 
+          rrfScore: rrfContribution 
+        })
+      }
+    }
   }
   
-  const supabase = await getSB()
-  
-  // Generate embedding for query
-  const [queryEmbedding] = await generateEmbeddings([query])
-  
-  // Search using RPC
-  const { data, error } = await supabase.rpc('match_paper_chunks', {
-    query_embedding: queryEmbedding,
-    match_count: limit * 2, // Fetch extra to filter
-    min_score: minScore,
-    paper_ids: paperIds
-  })
-  
-  if (error) {
-    console.warn('Chunk search failed:', error)
-    return []
-  }
-  
-  // Process and filter results
-  const chunks: RetrievedChunk[] = (data || [])
-    .filter((c: { score: number }) => c.score >= minScore)
-    .slice(0, limit)
-    .map((c: { id?: string; paper_id: string; content: string; score: number; chunk_index?: number }) => ({
-      id: c.id,
-      paper_id: c.paper_id,
-      content: c.content,
-      score: normalizeScore(c.score),
-      chunk_index: c.chunk_index
+  // Sort by RRF score and return
+  return Array.from(scoreMap.values())
+    .sort((a, b) => b.rrfScore - a.rrfScore)
+    .map(({ chunk, rrfScore }) => ({
+      ...chunk,
+      score: rrfScore // Replace score with RRF score
     }))
-  
-  return chunks
 }
 
 /**

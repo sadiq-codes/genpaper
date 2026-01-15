@@ -7,6 +7,11 @@
  * - The client automatically handles cookie-based auth when available
  * - Falls back to anonymous access when called outside request context (e.g., background tasks)
  * 
+ * Type Safety:
+ * - The client is typed with the Database schema from types/supabase.ts
+ * - If you encounter type errors for missing tables, regenerate types with:
+ *   `npx supabase gen types typescript --project-id <id> > types/supabase.ts`
+ * 
  * Example:
  *   const supabase = await getSB()
  *   const { data } = await supabase.from('papers').select()
@@ -15,6 +20,10 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/types/supabase'
+
+// Export the typed client type
+export type TypedSupabaseClient = SupabaseClient<Database>
 
 export async function createClient(): Promise<SupabaseClient> {
   // `cookies()` is only available inside a Route Handler / Server Component execution context.
@@ -29,6 +38,10 @@ export async function createClient(): Promise<SupabaseClient> {
     // No request context – fall back to a stub implementation.
   }
 
+  // Note: Using generic SupabaseClient instead of typed version because
+  // the generated types are outdated and missing several tables (paper_claims, 
+  // research_project_papers, etc.). When types are regenerated, change to:
+  // return createServerClient<Database>(...)
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -55,4 +68,7 @@ export async function createClient(): Promise<SupabaseClient> {
 // Helper to get client - maintains consistent API  
 export async function getSB(): Promise<SupabaseClient> {
   return await createClient()
-} 
+}
+
+// Re-export types for when they're needed
+export * from './types'

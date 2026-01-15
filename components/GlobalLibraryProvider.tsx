@@ -163,7 +163,11 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
   )
 }
 
-// Hook to use the global library context
+/**
+ * Hook to use the global library context.
+ * Currently unused but available for components that need direct library access.
+ * The drawer can be opened via the GlobalLibraryProvider's onOpen callback.
+ */
 export function useGlobalLibrary() {
   const context = useContext(GlobalLibraryContext)
   if (!context) {

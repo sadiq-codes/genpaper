@@ -19,6 +19,15 @@ import { getSB } from '@/lib/supabase/server'
 import { createClient as createSB } from '@/lib/supabase/client'
 import { generateQueryRewrites } from '@/lib/search/query-rewrite'
 import { semanticRerank, quickRelevanceCheck } from '@/lib/search/semantic-rerank'
+import { deduplicatePapers, normalizeTitle } from '@/lib/search/deduplication'
+import { 
+  isSourceAvailable, 
+  recordSuccess, 
+  recordFailure,
+  CircuitOpenError 
+} from '@/lib/search/circuit-breaker'
+import { getCached, setCached } from '@/lib/search/source-cache'
+import { getServiceClient } from '@/lib/supabase/service'
 
 // Enhanced paper type with ranking metadata
 export interface RankedPaper extends AcademicPaper {
@@ -147,88 +156,7 @@ function calculateRecencyScore(year: number): number {
   return Math.max(0, (year - (currentYear - 10)) * 0.1) // Boost papers from last 10 years
 }
 
-// Helper to normalize titles for deduplication
-function normalizeTitle(title: string): string {
-  return title.toLowerCase()
-    .replace(/[^\w\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-// Enhanced deduplication with arXiv preprint handling (no object mutation)
-// Uses both canonical_id AND normalized title to catch duplicates from different sources
-function deduplicatePapers(papers: AcademicPaper[]): AcademicPaper[] {
-  const seenCanonicalIds = new Set<string>()
-  const seenTitles = new Set<string>()  // Secondary dedup by normalized title
-  const deduplicated: AcademicPaper[] = []
-  const arxivPapers = new Map<string, AcademicPaper>()
-  const journalPapers = new Map<string, AcademicPaper>()
-  
-  // Sort by citation count descending to prefer higher-cited duplicates
-  const sorted = papers.sort((a, b) => b.citationCount - a.citationCount)
-  
-  // First pass: identify arXiv preprints and journal papers
-  for (const paper of sorted) {
-    const normalizedTitle = normalizeTitle(paper.title)
-    
-    if (paper.source === 'arxiv') {
-      arxivPapers.set(normalizedTitle, paper)
-    } else if (paper.doi) {
-      journalPapers.set(normalizedTitle, paper)
-    }
-  }
-  
-  // Second pass: deduplicate with arXiv preprint vs journal DOI preference
-  // Also check normalized title to catch same paper from different APIs
-  for (const paper of sorted) {
-    const normalizedTitle = normalizeTitle(paper.title)
-    
-    // Skip if we've already seen this canonical_id OR this title
-    if (seenCanonicalIds.has(paper.canonical_id) || seenTitles.has(normalizedTitle)) {
-      continue
-    }
-    
-    // Check for arXiv preprint vs journal version
-    if (paper.source === 'arxiv' && journalPapers.has(normalizedTitle)) {
-      const journalVersion = journalPapers.get(normalizedTitle)!
-      // Create new object instead of mutating - prevent side effects
-      const enhancedJournal = {
-        ...journalVersion,
-        preprint_id: paper.url,
-        siblings: [paper.canonical_id]
-      } as RankedPaper
-      
-      seenCanonicalIds.add(paper.canonical_id)
-      seenCanonicalIds.add(journalVersion.canonical_id)
-      seenTitles.add(normalizedTitle)
-      
-      // Only add if journal version not already added
-      if (!deduplicated.find(p => p.canonical_id === journalVersion.canonical_id)) {
-        deduplicated.push(enhancedJournal)
-      }
-    } else if (paper.doi && arxivPapers.has(normalizedTitle)) {
-      const arxivVersion = arxivPapers.get(normalizedTitle)!
-      // Create new object instead of mutating
-      const enhancedJournal = {
-        ...paper,
-        preprint_id: arxivVersion.url,
-        siblings: [arxivVersion.canonical_id]
-      } as RankedPaper
-      
-      seenCanonicalIds.add(paper.canonical_id)
-      seenCanonicalIds.add(arxivVersion.canonical_id)
-      seenTitles.add(normalizedTitle)
-      deduplicated.push(enhancedJournal)
-    } else {
-      // No duplicate found, add as-is
-      seenCanonicalIds.add(paper.canonical_id)
-      seenTitles.add(normalizedTitle)
-      deduplicated.push(paper)
-    }
-  }
-  
-  return deduplicated
-}
+// deduplicatePapers and normalizeTitle are now imported from @/lib/search/deduplication
 
 // Rank papers using corrected scoring (no double authority weighting)
 function rankPapers(
@@ -334,14 +262,29 @@ export async function parallelSearch(
   console.log(`Parallel search target paper threshold set to ${TARGET_PAPERS}`)
   
   // **PARALLEL SEARCH**: query each requested source concurrently and merge results
+  // Integrates circuit breaker (fail fast on unhealthy sources) and caching (avoid redundant calls)
   async function querySource(source: SupportedSource): Promise<AcademicPaper[]> {
     const searchOptions = { ...options, limit: Math.min(limit, 25), fastMode }
     const sourceTimeout = fastMode ? 6000 : 15000 // 6s vs 15s timeout
 
+    // Circuit breaker check - skip unhealthy sources
+    if (!isSourceAvailable(source)) {
+      console.log(`⚡ Skipping ${source} (circuit open)`)
+      return []
+    }
+
+    // Check cache first
+    const cacheKey = { ...searchOptions, includePreprints }
+    const cached = getCached<AcademicPaper[]>(source, primaryQuery, cacheKey)
+    if (cached) {
+      console.log(`💾 Cache hit for ${source} (${cached.length} papers)`)
+      return cached
+    }
+
     try {
       console.log(`🔍 Searching ${source} in parallel…`)
       
-      return await withAbortableTimeout(async (_signal) => {
+      const results = await withAbortableTimeout(async (_signal) => {
         void _signal // reference to avoid unused variable lint error
         // Note: signal parameter ready for future enhancement when academic APIs support AbortSignal
         switch (source) {
@@ -360,7 +303,15 @@ export async function parallelSearch(
         }
       }, sourceTimeout)
       
+      // Record success and cache results
+      recordSuccess(source)
+      setCached(source, primaryQuery, results, cacheKey)
+      
+      return results
+      
     } catch (error) {
+      // Record failure for circuit breaker
+      recordFailure(source, error instanceof Error ? error : new Error(String(error)))
       console.log(`❌ ${source} failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       return [] // Swallow individual failure but continue overall search
     }
@@ -549,8 +500,41 @@ export async function searchAndIngestPapers(
   return { papers: ingestedPapers, ingestedIds }
 }
 
+// In-memory lock to prevent concurrent processing of the same paper
+// Key: DOI or normalized title, Value: Promise that resolves when processing completes
+const paperProcessingLocks = new Map<string, Promise<{ paperId: string; paper: RankedPaper }>>()
+
+function getPaperLockKey(paper: RankedPaper): string {
+  return paper.doi || normalizeTitle(paper.title)
+}
+
 // Extract paper processing logic into separate function for parallel execution
 async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = ''): Promise<{ paperId: string; paper: RankedPaper }> {
+    const lockKey = getPaperLockKey(paper)
+    
+    // Check if this paper is already being processed
+    const existingLock = paperProcessingLocks.get(lockKey)
+    if (existingLock) {
+      console.log(`⏳ Paper already being processed, waiting: ${paper.title.slice(0, 50)}...`)
+      return existingLock
+    }
+    
+    // Create a new lock for this paper
+    const processingPromise = (async () => {
+      try {
+        return await processPaperWithPdfInternal(paper, searchQuery)
+      } finally {
+        // Clean up lock after processing completes
+        paperProcessingLocks.delete(lockKey)
+      }
+    })()
+    
+    paperProcessingLocks.set(lockKey, processingPromise)
+    return processingPromise
+}
+
+// Internal implementation of paper processing
+async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: string = ''): Promise<{ paperId: string; paper: RankedPaper }> {
     const paperDTO = convertToPaperDTO(paper, searchQuery)
     
     // Step 1: Ensure paper exists in DB first (get actual paperId)
@@ -594,8 +578,10 @@ async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = '')
       console.log(`📄 Paper has ${existingChunkCount} chunks - attempting PDF upgrade: ${paperDTO.title}`)
       
       // Clear existing abstract-only chunks before adding full-text content
+      // Use service client to bypass RLS (paper_chunks requires service_role for writes)
       try {
-        await supabase
+        const serviceClient = getServiceClient()
+        await serviceClient
           .from('paper_chunks')
           .delete()
           .eq('paper_id', paperId)

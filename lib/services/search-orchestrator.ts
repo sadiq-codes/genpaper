@@ -8,6 +8,7 @@ import { DEFAULT_WEIGHTS } from '@/lib/services/paper-aggregation'
 import pLimit from 'p-limit'
 import { generateDeterministicAuthorId, generateDeterministicPaperId } from '@/lib/utils/deterministic-id'
 import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
+import { deduplicatePapers, simpleDeduplicatePapers } from '@/lib/search/deduplication'
 
 /**
  * @services/search-orchestrator
@@ -38,37 +39,11 @@ export interface UnifiedSearchResult {
   }
 }
 
-// Normalize title for deduplication comparison
-function normalizeTitleForDedup(title: string): string {
-  return title.toLowerCase()
-    .replace(/[^\w\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-// Enhanced deduplication helper - uses DOI and normalized title as primary keys
-// to catch duplicates even when database IDs differ
+// dedupePapers helper - uses the consolidated deduplication module
+// For PaperWithAuthors, we use simpleDeduplicatePapers since these are already ingested
+// and don't need preprint linking (that happens during initial aggregation)
 function dedupePapers(papers: PaperWithAuthors[]): PaperWithAuthors[] {
-  const seenDois = new Set<string>()
-  const seenTitles = new Set<string>()
-  const deduped: PaperWithAuthors[] = []
-  
-  for (const paper of papers) {
-    const normalizedTitle = normalizeTitleForDedup(paper.title)
-    const normalizedDoi = paper.doi?.toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, '').trim()
-    
-    // Check if we've seen this DOI or title before
-    const isDuplicateDoi = normalizedDoi && seenDois.has(normalizedDoi)
-    const isDuplicateTitle = seenTitles.has(normalizedTitle)
-    
-    if (!isDuplicateDoi && !isDuplicateTitle) {
-      if (normalizedDoi) seenDois.add(normalizedDoi)
-      seenTitles.add(normalizedTitle)
-      deduped.push(paper)
-    }
-  }
-  
-  return deduped
+  return simpleDeduplicatePapers(papers)
 }
 
 // Convert RankedPaper to PaperWithAuthors format

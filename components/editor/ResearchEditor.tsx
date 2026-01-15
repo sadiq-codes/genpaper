@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react"
+import { useState, useCallback, useEffect, useMemo } from "react"
 import type { Editor } from "@tiptap/react"
 import { EditorTopNav } from "./EditorTopNav"
 import { EditorSidebar } from "./sidebar/EditorSidebar"
@@ -20,24 +20,28 @@ import {
 import { ChevronLeft, ChevronRight, Menu, X, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 import type {
-  ChatMessage,
   ProjectPaper,
   Citation,
   ExtractedClaim,
   ResearchGap,
-  AnalysisState,
   AnalysisOutput,
 } from "./types"
 import { cn } from "@/lib/utils"
 import { processContent } from "./utils/content-processor"
 import { editorToMarkdown } from "./utils/tiptap-to-markdown"
 import { GenerationProgress } from "./GenerationProgress"
-import { 
-  useCitationManagerConfig, 
-  useCitationPrefetch, 
+
+// Hooks
+import {
+  useEditorState,
+  useAnalysis,
+  usePaperManagement,
+  useChat,
+  useBackgroundPaperSearch,
+  useCitationManagerConfig,
+  useCitationPrefetch,
   extractCitationIdsFromEditor,
-  type CitationStyle 
-} from "./hooks/useCitationManager"
+} from "./hooks"
 
 // CitationStyleType now accepts any CSL style ID string
 export type CitationStyleType = string
@@ -74,56 +78,97 @@ export function ResearchEditor({
   isGenerating: initialIsGenerating = false,
   isWriteMode = false,
 }: ResearchEditorProps) {
-  // Editor state
+  // ============================================================================
+  // Core State
+  // ============================================================================
+  
   const [editor, setEditor] = useState<Editor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeTab, setActiveTab] = useState<"chat" | "research">("research")
-
-  // Mobile state
   const [isMobile, setIsMobile] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-
-  // Chat state
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
-  const [isChatLoading, setIsChatLoading] = useState(false)
-
-  // Library state
-  const [papers, setPapers] = useState<ProjectPaper[]>(initialPapers)
   const [libraryDrawerOpen, setLibraryDrawerOpen] = useState(false)
-
-  // Settings modal state
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
-  
-  // Citation style state - can be updated from settings modal
   const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
+  const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
 
-  // Analysis state
-  const [analysisState, setAnalysisState] = useState<AnalysisState>({
-    status: initialAnalysis ? "complete" : "idle",
-    claims: initialAnalysis?.claims || [],
-    userClaims: [], // Will be populated when hasOriginalResearch
-    gaps: initialAnalysis?.gaps || [],
-    synthesis: initialAnalysis?.synthesis || null,
-    positioning: null,
-    hasOriginalResearch: false,
+  // ============================================================================
+  // Custom Hooks
+  // ============================================================================
+
+  // Editor content state & auto-save
+  const {
+    content,
+    hasUnsavedChanges,
+    setContent,
+    markAsEdited,
+    setContentSilent,
+  } = useEditorState({
+    projectId,
+    initialContent,
+    onSave,
   })
 
-  // Remove paper confirmation dialog
-  const [removePaperDialog, setRemovePaperDialog] = useState<{
-    open: boolean
-    paperId: string
-    paperTitle: string
-    claimCount: number
-  }>({ open: false, paperId: "", paperTitle: "", claimCount: 0 })
+  // Paper management
+  const {
+    papers,
+    setPapers,
+    addPaper,
+    removePaper,
+    confirmRemovePaper,
+    removePaperDialog,
+    closeRemovePaperDialog,
+  } = usePaperManagement({
+    projectId,
+    initialPapers,
+    onPaperAdded: () => runAnalysis(),
+    onPaperRemoved: (paperId) => {
+      setAnalysisState(prev => ({
+        ...prev,
+        claims: prev.claims.filter(c => c.paper_id !== paperId),
+      }))
+    },
+  })
 
-  // Content state for auto-save
-  const [content, setContent] = useState(initialContent || "")
-  
-  // Track if user has made any edits (to prevent auto-save on initial load)
-  const [hasUserEdited, setHasUserEdited] = useState(false)
+  // Analysis state
+  const {
+    analysisState,
+    runAnalysis,
+    setAnalysisState,
+  } = useAnalysis({
+    projectId,
+    projectTitle,
+    papers,
+    initialAnalysis,
+  })
 
-  // Generation state
-  const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
+  // Background paper search for write mode
+  // Note: isSearching could be used for sidebar loading indicator in future
+  const { isSearching: _isSearchingPapers } = useBackgroundPaperSearch({
+    projectId,
+    topic: projectTopic || projectTitle,
+    enabled: isWriteMode && papers.length === 0,
+    maxPapers: 10,
+    onPapersFound: (foundPapers) => {
+      setPapers(prev => [...prev, ...foundPapers])
+    },
+  })
+
+  // Chat
+  const {
+    messages: chatMessages,
+    isLoading: isChatLoading,
+    sendMessage: handleSendMessage,
+  } = useChat({
+    projectId,
+    editor,
+    papers,
+    analysisState,
+  })
+
+  // ============================================================================
+  // Effects
+  // ============================================================================
 
   // Sync isGenerating with prop changes (important for SSR hydration)
   useEffect(() => {
@@ -145,317 +190,19 @@ export function ResearchEditor({
     return () => window.removeEventListener("resize", checkMobile)
   }, [])
 
-  // Write mode: Show welcome toast and trigger background paper search
+  // Write mode: Show welcome toast
   useEffect(() => {
     if (!isWriteMode || !projectId || !projectTopic) return
     
-    // Show welcome message
     toast.success("Ready to write!", {
       description: "Start writing your paper. We're finding relevant sources in the background.",
       duration: 5000,
     })
-
-    // TODO: Trigger background paper search based on projectTopic
-    // This would call an API endpoint that:
-    // 1. Searches for papers based on the topic
-    // 2. Adds them to the project asynchronously
-    // 3. The sidebar would update as papers are found
-    // For now, papers will be empty until user adds them manually from library
-    
   }, [isWriteMode, projectId, projectTopic])
 
-  // Auto-run analysis on mount if papers exist but no analysis
-  useEffect(() => {
-    if (projectId && papers.length > 0 && analysisState.status === "idle" && analysisState.claims.length === 0) {
-      handleRunAnalysis()
-    }
-  }, [projectId, papers.length]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Track if content has unsaved changes
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const contentRef = useRef(content)
-
-  // Keep ref in sync
-  useEffect(() => {
-    contentRef.current = content
-  }, [content])
-
-  // Save function
-  const saveContent = useCallback(async () => {
-    if (!projectId || !contentRef.current) return
-    try {
-      await fetch("/api/editor/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, content: contentRef.current }),
-      })
-      setHasUnsavedChanges(false)
-      onSave?.(contentRef.current)
-    } catch (error) {
-      console.error("Auto-save failed:", error)
-    }
-  }, [projectId, onSave])
-
-  // Auto-save effect with debounce
-  // Only save after user has made actual edits (not on initial load)
-  useEffect(() => {
-    if (!projectId || !content || !hasUserEdited) return
-
-    setHasUnsavedChanges(true)
-    const timer = setTimeout(() => {
-      saveContent()
-    }, 2000)
-    return () => clearTimeout(timer)
-  }, [content, projectId, saveContent, hasUserEdited])
-
-  // Save on page unload
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasUnsavedChanges) {
-        saveContent()
-        e.preventDefault()
-        e.returnValue = ""
-      }
-    }
-
-    window.addEventListener("beforeunload", handleBeforeUnload)
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload)
-  }, [hasUnsavedChanges, saveContent])
-
-  // Run analysis
-  const handleRunAnalysis = useCallback(async () => {
-    if (!projectId || papers.length === 0) return
-
-    setAnalysisState((prev) => ({ ...prev, status: "analyzing" }))
-
-    try {
-      const response = await fetch("/api/analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          paperIds: papers.map((p) => p.id),
-          topic: projectTitle,
-          analysisType: "full",
-        }),
-      })
-
-      if (!response.ok) throw new Error("Analysis failed")
-
-      // Refetch analysis data
-      const analysisResponse = await fetch(`/api/analysis?projectId=${projectId}`)
-      if (analysisResponse.ok) {
-        const data = await analysisResponse.json()
-
-        // Flatten claims and add paper info
-        const allClaims: ExtractedClaim[] = []
-        for (const paperId of Object.keys(data.claims || {})) {
-          const paper = papers.find((p) => p.id === paperId)
-          const paperClaims = (data.claims[paperId] || []).map((claim: ExtractedClaim) => ({
-            ...claim,
-            paper_title: paper?.title,
-            paper_authors: paper?.authors,
-            paper_year: paper?.year,
-          }))
-          allClaims.push(...paperClaims)
-        }
-
-        setAnalysisState((prev) => ({
-          ...prev,
-          status: "complete",
-          claims: allClaims,
-          gaps: data.gaps || [],
-          synthesis: data.analyses?.find((a: AnalysisOutput) => a.analysis_type === "synthesis") || null,
-          lastAnalyzedAt: new Date().toISOString(),
-          // Preserve or update user claims and positioning from response
-          userClaims: data.userClaims || prev.userClaims || [],
-          positioning: data.positioning || prev.positioning || null,
-          hasOriginalResearch: data.hasOriginalResearch || prev.hasOriginalResearch || false,
-        }))
-
-        toast.success("Analysis complete", {
-          description: `${allClaims.length} claims extracted, ${(data.gaps || []).length} gaps found`,
-        })
-      }
-    } catch (error) {
-      console.error("Analysis failed:", error)
-      setAnalysisState((prev) => ({
-        ...prev,
-        status: "error",
-        error: error instanceof Error ? error.message : "Analysis failed",
-      }))
-      toast.error("Analysis failed", {
-        description: "Please try again",
-      })
-    }
-  }, [projectId, papers, projectTitle])
-
-  // Handle adding paper from library drawer
-  const handleAddPaperToProject = useCallback(
-    async (paperId: string, title: string) => {
-      if (!projectId) return
-
-      try {
-        const response = await fetch("/api/editor/papers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId, paperId }),
-        })
-
-        const data = await response.json()
-
-        if (response.status === 409) {
-          toast.info("Paper already in project")
-          return
-        }
-
-        if (!response.ok) {
-          throw new Error(data.error || "Failed to add paper")
-        }
-
-        setPapers((prev) => [...prev, data.paper])
-        setLibraryDrawerOpen(false)
-
-        toast.success("Paper added to project", {
-          description: title.slice(0, 50) + (title.length > 50 ? "..." : ""),
-          action: {
-            label: "Re-analyze",
-            onClick: () => handleRunAnalysis(),
-          },
-        })
-      } catch (error) {
-        console.error("Error adding paper:", error)
-        toast.error("Failed to add paper")
-      }
-    },
-    [projectId, handleRunAnalysis],
-  )
-
-  // Handle removing paper from project
-  const handleRemovePaper = useCallback(
-    (paperId: string, claimCount: number) => {
-      const paper = papers.find((p) => p.id === paperId)
-      if (!paper) return
-
-      setRemovePaperDialog({
-        open: true,
-        paperId,
-        paperTitle: paper.title,
-        claimCount,
-      })
-    },
-    [papers],
-  )
-
-  const confirmRemovePaper = useCallback(
-    async (deleteClaims: boolean) => {
-      if (!projectId) return
-
-      const { paperId } = removePaperDialog
-
-      try {
-        const response = await fetch(
-          `/api/editor/papers?projectId=${projectId}&paperId=${paperId}&deleteClaims=${deleteClaims}`,
-          { method: "DELETE" },
-        )
-
-        if (!response.ok) {
-          throw new Error("Failed to remove paper")
-        }
-
-        const data = await response.json()
-
-        setPapers((prev) => prev.filter((p) => p.id !== paperId))
-
-        if (deleteClaims) {
-          setAnalysisState((prev) => ({
-            ...prev,
-            claims: prev.claims.filter((c) => c.paper_id !== paperId),
-          }))
-        }
-
-        toast.success("Paper removed", {
-          description: data.claimsDeleted > 0 ? `${data.claimsDeleted} claims also removed` : undefined,
-        })
-      } catch (error) {
-        console.error("Error removing paper:", error)
-        toast.error("Failed to remove paper")
-      } finally {
-        setRemovePaperDialog({ open: false, paperId: "", paperTitle: "", claimCount: 0 })
-      }
-    },
-    [projectId, removePaperDialog],
-  )
-
-  // Handle sending chat message
-  const handleSendMessage = useCallback(
-    async (messageContent: string) => {
-      const userMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: messageContent,
-        timestamp: new Date(),
-      }
-      setChatMessages((prev) => [...prev, userMessage])
-      setIsChatLoading(true)
-
-      try {
-        const response = await fetch("/api/editor/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId,
-            message: messageContent,
-            documentContent: editor ? editorToMarkdown(editor) : "",
-            papers: papers.map((p) => ({ id: p.id, title: p.title, abstract: p.abstract })),
-            claims: analysisState.claims.slice(0, 20),
-            gaps: analysisState.gaps,
-          }),
-        })
-
-        if (!response.ok) throw new Error("Failed to get AI response")
-
-        const data = await response.json()
-
-        const assistantMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: data.response,
-          timestamp: new Date(),
-          citations: data.citations,
-        }
-        setChatMessages((prev) => [...prev, assistantMessage])
-
-        if (data.edits && editor) {
-          data.edits.forEach((edit: { type: string; content: string }) => {
-            if (edit.type === "insert") {
-              const { json: processedContent, isFullDoc } = processContent(edit.content, papers)
-
-              if (isFullDoc && processedContent.content) {
-                editor.chain().focus().insertContent(processedContent.content).run()
-              } else if (Array.isArray(processedContent) && processedContent.length > 0) {
-                editor.chain().focus().insertContent(processedContent).run()
-              } else {
-                editor.chain().focus().insertContent(edit.content).run()
-              }
-            }
-          })
-        }
-      } catch (error) {
-        console.error("Chat error:", error)
-        const errorMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: "Sorry, I encountered an error. Please try again.",
-          timestamp: new Date(),
-        }
-        setChatMessages((prev) => [...prev, errorMessage])
-      } finally {
-        setIsChatLoading(false)
-      }
-    },
-    [projectId, editor, papers, analysisState.claims, analysisState.gaps],
-  )
+  // ============================================================================
+  // Handlers
+  // ============================================================================
 
   // Handle AI edit from floating toolbar
   const handleAiEdit = useCallback(
@@ -464,7 +211,7 @@ export function ResearchEditor({
       if (isMobile) setMobileMenuOpen(true)
       handleSendMessage(`Please help me improve this text: "${selectedText}"`)
     },
-    [handleSendMessage, isMobile],
+    [handleSendMessage, isMobile]
   )
 
   // Handle chat from floating toolbar
@@ -474,7 +221,7 @@ export function ResearchEditor({
       if (isMobile) setMobileMenuOpen(true)
       handleSendMessage(`I have a question about: "${selectedText}"`)
     },
-    [handleSendMessage, isMobile],
+    [handleSendMessage, isMobile]
   )
 
   // Handle citation insertion
@@ -484,7 +231,7 @@ export function ResearchEditor({
       editor.chain().focus().insertCitation(citation).run()
       if (isMobile) setMobileMenuOpen(false)
     },
-    [editor, isMobile],
+    [editor, isMobile]
   )
 
   // Handle inserting a claim as plain text with citation
@@ -505,7 +252,7 @@ export function ResearchEditor({
 
       if (isMobile) setMobileMenuOpen(false)
     },
-    [editor, isMobile],
+    [editor, isMobile]
   )
 
   // Handle inserting a gap
@@ -536,7 +283,7 @@ export function ResearchEditor({
 
       if (isMobile) setMobileMenuOpen(false)
     },
-    [editor, isMobile],
+    [editor, isMobile]
   )
 
   // Handle export
@@ -573,16 +320,15 @@ export function ResearchEditor({
         toast.error("Export failed")
       }
     },
-    [editor, projectTitle],
+    [editor, projectTitle]
   )
 
-  // Handle generation completion - update editor content
+  // Handle generation completion
   const handleGenerationComplete = useCallback(
     (generatedContent: string) => {
       setIsGenerating(false)
 
       if (editor && !editor.isDestroyed) {
-        // Process markdown to TipTap JSON
         const { json, isFullDoc } = processContent(generatedContent, papers)
 
         if (isFullDoc && json) {
@@ -604,12 +350,11 @@ export function ResearchEditor({
           })
         }
 
-        // Save the original markdown (not HTML) - editor onUpdate will handle future saves
-        setContent(generatedContent)
-        setHasUserEdited(true) // Mark as edited so auto-save triggers
+        setContentSilent(generatedContent)
+        markAsEdited()
       } else {
-        setContent(generatedContent)
-        setHasUserEdited(true) // Mark as edited so auto-save triggers
+        setContentSilent(generatedContent)
+        markAsEdited()
       }
 
       toast.success("Paper generated successfully!")
@@ -619,7 +364,7 @@ export function ResearchEditor({
       url.searchParams.delete("created")
       window.history.replaceState({}, "", url.toString())
     },
-    [editor, papers],
+    [editor, papers, setContentSilent, markAsEdited]
   )
 
   // Handle generation error
@@ -639,7 +384,32 @@ export function ResearchEditor({
     window.location.href = "/projects"
   }, [])
 
-  // Sidebar content for both desktop and mobile
+  // Handle adding paper from library drawer
+  const handleAddPaperToProject = useCallback(
+    (paperId: string, title: string) => {
+      addPaper(paperId, title)
+      setLibraryDrawerOpen(false)
+    },
+    [addPaper]
+  )
+
+  // ============================================================================
+  // Citation Manager
+  // ============================================================================
+
+  const isCitationManagerConfigured = useCitationManagerConfig(projectId, currentCitationStyle)
+
+  const citationIds = useMemo(() => {
+    if (!editor) return []
+    return extractCitationIdsFromEditor(editor.getJSON())
+  }, [editor, content]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useCitationPrefetch(citationIds, citationIds.length > 0, isCitationManagerConfigured)
+
+  // ============================================================================
+  // Sidebar Content
+  // ============================================================================
+
   const sidebarContent = (
     <EditorSidebar
       activeTab={activeTab}
@@ -652,27 +422,15 @@ export function ResearchEditor({
       onInsertCitation={handleInsertCitation}
       onInsertClaim={handleInsertClaim}
       onInsertGap={handleInsertGap}
-      onRunAnalysis={handleRunAnalysis}
+      onRunAnalysis={runAnalysis}
       onOpenLibrary={() => setLibraryDrawerOpen(true)}
-      onRemovePaper={handleRemovePaper}
+      onRemovePaper={removePaper}
     />
   )
 
-  // Configure CitationManager with project context
-  // Returns true when configured (has valid projectId)
-  // Uses currentCitationStyle which can be updated from settings modal
-  const isCitationManagerConfigured = useCitationManagerConfig(projectId, currentCitationStyle)
-  
-  // Extract citation IDs from editor content for prefetching
-  // Note: content is intentionally in deps to trigger re-extraction when document changes
-  const citationIds = useMemo(() => {
-    if (!editor) return []
-    return extractCitationIdsFromEditor(editor.getJSON())
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, content])
-  
-  // Prefetch all citations in document (waits for configuration)
-  useCitationPrefetch(citationIds, citationIds.length > 0, isCitationManagerConfigured)
+  // ============================================================================
+  // Render
+  // ============================================================================
 
   return (
     <div className="h-screen w-full flex flex-col rounded-3xl border-2 border-foreground/10 overflow-hidden bg-background">
@@ -717,7 +475,7 @@ export function ResearchEditor({
           <div
             className={cn(
               "transition-all duration-300 ease-in-out overflow-hidden",
-              sidebarOpen ? "w-[380px] min-w-[380px]" : "w-0 min-w-0",
+              sidebarOpen ? "w-[380px] min-w-[380px]" : "w-0 min-w-0"
             )}
           >
             <div className="h-full p-3 pr-0">{sidebarContent}</div>
@@ -754,13 +512,11 @@ export function ResearchEditor({
               initialContent={initialContent}
               onUpdate={(newContent) => {
                 setContent(newContent)
-                setHasUserEdited(true)
               }}
               onEditorReady={setEditor}
               onInsertCitation={() => setActiveTab("research")}
               onAiEdit={handleAiEdit}
               onChat={handleChatFromToolbar}
-              // Sentence generation context
               projectId={projectId}
               projectTopic={projectTitle}
               papers={papers}
@@ -779,9 +535,9 @@ export function ResearchEditor({
 
       {/* Project Settings Modal */}
       {projectId && (
-        <ProjectSettingsModal 
-          open={settingsModalOpen} 
-          onOpenChange={setSettingsModalOpen} 
+        <ProjectSettingsModal
+          open={settingsModalOpen}
+          onOpenChange={setSettingsModalOpen}
           projectId={projectId}
           onCitationStyleChange={(style) => setCurrentCitationStyle(style as CitationStyleType)}
         />
@@ -790,7 +546,7 @@ export function ResearchEditor({
       {/* Remove Paper Confirmation Dialog */}
       <Dialog
         open={removePaperDialog.open}
-        onOpenChange={(open) => !open && setRemovePaperDialog((prev) => ({ ...prev, open: false }))}
+        onOpenChange={(open) => !open && closeRemovePaperDialog()}
       >
         <DialogContent>
           <DialogHeader>
@@ -815,7 +571,7 @@ export function ResearchEditor({
           )}
 
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setRemovePaperDialog((prev) => ({ ...prev, open: false }))}>
+            <Button variant="outline" onClick={closeRemovePaperDialog}>
               Cancel
             </Button>
             <Button variant="destructive" onClick={() => confirmRemovePaper(true)}>

@@ -201,8 +201,9 @@ Provide specific, actionable feedback on:
   // Pure utility functions (no I/O)
   static formatEvidenceSnippets(chunks: Array<{ content: string; paper_id: string; title?: string }>): string {
     return JSON.stringify(
-      chunks.slice(0, 10).map((chunk, i) => ({
-        id: i + 1,
+      chunks.slice(0, 10).map((chunk) => ({
+        // Note: Removed numeric "id" field to prevent AI from confusing snippet numbers with paper_id
+        // The paper_id is the ONLY identifier that should be used in [CITE: paper_id] markers
         paper_id: chunk.paper_id,
         title: chunk.title || 'Source',
         // Tag content with paper_id so AI knows which ID to use for [CITE: paper_id]

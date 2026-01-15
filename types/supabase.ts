@@ -7,92 +7,61 @@ export type Json =
   | Json[]
 
 export type Database = {
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          operationName?: string
-          query?: string
-          variables?: Json
-          extensions?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.1"
   }
   public: {
     Tables: {
-      authors: {
+      chunk_citation_log: {
         Row: {
+          chunk_id: string
+          created_at: string | null
           id: string
-          name: string
+          paper_id: string
+          project_id: string
+          query_context: string | null
+          section_type: string | null
+          was_cited: boolean | null
         }
         Insert: {
+          chunk_id: string
+          created_at?: string | null
           id?: string
-          name: string
+          paper_id: string
+          project_id: string
+          query_context?: string | null
+          section_type?: string | null
+          was_cited?: boolean | null
         }
         Update: {
+          chunk_id?: string
+          created_at?: string | null
           id?: string
-          name?: string
-        }
-        Relationships: []
-      }
-      citation_links: {
-        Row: {
-          citation_id: string | null
-          context: string | null
-          created_at: string
-          end_pos: number
-          id: string
-          project_id: string | null
-          reason: string
-          section: string
-          start_pos: number
-        }
-        Insert: {
-          citation_id?: string | null
-          context?: string | null
-          created_at?: string
-          end_pos: number
-          id?: string
-          project_id?: string | null
-          reason: string
-          section: string
-          start_pos: number
-        }
-        Update: {
-          citation_id?: string | null
-          context?: string | null
-          created_at?: string
-          end_pos?: number
-          id?: string
-          project_id?: string | null
-          reason?: string
-          section?: string
-          start_pos?: number
+          paper_id?: string
+          project_id?: string
+          query_context?: string | null
+          section_type?: string | null
+          was_cited?: boolean | null
         }
         Relationships: [
           {
-            foreignKeyName: "citation_links_citation_id_fkey"
-            columns: ["citation_id"]
+            foreignKeyName: "chunk_citation_log_chunk_id_fkey"
+            columns: ["chunk_id"]
             isOneToOne: false
-            referencedRelation: "citations"
+            referencedRelation: "paper_chunks"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "citation_links_project_id_fkey"
+            foreignKeyName: "chunk_citation_log_paper_id_fkey"
+            columns: ["paper_id"]
+            isOneToOne: false
+            referencedRelation: "papers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chunk_citation_log_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "research_projects"
@@ -102,30 +71,52 @@ export type Database = {
       }
       citations: {
         Row: {
-          created_at: string
-          csl_json: Json
+          citation_number: number | null
+          citation_text: string | null
+          context: string | null
+          created_at: string | null
+          csl_json: Json | null
+          first_seen_order: number | null
           id: string
           key: string
-          project_id: string | null
-          updated_at: string
+          paper_id: string | null
+          project_id: string
+          updated_at: string | null
         }
         Insert: {
-          created_at?: string
-          csl_json: Json
+          citation_number?: number | null
+          citation_text?: string | null
+          context?: string | null
+          created_at?: string | null
+          csl_json?: Json | null
+          first_seen_order?: number | null
           id?: string
           key: string
-          project_id?: string | null
-          updated_at?: string
+          paper_id?: string | null
+          project_id: string
+          updated_at?: string | null
         }
         Update: {
-          created_at?: string
-          csl_json?: Json
+          citation_number?: number | null
+          citation_text?: string | null
+          context?: string | null
+          created_at?: string | null
+          csl_json?: Json | null
+          first_seen_order?: number | null
           id?: string
           key?: string
-          project_id?: string | null
-          updated_at?: string
+          paper_id?: string | null
+          project_id?: string
+          updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "citations_paper_id_fkey"
+            columns: ["paper_id"]
+            isOneToOne: false
+            referencedRelation: "papers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "citations_project_id_fkey"
             columns: ["project_id"]
@@ -135,189 +126,64 @@ export type Database = {
           },
         ]
       }
-      collection_papers: {
+      documents: {
         Row: {
-          collection_id: string
-          paper_id: string
-        }
-        Insert: {
-          collection_id: string
-          paper_id: string
-        }
-        Update: {
-          collection_id?: string
-          paper_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "fk_collection_papers_collection"
-            columns: ["collection_id"]
-            isOneToOne: false
-            referencedRelation: "library_collections"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "fk_collection_papers_paper"
-            columns: ["paper_id"]
-            isOneToOne: false
-            referencedRelation: "papers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      failed_chunks: {
-        Row: {
-          chunk_index: number
-          content: string
+          content: string | null
           created_at: string | null
-          error_count: number | null
-          error_message: string | null
           id: string
-          last_attempt_at: string | null
-          paper_id: string | null
+          title: string
+          updated_at: string | null
+          user_id: string
         }
         Insert: {
-          chunk_index: number
-          content: string
+          content?: string | null
           created_at?: string | null
-          error_count?: number | null
-          error_message?: string | null
           id?: string
-          last_attempt_at?: string | null
-          paper_id?: string | null
+          title: string
+          updated_at?: string | null
+          user_id: string
         }
         Update: {
-          chunk_index?: number
-          content?: string
+          content?: string | null
           created_at?: string | null
-          error_count?: number | null
-          error_message?: string | null
           id?: string
-          last_attempt_at?: string | null
-          paper_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "failed_chunks_paper_id_fkey"
-            columns: ["paper_id"]
-            isOneToOne: false
-            referencedRelation: "papers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      library_collections: {
-        Row: {
-          created_at: string
-          description: string | null
-          id: string
-          name: string
-          user_id: string | null
-        }
-        Insert: {
-          created_at?: string
-          description?: string | null
-          id?: string
-          name: string
-          user_id?: string | null
-        }
-        Update: {
-          created_at?: string
-          description?: string | null
-          id?: string
-          name?: string
-          user_id?: string | null
+          title?: string
+          updated_at?: string | null
+          user_id?: string
         }
         Relationships: []
-      }
-      library_paper_tags: {
-        Row: {
-          paper_id: string
-          tag_id: string
-        }
-        Insert: {
-          paper_id: string
-          tag_id: string
-        }
-        Update: {
-          paper_id?: string
-          tag_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "fk_library_paper_tags_paper"
-            columns: ["paper_id"]
-            isOneToOne: false
-            referencedRelation: "library_papers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "fk_library_paper_tags_tag"
-            columns: ["tag_id"]
-            isOneToOne: false
-            referencedRelation: "tags"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       library_papers: {
         Row: {
           added_at: string
+          collection: string | null
           id: string
           notes: string | null
-          paper_id: string | null
-          user_id: string | null
+          paper_id: string
+          tags: string[] | null
+          user_id: string
         }
         Insert: {
           added_at?: string
+          collection?: string | null
           id?: string
           notes?: string | null
-          paper_id?: string | null
-          user_id?: string | null
+          paper_id: string
+          tags?: string[] | null
+          user_id: string
         }
         Update: {
           added_at?: string
+          collection?: string | null
           id?: string
           notes?: string | null
-          paper_id?: string | null
-          user_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "fk_library_papers_paper"
-            columns: ["paper_id"]
-            isOneToOne: false
-            referencedRelation: "papers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      paper_authors: {
-        Row: {
-          author_id: string
-          ordinal: number | null
-          paper_id: string
-        }
-        Insert: {
-          author_id: string
-          ordinal?: number | null
-          paper_id: string
-        }
-        Update: {
-          author_id?: string
-          ordinal?: number | null
           paper_id?: string
+          tags?: string[] | null
+          user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "paper_authors_author_id_fkey"
-            columns: ["author_id"]
-            isOneToOne: false
-            referencedRelation: "authors"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "paper_authors_paper_id_fkey"
+            foreignKeyName: "library_papers_paper_id_fkey"
             columns: ["paper_id"]
             isOneToOne: false
             referencedRelation: "papers"
@@ -329,35 +195,32 @@ export type Database = {
         Row: {
           chunk_index: number
           content: string
+          content_tsv: unknown
           created_at: string | null
-          embedding: string | null
-          error_count: number | null
+          embedding: string
           id: string
-          last_error: string | null
-          paper_id: string | null
-          processing_status: string | null
+          metadata: Json | null
+          paper_id: string
         }
         Insert: {
           chunk_index: number
           content: string
+          content_tsv?: unknown
           created_at?: string | null
-          embedding?: string | null
-          error_count?: number | null
+          embedding: string
           id?: string
-          last_error?: string | null
-          paper_id?: string | null
-          processing_status?: string | null
+          metadata?: Json | null
+          paper_id: string
         }
         Update: {
           chunk_index?: number
           content?: string
+          content_tsv?: unknown
           created_at?: string | null
-          embedding?: string | null
-          error_count?: number | null
+          embedding?: string
           id?: string
-          last_error?: string | null
-          paper_id?: string | null
-          processing_status?: string | null
+          metadata?: Json | null
+          paper_id?: string
         }
         Relationships: [
           {
@@ -369,20 +232,65 @@ export type Database = {
           },
         ]
       }
+      paper_claims: {
+        Row: {
+          claim_text: string
+          claim_type: string | null
+          confidence: number | null
+          created_at: string | null
+          embedding: string | null
+          evidence_quote: string | null
+          id: string
+          metadata: Json | null
+          paper_id: string
+          section: string | null
+        }
+        Insert: {
+          claim_text: string
+          claim_type?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          embedding?: string | null
+          evidence_quote?: string | null
+          id?: string
+          metadata?: Json | null
+          paper_id: string
+          section?: string | null
+        }
+        Update: {
+          claim_text?: string
+          claim_type?: string | null
+          confidence?: number | null
+          created_at?: string | null
+          embedding?: string | null
+          evidence_quote?: string | null
+          id?: string
+          metadata?: Json | null
+          paper_id?: string
+          section?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "paper_claims_paper_id_fkey"
+            columns: ["paper_id"]
+            isOneToOne: false
+            referencedRelation: "papers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       papers: {
         Row: {
           abstract: string | null
+          authors: Json | null
           citation_count: number | null
           created_at: string
-          csl_json: Json | null
           doi: string | null
-          embedding: string | null
+          embedding: string
           id: string
-          impact_score: number | null
-          metadata: Json | null
+          pdf_content: string | null
           pdf_url: string | null
           publication_date: string | null
-          search_vector: unknown | null
           source: string | null
           title: string
           url: string | null
@@ -390,17 +298,15 @@ export type Database = {
         }
         Insert: {
           abstract?: string | null
+          authors?: Json | null
           citation_count?: number | null
           created_at?: string
-          csl_json?: Json | null
           doi?: string | null
-          embedding?: string | null
+          embedding: string
           id?: string
-          impact_score?: number | null
-          metadata?: Json | null
+          pdf_content?: string | null
           pdf_url?: string | null
           publication_date?: string | null
-          search_vector?: unknown | null
           source?: string | null
           title: string
           url?: string | null
@@ -408,17 +314,15 @@ export type Database = {
         }
         Update: {
           abstract?: string | null
+          authors?: Json | null
           citation_count?: number | null
           created_at?: string
-          csl_json?: Json | null
           doi?: string | null
-          embedding?: string | null
+          embedding?: string
           id?: string
-          impact_score?: number | null
-          metadata?: Json | null
+          pdf_content?: string | null
           pdf_url?: string | null
           publication_date?: string | null
-          search_vector?: unknown | null
           source?: string | null
           title?: string
           url?: string | null
@@ -426,27 +330,36 @@ export type Database = {
         }
         Relationships: []
       }
-      papers_api_cache: {
+      processing_logs: {
         Row: {
-          expires_at: string
-          fetched_at: string
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
           id: string
-          request_hash: string
-          response: Json
+          metadata: Json | null
+          operation_type: string
+          paper_id: string | null
+          status: string
         }
         Insert: {
-          expires_at: string
-          fetched_at?: string
-          id: string
-          request_hash: string
-          response: Json
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          metadata?: Json | null
+          operation_type: string
+          paper_id?: string | null
+          status: string
         }
         Update: {
-          expires_at?: string
-          fetched_at?: string
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
           id?: string
-          request_hash?: string
-          response?: Json
+          metadata?: Json | null
+          operation_type?: string
+          paper_id?: string | null
+          status?: string
         }
         Relationships: []
       }
@@ -471,53 +384,43 @@ export type Database = {
         }
         Relationships: []
       }
-      project_citations: {
+      project_analysis: {
         Row: {
-          block_id: string | null
-          citation_text: string
-          created_at: string
+          analysis_type: string
+          completed_at: string | null
+          created_at: string | null
           id: string
-          page_range: unknown | null
-          paper_id: string | null
-          position_end: number | null
-          position_start: number | null
-          project_id: string | null
-          version: number
+          markdown_output: string | null
+          metadata: Json | null
+          project_id: string
+          status: string | null
+          structured_output: Json | null
         }
         Insert: {
-          block_id?: string | null
-          citation_text: string
-          created_at?: string
+          analysis_type: string
+          completed_at?: string | null
+          created_at?: string | null
           id?: string
-          page_range?: unknown | null
-          paper_id?: string | null
-          position_end?: number | null
-          position_start?: number | null
-          project_id?: string | null
-          version: number
+          markdown_output?: string | null
+          metadata?: Json | null
+          project_id: string
+          status?: string | null
+          structured_output?: Json | null
         }
         Update: {
-          block_id?: string | null
-          citation_text?: string
-          created_at?: string
+          analysis_type?: string
+          completed_at?: string | null
+          created_at?: string | null
           id?: string
-          page_range?: unknown | null
-          paper_id?: string | null
-          position_end?: number | null
-          position_start?: number | null
-          project_id?: string | null
-          version?: number
+          markdown_output?: string | null
+          metadata?: Json | null
+          project_id?: string
+          status?: string | null
+          structured_output?: Json | null
         }
         Relationships: [
           {
-            foreignKeyName: "project_citations_paper_id_fkey"
-            columns: ["paper_id"]
-            isOneToOne: false
-            referencedRelation: "papers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "project_citations_project_id_fkey"
+            foreignKeyName: "project_analysis_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "research_projects"
@@ -525,34 +428,127 @@ export type Database = {
           },
         ]
       }
-      research_project_versions: {
+      project_citations: {
         Row: {
-          content: string | null
-          created_at: string
+          citation_number: number | null
+          cite_key: string | null
+          created_at: string | null
+          csl_json: Json | null
+          first_seen_order: number | null
           id: string
-          project_id: string | null
-          version: number
-          word_count: number | null
+          paper_id: string
+          project_id: string
+          quote: string | null
+          reason: string | null
+          updated_at: string | null
         }
         Insert: {
-          content?: string | null
-          created_at?: string
+          citation_number?: number | null
+          cite_key?: string | null
+          created_at?: string | null
+          csl_json?: Json | null
+          first_seen_order?: number | null
           id?: string
-          project_id?: string | null
-          version: number
-          word_count?: number | null
+          paper_id: string
+          project_id: string
+          quote?: string | null
+          reason?: string | null
+          updated_at?: string | null
         }
         Update: {
-          content?: string | null
+          citation_number?: number | null
+          cite_key?: string | null
+          created_at?: string | null
+          csl_json?: Json | null
+          first_seen_order?: number | null
+          id?: string
+          paper_id?: string
+          project_id?: string
+          quote?: string | null
+          reason?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      project_evidence_usage: {
+        Row: {
+          content_hash: string
+          content_preview: string | null
+          created_at: string
+          id: string
+          paper_id: string
+          project_id: string
+          section_title: string
+        }
+        Insert: {
+          content_hash: string
+          content_preview?: string | null
           created_at?: string
           id?: string
-          project_id?: string | null
-          version?: number
-          word_count?: number | null
+          paper_id: string
+          project_id: string
+          section_title: string
+        }
+        Update: {
+          content_hash?: string
+          content_preview?: string | null
+          created_at?: string
+          id?: string
+          paper_id?: string
+          project_id?: string
+          section_title?: string
         }
         Relationships: [
           {
-            foreignKeyName: "research_project_versions_project_id_fkey"
+            foreignKeyName: "project_evidence_usage_paper_id_fkey"
+            columns: ["paper_id"]
+            isOneToOne: false
+            referencedRelation: "papers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_evidence_usage_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "research_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      research_gaps: {
+        Row: {
+          confidence: number | null
+          created_at: string | null
+          description: string
+          evidence: Json
+          gap_type: string
+          id: string
+          project_id: string
+          supporting_paper_ids: string[] | null
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string | null
+          description: string
+          evidence?: Json
+          gap_type: string
+          id?: string
+          project_id: string
+          supporting_paper_ids?: string[] | null
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string | null
+          description?: string
+          evidence?: Json
+          gap_type?: string
+          id?: string
+          project_id?: string
+          supporting_paper_ids?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "research_gaps_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "research_projects"
@@ -562,194 +558,359 @@ export type Database = {
       }
       research_projects: {
         Row: {
+          analysis_status: string | null
+          citation_style: string | null
           completed_at: string | null
+          content: string | null
           created_at: string
           generation_config: Json | null
+          generation_lock_at: string | null
+          generation_lock_id: string | null
+          has_original_research: boolean | null
           id: string
-          status: Database["public"]["Enums"]["paper_status"]
+          key_findings: string | null
+          paper_type: string | null
+          research_question: string | null
+          status: string | null
           topic: string
-          user_id: string | null
+          updated_at: string | null
+          user_id: string
         }
         Insert: {
+          analysis_status?: string | null
+          citation_style?: string | null
           completed_at?: string | null
+          content?: string | null
           created_at?: string
           generation_config?: Json | null
+          generation_lock_at?: string | null
+          generation_lock_id?: string | null
+          has_original_research?: boolean | null
           id?: string
-          status?: Database["public"]["Enums"]["paper_status"]
+          key_findings?: string | null
+          paper_type?: string | null
+          research_question?: string | null
+          status?: string | null
           topic: string
-          user_id?: string | null
+          updated_at?: string | null
+          user_id: string
         }
         Update: {
+          analysis_status?: string | null
+          citation_style?: string | null
           completed_at?: string | null
+          content?: string | null
           created_at?: string
           generation_config?: Json | null
+          generation_lock_at?: string | null
+          generation_lock_id?: string | null
+          has_original_research?: boolean | null
           id?: string
-          status?: Database["public"]["Enums"]["paper_status"]
+          key_findings?: string | null
+          paper_type?: string | null
+          research_question?: string | null
+          status?: string | null
           topic?: string
-          user_id?: string | null
+          updated_at?: string | null
+          user_id?: string
         }
         Relationships: []
       }
-      tags: {
+      user_preferences: {
         Row: {
+          citation_style: string
+          created_at: string
           id: string
-          name: string
-          user_id: string | null
+          updated_at: string
+          user_id: string
         }
         Insert: {
+          citation_style?: string
+          created_at?: string
           id?: string
-          name: string
-          user_id?: string | null
+          updated_at?: string
+          user_id: string
         }
         Update: {
+          citation_style?: string
+          created_at?: string
           id?: string
-          name?: string
-          user_id?: string | null
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
     }
     Views: {
-      [_ in never]: never
+      chunk_citation_stats: {
+        Row: {
+          chunk_id: string | null
+          paper_id: string | null
+          recency_weighted_citations: number | null
+          section_diversity: number | null
+          total_citations: number | null
+          unique_projects: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chunk_citation_log_chunk_id_fkey"
+            columns: ["chunk_id"]
+            isOneToOne: false
+            referencedRelation: "paper_chunks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chunk_citation_log_paper_id_fkey"
+            columns: ["paper_id"]
+            isOneToOne: false
+            referencedRelation: "papers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
-      analyze_papers_table: {
-        Args: Record<PropertyKey, never>
-        Returns: undefined
+      add_citation_unified: {
+        Args: {
+          p_csl_json: Json
+          p_paper_id: string
+          p_project_id: string
+          p_quote?: string
+          p_reason?: string
+        }
+        Returns: {
+          citation_number: number
+          cite_key: string
+          is_new: boolean
+          result_csl_json: Json
+        }[]
       }
-      citext: {
-        Args: { "": boolean } | { "": string } | { "": unknown }
-        Returns: string
-      }
-      citext_hash: {
-        Args: { "": string }
-        Returns: number
-      }
-      citextin: {
-        Args: { "": unknown }
-        Returns: string
-      }
-      citextout: {
-        Args: { "": string }
-        Returns: unknown
-      }
-      citextrecv: {
-        Args: { "": unknown }
-        Returns: string
-      }
-      citextsend: {
-        Args: { "": string }
-        Returns: string
-      }
-      cleanup_expired_cache: {
-        Args: Record<PropertyKey, never>
-        Returns: undefined
-      }
-      cleanup_old_pdfs: {
-        Args: Record<PropertyKey, never>
-        Returns: undefined
-      }
-      cleanup_successful_chunks: {
-        Args: Record<PropertyKey, never>
+      build_csl_json_from_paper: { Args: { p_paper_id: string }; Returns: Json }
+      clear_project_evidence: {
+        Args: { p_project_id: string }
         Returns: number
       }
       find_similar_papers: {
-        Args: { source_paper_id: string; match_count?: number }
+        Args: {
+          match_count: number
+          min_year?: number
+          query_embedding: string
+        }
         Returns: {
-          paper_id: string
-          score: number
+          abstract: string
+          doi: string
+          id: string
+          pdf_url: string
+          publication_date: string
+          semantic_score: number
+          title: string
+          venue: string
         }[]
       }
-      generate_csl_json: {
-        Args: { paper_row: Database["public"]["Tables"]["papers"]["Row"] }
-        Returns: Json
-      }
-      get_cache_stats: {
-        Args: Record<PropertyKey, never>
-        Returns: {
-          total_entries: number
-          expired_entries: number
-          valid_entries: number
-          oldest_entry: string
-          newest_entry: string
-        }[]
-      }
-      get_paper_chunks: {
-        Args: { paper_ids: string[]; match_count?: number }
-        Returns: {
-          paper_id: string
-          chunk_index: number
-          content: string
-        }[]
-      }
-      get_project_citations: {
+      get_evidence_stats: {
         Args: { p_project_id: string }
         Returns: {
-          citation_id: string
-          citation_key: string
+          papers_used: number
+          section_usage: Json
+          sections_count: number
+          total_used: number
+        }[]
+      }
+      get_project_citation_style: {
+        Args: { p_project_id: string; p_user_id: string }
+        Returns: string
+      }
+      get_project_citations_unified: {
+        Args: { p_project_id: string }
+        Returns: {
+          citation_number: number
+          cite_key: string
+          created_at: string
           csl_json: Json
-          links: Json
+          id: string
+          paper_id: string
+          quote: string
+          reason: string
+        }[]
+      }
+      get_user_library_stats: { Args: { p_user_id: string }; Returns: Json }
+      hybrid_search_chunks: {
+        Args: {
+          match_count?: number
+          min_vector_score?: number
+          paper_ids?: string[]
+          query_embedding: string
+          search_query: string
+          vector_weight?: number
+        }
+        Returns: {
+          chunk_index: number
+          combined_score: number
+          content: string
+          id: string
+          keyword_score: number
+          paper_id: string
+          vector_score: number
+        }[]
+      }
+      hybrid_search_chunks_with_boost: {
+        Args: {
+          citation_boost?: number
+          match_count?: number
+          min_vector_score?: number
+          paper_ids?: string[]
+          query_embedding: string
+          search_query: string
+          vector_weight?: number
+        }
+        Returns: {
+          chunk_index: number
+          citation_boost_applied: number
+          combined_score: number
+          content: string
+          id: string
+          keyword_score: number
+          paper_id: string
+          vector_score: number
         }[]
       }
       hybrid_search_papers: {
         Args: {
+          match_count: number
+          min_year?: number
           query_embedding: string
           query_text: string
-          match_count?: number
-          min_year?: number
           semantic_weight?: number
         }
         Returns: {
-          paper_id: string
-          semantic_score: number
-          keyword_score: number
+          abstract: string
           combined_score: number
+          doi: string
+          id: string
+          keyword_score: number
+          pdf_url: string
+          publication_date: string
+          semantic_score: number
+          title: string
+          venue: string
         }[]
+      }
+      is_evidence_used: {
+        Args: {
+          p_content_hash: string
+          p_paper_id: string
+          p_project_id: string
+        }
+        Returns: boolean
+      }
+      keyword_search_chunks: {
+        Args: {
+          match_count?: number
+          paper_ids?: string[]
+          search_query: string
+        }
+        Returns: {
+          chunk_index: number
+          content: string
+          id: string
+          paper_id: string
+          score: number
+        }[]
+      }
+      log_chunk_citation: {
+        Args: {
+          p_chunk_id: string
+          p_paper_id: string
+          p_project_id: string
+          p_query_context?: string
+          p_section_type?: string
+        }
+        Returns: undefined
       }
       match_paper_chunks: {
         Args: {
-          query_embedding: string
-          match_count?: number
+          match_count: number
           min_score?: number
-        }
-        Returns: {
-          paper_id: string
-          chunk_index: number
-          content: string
-          score: number
-        }[]
-      }
-      match_papers: {
-        Args: {
+          paper_ids?: string[]
           query_embedding: string
-          match_count?: number
-          min_year?: number
         }
         Returns: {
+          chunk_index: number
+          content: string
+          id: string
           paper_id: string
           score: number
         }[]
       }
-      retry_failed_chunks: {
-        Args: Record<PropertyKey, never>
+      match_paper_claims: {
+        Args: {
+          match_count?: number
+          paper_ids: string[]
+          query_embedding: string
+        }
         Returns: {
+          claim_text: string
+          claim_type: string
+          confidence: number
+          evidence_quote: string
+          id: string
           paper_id: string
-          chunk_index: number
-          content: string
-          retry_count: number
+          section: string
+          similarity: number
         }[]
       }
-      test_citation_constraints: {
-        Args: Record<PropertyKey, never>
+      refresh_chunk_citation_stats: { Args: never; Returns: undefined }
+      semantic_search_papers: {
+        Args: {
+          match_count: number
+          min_year?: number
+          query_embedding: string
+          query_text: string
+        }
+        Returns: {
+          abstract: string
+          combined_score: number
+          doi: string
+          id: string
+          keyword_score: number
+          pdf_url: string
+          publication_date: string
+          semantic_score: number
+          title: string
+          venue: string
+        }[]
+      }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
+      track_evidence_usage: {
+        Args: {
+          p_content_hash: string
+          p_content_preview?: string
+          p_paper_id: string
+          p_project_id: string
+          p_section_title: string
+        }
         Returns: string
       }
-      upsert_citation: {
-        Args: { p_project_id: string; p_key: string; p_data: Json }
-        Returns: Json
+      upsert_user_preferences: {
+        Args: { p_citation_style?: string; p_user_id: string }
+        Returns: {
+          citation_style: string
+          created_at: string
+          id: string
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "user_preferences"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
     }
     Enums: {
-      paper_status: "generating" | "complete" | "failed"
+      [_ in never]: never
     }
     CompositeTypes: {
       [_ in never]: never
@@ -757,21 +918,25 @@ export type Database = {
   }
 }
 
-type DefaultSchema = Database[Extract<keyof Database, "public">]
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    | { schema: keyof Database },
+    | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof Database
+    schema: keyof DatabaseWithoutInternals
   }
-    ? keyof (Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        Database[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
     : never = never,
-> = DefaultSchemaTableNameOrOptions extends { schema: keyof Database }
-  ? (Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      Database[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
       Row: infer R
     }
     ? R
@@ -789,14 +954,16 @@ export type Tables<
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
-    | { schema: keyof Database },
+    | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof Database
+    schema: keyof DatabaseWithoutInternals
   }
-    ? keyof Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never = never,
-> = DefaultSchemaTableNameOrOptions extends { schema: keyof Database }
-  ? Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
       Insert: infer I
     }
     ? I
@@ -812,14 +979,16 @@ export type TablesInsert<
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
-    | { schema: keyof Database },
+    | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
-    schema: keyof Database
+    schema: keyof DatabaseWithoutInternals
   }
-    ? keyof Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never = never,
-> = DefaultSchemaTableNameOrOptions extends { schema: keyof Database }
-  ? Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
       Update: infer U
     }
     ? U
@@ -835,14 +1004,16 @@ export type TablesUpdate<
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
-    | { schema: keyof Database },
+    | { schema: keyof DatabaseWithoutInternals },
   EnumName extends DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof Database
+    schema: keyof DatabaseWithoutInternals
   }
-    ? keyof Database[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
     : never = never,
-> = DefaultSchemaEnumNameOrOptions extends { schema: keyof Database }
-  ? Database[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
   : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
     ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
     : never
@@ -850,25 +1021,22 @@ export type Enums<
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
-    | { schema: keyof Database },
+    | { schema: keyof DatabaseWithoutInternals },
   CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
-    schema: keyof Database
+    schema: keyof DatabaseWithoutInternals
   }
-    ? keyof Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
     : never = never,
-> = PublicCompositeTypeNameOrOptions extends { schema: keyof Database }
-  ? Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
     ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
-    Enums: {
-      paper_status: ["generating", "complete", "failed"],
-    },
+    Enums: {},
   },
 } as const
