@@ -55,7 +55,7 @@ export async function collectPapers(
   options: EnhancedGenerationOptions
 ): Promise<PaperWithAuthors[]> {
 
-  const { topic, libraryPaperIds = [], useLibraryOnly, config, userId: _userId } = options
+  const { topic, libraryPaperIds = [], useLibraryOnly, config, userId: _userId, discipline } = options
   
   console.log(`📋 Generation Request:`)
   console.log(`   🎯 Topic: "${topic}"`)
@@ -108,42 +108,51 @@ export async function collectPapers(
         searchQueries = await buildEnhancedSearchQueries(topic, {
           researchQuestion: originalResearch.research_question,
           keyFindings: originalResearch.key_findings,
-        })
+        }, discipline)
         console.log(`   📋 Generated ${searchQueries.length} search queries:`)
         searchQueries.forEach((q, i) => console.log(`      ${i + 1}. "${q.slice(0, 80)}${q.length > 80 ? '...' : ''}"`))
       }
       
-      // Adjust recency weight based on profile
-      // cutting-edge: prioritize recent papers heavily
+      // Adjust recency weight and search window based on profile
+      // cutting-edge: prioritize recent papers heavily, narrow time window
       // balanced: equal weight to recency and other factors
-      // foundational-heavy: prioritize citation count/authority over recency
+      // foundational-heavy: prioritize citation count/authority, wide time window
       const recencyProfile = options.recencyProfile
       let recencyWeight = 0.1  // default balanced
       let authorityWeight = 0.5
+      let fromYear = 2000      // default search window
       
       if (recencyProfile === 'cutting-edge') {
         recencyWeight = 0.35
         authorityWeight = 0.3
-        console.log(`📅 Recency profile: cutting-edge - prioritizing recent papers`)
+        fromYear = new Date().getFullYear() - 10  // Last 10 years for fast-moving fields
+        console.log(`📅 Recency profile: cutting-edge - prioritizing recent papers (from ${fromYear})`)
       } else if (recencyProfile === 'foundational-heavy') {
         recencyWeight = 0.05
         authorityWeight = 0.6
-        console.log(`📅 Recency profile: foundational-heavy - prioritizing high-citation papers`)
+        fromYear = 1980  // Include older foundational works
+        console.log(`📅 Recency profile: foundational-heavy - including older foundational papers (from ${fromYear})`)
       } else {
-        console.log(`📅 Recency profile: balanced - equal weighting`)
+        fromYear = 2000  // Balanced - last ~25 years
+        console.log(`📅 Recency profile: balanced - standard time window (from ${fromYear})`)
       }
       
       const searchOptions: UnifiedSearchOptions = {
         maxResults: remainingSlots,
         minResults: Math.min(5, remainingSlots),
         excludePaperIds: pinnedIds,
-        fromYear: 2000,
+        fromYear,  // Now dynamic based on recency profile
         localRegion: config?.localRegion,
         sources: (config?.sources as PaperSource[])
                   ?? ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
         semanticWeight: 0.4,
         authorityWeight,
-        recencyWeight
+        recencyWeight,
+        discipline  // Pass discipline for API-level filtering
+      }
+      
+      if (discipline) {
+        console.log(`🎓 Discipline filter: ${discipline}`)
       }
       
       // Search with multiple queries and merge results

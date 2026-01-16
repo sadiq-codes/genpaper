@@ -7,6 +7,11 @@
  * - The client automatically handles cookie-based auth when available
  * - Falls back to anonymous access when called outside request context (e.g., background tasks)
  * 
+ * Service Role Client:
+ * - Use `getServiceClient()` from '@/lib/supabase/service' for elevated permissions
+ * - This includes inserting papers, paper_chunks, and other shared resources
+ * - The service role client bypasses RLS policies
+ * 
  * Type Safety:
  * - The client is typed with the Database schema from types/supabase.ts
  * - If you encounter type errors for missing tables, regenerate types with:
@@ -15,6 +20,11 @@
  * Example:
  *   const supabase = await getSB()
  *   const { data } = await supabase.from('papers').select()
+ *   
+ *   // For inserting papers (requires service role):
+ *   import { getServiceClient } from '@/lib/supabase/service'
+ *   const serviceSupabase = getServiceClient()
+ *   await serviceSupabase.from('papers').insert({...})
  */
 
 import { createServerClient } from '@supabase/ssr'

@@ -176,50 +176,21 @@ export async function getGapsForProject(projectId: string): Promise<ResearchGap[
 
 /**
  * Find contradictions between specific papers
+ * 
+ * NOTE: This functionality is already included in findResearchGaps() which
+ * identifies contradictions as one of its gap types. This function is kept
+ * for backward compatibility but internally delegates to findResearchGaps.
+ * 
+ * @deprecated Use findResearchGaps() which includes contradiction detection
  */
 export async function findContradictions(
-  paperIds: string[]
+  paperIds: string[],
+  topic: string = 'research topic'
 ): Promise<ResearchGap[]> {
-  const allClaims: ExtractedClaim[] = []
-  for (const paperId of paperIds) {
-    const claims = await getClaimsForPaper(paperId)
-    allClaims.push(...claims)
-  }
-
-  // Filter to findings only (most likely to contradict)
-  const findings = allClaims.filter(c => c.claim_type === 'finding')
-  
-  if (findings.length < 2) {
-    return []
-  }
-
-  // Use GPT to find contradictions
-  const { object } = await generateObject({
-    model: getLanguageModel(),
-    schema: z.object({
-      contradictions: z.array(z.object({
-        claim_a: z.string(),
-        claim_b: z.string(),
-        paper_a_id: z.string(),
-        paper_b_id: z.string(),
-        explanation: z.string(),
-        confidence: z.number()
-      }))
-    }),
-    prompt: buildContradictionPrompt(findings),
-    temperature: 0.1,
-  })
-
-  return object.contradictions.map(c => ({
-    gap_type: 'contradiction' as GapType,
-    description: c.explanation,
-    evidence: [
-      { paper_id: c.paper_a_id, claim_text: c.claim_a, relevance: 'First claim' },
-      { paper_id: c.paper_b_id, claim_text: c.claim_b, relevance: 'Contradicting claim' }
-    ],
-    supporting_paper_ids: [c.paper_a_id, c.paper_b_id],
-    confidence: c.confidence
-  }))
+  // Delegate to findResearchGaps which already handles contradictions
+  const result = await findResearchGaps('', paperIds, topic)
+  // Filter to only contradiction-type gaps
+  return result.gaps.filter(g => g.gap_type === 'contradiction')
 }
 
 // Helper functions
@@ -309,24 +280,6 @@ For each gap:
 
 Focus on significant, actionable gaps that would inform future research.
 Aim to identify 3-10 gaps total, prioritizing the most important ones.`
-}
-
-function buildContradictionPrompt(findings: ExtractedClaim[]): string {
-  let prompt = `Analyze these research findings for contradictions:\n\n`
-  
-  for (const finding of findings) {
-    prompt += `[Paper ${finding.paper_id}]: ${finding.claim_text}\n`
-  }
-  
-  prompt += `\nIdentify any pairs of findings that directly contradict each other.
-A contradiction occurs when:
-- Two papers report opposite results
-- One paper's finding invalidates another's conclusion
-- Methodological differences lead to incompatible findings
-
-Only report clear contradictions, not just differences in scope or focus.`
-  
-  return prompt
 }
 
 /**

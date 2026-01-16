@@ -175,7 +175,7 @@ export async function GET(request: NextRequest) {
       const config = {
         temperature,
         max_tokens: maxTokens,
-        sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+        sources: ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
         limit: 25,
         library_papers_used: libraryPaperIds,
         length: length as 'short' | 'medium' | 'long',
@@ -215,7 +215,7 @@ export async function GET(request: NextRequest) {
       length: length as 'short' | 'medium' | 'long',
       useLibraryOnly,
       libraryPaperIds,
-      sources: ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+      sources: ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
       temperature,
       maxTokens
     }

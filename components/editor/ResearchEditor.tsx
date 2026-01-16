@@ -37,11 +37,15 @@ import {
   useAnalysis,
   usePaperManagement,
   useChat,
+  useEditorChat,
   useBackgroundPaperSearch,
   useCitationManagerConfig,
   useCitationPrefetch,
   extractCitationIdsFromEditor,
 } from "./hooks"
+
+// Feature flag for new streaming chat with tools
+const USE_STREAMING_CHAT = true
 
 // CitationStyleType now accepts any CSL style ID string
 export type CitationStyleType = string
@@ -154,17 +158,29 @@ export function ResearchEditor({
     },
   })
 
-  // Chat
-  const {
-    messages: chatMessages,
-    isLoading: isChatLoading,
-    sendMessage: handleSendMessage,
-  } = useChat({
+  // Chat - use new streaming hook if feature flag is enabled AND we have a projectId
+  const legacyChat = useChat({
     projectId,
     editor,
     papers,
     analysisState,
   })
+
+  const streamingChat = useEditorChat({
+    projectId: projectId || '',
+    editor,
+  })
+
+  // Select which chat implementation to use
+  // Fall back to legacy chat if no projectId (streaming requires project persistence)
+  const useStreamingChat = USE_STREAMING_CHAT && !!projectId
+  const chatMessages = useStreamingChat ? streamingChat.messages : legacyChat.messages
+  const isChatLoading = useStreamingChat ? streamingChat.isLoading : legacyChat.isLoading
+  const handleSendMessage = useStreamingChat ? streamingChat.sendMessage : legacyChat.sendMessage
+  const pendingTools = useStreamingChat ? streamingChat.pendingTools : []
+  const confirmTool = useStreamingChat ? streamingChat.confirmTool : undefined
+  const rejectTool = useStreamingChat ? streamingChat.rejectTool : undefined
+  const clearChatHistory = useStreamingChat ? streamingChat.clearHistory : undefined
 
   // ============================================================================
   // Effects
@@ -417,6 +433,10 @@ export function ResearchEditor({
       chatMessages={chatMessages}
       onSendMessage={handleSendMessage}
       isChatLoading={isChatLoading}
+      pendingTools={pendingTools}
+      onConfirmTool={confirmTool}
+      onRejectTool={rejectTool}
+      onClearHistory={clearChatHistory}
       papers={papers}
       analysisState={analysisState}
       onInsertCitation={handleInsertCitation}

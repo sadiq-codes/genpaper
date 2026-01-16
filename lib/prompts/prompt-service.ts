@@ -11,6 +11,9 @@ import type { PromptData, BuiltPrompt, TemplateOptions } from '@/lib/core/prompt
  * 
  * Handles template loading and delegates to pure PromptBuilder.
  * Separates I/O concerns from pure prompt construction logic.
+ * 
+ * Note: Paper-type specific guidance is now provided by the dynamic Paper Profile system,
+ * not by static rubrics in skeleton.yaml. This service focuses on core template loading.
  */
 
 // Re-export types from pure PromptBuilder
@@ -45,8 +48,6 @@ export class PromptService {
   ): BuiltPrompt {
     return PromptBuilder.buildSimple(systemPrompt, userPrompt, data)
   }
-
-
 
   private static async loadTemplate(templateName: string): Promise<PromptTemplate> {
     if (this.templateCache.has(templateName)) {

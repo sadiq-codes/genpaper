@@ -39,6 +39,7 @@ export interface PromptData {
   keyFindings?: string
   
   // Paper profile guidance (contextual intelligence from profile generation)
+  // This is the SINGLE SOURCE OF TRUTH for paper-type specific guidance
   profileGuidance?: string
 }
 

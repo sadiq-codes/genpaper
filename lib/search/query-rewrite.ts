@@ -19,20 +19,36 @@ export interface OriginalResearchContext {
  * Generate up to k alternative keyword search queries that are semantically
  * similar to the input query. Falls back to returning the original query if
  * no LLM key is present or API fails.
+ * 
+ * @param query - The original search query
+ * @param k - Number of alternative queries to generate (default: 3)
+ * @param discipline - Optional academic discipline to focus the queries (e.g., "American Literature")
  */
-export async function generateQueryRewrites(query: string, k = 3): Promise<string[]> {
+export async function generateQueryRewrites(query: string, k = 3, discipline?: string): Promise<string[]> {
   const rewrites: string[] = [query.trim()]
 
   if (!process.env.OPENAI_API_KEY) return rewrites
 
+  // Build discipline-aware prompt context - fully dynamic, no hardcoded discipline examples
+  const disciplineContext = discipline 
+    ? `\n\nIMPORTANT DISCIPLINE CONTEXT:
+The topic is in the discipline of "${discipline}".
+- Generate queries that specifically target ${discipline} scholarship
+- Include names of major scholars, key authors/researchers, important works, and terminology specific to ${discipline}
+- AVOID generating queries that would return papers from adjacent or unrelated disciplines
+- Focus on the core methodology and discourse patterns of ${discipline}
+- Consider what databases, journals, and publication types are most relevant for ${discipline}`
+    : ''
+
   try {
     const { text } = await generateText({
       model: getLanguageModel(),
-      system: 'You are an academic search assistant.',
-      prompt: `Generate ${k} alternative keyword-style academic search queries that would find papers similar to: "${query}".
+      system: 'You are an academic search assistant specializing in finding scholarly papers in specific disciplines.',
+      prompt: `Generate ${k} alternative keyword-style academic search queries that would find papers similar to: "${query}".${disciplineContext}
+
 Return the list as a JSON array of plain strings. Do not add any explanation.`,
       temperature: 0.7,
-      maxTokens: 150
+      maxTokens: 200
     })
 
     let arr: string[] = []
@@ -62,17 +78,19 @@ Return the list as a JSON array of plain strings. Do not add any explanation.`,
  * 
  * @param topic - The main topic or research question
  * @param originalResearch - Optional context with key findings
+ * @param discipline - Optional academic discipline to focus the queries
  * @returns Array of search queries, deduplicated
  */
 export async function buildEnhancedSearchQueries(
   topic: string,
-  originalResearch?: OriginalResearchContext
+  originalResearch?: OriginalResearchContext,
+  discipline?: string
 ): Promise<string[]> {
   const queries: string[] = [topic.trim()]
 
   // If no original research context, just return basic rewrites
   if (!originalResearch?.keyFindings) {
-    return generateQueryRewrites(topic)
+    return generateQueryRewrites(topic, 3, discipline)
   }
 
   // Don't call LLM if no API key
@@ -130,8 +148,8 @@ Example format: ["query 1", "query 2", "query 3", "query 4"]`,
 
   } catch (err) {
     console.warn('Enhanced query generation failed, falling back to basic rewrites:', err)
-    // Fallback to basic rewrites
-    const basicRewrites = await generateQueryRewrites(topic)
+    // Fallback to basic rewrites with discipline context
+    const basicRewrites = await generateQueryRewrites(topic, 3, discipline)
     queries.push(...basicRewrites)
   }
 

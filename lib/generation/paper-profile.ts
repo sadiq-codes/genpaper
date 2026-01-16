@@ -41,7 +41,7 @@ export async function generatePaperProfile(
   
   info({ topic: topic.slice(0, 100), paperType, hasOriginalResearch }, 'Generating paper profile')
   
-  const prompt = getPaperProfilePrompt({
+  const prompt = await getPaperProfilePrompt({
     topic,
     paperType,
     hasOriginalResearch: hasOriginalResearch || false,
@@ -136,20 +136,36 @@ function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
   // Ensure minimum source requirements are reasonable
   // Safety floor: if LLM returned unreasonably low values, use sensible minimums
   // These are NOT targets - the LLM should set appropriate values based on discipline
-  // This just catches edge cases where LLM might return 0 or 1
-  const SAFETY_MIN_SOURCES = 5  // Absolute floor - any paper needs at least some sources
+  // This just catches edge cases where LLM might return unreasonably low values
+  
+  // Different paper types have different minimum requirements
+  // Literature reviews are all about sources - they need MANY more than other types
+  const SAFETY_MIN_BY_TYPE: Record<string, number> = {
+    'literatureReview': 25,    // Literature reviews require comprehensive source coverage
+    'mastersThesis': 20,       // Theses need substantial source base
+    'phdDissertation': 30,     // Dissertations need extensive coverage
+    'capstoneProject': 15,     // Capstones are practical but need sources
+    'researchArticle': 10      // Research articles focus on original data
+  }
+  
+  const SAFETY_MIN_SOURCES = SAFETY_MIN_BY_TYPE[profile.paperType] || 10
   
   if (!profile.sourceExpectations.minimumUniqueSources || profile.sourceExpectations.minimumUniqueSources < SAFETY_MIN_SOURCES) {
-    warn({ originalValue: profile.sourceExpectations.minimumUniqueSources }, 
-      `Profile minimum sources below safety floor (${SAFETY_MIN_SOURCES}), adjusting`)
+    warn({ 
+      originalValue: profile.sourceExpectations.minimumUniqueSources,
+      paperType: profile.paperType,
+      newMinimum: SAFETY_MIN_SOURCES
+    }, `Profile minimum sources below safety floor for ${profile.paperType} (${SAFETY_MIN_SOURCES}), adjusting`)
     profile.sourceExpectations.minimumUniqueSources = SAFETY_MIN_SOURCES
   }
   
-  // Ideal should always be at least the minimum
-  if (!profile.sourceExpectations.idealSourceCount || profile.sourceExpectations.idealSourceCount < profile.sourceExpectations.minimumUniqueSources) {
-    profile.sourceExpectations.idealSourceCount = Math.round(
-      profile.sourceExpectations.minimumUniqueSources * 1.5
-    )
+  // Ideal should always be higher than minimum
+  // For literature reviews, ideal should be significantly higher
+  const idealMultiplier = profile.paperType === 'literatureReview' ? 2.0 : 1.5
+  const minimumIdeal = Math.round(profile.sourceExpectations.minimumUniqueSources * idealMultiplier)
+  
+  if (!profile.sourceExpectations.idealSourceCount || profile.sourceExpectations.idealSourceCount < minimumIdeal) {
+    profile.sourceExpectations.idealSourceCount = minimumIdeal
   }
   
   // Ensure at least some quality criteria exist
@@ -209,10 +225,20 @@ function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
  * Build profile guidance text for use in prompts.
  * This formats the profile into BINDING instructions that guide generation.
  * Genre rules and forbidden content are emphasized as non-negotiable constraints.
+ * 
+ * @param profile - The paper profile
+ * @param mode - 'outline' for outline generation (emphasizes structure constraints),
+ *               'section' for section generation (emphasizes writing guidance)
  */
-export function buildProfileGuidanceForPrompt(profile: PaperProfile): string {
+export function buildProfileGuidanceForPrompt(
+  profile: PaperProfile, 
+  mode: 'outline' | 'section' = 'section'
+): string {
   const sections = profile.structure.appropriateSections
-    .map(s => `- **${s.title}** (${s.key}): ${s.purpose} [${s.minWords}-${s.maxWords} words, citations: ${s.citationExpectation}]`)
+    .map(s => mode === 'outline'
+      ? `- **${s.title}** (key: ${s.key}): ${s.purpose} [${s.minWords}-${s.maxWords} words]`
+      : `- **${s.title}** (${s.key}): ${s.purpose} [${s.minWords}-${s.maxWords} words, citations: ${s.citationExpectation}]`
+    )
     .join('\n')
   
   const inappropriate = profile.structure.inappropriateSections.length > 0
@@ -294,6 +320,68 @@ Since you are synthesizing existing research, MOST claims require citations:
 
 Most paragraphs should contain multiple citations because you are reporting 
 what the literature says. Integrate sources to show dialogue between scholars.
+
+═══════════════════════════════════════════════════════════════════════════════
+📚 ORGANIZATIONAL APPROACHES - Choose the Best Structure
+═══════════════════════════════════════════════════════════════════════════════
+
+Choose the most appropriate structure based on the topic:
+
+1. **THEMATIC** - Organize by recurring themes or concepts
+   Best for: Multi-faceted topics with distinct sub-areas
+   Example: "Healthcare access" → policy barriers, economic barriers, cultural barriers
+
+2. **CHRONOLOGICAL** - Trace the development of ideas over time
+   Best for: Topics with clear historical evolution
+   Example: "AI in education" → 1980s expert systems → 2000s adaptive learning → 2020s generative AI
+
+3. **METHODOLOGICAL** - Compare different research approaches
+   Best for: Topics studied using diverse methods with different findings
+   Example: "Leadership effectiveness" → survey studies vs case studies vs experimental research
+
+4. **THEORETICAL** - Organize by competing theories or frameworks
+   Best for: Topics with multiple theoretical perspectives
+   Example: "Learning" → behaviorist vs cognitive vs constructivist theories
+
+For complex topics, you may COMBINE approaches (e.g., thematic overall with chronological within each theme).
+
+═══════════════════════════════════════════════════════════════════════════════
+🏆 PIVOTAL PUBLICATIONS - Identify Landmark Studies
+═══════════════════════════════════════════════════════════════════════════════
+
+Identify and highlight influential works that shaped the field:
+- Look for frequently referenced foundational studies
+- Identify theories or frameworks that subsequent studies build upon
+- Note methodological innovations that changed how the topic is studied
+- Highlight studies that challenged prevailing assumptions
+
+When discussing landmark studies, explain WHY they were influential:
+"Bandura's (1977) social learning theory was pivotal because it shifted the field's focus 
+from purely behavioral explanations to include cognitive and social factors, spawning 
+decades of research on observational learning and self-efficacy."
+
+═══════════════════════════════════════════════════════════════════════════════
+📝 LITERATURE REVIEW STRUCTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+**INTRODUCTION should:**
+- Establish the focus and purpose of the review
+- Define the scope (what's included/excluded)
+- State the research question or gap being addressed
+- Preview the organizational approach
+
+**BODY should:**
+- Be organized by your chosen approach (themes, time periods, methods, or theories)
+- Use clear subheadings for each major section
+- Synthesize sources within each section (don't just list them)
+- Show connections between sections
+
+**CONCLUSION should:**
+- Summarize the key findings from the literature
+- Emphasize the significance of what you found
+- Clearly state the gap your research addresses
+- Show how your work contributes to the field
+
 ═══════════════════════════════════════════════════════════════════════════════
 `
   } else if (profile.paperType === 'researchArticle') {
@@ -392,6 +480,88 @@ if specific real data was not provided. This maintains academic honesty.
 `
   }
   
+  // For outline mode, use a more structured format emphasizing constraints
+  if (mode === 'outline') {
+    // Determine if this paper type needs literature review organizational guidance
+    const needsLitReviewGuidance = profile.paperType === 'literatureReview' || 
+      profile.structure.appropriateSections.some(s => 
+        s.key.toLowerCase().includes('literature') || s.key.toLowerCase().includes('review')
+      )
+    
+    const litReviewOrgGuidance = needsLitReviewGuidance ? `
+
+LITERATURE REVIEW ORGANIZATIONAL APPROACH:
+When creating the outline for the literature review section(s), choose the most appropriate structure:
+
+1. **THEMATIC** - Organize by recurring themes or concepts
+   Best for: Multi-faceted topics with distinct sub-areas
+   Create subsections for each major theme (e.g., "Economic Factors", "Social Factors", "Policy Implications")
+
+2. **CHRONOLOGICAL** - Trace development of ideas over time
+   Best for: Topics with clear historical evolution
+   Create subsections for different time periods or phases of development
+
+3. **METHODOLOGICAL** - Compare different research approaches
+   Best for: Topics studied using diverse methods
+   Create subsections comparing qualitative vs. quantitative findings, or different methodological schools
+
+4. **THEORETICAL** - Organize by competing theories or frameworks
+   Best for: Topics with multiple theoretical perspectives
+   Create subsections for each major theoretical approach
+
+Choose based on what best illuminates the topic. For complex topics, you may combine approaches
+(e.g., thematic overall with chronological development within each theme).
+
+IMPORTANT: If a THEME ANALYSIS FROM COLLECTED LITERATURE section appears below, use those
+EMERGENT THEMES as the basis for your section structure. The themes identified from actual
+literature analysis are more accurate than generic assumptions. Create subsections that
+align with the themes, debates, and organizational approach recommended by the analysis.
+
+Generate meaningful subsection titles that reflect the actual content themes identified from the topic.
+Do NOT use generic titles like "Theme 1" or "Section A" - use descriptive titles.
+` : ''
+
+    return `
+═══════════════════════════════════════════════════════════════════════════════
+MANDATORY PAPER PROFILE CONSTRAINTS - YOU MUST FOLLOW THESE EXACTLY
+═══════════════════════════════════════════════════════════════════════════════
+
+This is a ${profile.paperType} in ${profile.discipline.primary}.
+
+MANDATORY STRUCTURE - USE ONLY THESE SECTIONS:
+Your outline MUST use sections from this list. Do not invent other sections.
+${sections}
+
+FORBIDDEN SECTIONS - DO NOT CREATE THESE UNDER ANY CIRCUMSTANCES:
+The following sections are INAPPROPRIATE for this paper type and MUST NOT appear:
+${inappropriate}
+
+If you create any of the forbidden sections, the paper will be REJECTED.
+
+GENRE RULES - INVIOLABLE CONSTRAINTS:
+${genreRules || 'Follow standard academic conventions for this paper type.'}
+
+REQUIRED THEME COVERAGE:
+The paper must address these themes: ${themes}
+${litReviewOrgGuidance}
+DISCIPLINE CONTEXT:
+- Field: ${profile.discipline.primary}
+- Related fields: ${profile.discipline.related.join(', ')}
+- Pace of change: ${profile.discipline.fieldCharacteristics.paceOfChange}
+- Theory vs Empirical balance: ${profile.discipline.fieldCharacteristics.theoryVsEmpirical}
+- Practitioner relevance: ${profile.discipline.fieldCharacteristics.practitionerRelevance}
+
+SOURCE EXPECTATIONS:
+- Minimum unique sources required: ${profile.sourceExpectations.minimumUniqueSources}
+- Ideal source count: ${profile.sourceExpectations.idealSourceCount}
+- Recency profile: ${profile.sourceExpectations.recencyProfile}
+
+═══════════════════════════════════════════════════════════════════════════════
+CREATE YOUR OUTLINE USING ONLY THE MANDATORY SECTIONS ABOVE
+═══════════════════════════════════════════════════════════════════════════════`
+  }
+
+  // Section mode - full guidance for content generation
   return `## PAPER PROFILE GUIDANCE - BINDING CONSTRAINTS
 ${typeWarning}
 **Discipline:** ${profile.discipline.primary}

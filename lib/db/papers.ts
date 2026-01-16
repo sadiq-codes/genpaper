@@ -1,8 +1,10 @@
 import { getSB } from '@/lib/supabase/server'
+import { getServiceClient } from '@/lib/supabase/service'
 import type { PaperWithAuthors } from '@/types/simplified'
 import { generateEmbeddings } from '@/lib/utils/embedding'
 import { PaperDTO } from '@/lib/schemas/paper'
 import { debug, info, warn, error as logError } from '@/lib/utils/logger'
+import { expandWithStems } from '@/lib/utils/stemmer'
  
 
 // Centralized embedding configuration to ensure consistency
@@ -138,11 +140,15 @@ export async function hybridSearchPapers(
     warn({ error }, 'RPC search failed, falling back to text search')
     
     // Fallback to basic text search if RPC fails
+    // Use stemming to match related words (e.g., "religion" matches "religious")
     const queryWords = query.toLowerCase().split(/\s+/).filter(word => word.length > 2)
+    const expandedWords = expandWithStems(queryWords)
+    debug({ queryWords, expandedWords }, 'Fallback search with stemmed terms')
+    
     const { data: fallbackResults, error: fallbackError } = await supabase
       .from('papers')
       .select('*')
-      .or(queryWords.map(word => `title.ilike.%${word}%,abstract.ilike.%${word}%`).join(','))
+      .or(expandedWords.map(word => `title.ilike.%${word}%,abstract.ilike.%${word}%`).join(','))
       .gte('publication_date', `${minYear}-01-01`)
       .order('citation_count', { ascending: false })
       .limit(limit)
@@ -187,35 +193,43 @@ export async function hybridSearchPapers(
     warn({ queryLength: queryEmbedding.length, minYear, semanticWeight }, 'RPC returned no results')
   }
 
-  // 3. Filter out excluded papers
+  // 3. Filter out excluded papers with meaningful relevance threshold
+  // A combined_score of 0.3 indicates reasonable semantic/keyword similarity
+  // Lower scores often indicate irrelevant papers that happen to be in the database
+  const MIN_RELEVANCE_SCORE = 0.3
+  
   const filteredResults = (searchResults || []).filter(
     (result: HybridSearchResult) => 
       !excludePaperIds.includes(result.id) &&
-      result.combined_score >= 0.0001 // Minimum score threshold to filter noise
+      result.combined_score >= MIN_RELEVANCE_SCORE
   )
 
   debug({ beforeFilter: searchResults?.length || 0, afterFilter: filteredResults.length }, 'Filtered results')
 
   // 4. Get full paper details for the top results
   if (filteredResults.length === 0) {
-    debug('No papers after filtering, trying permissive approach')
+    debug('No papers passed relevance threshold, trying relaxed approach')
     
-    // Try again with even more permissive filtering if we got 0 results
-    const veryPermissiveResults = (searchResults || []).filter(
+    // Try again with a slightly relaxed threshold (0.15 instead of 0.3)
+    // This catches papers that may be relevant but have lower embedding similarity
+    // Important: We don't fall back to ANY positive score as that returns irrelevant papers
+    const RELAXED_RELEVANCE_SCORE = 0.15
+    
+    const relaxedResults = (searchResults || []).filter(
       (result: HybridSearchResult) => 
         !excludePaperIds.includes(result.id) &&
-        (result.combined_score > 0 || result.semantic_score > 0 || result.keyword_score > 0)
+        result.combined_score >= RELAXED_RELEVANCE_SCORE
     )
     
-    debug({ count: veryPermissiveResults.length }, 'Permissive filtering results')
+    debug({ count: relaxedResults.length, threshold: RELAXED_RELEVANCE_SCORE }, 'Relaxed filtering results')
     
-    if (veryPermissiveResults.length === 0) {
-      debug('No papers found even with permissive filtering')
+    if (relaxedResults.length === 0) {
+      debug('No papers found even with relaxed threshold - query may have no relevant papers in database')
       return []
     }
     
-    // Use the permissive results instead
-    const topPermissiveResults = veryPermissiveResults.slice(0, limit)
+    // Use the relaxed results instead
+    const topPermissiveResults = relaxedResults.slice(0, limit)
 
     const permissiveIds = topPermissiveResults.map((r: HybridSearchResult) => r.id).filter(isValidUuid)
     if (permissiveIds.length === 0) {
@@ -536,16 +550,25 @@ export async function ingestPaper(
 
 /**
  * Create paper metadata (extracted from old ingestPaperLightweight)
+ * 
+ * Bibliographic fields (volume, issue, pages, publisher) are stored in the metadata JSONB column.
+ * These fields come from academic APIs at ingestion time and are needed later for complete citations.
+ * We store them here because:
+ * 1. Academic APIs provide them during search/ingestion
+ * 2. Papers may be cited much later, after the API data is gone
+ * 3. CSL JSON generation reads from papers.metadata for these fields
+ * 
+ * NOTE: Uses service role client to bypass RLS (papers are shared resources)
  */
 export async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
-  const supabase = await getSB()
+  const supabase = getServiceClient()
   
   // Generate embedding from title + abstract before inserting
   // This is required because the database has a NOT NULL constraint on the embedding column
   const text = `${paperData.title}\n${paperData.abstract || ''}`
   const [embedding] = await generateEmbeddings([text])
   
-  // Store additional bibliographic fields in metadata JSONB column
+  // Store bibliographic fields in metadata JSONB column
   // These are needed for complete citation generation (volume, issue, pages, publisher)
   const metadata: Record<string, unknown> = {}
   if (paperData.volume) metadata.volume = paperData.volume

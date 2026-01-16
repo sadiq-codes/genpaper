@@ -235,11 +235,9 @@ export async function createChunksForPaper(
     if (normalizedContent.length < 100) {
       const { createDeterministicChunkId } = await import('@/lib/utils/deterministic-id')
       const { generateEmbeddings } = await import('@/lib/utils/embedding')
-      const { extractChunkMetadata } = await import('./chunk-metadata')
 
       const [embedding] = await generateEmbeddings([normalizedContent])
       const chunkId = createDeterministicChunkId(paperId, normalizedContent, 0)
-      const metadata = extractChunkMetadata(normalizedContent, 0)
 
       const { error } = await serviceClient
         .from('paper_chunks')
@@ -248,8 +246,9 @@ export async function createChunksForPaper(
           paper_id: paperId,
           chunk_index: 0,
           content: normalizedContent,
-          embedding,
-          metadata
+          embedding
+          // Note: metadata field removed - was computing section_type, has_citations, etc.
+          // but these were never used for filtering or retrieval
         }, {
           onConflict: 'id',
           ignoreDuplicates: true
@@ -293,29 +292,21 @@ export async function createChunksForPaper(
 
     // Generate embeddings for all chunks
     const { generateEmbeddings } = await import('@/lib/utils/embedding')
-    const { extractMetadataForChunks } = await import('./chunk-metadata')
     
     const chunkTexts = chunks.map(chunk => chunk.content)
     const embeddings = await generateEmbeddings(chunkTexts)
     
-    // Extract metadata for each chunk (section type, citations, etc.)
-    // Pass overlapLength to ensure section detection uses new content, not overlap prefix
-    const metadataList = extractMetadataForChunks(
-      chunks.map((c, idx) => ({ 
-        content: c.content, 
-        chunk_index: idx,
-        overlapLength: c.metadata?.overlapLength ?? 0
-      }))
-    )
+    // Note: Chunk metadata extraction removed - was computing section_type, has_citations, 
+    // has_data, has_figures, is_conclusion, complexity_score, key_terms but these were
+    // never used for filtering or retrieval. Semantic search uses embeddings only.
 
-    // Insert chunks into database with embeddings and metadata
+    // Insert chunks into database with embeddings
     const chunkData = chunks.map((chunk, index) => ({
       id: chunk.id,
       paper_id: paperId,
       chunk_index: index,
       content: chunk.content,
-      embedding: embeddings[index],
-      metadata: metadataList[index]
+      embedding: embeddings[index]
     }))
     
     let { error } = await serviceClient

@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/tooltip'
 import { ChatTab } from './ChatTab'
 import { ResearchTab } from './ResearchTab'
+import type { Message } from 'ai'
 import type { 
   ChatMessage, 
   ProjectPaper, 
@@ -18,15 +19,21 @@ import type {
   ResearchGap,
   AnalysisState,
 } from '../types'
+import type { PendingToolCall } from '../hooks/useEditorChat'
 import { cn } from '@/lib/utils'
 
 interface EditorSidebarProps {
   activeTab: 'chat' | 'research'
   onTabChange: (tab: 'chat' | 'research') => void
-  // Chat props
-  chatMessages: ChatMessage[]
+  // Chat props - supports both old and new message formats
+  chatMessages: ChatMessage[] | Message[]
   onSendMessage: (content: string) => void
   isChatLoading?: boolean
+  // New tool-related props (optional for backward compatibility)
+  pendingTools?: PendingToolCall[]
+  onConfirmTool?: (toolId: string) => void
+  onRejectTool?: (toolId: string) => void
+  onClearHistory?: () => void
   // Research props
   papers: ProjectPaper[]
   analysisState: AnalysisState
@@ -46,6 +53,10 @@ export function EditorSidebar({
   chatMessages,
   onSendMessage,
   isChatLoading = false,
+  pendingTools,
+  onConfirmTool,
+  onRejectTool,
+  onClearHistory,
   papers,
   analysisState,
   onInsertCitation,
@@ -59,7 +70,7 @@ export function EditorSidebar({
   return (
     <div className="flex flex-col h-full rounded-2xl border-2 border-foreground/10 bg-background overflow-hidden">
       {/* Tab header */}
-      <div className="flex items-center justify-between p-3 border-b-2 border-foreground/10">
+      <div className="flex-shrink-0 flex items-center justify-between p-3 border-b-2 border-foreground/10">
         <div className="flex gap-1 p-1 bg-muted rounded-lg">
           <button
             onClick={() => onTabChange('chat')}
@@ -107,12 +118,16 @@ export function EditorSidebar({
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden">
         {activeTab === 'chat' ? (
           <ChatTab 
             messages={chatMessages}
             onSendMessage={onSendMessage}
             isLoading={isChatLoading}
+            pendingTools={pendingTools}
+            onConfirmTool={onConfirmTool}
+            onRejectTool={onRejectTool}
+            onClearHistory={onClearHistory}
           />
         ) : (
           <ResearchTab 

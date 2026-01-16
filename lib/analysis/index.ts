@@ -22,7 +22,7 @@ export {
   findResearchGaps,
   storeResearchGaps,
   getGapsForProject,
-  findContradictions,
+  findContradictions, // @deprecated - use findResearchGaps which includes contradiction detection
   analyzeGapAddressing,
   type ResearchGap,
   type GapType,

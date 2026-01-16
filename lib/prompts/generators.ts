@@ -1,6 +1,9 @@
 import type { PaperTypeKey } from './types';
 import type { PaperProfile } from '@/lib/generation/paper-profile-types';
 import { getLanguageModel } from '@/lib/ai/vercel-client';
+import { buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile';
+import { generateObject } from 'ai';
+import { z } from 'zod';
 
 // Constants for consistent fallbacks
 export const DEFAULT_QUALITY_CRITERIA = [
@@ -9,41 +12,13 @@ export const DEFAULT_QUALITY_CRITERIA = [
   'scholarly depth'
 ] as const;
 
-/**
- * Centralized JSON parsing utility for LLM responses
- * Handles common cleanup patterns and provides consistent error handling
- */
-function safeJsonParseLLM<T>(responseText: string | undefined): { success: true; data: T } | { success: false; error: string } {
-  if (!responseText) {
-    return { success: false, error: 'No response text available' };
-  }
-
-  try {
-    // Clean the response text aggressively
-    let cleanText = responseText.trim();
-    
-    // Remove markdown code blocks
-    cleanText = cleanText.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-    
-    // If it doesn't start with [ or {, try to find the JSON structure
-    if (!cleanText.startsWith('[') && !cleanText.startsWith('{')) {
-      const structureMatch = cleanText.match(/[\[\{][\s\S]*[\]\}]/);
-      if (structureMatch) {
-        cleanText = structureMatch[0];
-      } else {
-        return { success: false, error: 'No valid JSON structure found' };
-      }
-    }
-    
-    const parsed = JSON.parse(cleanText);
-    return { success: true, data: parsed as T };
-  } catch (parseError) {
-    return { 
-      success: false, 
-      error: `JSON parsing failed: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` 
-    };
-  }
-}
+// Zod schema for quality criteria response
+const QualityCriteriaSchema = z.object({
+  criteria: z.array(z.string().min(3).max(80))
+    .min(1)
+    .max(5)
+    .describe('Array of 3-5 quality criteria strings specific to this discipline and section type')
+});
 
 interface OutlineSection {
   sectionKey: string;
@@ -97,108 +72,8 @@ export interface OriginalResearchInput {
   keyFindings?: string
 }
 
-/**
- * Build profile guidance for outline generation
- * Converts the paper profile into BINDING constraints that the outline generator MUST follow
- */
-function buildOutlineProfileGuidance(profile: PaperProfile): string {
-  const sections = profile.structure.appropriateSections
-    .map(s => `- **${s.title}** (key: ${s.key}): ${s.purpose} [${s.minWords}-${s.maxWords} words]`)
-    .join('\n')
-  
-  const inappropriate = profile.structure.inappropriateSections
-    .map(s => `- "${s.name}": ${s.reason}`)
-    .join('\n')
-  
-  const genreRules = profile.genreRules
-    .map(r => `- ${r.rule} (Rationale: ${r.rationale})`)
-    .join('\n')
-  
-  const themes = profile.coverage.requiredThemes.join(', ')
-  
-  // Determine if this paper type needs literature review organizational guidance
-  const needsLitReviewGuidance = profile.paperType === 'literatureReview' || 
-    profile.structure.appropriateSections.some(s => 
-      s.key.toLowerCase().includes('literature') || s.key.toLowerCase().includes('review')
-    )
-  
-  // NOTE: If themeGuidance is provided (from actual literature analysis), it will be appended
-  // to this profile guidance. The theme guidance contains EMERGENT themes from the collected
-  // papers, which should take priority over these generic organizational suggestions.
-  const litReviewOrgGuidance = needsLitReviewGuidance ? `
-
-LITERATURE REVIEW ORGANIZATIONAL APPROACH:
-When creating the outline for the literature review section(s), choose the most appropriate structure:
-
-1. **THEMATIC** - Organize by recurring themes or concepts
-   Best for: Multi-faceted topics with distinct sub-areas
-   Create subsections for each major theme (e.g., "Economic Factors", "Social Factors", "Policy Implications")
-
-2. **CHRONOLOGICAL** - Trace development of ideas over time
-   Best for: Topics with clear historical evolution
-   Create subsections for different time periods or phases of development
-
-3. **METHODOLOGICAL** - Compare different research approaches
-   Best for: Topics studied using diverse methods
-   Create subsections comparing qualitative vs. quantitative findings, or different methodological schools
-
-4. **THEORETICAL** - Organize by competing theories or frameworks
-   Best for: Topics with multiple theoretical perspectives
-   Create subsections for each major theoretical approach
-
-Choose based on what best illuminates the topic. For complex topics, you may combine approaches
-(e.g., thematic overall with chronological development within each theme).
-
-IMPORTANT: If a THEME ANALYSIS FROM COLLECTED LITERATURE section appears below, use those
-EMERGENT THEMES as the basis for your section structure. The themes identified from actual
-literature analysis are more accurate than generic assumptions. Create subsections that
-align with the themes, debates, and organizational approach recommended by the analysis.
-
-Generate meaningful subsection titles that reflect the actual content themes identified from the topic.
-Do NOT use generic titles like "Theme 1" or "Section A" - use descriptive titles.
-` : ''
-
-  const guidance = `
-═══════════════════════════════════════════════════════════════════════════════
-MANDATORY PAPER PROFILE CONSTRAINTS - YOU MUST FOLLOW THESE EXACTLY
-═══════════════════════════════════════════════════════════════════════════════
-
-This is a ${profile.paperType} in ${profile.discipline.primary}.
-
-MANDATORY STRUCTURE - USE ONLY THESE SECTIONS:
-Your outline MUST use sections from this list. Do not invent other sections.
-${sections}
-
-FORBIDDEN SECTIONS - DO NOT CREATE THESE UNDER ANY CIRCUMSTANCES:
-The following sections are INAPPROPRIATE for this paper type and MUST NOT appear:
-${inappropriate || 'None specified'}
-
-If you create any of the forbidden sections, the paper will be REJECTED.
-
-GENRE RULES - INVIOLABLE CONSTRAINTS:
-${genreRules || 'Follow standard academic conventions for this paper type.'}
-
-REQUIRED THEME COVERAGE:
-The paper must address these themes: ${themes || 'As appropriate for the topic'}
-${litReviewOrgGuidance}
-DISCIPLINE CONTEXT:
-- Field: ${profile.discipline.primary}
-- Related fields: ${profile.discipline.related.join(', ')}
-- Pace of change: ${profile.discipline.fieldCharacteristics.paceOfChange}
-- Theory vs Empirical balance: ${profile.discipline.fieldCharacteristics.theoryVsEmpirical}
-- Practitioner relevance: ${profile.discipline.fieldCharacteristics.practitionerRelevance}
-
-SOURCE EXPECTATIONS:
-- Minimum unique sources required: ${profile.sourceExpectations.minimumUniqueSources}
-- Ideal source count: ${profile.sourceExpectations.idealSourceCount}
-- Recency profile: ${profile.sourceExpectations.recencyProfile}
-
-═══════════════════════════════════════════════════════════════════════════════
-CREATE YOUR OUTLINE USING ONLY THE MANDATORY SECTIONS ABOVE
-═══════════════════════════════════════════════════════════════════════════════`
-
-  return guidance
-}
+// NOTE: buildOutlineProfileGuidance has been consolidated into buildProfileGuidanceForPrompt
+// in paper-profile.ts. Use buildProfileGuidanceForPrompt(profile, 'outline') for outline generation.
 
 /**
  * Generate user prompt for outline creation - FINAL FIX with paper assignment
@@ -289,6 +164,8 @@ Your response must be valid JSON that matches this TypeScript type:
  * Generate discipline-specific quality criteria for a section
  * This replaces the hardcoded getDepthCuesForSection function
  * 
+ * Uses Zod schema with generateObject for type-safe structured output.
+ * 
  * @param topic - The research topic (e.g., "Machine Learning in Healthcare")
  * @param sectionTitle - The section being planned (e.g., "Introduction", "Methodology")
  * @param paperType - Type of academic paper (researchArticle, review, etc.)
@@ -326,92 +203,25 @@ Examples of discipline-specific criteria:
 - Case study: "contextual detail", "practical implications", "transferability"
 - Humanities analysis: "textual evidence", "interpretive depth", "cultural context"
 
-Respond with NOTHING BUT a JSON array of strings, each describing one quality criterion specific to this field and section type.`;
-
-  const model = getLanguageModel();
+Return a JSON object with a "criteria" array containing 3-5 quality criteria strings specific to this field and section type.`;
 
   try {
-    const response = await model.doGenerate({
-      inputFormat: 'messages',
-      mode: { type: 'regular' }, // Use regular mode for more reliable text parsing
-      prompt: [{ 
-        role: 'user', 
-        content: [{ type: 'text', text: prompt }]
-      }],
-      maxTokens: 300,
-      temperature: 0.1 // Even lower temperature for more consistency
+    const { object } = await generateObject({
+      model: getLanguageModel(),
+      schema: QualityCriteriaSchema,
+      prompt,
+      temperature: 0.1, // Low temperature for consistency
     });
 
-    // SURGICAL FIX: Use centralized JSON parsing with fallback strategies
-    const parseResult = safeJsonParseLLM<unknown>(response.text);
-    
-    let parsedJson: unknown;
-    if (parseResult.success) {
-      parsedJson = parseResult.data;
-    } else {
-      console.error(`Quality criteria parsing failed. Raw response: "${response.text}". Error: ${parseResult.error}`);
-      
-      // Strategy 2: Try to extract from the raw text using regex with validation
-      if (response.text) {
-        const stringMatches = response.text.match(/"([^"]+)"/g);
-        if (stringMatches && stringMatches.length > 0) {
-          const extractedStrings = stringMatches
-            .map(match => match.slice(1, -1)) // Remove quotes
-            .filter(str => {
-              // Lightweight heuristic to filter out noise
-              return str.length >= 3 && 
-                     str.length <= 80 && 
-                     !str.includes('\n') && 
-                     !str.includes('\t') && 
-                     !/[{}\[\]<>]/.test(str) && // No structural chars
-                     !/error|failed|stack|trace/i.test(str); // No error noise
-            });
-          
-          if (extractedStrings.length > 0) {
-            console.log(`Extracted quality criteria from regex: ${JSON.stringify(extractedStrings)}`);
-            return extractedStrings.slice(0, 5);
-          }
-        }
-      }
-      
-      // Strategy 3: Fallback to defaults
-      console.log('Using fallback quality criteria due to parsing failure');
-      return [...DEFAULT_QUALITY_CRITERIA];
-    }
-
-    // Validate the parsed result
-    if (!Array.isArray(parsedJson)) {
-      console.error(`Quality criteria must be a JSON array of strings. Got: ${typeof parsedJson}. Value: ${JSON.stringify(parsedJson)}`);
-      
-      // Try to extract from object if it's an object with an array property
-      if (typeof parsedJson === 'object' && parsedJson !== null) {
-        const obj = parsedJson as Record<string, unknown>;
-        for (const key of ['criteria', 'quality_criteria', 'items', 'values']) {
-          if (Array.isArray(obj[key])) {
-            parsedJson = obj[key];
-            break;
-          }
-        }
-      }
-      
-      // If still not an array, use fallback
-      if (!Array.isArray(parsedJson)) {
-        return [...DEFAULT_QUALITY_CRITERIA];
-      }
-    }
-    
-    // Filter to ensure all items are strings
-    const criteria = (parsedJson as unknown[])
-      .filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
-      .map(item => item.trim());
+    const criteria = object.criteria.map(c => c.trim()).filter(c => c.length > 0);
     
     if (criteria.length === 0) {
-      console.warn(`Quality criteria array was empty after filtering. Raw JSON: ${JSON.stringify(parsedJson)}`);
+      console.warn('Quality criteria array was empty after filtering');
       return [...DEFAULT_QUALITY_CRITERIA];
     }
     
-    console.log(`✅ Successfully generated ${criteria.length} quality criteria: ${JSON.stringify(criteria)}`);
-    return criteria.slice(0, 5); // Limit to max 5 criteria
+    console.log(`Generated ${criteria.length} quality criteria: ${JSON.stringify(criteria)}`);
+    return criteria;
     
   } catch (error) {
     console.error('Failed to generate quality criteria:', error);
@@ -500,8 +310,8 @@ export async function generateOutline(
   const hasOriginalResearch = Boolean(originalResearch?.researchQuestion);
   const systemPrompt = generateOutlineSystemPrompt(paperType, hasOriginalResearch);
   
-  // Build profile guidance if profile is provided
-  const profileGuidance = profile ? buildOutlineProfileGuidance(profile) : '';
+  // Build profile guidance if profile is provided (using 'outline' mode for structure-focused guidance)
+  const profileGuidance = profile ? buildProfileGuidanceForPrompt(profile, 'outline') : '';
   
   // Combine profile guidance with theme guidance if available
   const combinedGuidance = themeGuidance 

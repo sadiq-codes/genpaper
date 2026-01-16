@@ -27,7 +27,9 @@ import { CitationUpdater } from '../CitationUpdater'
 import { Citation } from '../extensions/Citation'
 import { Mathematics } from '../extensions/Mathematics'
 import { GhostText } from '../extensions/GhostText'
+import { GhostEdit } from '../extensions/GhostEdit'
 import { SlashCommands } from '../extensions/SlashCommands'
+import { BlockId } from '../extensions/BlockId'
 import { useSmartCompletion } from '../hooks/useSmartCompletion'
 import { processContent, hasMarkdownFormatting } from '../utils/content-processor'
 import { editorToMarkdown } from '../utils/tiptap-to-markdown'
@@ -209,11 +211,13 @@ export function DocumentEditor({
       Citation,
       Mathematics,
       GhostText,
+      GhostEdit,
       TaskList,
       TaskItem.configure({
         nested: true,
       }),
       SlashCommands,
+      BlockId,
     ],
     content: DEFAULT_CONTENT, // Initial empty state - real content set via effect
     editorProps: {

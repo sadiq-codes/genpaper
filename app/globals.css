@@ -736,3 +736,238 @@ kbd {
 .ProseMirror h3.is-empty::before {
   @apply text-muted-foreground/50;
 }
+
+/* =============================================================================
+   Ghost Edit Styles - AI Edit Previews
+   ============================================================================= */
+
+/* Deletion styling - red strikethrough */
+.ghost-edit-delete {
+  @apply relative;
+  text-decoration: line-through;
+  text-decoration-color: oklch(0.55 0.2 25);
+  text-decoration-thickness: 2px;
+  background-color: oklch(0.95 0.05 25 / 0.5);
+  color: oklch(0.45 0.15 25);
+  border-radius: 2px;
+  padding: 0 2px;
+  margin: 0 -2px;
+}
+
+.ghost-edit-delete.ghost-edit-active {
+  background-color: oklch(0.92 0.08 25 / 0.7);
+  box-shadow: 0 0 0 2px oklch(0.7 0.15 25 / 0.3);
+}
+
+/* Insertion styling - green highlight */
+.ghost-edit-insert {
+  background-color: oklch(0.95 0.08 145 / 0.6);
+  color: oklch(0.35 0.15 145);
+  border-radius: 2px;
+  padding: 1px 4px;
+  border: 1px dashed oklch(0.6 0.15 145 / 0.5);
+}
+
+.ghost-edit-insert-container.ghost-edit-active .ghost-edit-insert,
+.ghost-edit-replace-container.ghost-edit-active .ghost-edit-insert {
+  background-color: oklch(0.92 0.12 145 / 0.7);
+  border-color: oklch(0.5 0.15 145);
+  box-shadow: 0 0 0 2px oklch(0.6 0.15 145 / 0.3);
+}
+
+/* Container for insert/replace widgets */
+.ghost-edit-insert-container,
+.ghost-edit-replace-container,
+.ghost-edit-control-container {
+  @apply inline-flex items-center gap-1;
+  vertical-align: baseline;
+}
+
+/* Control buttons */
+.ghost-edit-controls {
+  @apply inline-flex items-center gap-0.5 ml-1;
+}
+
+.ghost-edit-btn {
+  @apply inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold transition-all cursor-pointer border-0;
+  line-height: 1;
+}
+
+.ghost-edit-btn:hover {
+  transform: scale(1.1);
+}
+
+.ghost-edit-btn:active {
+  transform: scale(0.95);
+}
+
+/* Accept button - green */
+.ghost-edit-accept {
+  background-color: oklch(0.85 0.1 145);
+  color: oklch(0.25 0.1 145);
+}
+
+.ghost-edit-accept:hover {
+  background-color: oklch(0.75 0.15 145);
+  color: white;
+}
+
+/* Reject button - red */
+.ghost-edit-reject {
+  background-color: oklch(0.9 0.08 25);
+  color: oklch(0.35 0.15 25);
+}
+
+.ghost-edit-reject:hover {
+  background-color: oklch(0.65 0.2 25);
+  color: white;
+}
+
+/* Dark mode adjustments */
+.dark .ghost-edit-delete {
+  text-decoration-color: oklch(0.65 0.2 25);
+  background-color: oklch(0.25 0.08 25 / 0.4);
+  color: oklch(0.75 0.15 25);
+}
+
+.dark .ghost-edit-delete.ghost-edit-active {
+  background-color: oklch(0.3 0.1 25 / 0.5);
+  box-shadow: 0 0 0 2px oklch(0.5 0.15 25 / 0.4);
+}
+
+.dark .ghost-edit-insert {
+  background-color: oklch(0.25 0.1 145 / 0.5);
+  color: oklch(0.8 0.12 145);
+  border-color: oklch(0.5 0.12 145 / 0.5);
+}
+
+.dark .ghost-edit-insert-container.ghost-edit-active .ghost-edit-insert,
+.dark .ghost-edit-replace-container.ghost-edit-active .ghost-edit-insert {
+  background-color: oklch(0.3 0.12 145 / 0.6);
+  border-color: oklch(0.6 0.12 145);
+}
+
+.dark .ghost-edit-accept {
+  background-color: oklch(0.35 0.12 145);
+  color: oklch(0.9 0.05 145);
+}
+
+.dark .ghost-edit-accept:hover {
+  background-color: oklch(0.45 0.15 145);
+}
+
+.dark .ghost-edit-reject {
+  background-color: oklch(0.35 0.1 25);
+  color: oklch(0.85 0.1 25);
+}
+
+.dark .ghost-edit-reject:hover {
+  background-color: oklch(0.45 0.15 25);
+}
+
+/* Animation for ghost edit appearance */
+@keyframes ghostEditFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ghost-edit-insert-container,
+.ghost-edit-replace-container,
+.ghost-edit-control-container {
+  animation: ghostEditFadeIn 0.2s ease-out;
+}
+
+/* Tooltip hint for keyboard shortcuts */
+.ghost-edit-controls::after {
+  content: 'Enter/Esc';
+  @apply absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-muted-foreground whitespace-nowrap opacity-0 transition-opacity pointer-events-none;
+}
+
+.ghost-edit-insert-container:hover .ghost-edit-controls::after,
+.ghost-edit-replace-container:hover .ghost-edit-controls::after,
+.ghost-edit-control-container:hover .ghost-edit-controls::after,
+.ghost-edit-active .ghost-edit-controls::after {
+  @apply opacity-70;
+}
+
+/* Scroll highlight animation - pulses when navigating to an edit */
+@keyframes ghostEditScrollHighlight {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.7 0.15 250 / 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 4px oklch(0.7 0.15 250 / 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.7 0.15 250 / 0);
+  }
+}
+
+.ghost-edit-scroll-highlight {
+  animation: ghostEditScrollHighlight 0.6s ease-out;
+}
+
+/* Acceptance animation - green flash when edit is applied */
+@keyframes ghostEditAccepted {
+  0% {
+    background-color: oklch(0.85 0.15 145 / 0.8);
+    transform: scale(1);
+  }
+  50% {
+    background-color: oklch(0.9 0.12 145 / 0.6);
+    transform: scale(1.02);
+  }
+  100% {
+    background-color: transparent;
+    transform: scale(1);
+  }
+}
+
+.ghost-edit-accepted {
+  animation: ghostEditAccepted 0.4s ease-out forwards;
+  border-radius: 2px;
+}
+
+/* Rejection animation - red flash when edit is rejected */
+@keyframes ghostEditRejected {
+  0% {
+    background-color: oklch(0.85 0.12 25 / 0.6);
+    transform: scale(1);
+  }
+  50% {
+    background-color: oklch(0.9 0.08 25 / 0.4);
+    transform: scale(0.98);
+  }
+  100% {
+    background-color: transparent;
+    transform: scale(1);
+  }
+}
+
+.ghost-edit-rejected {
+  animation: ghostEditRejected 0.3s ease-out forwards;
+  border-radius: 2px;
+}
+
+/* Dark mode scroll highlight */
+.dark .ghost-edit-scroll-highlight {
+  animation-name: ghostEditScrollHighlightDark;
+}
+
+@keyframes ghostEditScrollHighlightDark {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.6 0.15 250 / 0.6);
+  }
+  50% {
+    box-shadow: 0 0 0 4px oklch(0.6 0.15 250 / 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.6 0.15 250 / 0);
+  }
+}

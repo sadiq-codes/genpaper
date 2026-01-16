@@ -26,6 +26,7 @@ export interface SearchOptions {
   fastMode?: boolean
   desired?: number // Target number of results to collect before stopping
   includeOtherTypes?: boolean // Include books, datasets, etc.
+  discipline?: string // Academic discipline for concept filtering (e.g., "American Literature")
 }
 
 // Import shared utilities
@@ -34,6 +35,7 @@ import { XMLParser } from 'fast-xml-parser'
 import pLimit from 'p-limit'
 import { formatDateForAPI, createCanonicalId } from '@/lib/utils/paper-id'
 import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
+import { getOpenAlexConceptIds, shouldApplyConceptFilter } from '@/lib/utils/discipline-mapping'
 
 // OpenAlex publication types - using correct names per API docs
 // Note: OpenAlex uses different type names than Crossref
@@ -884,6 +886,20 @@ function buildOpenAlexFilter(options: SearchOptions): string {
   
   if (options.openAccessOnly) {
     parts.push('is_oa:true')
+  }
+  
+  // Discipline-based concept filtering
+  // This is the most effective way to ensure papers are from the right academic field
+  if (options.discipline) {
+    if (shouldApplyConceptFilter(options.discipline)) {
+      const conceptIds = getOpenAlexConceptIds(options.discipline)
+      if (conceptIds.length > 0) {
+        // Use pipe-separated OR logic for multiple concepts
+        // Format: concepts.id:C123|C456 (matches papers with ANY of these concepts)
+        parts.push(`concepts.id:${conceptIds.join('|')}`)
+        console.log(`📚 OpenAlex filtering by discipline concepts: ${options.discipline} -> ${conceptIds.join(', ')}`)
+      }
+    }
   }
   
   return parts.join(',')

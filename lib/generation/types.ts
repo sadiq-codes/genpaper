@@ -20,6 +20,8 @@ export interface EnhancedGenerationOptions {
   onProgress?: (progress: GenerationProgress) => void
   /** Recency profile from paper profile - affects search weighting */
   recencyProfile?: RecencyProfile
+  /** Academic discipline from paper profile - affects source filtering */
+  discipline?: string
 }
 
 

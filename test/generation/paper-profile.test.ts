@@ -37,14 +37,14 @@ describe('Paper Profile Intelligence System', () => {
   
   describe('Profile Prompt Generation', () => {
     
-    it('should generate literature review prompt with correct guidance', () => {
+    it('should generate literature review prompt with correct guidance', async () => {
       const input: ProfileGenerationInput = {
         topic: 'Why do entrepreneurial ventures fail?',
         paperType: 'literatureReview',
         hasOriginalResearch: false
       }
       
-      const { system, user } = getPaperProfilePrompt(input)
+      const { system, user } = await getPaperProfilePrompt(input)
       
       // System prompt should mention being an expert advisor
       expect(system).toContain('expert academic advisor')
@@ -59,14 +59,14 @@ describe('Paper Profile Intelligence System', () => {
       expect(user).not.toContain('EMPIRICAL RESEARCH PAPER CONTEXT')
     })
     
-    it('should generate research article prompt with empirical guidance when hasOriginalResearch=true', () => {
+    it('should generate research article prompt with empirical guidance when hasOriginalResearch=true', async () => {
       const input: ProfileGenerationInput = {
         topic: 'Effect of AI on healthcare outcomes',
         paperType: 'researchArticle',
         hasOriginalResearch: true
       }
       
-      const { user } = getPaperProfilePrompt(input)
+      const { user } = await getPaperProfilePrompt(input)
       
       // Should contain empirical research guidance
       expect(user).toContain('EMPIRICAL RESEARCH PAPER CONTEXT')
@@ -77,13 +77,13 @@ describe('Paper Profile Intelligence System', () => {
       expect(user).not.toContain('LITERATURE REVIEW CONTEXT')
     })
     
-    it('should include topic in the prompt', () => {
+    it('should include topic in the prompt', async () => {
       const input: ProfileGenerationInput = {
         topic: 'Machine learning in drug discovery',
         paperType: 'literatureReview'
       }
       
-      const { user } = getPaperProfilePrompt(input)
+      const { user } = await getPaperProfilePrompt(input)
       
       expect(user).toContain('Machine learning in drug discovery')
     })

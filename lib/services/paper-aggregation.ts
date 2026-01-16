@@ -55,6 +55,7 @@ export interface AggregatedSearchOptions extends SearchOptions {
   authorityWeight?: number
   recencyWeight?: number
   sources?: PaperSources
+  // discipline is inherited from SearchOptions
 }
 
 // ---------- Enhanced BM25 utilities with proper tf-idf calculation ----------
@@ -146,6 +147,9 @@ function calculateAuthorityScore(citationCount: number): number {
 }
 
 // Calculate recency score with BCE edge-case protection
+// Returns a 0-1 normalized score based on publication year
+// The score is adjusted by recencyWeight during ranking, so this just provides
+// a relative measure of how recent the paper is
 function calculateRecencyScore(year: number): number {
   // Guard against negative years producing positives in BCE edge-case
   if (year < 1900) {
@@ -153,7 +157,17 @@ function calculateRecencyScore(year: number): number {
   }
   
   const currentYear = new Date().getFullYear()
-  return Math.max(0, (year - (currentYear - 10)) * 0.1) // Boost papers from last 10 years
+  const age = currentYear - year
+  
+  // Exponential decay: papers lose relevance over time
+  // This produces scores roughly:
+  // - Current year: ~1.0
+  // - 5 years ago: ~0.6
+  // - 10 years ago: ~0.37
+  // - 20 years ago: ~0.14
+  // - 50 years ago: ~0.007
+  // The recencyWeight parameter controls how much this score matters in final ranking
+  return Math.exp(-0.1 * age)
 }
 
 // deduplicatePapers and normalizeTitle are now imported from @/lib/search/deduplication
@@ -221,7 +235,8 @@ export async function parallelSearch(
     maxResults = 25,
     includePreprints = true,
     sources = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'], // All sources by default
-    fastMode = false
+    fastMode = false,
+    discipline
   } = options
   
   // Filter to only supported sources to prevent pubmed config mismatch
@@ -247,13 +262,16 @@ export async function parallelSearch(
     }
   }
   
-  // Generate embedding-based query rewrites (async)
-  const expandedQueries = await generateQueryRewrites(query)
+  // Generate embedding-based query rewrites (async) with discipline context
+  const expandedQueries = await generateQueryRewrites(query, 3, discipline)
   const primaryQuery = expandedQueries[0]
   
   console.log(`Starting smart sequential search for: "${primaryQuery}"`)
   console.log(`Source priority order: ${sourcesByPriority.join(' → ')}`)
   console.log(`Fast mode: ${fastMode ? 'ON' : 'OFF'}`)
+  if (discipline) {
+    console.log(`Discipline filter: ${discipline}`)
+  }
   
   const allPapers: AcademicPaper[] = []
   // Increase the threshold so we do not prematurely stop after a single large response
@@ -264,7 +282,7 @@ export async function parallelSearch(
   // **PARALLEL SEARCH**: query each requested source concurrently and merge results
   // Integrates circuit breaker (fail fast on unhealthy sources) and caching (avoid redundant calls)
   async function querySource(source: SupportedSource): Promise<AcademicPaper[]> {
-    const searchOptions = { ...options, limit: Math.min(limit, 25), fastMode }
+    const searchOptions = { ...options, limit: Math.min(limit, 25), fastMode, discipline }
     const sourceTimeout = fastMode ? 6000 : 15000 // 6s vs 15s timeout
 
     // Circuit breaker check - skip unhealthy sources
@@ -334,8 +352,9 @@ export async function parallelSearch(
   console.log(`🔄 After deduplication: ${deduplicated.length} papers`)
   
   // Quick pre-filter: remove obviously irrelevant papers before expensive embedding
+  // Pass discipline to filter out papers from wrong academic fields
   const preFiltered = deduplicated.filter(paper => 
-    quickRelevanceCheck(primaryQuery, paper.title, paper.abstract)
+    quickRelevanceCheck(primaryQuery, paper.title, paper.abstract, discipline)
   )
   console.log(`🔍 After quick relevance filter: ${preFiltered.length} papers`)
   

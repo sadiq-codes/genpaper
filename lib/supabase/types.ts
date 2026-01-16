@@ -78,7 +78,10 @@ export type ProjectEvidenceUsageRow = TableRow<'project_evidence_usage'>
  * Extended paper_chunks row type with hybrid search fields.
  * After migration 20260115000000_add_hybrid_search.sql is applied:
  * - content_tsv: tsvector for full-text search
- * - metadata: JSONB for chunk metadata (section_type, has_citations, etc.)
+ * 
+ * Note: The metadata JSONB column exists in the schema but is no longer populated.
+ * Chunk metadata extraction (section_type, has_citations, etc.) was removed as it
+ * was never used for filtering or retrieval - semantic search uses embeddings only.
  */
 export interface PaperChunkWithHybridFields {
   id: string
@@ -89,16 +92,8 @@ export interface PaperChunkWithHybridFields {
   created_at: string | null
   /** tsvector column for full-text search (auto-populated) */
   content_tsv?: unknown
-  /** JSONB metadata for chunk enrichment */
-  metadata?: {
-    section_type?: string | null
-    has_citations?: boolean
-    has_figures?: boolean
-    has_data?: boolean
-    is_conclusion?: boolean
-    complexity_score?: number
-    key_terms?: string[]
-  } | null
+  /** JSONB metadata - no longer populated (kept for backward compatibility) */
+  metadata?: Record<string, unknown> | null
 }
 
 /**

@@ -28,6 +28,7 @@ export interface UnifiedSearchOptions {
   semanticWeight?: number
   authorityWeight?: number
   recencyWeight?: number
+  discipline?: string  // Academic discipline for filtering (e.g., "American Literature")
 }
 
 export interface UnifiedSearchResult {
@@ -122,7 +123,8 @@ export async function unifiedSearch(
     sources = ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
     semanticWeight = DEFAULT_WEIGHTS.semanticWeight,
     authorityWeight = DEFAULT_WEIGHTS.authorityWeight,
-    recencyWeight = DEFAULT_WEIGHTS.recencyWeight
+    recencyWeight = DEFAULT_WEIGHTS.recencyWeight,
+    discipline
   } = options
 
   console.log(`🔍 Starting unified search: "${query}"`)
@@ -155,7 +157,8 @@ export async function unifiedSearch(
           sources,
           semanticWeight,
           authorityWeight,
-          recencyWeight
+          recencyWeight,
+          discipline  // Pass discipline for API-level filtering
         }
         
         const { papers: rankedPapers } = await searchAndIngestPapers(query, academicOptions)
@@ -190,6 +193,11 @@ export async function unifiedSearch(
 
   // DEDUPLICATION - Critical for quality
   allPapers = dedupePapers(allPapers)
+
+  // Note: Primary relevance filtering now happens at the source:
+  // - hybridSearchPapers uses MIN_RELEVANCE_SCORE = 0.3 threshold
+  // - paper-aggregation.ts uses quickRelevanceCheck + semanticRerank
+  // We keep a light safety check here for defense in depth
 
   // KEYWORD FALLBACK - Critical for result completeness
   if (allPapers.length < minResults) {

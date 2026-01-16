@@ -31,6 +31,7 @@ export interface BuildPromptOptions extends TemplateOptions {
   // Original research context (for empirical papers)
   originalResearch?: OriginalResearchContext
   // Paper profile guidance (contextual intelligence from profile generation)
+  // This is now the SINGLE SOURCE OF TRUTH for paper-type specific guidance
   profileGuidance?: string
   // Note: minSourcesRequired removed - we now use semantic citation guidance instead of quantitative enforcement
 }
@@ -225,7 +226,7 @@ async function generatePromptData(
     hasOriginalResearch: originalResearch?.hasOriginalResearch || false,
     researchQuestion: originalResearch?.researchQuestion,
     keyFindings: originalResearch?.keyFindings,
-    // Paper profile guidance (contextual intelligence)
+    // Paper profile guidance (contextual intelligence) - single source of truth
     profileGuidance: options.profileGuidance || undefined
   }
 }
@@ -402,24 +403,39 @@ async function buildPreviousSectionsSummary(currentSectionKey?: string): Promise
 
 /**
  * Generate a basic section summary based on title and evidence usage
+ * Uses generic language that works across disciplines (STEM, humanities, social sciences)
  */
 function generateBasicSectionSummary(sectionTitle: string, chunkCount: number): string {
   const titleLower = sectionTitle.toLowerCase()
   
-  if (titleLower.includes('introduction')) {
-    return `Established context and research questions using ${chunkCount} sources. Background and motivation covered.`
-  } else if (titleLower.includes('method')) {
-    return `Detailed research methodology and procedures using ${chunkCount} sources. Methods and approaches defined.`
-  } else if (titleLower.includes('result')) {
-    return `Presented findings and outcomes using ${chunkCount} sources. Key results and data reported.`
-  } else if (titleLower.includes('discussion')) {
-    return `Interpreted results and implications using ${chunkCount} sources. Analysis and interpretation provided.`
-  } else if (titleLower.includes('literature') || titleLower.includes('review')) {
-    return `Reviewed relevant literature using ${chunkCount} sources. Prior work and gaps identified.`
-  } else if (titleLower.includes('conclusion')) {
-    return `Synthesized key contributions using ${chunkCount} sources. Final conclusions and future work discussed.`
-  } else {
-    return `Covered ${sectionTitle} content using ${chunkCount} sources from evidence base.`
+  // Generic section type detection - works across paper types
+  // Introduction-like sections (context, background, overview)
+  if (titleLower.includes('introduction') || titleLower.includes('background') || titleLower.includes('overview')) {
+    return `Established context and framing using ${chunkCount} sources. Background and scope covered.`
+  } 
+  // Methodology-like sections (methods, approach, framework, design)
+  else if (titleLower.includes('method') || titleLower.includes('approach') || titleLower.includes('framework') || titleLower.includes('design')) {
+    return `Detailed approach and framework using ${chunkCount} sources. Methodology defined.`
+  } 
+  // Results/Findings-like sections (results, findings, analysis)
+  else if (titleLower.includes('result') || titleLower.includes('finding') || titleLower.includes('analysis')) {
+    return `Presented findings using ${chunkCount} sources. Key outcomes reported.`
+  } 
+  // Discussion/Interpretation-like sections (discussion, interpretation, implications)
+  else if (titleLower.includes('discussion') || titleLower.includes('interpretation') || titleLower.includes('implication')) {
+    return `Interpreted findings using ${chunkCount} sources. Analysis and implications provided.`
+  } 
+  // Literature/Review-like sections (literature, review, prior work, related work)
+  else if (titleLower.includes('literature') || titleLower.includes('review') || titleLower.includes('prior work') || titleLower.includes('related')) {
+    return `Reviewed relevant scholarship using ${chunkCount} sources. Prior work examined.`
+  } 
+  // Conclusion-like sections (conclusion, summary, synthesis)
+  else if (titleLower.includes('conclusion') || titleLower.includes('summary') || titleLower.includes('synthesis')) {
+    return `Synthesized key contributions using ${chunkCount} sources. Conclusions provided.`
+  } 
+  // Thematic sections common in humanities (often have descriptive titles)
+  else {
+    return `Covered "${sectionTitle}" using ${chunkCount} sources from evidence base.`
   }
 }
 

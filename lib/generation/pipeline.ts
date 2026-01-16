@@ -157,7 +157,7 @@ export async function generatePaper(
       config: {
         temperature: config.temperature || 0.2,
         max_tokens: config.maxTokens || 16000,
-        sources: config.sources || ['arxiv', 'openalex', 'crossref', 'semantic_scholar'],
+        sources: config.sources || ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
         // Use profile's ideal source count to determine paper limit
         // Fetch more papers than needed to ensure diversity after filtering
         limit: Math.max(50, paperProfile.sourceExpectations.idealSourceCount * 2),
@@ -168,7 +168,9 @@ export async function generatePaper(
         localRegion: undefined
       },
       // Pass recency profile from paper profile
-      recencyProfile: paperProfile.sourceExpectations.recencyProfile
+      recencyProfile: paperProfile.sourceExpectations.recencyProfile,
+      // Pass discipline for API-level filtering to ensure sources are from the right field
+      discipline: paperProfile.discipline.primary
     }
 
     const allPapers = await collectPapers(discoveryOptions)

@@ -7,6 +7,7 @@
 
 import { generateEmbeddings } from '@/lib/utils/embedding'
 import { cosineSimilarity } from '@/lib/rag/base-retrieval'
+import { stemWords } from '@/lib/utils/stemmer'
 
 export interface RerankableItem {
   id: string
@@ -133,24 +134,50 @@ export async function semanticRerank<T extends RerankableItem>(
 
 /**
  * Quick relevance check - returns true if query seems relevant to text
- * Uses simple heuristics, no embeddings (fast)
+ * Uses stemming for better matching of related words (e.g., "religion" matches "religious")
+ * 
+ * Discipline filtering is now handled through:
+ * 1. OpenAlex concept filtering at the API level (most effective)
+ * 2. LLM-based query rewriting with discipline context
+ * 3. Semantic similarity scoring during re-ranking
+ * 
+ * @param query - The search query
+ * @param title - Paper title
+ * @param abstract - Paper abstract (optional)
+ * @param _discipline - Unused, kept for backward compatibility
+ * @returns true if the paper passes the relevance threshold
+ * 
+ * @example
+ * quickRelevanceCheck("Religion in American literature", "Religious themes in American novels")
+ * // → true (stems: "religi" matches "religi", "american" matches "american", "literatur" matches)
  */
-export function quickRelevanceCheck(query: string, title: string, abstract?: string): boolean {
+export function quickRelevanceCheck(query: string, title: string, abstract?: string, _discipline?: string): boolean {
   const q = query.toLowerCase()
   const t = title.toLowerCase()
   const a = (abstract || '').toLowerCase()
+  const combinedText = t + ' ' + a
   
-  // Check for exact phrase match
+  // Discipline-based filtering is now handled by:
+  // 1. OpenAlex concept IDs in buildOpenAlexFilter()
+  // 2. Discipline-aware query expansion in generateQueryRewrites()
+  // 3. Semantic similarity thresholds in semanticRerank()
+  // No hardcoded keyword lists needed.
+  
+  // Check for exact phrase match (fast path)
   if (t.includes(q) || a.includes(q)) {
     return true
   }
   
-  // Check for word overlap
-  const queryWords = q.split(/\s+/).filter(w => w.length > 3)
-  const textWords = new Set((t + ' ' + a).split(/\s+/))
+  // Use stemming for word overlap check
+  // This allows "religion" to match "religious", "literature" to match "literary", etc.
+  const queryStemsSet = stemWords(q)
+  const textStemsSet = stemWords(combinedText)
   
-  const matchCount = queryWords.filter(w => textWords.has(w)).length
-  const matchRatio = queryWords.length > 0 ? matchCount / queryWords.length : 0
+  // Count how many query stems appear in the text
+  const matchCount = [...queryStemsSet].filter(stem => textStemsSet.has(stem)).length
+  const matchRatio = queryStemsSet.size > 0 ? matchCount / queryStemsSet.size : 0
   
-  return matchRatio >= 0.5 // At least 50% of query words present
+  // At least 30% of query word stems must be present
+  // For a 5-word query, this means 2+ stemmed words must match
+  return matchRatio >= 0.3
 }
