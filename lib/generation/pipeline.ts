@@ -169,6 +169,8 @@ export async function generatePaper(
       },
       // Pass recency profile from paper profile
       recencyProfile: paperProfile.sourceExpectations.recencyProfile,
+      // Pass explicit search year range from paper profile (AI-determined based on topic)
+      searchYearRange: paperProfile.sourceExpectations.searchYearRange,
       // Pass discipline for API-level filtering to ensure sources are from the right field
       discipline: paperProfile.discipline.primary
     }
@@ -366,9 +368,21 @@ export async function generatePaper(
         profileGuidance
         // Note: minSourcesRequired removed - using semantic citation guidance instead
       },
+      // Progress callback - called when section starts
       (completed, total, currentSection) => {
         const progress = Math.round((completed / total) * 40) + 45 // 45-85%
         onProgress?.('generation', progress, `Generating ${currentSection} (${completed}/${total})`)
+      },
+      // Section complete callback - sends content for live preview
+      (sectionTitle, content, sectionIndex, total) => {
+        const progress = Math.round((sectionIndex / total) * 40) + 45 // 45-85%
+        onProgress?.('generation', progress, `Completed ${sectionTitle} (${sectionIndex}/${total})`, {
+          sectionComplete: true,
+          sectionTitle,
+          sectionContent: content,
+          sectionIndex,
+          totalSections: total
+        })
       }
     )
 

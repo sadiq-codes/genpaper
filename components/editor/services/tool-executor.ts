@@ -13,17 +13,20 @@ import { findBlockById } from '../extensions/BlockId'
 import { fuzzyFindPhrase, findSection, findInSection } from '@/lib/utils/fuzzy-match'
 import { toast } from 'sonner'
 import { hasMarkdownFormatting, processAIContent } from '../utils/content-processor'
+import { textIndexToDocPosition, validatePositions } from '../utils/position-utils'
 import type { ProjectPaper } from '../types'
 
-// Papers context for citation resolution - set externally
-let papersContext: ProjectPaper[] = []
+// Papers context for citation resolution
+// Note: This is a fallback. Prefer passing papers via options when possible.
+let _globalPapersContext: ProjectPaper[] = []
 
 /**
- * Set the papers context for markdown processing
- * Call this when papers change in the editor
+ * Set the global papers context for markdown processing.
+ * This is a fallback mechanism - prefer passing papers via ToolExecutionOptions.
+ * @deprecated Use ToolExecutionOptions.papers instead when possible
  */
 export function setToolExecutorPapers(papers: ProjectPaper[]): void {
-  papersContext = papers
+  _globalPapersContext = papers
 }
 
 // =============================================================================
@@ -35,6 +38,14 @@ export interface ToolExecutionResult {
   message: string
   affectedRange?: { from: number; to: number }
   blockId?: string
+}
+
+export interface ToolExecutionOptions {
+  /** If set, this edit ID will be attached to the transaction as 'ghostEditAccepted' meta
+   *  to prevent clearing other ghost previews when this edit modifies the document */
+  ghostEditId?: string
+  /** Papers context for citation resolution in markdown content */
+  papers?: ProjectPaper[]
 }
 
 interface BlockTarget {
@@ -135,31 +146,75 @@ function getNotFoundMessage(args: {
   return 'No target specified. Provide a blockId, searchPhrase, or section.'
 }
 
+/**
+ * Validate and clamp positions to document bounds.
+ * Returns validated positions or null with error message if invalid.
+ */
+function validateEditRange(
+  editor: Editor,
+  from: number,
+  to: number
+): { from: number; to: number } | { error: string } {
+  const validation = validatePositions(editor, from, to)
+  
+  if (!validation.valid) {
+    console.warn(`[ToolExecutor] Position validation failed: ${validation.error}`)
+    // Try to clamp to valid range
+    const docSize = editor.state.doc.content.size
+    const clampedFrom = Math.max(0, Math.min(from, docSize))
+    const clampedTo = Math.max(clampedFrom, Math.min(to, docSize))
+    
+    if (clampedFrom === clampedTo && from !== to) {
+      return { error: validation.error || 'Invalid position range' }
+    }
+    
+    console.log(`[ToolExecutor] Clamped positions: ${from}->${clampedFrom}, ${to}->${clampedTo}`)
+    return { from: clampedFrom, to: clampedTo }
+  }
+  
+  return { from, to }
+}
+
 // =============================================================================
 // MAIN EXECUTOR
 // =============================================================================
 
 /**
  * Execute a document tool on the TipTap editor.
+ * 
+ * @param editor - TipTap editor instance
+ * @param toolName - Name of the tool to execute
+ * @param args - Tool arguments
+ * @param options - Execution options (e.g., ghostEditId to preserve other previews, papers for citations)
  */
 export function executeDocumentTool(
   editor: Editor,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  options: ToolExecutionOptions = {}
 ): ToolExecutionResult {
   console.log(`[ToolExecutor] Executing ${toolName}`)
   console.log(`[ToolExecutor] Args:`, JSON.stringify(args, null, 2))
   
+  // Get papers context (from options or global fallback)
+  const papers = options.papers || _globalPapersContext
+  
   try {
+    // If we have a ghost edit ID, wrap execution to set the meta
+    if (options.ghostEditId) {
+      // Use a chain to ensure the meta is set on the same transaction
+      return executeWithGhostMeta(editor, toolName, args, options.ghostEditId, papers)
+    }
+    
     switch (toolName) {
       case 'insertContent':
-        return executeInsertContent(editor, args)
+        return executeInsertContent(editor, args, papers)
       case 'replaceBlock':
-        return executeReplaceBlock(editor, args)
+        return executeReplaceBlock(editor, args, papers)
       case 'replaceInSection':
-        return executeReplaceInSection(editor, args)
+        return executeReplaceInSection(editor, args, papers)
       case 'rewriteSection':
-        return executeRewriteSection(editor, args)
+        return executeRewriteSection(editor, args, papers)
       case 'deleteContent':
         return executeDeleteContent(editor, args)
       case 'addCitation':
@@ -179,16 +234,81 @@ export function executeDocumentTool(
   }
 }
 
+/**
+ * Execute a tool while setting ghostEditAccepted meta to preserve other ghost previews.
+ * This wraps the normal execution to ensure the meta is set on the modifying transaction.
+ */
+function executeWithGhostMeta(
+  editor: Editor,
+  toolName: string,
+  args: Record<string, unknown>,
+  ghostEditId: string,
+  papers: ProjectPaper[] = []
+): ToolExecutionResult {
+  // We need to intercept the transaction and add our meta
+  // Use appendTransaction-style approach via editor.view.dispatch wrapper
+  const originalDispatch = editor.view.dispatch.bind(editor.view)
+  let result: ToolExecutionResult = { success: false, message: 'Not executed' }
+  
+  // Temporarily wrap dispatch to add our meta
+  editor.view.dispatch = (tr) => {
+    if (tr.docChanged) {
+      tr.setMeta('ghostEditAccepted', ghostEditId)
+    }
+    return originalDispatch(tr)
+  }
+  
+  try {
+    switch (toolName) {
+      case 'insertContent':
+        result = executeInsertContent(editor, args, papers)
+        break
+      case 'replaceBlock':
+        result = executeReplaceBlock(editor, args, papers)
+        break
+      case 'replaceInSection':
+        result = executeReplaceInSection(editor, args, papers)
+        break
+      case 'rewriteSection':
+        result = executeRewriteSection(editor, args, papers)
+        break
+      case 'deleteContent':
+        result = executeDeleteContent(editor, args)
+        break
+      case 'addCitation':
+        result = executeAddCitation(editor, args)
+        break
+      case 'highlightText':
+        result = executeHighlightText(editor, args)
+        break
+      case 'addComment':
+        result = executeAddComment(editor, args)
+        break
+      default:
+        result = { success: false, message: `Unknown tool: ${toolName}` }
+    }
+  } finally {
+    // Restore original dispatch
+    editor.view.dispatch = originalDispatch
+  }
+  
+  return result
+}
+
 // =============================================================================
 // TOOL IMPLEMENTATIONS
 // =============================================================================
 
 /**
  * Prepare content for insertion - converts markdown to TipTap JSON if needed
+ * @param content - Raw content string
+ * @param papers - Papers context for citation resolution
  */
-function prepareContent(content: string): string | Record<string, unknown> {
+function prepareContent(content: string, papers: ProjectPaper[] = []): string | Record<string, unknown> {
   if (hasMarkdownFormatting(content)) {
     // Convert markdown to TipTap JSON for proper rendering (tables, lists, etc.)
+    // Use provided papers or fall back to global context
+    const papersContext = papers.length > 0 ? papers : _globalPapersContext
     const doc = processAIContent(content, papersContext)
     // Return the content array, not the full doc wrapper
     return doc.content || content
@@ -208,7 +328,8 @@ function prepareContent(content: string): string | Record<string, unknown> {
  */
 function executeInsertContent(
   editor: Editor,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  papers: ProjectPaper[] = []
 ): ToolExecutionResult {
   const rawContent = args.content as string
   const afterBlockId = args.afterBlockId as string | undefined || args.blockId as string | undefined
@@ -220,7 +341,7 @@ function executeInsertContent(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const content = prepareContent(rawContent)
+  const content = prepareContent(rawContent, papers)
   const isMarkdown = typeof content !== 'string'
   
   if (isMarkdown) {
@@ -330,7 +451,8 @@ function executeInsertContent(
  */
 function executeReplaceBlock(
   editor: Editor,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  papers: ProjectPaper[] = []
 ): ToolExecutionResult {
   const blockId = args.blockId as string | undefined
   const section = args.section as string | undefined
@@ -342,8 +464,9 @@ function executeReplaceBlock(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const newContent = prepareContent(rawContent)
-  const isMarkdown = typeof newContent !== 'string'
+  const newContent = prepareContent(rawContent, papers)
+  // Note: isMarkdown available for future logging/debugging
+  const _isMarkdown = typeof newContent !== 'string'
 
   // If searchPhrase is provided, do text-level replacement
   if (searchPhrase) {
@@ -364,8 +487,16 @@ function executeReplaceBlock(
       }
     }
 
-    const from = findTipTapPosition(editor, match.startIndex)
-    const to = findTipTapPosition(editor, match.endIndex)
+    const rawFrom = findTipTapPosition(editor, match.startIndex)
+    const rawTo = findTipTapPosition(editor, match.endIndex)
+
+    // Validate positions before edit
+    const validated = validateEditRange(editor, rawFrom, rawTo)
+    if ('error' in validated) {
+      toast.error(validated.error)
+      return { success: false, message: validated.error }
+    }
+    const { from, to } = validated
 
     editor.chain()
       .focus()
@@ -390,9 +521,16 @@ function executeReplaceBlock(
     return { success: false, message }
   }
 
+  // Validate positions before edit
+  const validated = validateEditRange(editor, target.pos, target.endPos)
+  if ('error' in validated) {
+    toast.error(validated.error)
+    return { success: false, message: validated.error }
+  }
+
   editor.chain()
     .focus()
-    .setTextSelection({ from: target.pos, to: target.endPos })
+    .setTextSelection({ from: validated.from, to: validated.to })
     .insertContent(newContent)
     .run()
 
@@ -402,7 +540,7 @@ function executeReplaceBlock(
   return { 
     success: true, 
     message: `Replaced content${methodNote}`,
-    affectedRange: { from: target.pos, to: target.endPos },
+    affectedRange: { from: validated.from, to: validated.to },
     blockId: target.blockId,
   }
 }
@@ -413,7 +551,8 @@ function executeReplaceBlock(
  */
 function executeReplaceInSection(
   editor: Editor,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  papers: ProjectPaper[] = []
 ): ToolExecutionResult {
   const section = args.section as string
   const searchPhrase = args.searchPhrase as string
@@ -424,7 +563,7 @@ function executeReplaceInSection(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const newContent = prepareContent(rawContent)
+  const newContent = prepareContent(rawContent, papers)
 
   const target = findTargetBlock(editor, { section, searchPhrase })
 
@@ -434,9 +573,16 @@ function executeReplaceInSection(
     return { success: false, message }
   }
 
+  // Validate positions before edit
+  const validated = validateEditRange(editor, target.pos, target.endPos)
+  if ('error' in validated) {
+    toast.error(validated.error)
+    return { success: false, message: validated.error }
+  }
+
   editor.chain()
     .focus()
-    .setTextSelection({ from: target.pos, to: target.endPos })
+    .setTextSelection({ from: validated.from, to: validated.to })
     .insertContent(newContent)
     .run()
 
@@ -444,7 +590,7 @@ function executeReplaceInSection(
   return { 
     success: true, 
     message: 'Content replaced',
-    affectedRange: { from: target.pos, to: target.endPos },
+    affectedRange: { from: validated.from, to: validated.to },
   }
 }
 
@@ -454,7 +600,8 @@ function executeReplaceInSection(
  */
 function executeRewriteSection(
   editor: Editor,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  papers: ProjectPaper[] = []
 ): ToolExecutionResult {
   const sectionName = args.section as string
   const rawContent = args.newContent as string
@@ -464,7 +611,7 @@ function executeRewriteSection(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const newContent = prepareContent(rawContent)
+  const newContent = prepareContent(rawContent, papers)
   const isMarkdown = typeof newContent !== 'string'
 
   const docText = editor.getText()
@@ -475,8 +622,16 @@ function executeRewriteSection(
     return { success: false, message: `Section "${sectionName}" not found` }
   }
 
-  const from = findTipTapPosition(editor, section.contentStart)
-  const to = findTipTapPosition(editor, section.contentEnd)
+  const rawFrom = findTipTapPosition(editor, section.contentStart)
+  const rawTo = findTipTapPosition(editor, section.contentEnd)
+
+  // Validate positions before edit
+  const validated = validateEditRange(editor, rawFrom, rawTo)
+  if ('error' in validated) {
+    toast.error(validated.error)
+    return { success: false, message: validated.error }
+  }
+  const { from, to } = validated
 
   editor.chain()
     .focus()
@@ -533,8 +688,16 @@ function executeDeleteContent(
     }
 
     // Calculate actual document positions
-    const from = findTipTapPosition(editor, match.startIndex)
-    const to = findTipTapPosition(editor, match.endIndex)
+    const rawFrom = findTipTapPosition(editor, match.startIndex)
+    const rawTo = findTipTapPosition(editor, match.endIndex)
+
+    // Validate positions before edit
+    const validated = validateEditRange(editor, rawFrom, rawTo)
+    if ('error' in validated) {
+      toast.error(validated.error)
+      return { success: false, message: validated.error }
+    }
+    const { from, to } = validated
 
     editor.chain()
       .focus()
@@ -559,9 +722,16 @@ function executeDeleteContent(
     return { success: false, message }
   }
 
+  // Validate positions before edit
+  const validated = validateEditRange(editor, target.pos, target.endPos)
+  if ('error' in validated) {
+    toast.error(validated.error)
+    return { success: false, message: validated.error }
+  }
+
   editor.chain()
     .focus()
-    .setTextSelection({ from: target.pos, to: target.endPos })
+    .setTextSelection({ from: validated.from, to: validated.to })
     .deleteSelection()
     .run()
 
@@ -571,7 +741,7 @@ function executeDeleteContent(
   return { 
     success: true, 
     message: `Deleted content${methodNote}`,
-    affectedRange: { from: target.pos, to: target.endPos },
+    affectedRange: { from: validated.from, to: validated.to },
   }
 }
 
@@ -755,33 +925,5 @@ function executeAddComment(
 // HELPERS
 // =============================================================================
 
-/**
- * Convert a plain text index to TipTap document position.
- */
-function findTipTapPosition(editor: Editor, textIndex: number): number {
-  let charCount = 0
-  let position = 0
-  let found = false
-
-  editor.state.doc.descendants((node, pos) => {
-    if (found) return false
-
-    if (node.isText && node.text) {
-      const nodeLength = node.text.length
-      
-      if (charCount + nodeLength >= textIndex) {
-        position = pos + (textIndex - charCount)
-        found = true
-        return false
-      }
-      
-      charCount += nodeLength
-    } else if (node.isBlock && charCount > 0) {
-      charCount += 1
-    }
-
-    return true
-  })
-
-  return found ? position : editor.state.doc.content.size
-}
+// Alias for backward compatibility - uses shared utility
+const findTipTapPosition = textIndexToDocPosition

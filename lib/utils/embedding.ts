@@ -6,7 +6,7 @@
  */
 
 import { embedMany } from 'ai'
-import { getEmbeddingModel } from '@/lib/ai/vercel-client'
+import { getEmbeddingModel, EMBEDDING_CONFIG } from '@/lib/ai/vercel-client'
 
 // Re-export for backwards compatibility
 export { EMBEDDING_CONFIG } from '@/lib/ai/vercel-client'
@@ -24,7 +24,13 @@ export async function generateEmbeddings(inputs: string | string[]): Promise<num
   try {
     const { embeddings } = await embedMany({
       model: getEmbeddingModel(),
-      values: inputArray
+      values: inputArray,
+      // In AI SDK v6, dimensions must be passed via providerOptions
+      providerOptions: {
+        openai: {
+          dimensions: EMBEDDING_CONFIG.dimensions
+        }
+      }
     })
     
     return embeddings

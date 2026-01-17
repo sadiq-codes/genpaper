@@ -1,8 +1,19 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
-import CommandPalette from '@/components/ui/command-palette'
-import LibraryDrawer from '@/components/ui/library-drawer'
+import dynamic from 'next/dynamic'
+
+// Lazy load heavy components - only load when opened
+// This saves ~50KB from initial bundle
+const CommandPalette = dynamic(() => import('@/components/ui/command-palette'), {
+  ssr: false,
+  loading: () => null, // No loading state - modal will just appear
+})
+
+const LibraryDrawer = dynamic(() => import('@/components/ui/library-drawer'), {
+  ssr: false,
+  loading: () => null, // No loading state - drawer will just appear
+})
 
 interface GlobalLibraryContextType {
   openCommandPalette: () => void
@@ -143,22 +154,26 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
     <GlobalLibraryContext.Provider value={contextValue}>
       {children}
       
-      {/* Command Palette */}
-      <CommandPalette
-        isOpen={showCommandPalette}
-        onClose={() => setShowCommandPalette(false)}
-        onLibrarySearch={handleLibrarySearch}
-        onProjectSearch={handleProjectSearch}
-      />
+      {/* Command Palette - only render when open (lazy loaded) */}
+      {showCommandPalette && (
+        <CommandPalette
+          isOpen={showCommandPalette}
+          onClose={() => setShowCommandPalette(false)}
+          onLibrarySearch={handleLibrarySearch}
+          onProjectSearch={handleProjectSearch}
+        />
+      )}
       
-      {/* Library Drawer */}
-      <LibraryDrawer
-        isOpen={showLibraryDrawer}
-        onClose={closeLibraryDrawer}
-        onAddToProject={addPaperToProject}
-        currentProjectId={currentProjectId}
-        initialQuery={libraryQuery}
-      />
+      {/* Library Drawer - only render when open (lazy loaded) */}
+      {showLibraryDrawer && (
+        <LibraryDrawer
+          isOpen={showLibraryDrawer}
+          onClose={closeLibraryDrawer}
+          onAddToProject={addPaperToProject}
+          currentProjectId={currentProjectId}
+          initialQuery={libraryQuery}
+        />
+      )}
     </GlobalLibraryContext.Provider>
   )
 }

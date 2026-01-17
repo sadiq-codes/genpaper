@@ -1,6 +1,7 @@
 'use client'
 
-import { useActionState, useState, useEffect, useMemo, useCallback } from 'react'
+import { useActionState, useState, useEffect, useMemo, useCallback, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Loader2, BookOpen } from 'lucide-react'
@@ -26,7 +27,18 @@ const PLACEHOLDER_CONFIG: Record<PaperTypeValue, string> = {
 }
 
 export function ProjectInput() {
+  const router = useRouter()
   const [state, formAction, isPending] = useActionState(createProjectAction, null)
+  const [isNavigating, startTransition] = useTransition()
+
+  // Combined loading state for best UX
+  const isLoading = isPending || isNavigating
+
+  // Prefetch editor route on mount for faster navigation
+  useEffect(() => {
+    // Prefetch the editor base route
+    router.prefetch('/editor/[projectId]')
+  }, [router])
 
   // Form state
   const [paperType, setPaperType] = useState<PaperTypeValue>('literatureReview')
@@ -63,14 +75,14 @@ export function ProjectInput() {
 
   // Handle keyboard submit (Cmd/Ctrl + Enter)
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && isFormValid && !isPending) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && isFormValid && !isLoading) {
       e.preventDefault()
       const form = e.currentTarget.closest('form')
       if (form) {
         form.requestSubmit()
       }
     }
-  }, [isFormValid, isPending])
+  }, [isFormValid, isLoading])
 
   return (
     <div className="w-full max-w-2xl mx-auto">
@@ -91,7 +103,7 @@ export function ProjectInput() {
             onChange={(e) => setTopic(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
-            disabled={isPending}
+            disabled={isLoading}
             required
             minLength={10}
             rows={3}
@@ -105,10 +117,10 @@ export function ProjectInput() {
           />
 
           {/* Controls Row */}
-          <div className="flex items-center justify-between px-3 pb-3 pt-1">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3 pb-3 pt-1">
             {/* Left Controls */}
-            <div className="flex items-center gap-0.5">
-              <AddSourceMenu disabled={isPending} />
+            <div className="flex items-center gap-0.5 flex-wrap">
+              <AddSourceMenu disabled={isLoading} />
               <AdvancedOptionsPopover
                 hasOriginalResearch={hasOriginalResearch}
                 onHasOriginalResearchChange={setHasOriginalResearch}
@@ -116,36 +128,38 @@ export function ProjectInput() {
                 onKeyFindingsChange={setKeyFindings}
                 showKeyFindings={showKeyFindings}
                 showOriginalResearchToggle={showOriginalResearchToggle}
-                disabled={isPending}
+                disabled={isLoading}
               />
-              <div className="w-px h-5 bg-border/50 mx-1" />
+              <div className="hidden sm:block w-px h-5 bg-border/50 mx-1" />
               <PaperTypeSelect
                 value={paperType}
                 onValueChange={setPaperType}
-                disabled={isPending}
+                disabled={isLoading}
                 variant="inline"
               />
               <GenerationModeSelect
                 value={generationMode}
                 onValueChange={setGenerationMode}
-                disabled={isPending}
+                disabled={isLoading}
               />
             </div>
 
             {/* Right Control - Submit */}
             <Button
               type="submit"
-              size="icon"
-              disabled={isPending || !isFormValid}
+              disabled={isLoading || !isFormValid}
               className={cn(
-                'h-8 w-8 rounded-lg transition-all',
-                isFormValid && !isPending && 'bg-primary hover:bg-primary/90',
+                'h-9 sm:h-8 sm:w-8 rounded-lg transition-all w-full sm:w-auto',
+                isFormValid && !isLoading && 'bg-primary hover:bg-primary/90',
               )}
             >
-              {isPending ? (
+              {isLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <ArrowRight className="h-4 w-4" />
+                <>
+                  <span className="sm:hidden mr-2">Start</span>
+                  <ArrowRight className="h-4 w-4" />
+                </>
               )}
               <span className="sr-only">Start research</span>
             </Button>

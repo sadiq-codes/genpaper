@@ -48,7 +48,7 @@ The topic is in the discipline of "${discipline}".
 
 Return the list as a JSON array of plain strings. Do not add any explanation.`,
       temperature: 0.7,
-      maxTokens: 200
+      maxOutputTokens: 200
     })
 
     let arr: string[] = []
@@ -129,7 +129,7 @@ Return ONLY a JSON array of 4 search query strings, one for each category.
 Each query should be 5-15 words, keyword-focused (no full sentences).
 Example format: ["query 1", "query 2", "query 3", "query 4"]`,
       temperature: 0.5,
-      maxTokens: 300
+      maxOutputTokens: 300
     })
     
     let arr: string[] = []

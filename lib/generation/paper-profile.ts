@@ -60,24 +60,27 @@ export async function generatePaperProfile(
       }
       
       const response = await model.doGenerate({
-        inputFormat: 'messages',
-        mode: {
-          type: 'object-json',
-          schema: PAPER_PROFILE_JSON_SCHEMA
-        },
         prompt: [
           { role: 'system', content: prompt.system },
           { role: 'user', content: [{ type: 'text', text: prompt.user }] }
         ],
+        responseFormat: {
+          type: 'json',
+          schema: PAPER_PROFILE_JSON_SCHEMA
+        },
         temperature: 0.3,  // Lower temperature for consistency
-        maxTokens: 4000
+        maxOutputTokens: 4000
       })
       
-      if (!response.text) {
+      // In v3, response has content array with text parts
+      const textPart = response.content?.find((p: { type: string }) => p.type === 'text')
+      const responseText = textPart && 'text' in textPart ? textPart.text : undefined
+      
+      if (!responseText) {
         throw new Error('No response text from model')
       }
       
-      const rawProfile = JSON.parse(response.text)
+      const rawProfile = JSON.parse(responseText)
       
       // Add metadata and validate
       const profile: PaperProfile = {

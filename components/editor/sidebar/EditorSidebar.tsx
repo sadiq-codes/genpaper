@@ -1,6 +1,7 @@
 'use client'
 
-import { Clock, FlaskConical, MessageSquare } from 'lucide-react'
+import dynamic from 'next/dynamic'
+import { Clock, FlaskConical, MessageSquare, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -8,9 +9,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { ChatTab } from './ChatTab'
-import { ResearchTab } from './ResearchTab'
-import type { Message } from 'ai'
+import type { UIMessage } from 'ai'
 import type { 
   ProjectPaper, 
   Citation, 
@@ -18,18 +17,49 @@ import type {
 import type { PendingToolCall } from '../hooks/useEditorChat'
 import { cn } from '@/lib/utils'
 
+// Re-export type for external use
+export type { ChatSendOptions } from './ChatTab'
+
+// Code split the heavy tab components - only load when active
+// This reduces initial bundle size significantly
+const ChatTab = dynamic(() => import('./ChatTab').then(mod => ({ default: mod.ChatTab })), {
+  ssr: false,
+  loading: () => <TabLoadingSkeleton />,
+})
+
+const ResearchTab = dynamic(() => import('./ResearchTab').then(mod => ({ default: mod.ResearchTab })), {
+  ssr: false,
+  loading: () => <TabLoadingSkeleton />,
+})
+
+// Minimal loading skeleton for tabs
+function TabLoadingSkeleton() {
+  return (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  )
+}
+
+// Import type for ChatSendOptions
+import type { ChatSendOptions } from './ChatTab'
+
 interface EditorSidebarProps {
   activeTab: 'chat' | 'research'
   onTabChange: (tab: 'chat' | 'research') => void
+  // Project info
+  projectId?: string
   // Chat props
-  chatMessages: Message[]
-  onSendMessage: (content: string) => void
+  chatMessages: UIMessage[]
+  onSendMessage: (content: string | ChatSendOptions) => void
   isChatLoading?: boolean
-  // New tool-related props (optional for backward compatibility)
+  // Tool-related props (actions are in editor now, these are for status display)
   pendingTools?: PendingToolCall[]
   onConfirmTool?: (toolId: string) => void
   onRejectTool?: (toolId: string) => void
   onClearHistory?: () => void
+  /** Whether ghost edit previews are visible in editor */
+  hasGhostPreviews?: boolean
   // Research props
   papers: ProjectPaper[]
   onInsertCitation: (citation: Citation) => void
@@ -42,6 +72,7 @@ interface EditorSidebarProps {
 export function EditorSidebar({
   activeTab,
   onTabChange,
+  projectId,
   chatMessages,
   onSendMessage,
   isChatLoading = false,
@@ -49,6 +80,7 @@ export function EditorSidebar({
   onConfirmTool,
   onRejectTool,
   onClearHistory,
+  hasGhostPreviews = false,
   papers,
   onInsertCitation,
   onOpenLibrary,
@@ -112,10 +144,13 @@ export function EditorSidebar({
             messages={chatMessages}
             onSendMessage={onSendMessage}
             isLoading={isChatLoading}
+            papers={papers}
+            projectId={projectId}
             pendingTools={pendingTools}
             onConfirmTool={onConfirmTool}
             onRejectTool={onRejectTool}
             onClearHistory={onClearHistory}
+            hasGhostPreviews={hasGhostPreviews}
           />
         ) : (
           <ResearchTab 

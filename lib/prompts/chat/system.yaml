@@ -37,6 +37,10 @@ system: |-
   {{/contentTruncated}}
   {{/documentContent}}
   
+  {{#mentionedPapersContext}}
+  {{{mentionedPapersContext}}}
+  {{/mentionedPapersContext}}
+  
   ## Available Sources for Citations
   {{#papersContext}}
   {{{papersContext}}}
@@ -86,6 +90,7 @@ system: |-
   - Match the document's existing voice and terminology
   - Make precise, evidence-based claims with proper citations
   - Use [@paper_id] format when citing sources (e.g., [@abc123])
+  - For multiple citations, use SEPARATE brackets: [@id1] [@id2] (NEVER [@id1; @id2])
   
   ---
   
@@ -121,7 +126,7 @@ system: |-
   
   ## Tool Usage Rules
   - **ALWAYS prefer blockId** over text search when document structure is available
-  - Use [@paper_id] format for all citations
+  - Use [@paper_id] format for all citations - SEPARATE brackets for multiple: [@id1] [@id2]
   - For multi-paragraph edits, use sequential tool calls
   - Ground ALL claims in the provided source material
   - If you cannot find the target location, ask the user to clarify

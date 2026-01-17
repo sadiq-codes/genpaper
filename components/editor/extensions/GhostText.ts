@@ -223,20 +223,33 @@ export const GhostText = Extension.create({
             // Tab - accept ghost text
             if (event.key === 'Tab' && !event.shiftKey) {
               event.preventDefault()
-              editor.commands.acceptGhostText()
+              // Use requestAnimationFrame to ensure state is synchronized
+              requestAnimationFrame(() => {
+                if (!editor.isDestroyed) {
+                  editor.commands.acceptGhostText()
+                }
+              })
               return true
             }
 
             // Escape - clear ghost text
             if (event.key === 'Escape') {
               event.preventDefault()
-              editor.commands.clearGhostText()
+              requestAnimationFrame(() => {
+                if (!editor.isDestroyed) {
+                  editor.commands.clearGhostText()
+                }
+              })
               return true
             }
 
             // Arrow keys - clear ghost text and let default behavior happen
             if (event.key.startsWith('Arrow')) {
-              editor.commands.clearGhostText()
+              requestAnimationFrame(() => {
+                if (!editor.isDestroyed) {
+                  editor.commands.clearGhostText()
+                }
+              })
               return false
             }
 

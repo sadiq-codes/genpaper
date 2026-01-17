@@ -35,12 +35,32 @@ export interface BatchExecutionResult {
 // =============================================================================
 
 /**
- * Check if content requires block-level handling (contains paragraph breaks).
+ * Check if content requires block-level handling (contains paragraph breaks or block elements).
  * Multi-block content can't be safely inserted as plain text nodes.
+ * 
+ * Detects:
+ * - Double newlines (paragraph breaks)
+ * - Markdown headings (# Header)
+ * - Markdown lists (- item, * item, 1. item)
+ * - Code blocks (```)
+ * - HTML block elements
  */
 function containsMultipleBlocks(content: string): boolean {
-  // Check for common block separators
-  return content.includes('\n\n') || content.includes('\r\n\r\n')
+  // Check for common block patterns
+  const blockPatterns = [
+    /\n\n/,                    // Double newline (paragraph break)
+    /\r\n\r\n/,               // Windows-style paragraph break
+    /^#{1,6}\s/m,             // Markdown heading at start of line
+    /\n#{1,6}\s/,             // Markdown heading after newline
+    /^[-*+]\s/m,              // Unordered list item at start
+    /\n[-*+]\s/,              // Unordered list item after newline
+    /^\d+\.\s/m,              // Ordered list item at start
+    /\n\d+\.\s/,              // Ordered list item after newline
+    /```/,                     // Code block fence
+    /<(?:p|div|h[1-6]|ul|ol|li|blockquote|pre|table|hr)\b/i,  // HTML block elements
+  ]
+  
+  return blockPatterns.some(pattern => pattern.test(content))
 }
 
 /**
@@ -61,6 +81,17 @@ export function executeBatchEdits(
 ): BatchExecutionResult {
   if (edits.length === 0) {
     return { success: true, appliedCount: 0 }
+  }
+
+  // Validate edits don't overlap before processing
+  const validation = validateEditBatch(edits)
+  if (!validation.valid) {
+    console.warn('[BatchExecutor] Validation failed:', validation.reason)
+    return { 
+      success: false, 
+      appliedCount: 0, 
+      error: validation.reason 
+    }
   }
 
   // Filter out edits that had calculation errors
@@ -115,7 +146,10 @@ export function executeBatchEdits(
     return {
       success: true,
       appliedCount: sortedEdits.length,
-      affectedRange: { from: minFrom, to: maxTo }
+      // Only return affectedRange if we actually applied edits
+      affectedRange: sortedEdits.length > 0 && minFrom !== Infinity 
+        ? { from: minFrom, to: maxTo } 
+        : undefined
     }
   } catch (error) {
     console.error('[BatchExecutor] Failed to execute batch:', error)
@@ -130,6 +164,9 @@ export function executeBatchEdits(
 /**
  * Execute edits sequentially using editor.chain() to preserve block structure.
  * This is used when edits contain multi-block content.
+ * 
+ * Note: Sequential edits are marked with 'aiEdit' meta for undo grouping.
+ * While not truly atomic, this allows users to undo the batch more easily.
  */
 function executeSequentially(
   editor: Editor,
@@ -138,35 +175,52 @@ function executeSequentially(
   // Sort by position DESCENDING to avoid position drift
   const sortedEdits = [...edits].sort((a, b) => b.from - a.from)
   
+  // Generate a batch ID for undo grouping
+  const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  
   let appliedCount = 0
   let minFrom = Infinity
   let maxTo = -Infinity
 
   for (const edit of sortedEdits) {
     try {
+      // Build chain with aiEdit and batch metadata for undo grouping
+      const applyWithMeta = (chain: ReturnType<typeof editor.chain>) => {
+        // Access the underlying transaction to add metadata
+        // This helps with undo grouping - edits with same batchId can be undone together
+        return chain.command(({ tr }) => {
+          tr.setMeta('aiEdit', true)
+          tr.setMeta('batchId', batchId)
+          return true
+        })
+      }
+
       switch (edit.type) {
         case 'delete':
-          editor.chain()
-            .focus()
-            .setTextSelection({ from: edit.from, to: edit.to })
-            .deleteSelection()
-            .run()
+          applyWithMeta(
+            editor.chain()
+              .focus()
+              .setTextSelection({ from: edit.from, to: edit.to })
+              .deleteSelection()
+          ).run()
           break
 
         case 'insert':
-          editor.chain()
-            .focus()
-            .setTextSelection(edit.from)
-            .insertContent(edit.newContent)
-            .run()
+          applyWithMeta(
+            editor.chain()
+              .focus()
+              .setTextSelection(edit.from)
+              .insertContent(edit.newContent)
+          ).run()
           break
 
         case 'replace':
-          editor.chain()
-            .focus()
-            .setTextSelection({ from: edit.from, to: edit.to })
-            .insertContent(edit.newContent)
-            .run()
+          applyWithMeta(
+            editor.chain()
+              .focus()
+              .setTextSelection({ from: edit.from, to: edit.to })
+              .insertContent(edit.newContent)
+          ).run()
           break
       }
 
@@ -233,12 +287,27 @@ function applyEditToTransaction(
 }
 
 /**
- * Create a ProseMirror text node from content.
+ * Create a ProseMirror node from content.
+ * 
+ * For plain text: creates a text node
+ * For rich content (markdown/HTML): returns null to trigger sequential fallback
+ * 
+ * Note: Rich content with formatting (bold, italic, etc.) or block elements
+ * should use sequential execution with insertContent() which handles parsing.
  */
 function createTextNode(
   content: string,
   schema: Schema
 ) {
+  // Check if content has rich formatting that can't be represented as plain text
+  const hasRichFormatting = /[*_`~\[\]<>]/.test(content) || containsMultipleBlocks(content)
+  
+  if (hasRichFormatting) {
+    // Return null to trigger fallback to insertText or sequential execution
+    // Rich content should be handled by insertContent() which parses markdown/HTML
+    return null
+  }
+  
   try {
     return schema.text(content)
   } catch {

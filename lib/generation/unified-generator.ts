@@ -124,7 +124,7 @@ export async function generateWithUnifiedTemplate(
     system: promptData.system,
     prompt: promptData.user,
     temperature: resolvedOptions.temperature,
-    maxTokens: resolvedOptions.maxTokens
+    maxOutputTokens: resolvedOptions.maxTokens
   })
 
   // Sentence boundary detection with abbreviation handling
@@ -135,7 +135,7 @@ export async function generateWithUnifiedTemplate(
 
   for await (const delta of result.fullStream) {
     if (delta.type === 'text-delta') {
-      pendingText += delta.textDelta
+      pendingText += delta.text
       let match
       while ((match = sentenceEnd.exec(pendingText))) {
         const sentence = pendingText.slice(0, match.index + 1)
@@ -224,11 +224,15 @@ export async function generateFullSection(
 
 /**
  * Batch processing - process multiple sections sequentially with unified approach
+ * 
+ * @param onBatchProgress - Called when a section starts (completed = sections done so far)
+ * @param onSectionComplete - Called when a section finishes with its content
  */
 export async function generateMultipleSectionsUnified(
   contexts: SectionContext[],
   options: BuildPromptOptions = {},
-  onBatchProgress?: (completed: number, total: number, currentSection: string) => void
+  onBatchProgress?: (completed: number, total: number, currentSection: string) => void,
+  onSectionComplete?: (sectionTitle: string, content: string, sectionIndex: number, total: number) => void
 ): Promise<UnifiedGenerationResult[]> {
   const results: UnifiedGenerationResult[] = []
   
@@ -239,6 +243,9 @@ export async function generateMultipleSectionsUnified(
       options
     })
     results.push(result)
+    
+    // Notify that section is complete with content
+    onSectionComplete?.(contexts[i].title || contexts[i].sectionKey, result.content, i + 1, contexts.length)
   }
   
   return results

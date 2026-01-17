@@ -94,6 +94,9 @@ export interface ChatCOStarContext extends COStarBaseContext {
   papersContext: string
   ragContext: string
   
+  // Mentioned papers (explicitly referenced by user with @)
+  mentionedPapersContext?: string
+  
   // Tools (optional - can use default list)
   tools?: Array<{ name: string; description: string }>
   
@@ -230,6 +233,7 @@ export function buildChatContext(params: {
   selectedText?: string
   papersContext: string
   ragContext: string
+  mentionedPapersContext?: string
   maxContentLength?: number
 }): ChatCOStarContext {
   const {
@@ -241,6 +245,7 @@ export function buildChatContext(params: {
     selectedText,
     papersContext,
     ragContext,
+    mentionedPapersContext,
     maxContentLength = 3000,
   } = params
   
@@ -260,6 +265,7 @@ export function buildChatContext(params: {
     selectedText,
     papersContext,
     ragContext,
+    mentionedPapersContext,
   }
 }
 
@@ -326,4 +332,51 @@ export function formatPapersForContext(
     const authorSuffix = (p.authors?.length || 0) > 2 ? ' et al.' : ''
     return `- [${p.id}] "${p.title}" by ${authorStr}${authorSuffix}${p.year ? ` (${p.year})` : ''}`
   }).join('\n')
+}
+
+/**
+ * Format mentioned papers for AI prompt context
+ * These are papers explicitly referenced by the user using @ mentions
+ */
+export function formatMentionedPapersForContext(
+  papers: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
+  ragChunks?: Array<{ paper_id: string; content: string }>
+): string {
+  if (!papers || papers.length === 0) {
+    return ''
+  }
+  
+  const formatted = papers.map(p => {
+    const authorStr = p.authors?.slice(0, 3).join(', ') || 'Unknown'
+    const authorSuffix = (p.authors?.length || 0) > 3 ? ' et al.' : ''
+    
+    let entry = `### ${p.title}\n`
+    entry += `**Authors:** ${authorStr}${authorSuffix}\n`
+    if (p.year) entry += `**Year:** ${p.year}\n`
+    entry += `**Paper ID:** ${p.id}\n`
+    
+    // Add abstract if available
+    if (p.abstract) {
+      entry += `**Abstract:** ${p.abstract.slice(0, 500)}${p.abstract.length > 500 ? '...' : ''}\n`
+    }
+    
+    // Add relevant RAG chunks for this paper
+    if (ragChunks) {
+      const paperChunks = ragChunks.filter(c => c.paper_id === p.id)
+      if (paperChunks.length > 0) {
+        entry += `\n**Relevant excerpts:**\n`
+        for (const chunk of paperChunks.slice(0, 2)) {
+          entry += `> ${chunk.content.slice(0, 300)}${chunk.content.length > 300 ? '...' : ''}\n`
+        }
+      }
+    }
+    
+    return entry
+  }).join('\n---\n\n')
+  
+  return `## Papers Referenced by User (@mentions)
+
+The user has explicitly mentioned these papers in their message. Focus on these sources when answering their question.
+
+${formatted}`
 }

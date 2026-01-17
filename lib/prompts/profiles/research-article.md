@@ -60,21 +60,28 @@ If the research uses secondary data from cited sources:
 
 ## Required Format for Results (when data is available)
 
+⚠️ TABLE FORMAT EXAMPLES BELOW - DO NOT COPY VALUES ⚠️
+These show STRUCTURE only. Use YOUR actual data or data from YOUR evidence.
+
 ### Descriptive Statistics Table:
 | Variable | N | Mean | SD | Min | Max |
 |----------|---|------|-----|-----|-----|
-| Variable 1 | 247 | 3.45 | 1.12 | 1 | 5 |
+| [Your variable] | [Your N] | [Your mean] | [Your SD] | [Your min] | [Your max] |
 
 ### Analysis Results Table:
 | Predictor | β | SE | t | p | 95% CI |
 |-----------|-----|------|------|-------|--------------|
-| Predictor 1 | 0.34 | 0.08 | 4.25 | <.001 | [0.18, 0.50] |
+| [Your predictor] | [Your β] | [Your SE] | [Your t] | [Your p] | [Your CI] |
 
 ### Hypothesis testing format:
-- "H1 was supported: X significantly predicted Y (β = 0.34, p < .001)"
-- "H2 was not supported: no significant relationship (β = -0.12, p = .184)"
+- "H1 was supported: [Your finding] (β = [Your value], p [Your p-value])"
+- "H2 was not supported: [Your finding] (β = [Your value], p = [Your p-value])"
 
-**KEY PRINCIPLE:** Be specific when data is available, but NEVER fabricate data and claim it's real research. Transparency about data sources is essential.
+⚠️ **KEY PRINCIPLE:** 
+- If YOU have original research data: use YOUR actual numbers
+- If this is a template/example paper: clearly state data is illustrative
+- If using secondary data: ONLY include statistics from YOUR evidence sources
+- NEVER fabricate data and claim it's real research
 
 ---
 
@@ -119,9 +126,11 @@ Minimal citations.
 
 ### Appropriate Language:
 - "Our findings indicate..." / "The results show..."
-- "We found that X was significantly related to Y (β = 0.45, p < 0.01)"
-- "Hypothesis 1 was supported: entrepreneurs with prior experience..."
+- "We found that [variable] was significantly related to [variable] (β = [value], p [value])"
+- "Hypothesis 1 was supported: [your specific finding]..."
 - "Our data suggest..."
+
+⚠️ Replace bracketed placeholders with YOUR actual findings and statistics.
 
 ### Inappropriate Language (Literature Review Style):
 - "Studies have shown..." / "Research indicates..."
@@ -137,3 +146,111 @@ The profile's qualityCriteria MUST include:
 3. "Original data presentation with statistical evidence including tables"
 4. "Specific statistical results (β coefficients, p-values, confidence intervals)"
 5. "Interpretation of findings in theoretical context"
+
+---
+
+## Synthesis and Critical Evaluation in Literature Review Section
+
+Even though the Literature Review is a smaller section in research articles, it MUST still demonstrate:
+
+### Synthesis (Not Just Summary)
+
+⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
+
+❌ **AVOID (Descriptive listing):**
+> "[Author A] found X. [Author B] found Y. [Author C] found Z."
+
+✅ **USE (Integrated synthesis) - STRUCTURE ONLY:**
+> "Prior research converges on the importance of [topic from YOUR evidence] [CITE: your-actual-id1] [CITE: your-actual-id2], though 
+> findings regarding [aspect from YOUR evidence] remain mixed. While [some studies from YOUR evidence] suggest positive effects 
+> [CITE: your-actual-id3] [CITE: your-actual-id4], [other studies from YOUR evidence] has yielded conflicting results [CITE: your-actual-id5], 
+> potentially due to [explanation you identify]."
+
+⚠️ Replace ALL bracketed content with ACTUAL information from your evidence snippets.
+
+### Critical Evaluation
+
+For key prior studies you're building on, briefly evaluate:
+- Methodological strengths and limitations
+- Generalizability of findings
+- How your study addresses gaps or extends prior work
+
+### Source Diversity
+
+Even in a brief literature review:
+- Cite **at least 50%** of available relevant sources
+- Don't over-rely on 1-2 papers for all claims
+- Use different sources for different aspects of your theoretical framework
+
+---
+
+## Table Requirements for Research Articles
+
+### Required Tables:
+
+⚠️ TABLE FORMAT EXAMPLES BELOW - DO NOT COPY VALUES ⚠️
+Use YOUR actual data or data from YOUR evidence sources.
+
+**Table 1: Descriptive Statistics**
+| Variable | N | Mean | SD | Min | Max |
+|----------|---|------|-----|-----|-----|
+| [Your variable] | [Your N] | [Your mean] | [Your SD] | [Your min] | [Your max] |
+
+**Table 2: Correlation Matrix** (if applicable)
+|          | Var 1 | Var 2 | Var 3 |
+|----------|-------|-------|-------|
+| Var 1    | 1.00  |       |       |
+| Var 2    | [Your r]* | 1.00  |       |
+| Var 3    | [Your r]* | [Your r]* | 1.00  |
+
+**Table 3: Regression/Analysis Results**
+| Predictor | β | SE | t | p | 95% CI |
+|-----------|-----|------|------|-------|--------------|
+| [Your predictor] | [Your β] | [Your SE] | [Your t] | [Your p] | [Your CI] |
+
+### Optional Tables (when appropriate):
+
+**Comparison with Prior Studies:**
+⚠️ Only include studies from YOUR evidence - do not invent author names or findings.
+
+| Study | Sample | Method | Key Finding | Our Finding |
+|-------|--------|--------|-------------|-------------|
+| [Author from evidence] [CITE: actual-id] | [Sample IF in evidence] | [Method from evidence] | [Finding from evidence] | [Your comparison] |
+
+### Table Guidelines:
+- Every results section should have at least ONE data table
+- Tables should be referenced in the text ("As shown in Table 1...")
+- Include notes explaining significance levels (* p < .05, ** p < .01)
+- Don't duplicate table content extensively in prose
+
+---
+
+## Discussion Section: Comparing with Literature
+
+The Discussion section requires careful integration of YOUR findings with prior research:
+
+⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
+Use YOUR actual findings and citations from YOUR evidence.
+
+### Pattern 1: Consistent Findings
+> "Our finding that [your variable] significantly predicted [your variable] (β = [your value], p [your value]) aligns with 
+> prior research [CITE: your-actual-id1] [CITE: your-actual-id2]. This consistency across different samples 
+> and methodologies strengthens confidence in this relationship."
+
+### Pattern 2: Divergent Findings
+> "Contrary to [Author from YOUR evidence] [CITE: your-actual-id], we did not find a significant 
+> relationship between [variables] (β = [your value], p = [your value]). This discrepancy may reflect 
+> differences in [your explanation]."
+
+### Pattern 3: Extending Prior Work
+> "Our results extend [Author from YOUR evidence] [CITE: your-actual-id] by demonstrating that [your finding], 
+> a [aspect] not examined in prior research."
+
+⚠️ CRITICAL: Use YOUR actual statistics and cite authors that ARE in your evidence.
+Do not copy "Smith et al." or "Jones (2019)" from these examples.
+
+### Critical Comparison Requirements:
+- Compare your findings to AT LEAST 3-5 prior studies
+- Explain agreements AND disagreements
+- Offer explanations for any contradictions
+- Connect back to theoretical framework from literature review

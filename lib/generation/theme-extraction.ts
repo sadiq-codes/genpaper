@@ -235,42 +235,45 @@ async function performThemeExtraction(
   const prompt = buildThemeExtractionPrompt(input)
   
   const response = await model.doGenerate({
-    inputFormat: 'messages',
-    mode: {
-      type: 'object-json',
-      schema: THEME_ANALYSIS_JSON_SCHEMA
-    },
     prompt: [
       { role: 'system', content: prompt.system },
       { role: 'user', content: [{ type: 'text', text: prompt.user }] }
     ],
+    responseFormat: {
+      type: 'json',
+      schema: THEME_ANALYSIS_JSON_SCHEMA
+    },
     temperature: 0.3,
-    maxTokens: 4000
+    maxOutputTokens: 4000
   })
   
-  if (!response.text) {
+  // In v3, response has content array with text parts
+  const textPart = response.content?.find((p: { type: string }) => p.type === 'text')
+  const responseText = textPart && 'text' in textPart ? textPart.text : undefined
+  
+  if (!responseText) {
     throw new Error('No response from theme extraction model')
   }
   
   // Check for truncation
   // Note: Cast to string to handle different type definitions across AI SDK versions
-  const finishReason = response.finishReason as string
+  const finishReason = response.finishReason as unknown as string
   if (finishReason === 'length') {
     warn({
-      promptTokens: response.usage?.promptTokens,
-      completionTokens: response.usage?.completionTokens
+      inputTokens: response.usage?.inputTokens,
+      outputTokens: response.usage?.outputTokens
     }, 'Theme extraction response was truncated')
     throw new Error('Theme extraction response was truncated due to token limit')
   }
   
   let rawAnalysis: Record<string, unknown>
   try {
-    rawAnalysis = JSON.parse(response.text)
+    rawAnalysis = JSON.parse(responseText)
   } catch (parseError) {
     const errorMsg = parseError instanceof Error ? parseError.message : String(parseError)
     warn({
       parseError: errorMsg,
-      responsePreview: response.text?.slice(0, 500),
+      responsePreview: responseText?.slice(0, 500),
       finishReason
     }, 'Failed to parse theme extraction response')
     throw new Error(`Theme extraction JSON parse failed: ${errorMsg}`)
@@ -534,7 +537,8 @@ const THEME_ANALYSIS_JSON_SCHEMA = {
           strength: { type: 'string' as const, enum: ['dominant', 'moderate', 'emerging'] },
           keyTerms: { type: 'array' as const, items: { type: 'string' as const } }
         },
-        required: ['name', 'description', 'supportingPaperIds', 'strength']
+        required: ['name', 'description', 'supportingPaperIds', 'strength', 'keyTerms'],
+        additionalProperties: false
       }
     },
     debates: {
@@ -551,12 +555,14 @@ const THEME_ANALYSIS_JSON_SCHEMA = {
                 stance: { type: 'string' as const },
                 supportingPaperIds: { type: 'array' as const, items: { type: 'string' as const } }
               },
-              required: ['stance', 'supportingPaperIds']
+              required: ['stance', 'supportingPaperIds'],
+              additionalProperties: false
             }
           },
           significance: { type: 'string' as const }
         },
-        required: ['topic', 'positions']
+        required: ['topic', 'positions', 'significance'],
+        additionalProperties: false
       }
     },
     gaps: {
@@ -569,7 +575,8 @@ const THEME_ANALYSIS_JSON_SCHEMA = {
           significance: { type: 'string' as const, enum: ['critical', 'notable', 'minor'] },
           potentialDirections: { type: 'array' as const, items: { type: 'string' as const } }
         },
-        required: ['description', 'relatedThemes', 'significance']
+        required: ['description', 'relatedThemes', 'significance', 'potentialDirections'],
+        additionalProperties: false
       }
     },
     pivotalPapers: {
@@ -586,7 +593,8 @@ const THEME_ANALYSIS_JSON_SCHEMA = {
             enum: ['citation_count', 'frequently_referenced', 'foundational_methods', 'field_defining'] 
           }
         },
-        required: ['paperId', 'title', 'reason', 'evidenceType']
+        required: ['paperId', 'title', 'reason', 'citationCount', 'evidenceType'],
+        additionalProperties: false
       }
     },
     methodologicalApproaches: {
@@ -598,7 +606,8 @@ const THEME_ANALYSIS_JSON_SCHEMA = {
           paperIds: { type: 'array' as const, items: { type: 'string' as const } },
           prevalence: { type: 'string' as const, enum: ['common', 'moderate', 'rare'] }
         },
-        required: ['name', 'paperIds', 'prevalence']
+        required: ['name', 'paperIds', 'prevalence'],
+        additionalProperties: false
       }
     },
     organizationSuggestion: {
@@ -622,11 +631,13 @@ const THEME_ANALYSIS_JSON_SCHEMA = {
               description: { type: 'string' as const },
               relatedThemes: { type: 'array' as const, items: { type: 'string' as const } }
             },
-            required: ['title', 'description']
+            required: ['title', 'description', 'relatedThemes'],
+            additionalProperties: false
           }
         }
       },
-      required: ['approach', 'rationale']
+      required: ['approach', 'rationale', 'hybridComponents', 'suggestedSections'],
+      additionalProperties: false
     },
     temporalSpan: {
       type: 'object' as const,
@@ -634,7 +645,9 @@ const THEME_ANALYSIS_JSON_SCHEMA = {
         earliest: { type: 'number' as const },
         latest: { type: 'number' as const },
         concentrationPeriod: { type: 'string' as const }
-      }
+      },
+      required: ['earliest', 'latest', 'concentrationPeriod'],
+      additionalProperties: false
     },
     confidence: { type: 'number' as const },
     limitations: { type: 'array' as const, items: { type: 'string' as const } }
@@ -646,8 +659,11 @@ const THEME_ANALYSIS_JSON_SCHEMA = {
     'pivotalPapers', 
     'methodologicalApproaches',
     'organizationSuggestion',
-    'confidence'
-  ]
+    'temporalSpan',
+    'confidence',
+    'limitations'
+  ],
+  additionalProperties: false
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

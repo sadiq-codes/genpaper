@@ -155,6 +155,11 @@ async function generatePromptData(
   
   console.log(`📊 Evidence availability: usablePapers=${distinctPapers}, totalPapers=${totalDistinctPapers}`)
 
+  // Calculate source diversity target based on paper type
+  const currentPaperType = options.paperType || 'researchArticle'
+  const sourceDiversityTarget = calculateSourceDiversityTarget(currentPaperType, distinctPapers)
+  console.log(`📊 Source diversity target: ${sourceDiversityTarget.minPapers} papers (${sourceDiversityTarget.percentage}% of ${distinctPapers})`)
+
   // Filter out already-used evidence from cross-section memory
   const { EvidenceTracker } = await import('@/lib/services/evidence-tracker')
   const freshChunks = EvidenceTracker.filterUnusedEvidence(workingChunks)
@@ -444,3 +449,29 @@ function generateBasicSectionSummary(sectionTitle: string, chunkCount: number): 
 // - getCurrentText: was returning null, now inlined  
 // - _generateSectionSummary: unused
 // - buildAlreadyCoveredList: was returning empty string, now inlined
+
+/**
+ * Calculate source diversity target based on paper type
+ * Different paper types have different expectations for source breadth
+ */
+function calculateSourceDiversityTarget(paperType: string, availablePapers: number): { percentage: number; minPapers: number } {
+  // Paper type to minimum citation percentage mapping
+  const diversityTargets: Record<string, number> = {
+    'literatureReview': 80,      // Lit reviews need to cite most available sources
+    'literature-review': 80,
+    'phdDissertation': 90,       // PhD requires exhaustive coverage
+    'phd-dissertation': 90,
+    'mastersThesis': 70,         // Master's needs comprehensive coverage
+    'masters-thesis': 70,
+    'capstoneProject': 65,       // Capstone needs thorough coverage
+    'capstone-project': 65,
+    'researchArticle': 50,       // Research articles focus on relevant prior work
+    'research-article': 50,
+  }
+  
+  // Default to 50% if paper type not found
+  const percentage = diversityTargets[paperType] || 50
+  const minPapers = Math.ceil(availablePapers * (percentage / 100))
+  
+  return { percentage, minPapers }
+}

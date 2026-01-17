@@ -71,7 +71,12 @@ Identify and highlight LANDMARK STUDIES that shaped the field:
 
 When discussing landmark studies, explain their **INFLUENCE**:
 
-> "Bandura's (1977) social learning theory was pivotal because it expanded behavioral explanations to include cognitive and social factors, fundamentally changing how researchers approached skill acquisition and spawning decades of self-efficacy research."
+⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY CONTENT, ONLY STRUCTURE:
+> "[Author from YOUR evidence]'s [theory/finding] was pivotal because it [impact from YOUR evidence], 
+> fundamentally changing how researchers approached [topic] and spawning [subsequent developments]."
+
+⚠️ Replace ALL bracketed content with ACTUAL information from your evidence snippets.
+If your evidence doesn't identify a study as "pivotal," don't claim it is.
 
 ## Literature Review Structure
 
@@ -106,6 +111,74 @@ A literature review MUST include critical analysis, not just summaries. The prof
 4. "Discussion of unresolved tensions in the literature"
 5. "Identification of pivotal/landmark publications and their influence"
 
+### Critical Evaluation Framework
+
+For EACH major finding or claim discussed, evaluate:
+
+**Methodological Quality:**
+- Sample size adequacy (n=? - is it sufficient?)
+- Study design appropriateness (experimental, observational, qualitative?)
+- Potential biases or confounds
+- Measurement validity and reliability
+
+**Generalizability:**
+- Context limitations (geographic, temporal, demographic)
+- Population constraints (who was studied?)
+- Replication status (have findings been confirmed?)
+- External validity concerns
+
+**Contradictions:**
+- Studies with conflicting findings
+- Possible explanations for discrepancies (methods, samples, contexts)
+- Unresolved debates in the field
+
+⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
+
+**EXAMPLE (Good Critical Evaluation) - STRUCTURE ONLY:**
+> "While [Author from YOUR evidence] demonstrated [metric from YOUR evidence] for [topic], 
+> this study used only [limitation from YOUR evidence] (n=[sample size IF in evidence]). 
+> [Other context from YOUR evidence] remains limited, with [other studies from YOUR evidence] 
+> reporting [different findings from YOUR evidence], likely due to [explanation]. 
+> Furthermore, [limitation you identify from YOUR evidence] may limit applicability 
+> in [context]—a limitation [noted in YOUR evidence or you identify]."
+
+⚠️ CRITICAL: Only include percentages, sample sizes, and specific statistics that 
+ACTUALLY APPEAR in your evidence snippets. If evidence lacks numbers, write qualitatively:
+- "demonstrated high sensitivity" instead of inventing "95%"
+- "a small sample" instead of inventing "n=50"
+
+### Synthesis Patterns to Demonstrate
+
+⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
+
+❌ **AVOID (Descriptive listing):**
+> "[Author A] found X. [Author B] found Y. [Author C] found Z."
+
+✅ **USE (Integrated synthesis) - STRUCTURE ONLY:**
+> "A consistent pattern emerges across recent studies: researchers examining [topic from YOUR evidence] 
+> have consistently found [finding from YOUR evidence] [CITE: your-actual-id1] [CITE: your-actual-id2] [CITE: your-actual-id3]. 
+> However, findings diverge sharply regarding [aspect from YOUR evidence], with [some studies from YOUR evidence] suggesting 
+> [one finding] [CITE: your-actual-id4] while [other studies from YOUR evidence] reveal [different finding] [CITE: your-actual-id5]. 
+> This [type of divide you identify] may explain the apparent contradiction, as..."
+
+⚠️ Replace ALL bracketed content with ACTUAL information from your evidence snippets.
+
+### Quantitative Synthesis
+
+When multiple studies report comparable metrics:
+
+| Pattern | How to Synthesize |
+|---------|-------------------|
+| 3+ studies, same metric | Report range: "[metric] ranged from [low] to [high] across studies" (USE ACTUAL NUMBERS FROM EVIDENCE) |
+| Consistent direction | Note convergence: "all [N] studies found [direction] effects" (COUNT YOUR ACTUAL SOURCES) |
+| Mixed findings | Quantify disagreement: "[X] of [Y] studies found significant effects" (COUNT YOUR ACTUAL SOURCES) |
+| No numbers available | Use qualitative terms: "consistently," "predominantly," "mixed" |
+
+⚠️ **CRITICAL:** Never fabricate statistics. 
+- If numbers ARE in evidence: use exact numbers from evidence
+- If numbers are NOT in evidence: use qualitative terms like "consistently higher," "most studies found," etc.
+- COUNT your actual sources - don't invent "5 studies" if you only have 3
+
 ## When to Cite in Literature Reviews
 
 Since a literature review synthesizes existing research, MOST claims require citations:
@@ -120,6 +193,56 @@ Since a literature review synthesizes existing research, MOST claims require cit
 - Widely accepted common knowledge in the field
 
 In literature reviews, most paragraphs should contain multiple citations because you are reporting what the literature says. Only your analytical observations connecting sources do not require citations.
+
+## Table Requirements for Literature Reviews
+
+When synthesizing multiple studies, USE TABLES to organize complex information:
+
+### Required Tables (include at least ONE):
+
+⚠️ TABLE EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
+Populate tables ONLY with data from YOUR evidence snippets.
+
+**Table 1: Summary of Reviewed Studies**
+| Author (Year) | Sample/Context | Method | Key Findings |
+|---------------|----------------|--------|--------------|
+| [Author from evidence] [CITE: actual-id] | [Sample IF in evidence, else "not reported"] | [Method from evidence] | [Finding from evidence] |
+| [Author from evidence] [CITE: actual-id] | [Sample IF in evidence, else "not reported"] | [Method from evidence] | [Finding from evidence] |
+
+**Table 2: Comparison of Approaches/Methods**
+| Approach | Advantages | Limitations | Supporting Studies |
+|----------|------------|-------------|-------------------|
+| [Method from evidence] | [Advantage from evidence] | [Limitation from evidence] | [CITE: actual-id1] [CITE: actual-id2] |
+
+**Table 3: Contradictory Findings**
+| Finding | Studies Supporting | Studies Contradicting | Possible Explanation |
+|---------|-------------------|----------------------|---------------------|
+| [Finding from evidence] | [CITE: actual-ids] | [CITE: actual-ids] | [Your analysis] |
+
+⚠️ CRITICAL: If your evidence doesn't include sample sizes, methods, or other details, 
+either omit that column OR write "not reported" - NEVER invent data.
+
+### Table Guidelines:
+- Include citation markers in the Author or Studies column
+- Keep cell content concise (key points only)
+- Add a brief paragraph interpreting the table below it
+- Use tables to COMPLEMENT prose, not replace synthesis
+- Tables are especially valuable when comparing 4+ studies
+
+## Source Diversity Requirements
+
+**Literature reviews MUST demonstrate comprehensive coverage:**
+
+- Aim to cite **70-100%** of available papers across the review
+- Each thematic section should draw from **multiple different sources**
+- Avoid over-reliance on any single source (no paper cited 5+ times unless foundational)
+- Prioritize breadth: 15 papers cited once each > 3 papers cited 5 times each
+
+**Source Distribution Check:**
+Before finalizing each section, verify:
+- [ ] Have I used sources from across my evidence pool?
+- [ ] Am I citing different sources for different aspects?
+- [ ] Have I avoided citing the same source in consecutive sentences?
 
 ## Evidence Integrity Warning
 

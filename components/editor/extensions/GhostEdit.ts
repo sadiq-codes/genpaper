@@ -1,12 +1,15 @@
 /**
- * GhostEdit Extension - Visual previews for AI document edits
+ * GhostEdit Extension - Block-level visual previews for AI document edits
  * 
- * Shows proposed edits as inline decorations:
- * - Deletions: Red strikethrough
- * - Insertions: Green highlighted text
- * - Replacements: Red strikethrough + green insertion
+ * This extension shows proposed edits as distinct diff blocks:
+ * - Deletions: Block showing content to be removed (red)
+ * - Insertions: Block showing content to be added (green)
+ * - Replacements: Block showing both old and new content
  * 
- * Users can accept/reject edits via inline buttons or keyboard.
+ * Users can accept/reject edits via:
+ * - Large buttons in each diff block
+ * - Keyboard: Enter (accept), Escape (reject), Tab (navigate)
+ * - Floating toolbar for batch operations
  */
 
 import { Extension } from '@tiptap/core'
@@ -23,6 +26,10 @@ export interface GhostEditState {
   edits: CalculatedEdit[]
   /** Currently focused edit (for keyboard navigation) */
   activeEditId: string | null
+  /** Current chunk start index for pagination (0, 5, 10, ...) */
+  chunkStart: number
+  /** Number of edits to show at once */
+  chunkSize: number
   /** Callbacks for accept/reject */
   onAccept?: (editId: string) => void
   onReject?: (editId: string) => void
@@ -70,211 +77,244 @@ declare module '@tiptap/core' {
        * Scroll to a specific ghost edit
        */
       scrollToGhostEdit: (editId: string) => ReturnType
+      /**
+       * Set the active edit by ID
+       */
+      setActiveGhostEdit: (editId: string) => ReturnType
     }
   }
 }
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+const CHUNK_SIZE = 5 // Show 5 edits at a time for performance
 
 // =============================================================================
 // DECORATION BUILDERS
 // =============================================================================
 
 /**
- * Create decorations for a single edit
+ * Create a block-level diff decoration for an edit
  */
-function createEditDecorations(
+function createDiffBlockDecoration(
   edit: CalculatedEdit,
   isActive: boolean,
+  editNumber: number,
+  totalEdits: number,
   onAccept: (editId: string) => void,
-  onReject: (editId: string) => void
-): Decoration[] {
-  const decorations: Decoration[] = []
-  const activeClass = isActive ? ' ghost-edit-active' : ''
+  onReject: (editId: string) => void,
+  onNavigateNext: () => void,
+  onNavigatePrev: () => void
+): Decoration {
+  // Create the decoration at the start of the edit
+  const position = edit.from
 
-  switch (edit.type) {
-    case 'delete':
-      // Strikethrough for deletion
-      decorations.push(
-        Decoration.inline(edit.from, edit.to, {
-          class: `ghost-edit-delete${activeClass}`,
-          'data-edit-id': edit.id,
-        })
-      )
-      // Control buttons after the deletion
-      decorations.push(
-        Decoration.widget(edit.to, () => createControlWidget(edit, onAccept, onReject), {
-          side: 1,
-          key: `controls-${edit.id}`,
-        })
-      )
-      break
+  return Decoration.widget(position, () => {
+    return createDiffBlockElement(
+      edit,
+      isActive,
+      editNumber,
+      totalEdits,
+      onAccept,
+      onReject,
+      onNavigateNext,
+      onNavigatePrev
+    )
+  }, {
+    side: -1, // Before the content
+    key: `diff-block-${edit.id}`,
+  })
+}
 
-    case 'insert':
-      // Green text widget for insertion
-      decorations.push(
-        Decoration.widget(edit.from, () => createInsertWidget(edit, isActive, onAccept, onReject), {
-          side: 1,
-          key: `insert-${edit.id}`,
-        })
-      )
-      break
+/**
+ * Create the DOM element for a diff block
+ */
+function createDiffBlockElement(
+  edit: CalculatedEdit,
+  isActive: boolean,
+  editNumber: number,
+  totalEdits: number,
+  onAccept: (editId: string) => void,
+  onReject: (editId: string) => void,
+  onNavigateNext: () => void,
+  onNavigatePrev: () => void
+): HTMLElement {
+  const container = document.createElement('div')
+  container.className = `diff-block diff-block--${edit.type}${isActive ? ' diff-block--active' : ''}`
+  container.setAttribute('data-edit-id', edit.id)
+  container.setAttribute('data-diff-block', 'true')
+  container.setAttribute('role', 'region')
+  container.setAttribute('aria-label', `Edit ${editNumber} of ${totalEdits}: ${getEditTypeLabel(edit.type)}`)
 
-    case 'replace':
-      // Strikethrough for old content
-      if (edit.from !== edit.to) {
-        decorations.push(
-          Decoration.inline(edit.from, edit.to, {
-            class: `ghost-edit-delete${activeClass}`,
-            'data-edit-id': edit.id,
-          })
-        )
-      }
-      // Green widget for new content (after the strikethrough)
-      decorations.push(
-        Decoration.widget(edit.to, () => createReplaceWidget(edit, isActive, onAccept, onReject), {
-          side: 1,
-          key: `replace-${edit.id}`,
-        })
-      )
-      break
+  // Header
+  const header = document.createElement('div')
+  header.className = 'diff-block__header'
+  
+  const headerLeft = document.createElement('div')
+  headerLeft.className = 'diff-block__header-left'
+  
+  const icon = document.createElement('span')
+  icon.className = `diff-block__icon diff-block__icon--${edit.type}`
+  icon.innerHTML = getEditTypeIcon(edit.type)
+  headerLeft.appendChild(icon)
+  
+  const label = document.createElement('span')
+  label.className = 'diff-block__label'
+  label.textContent = getEditTypeLabel(edit.type)
+  headerLeft.appendChild(label)
+  
+  header.appendChild(headerLeft)
+
+  // Navigation (if multiple edits)
+  if (totalEdits > 1) {
+    const nav = document.createElement('div')
+    nav.className = 'diff-block__nav'
+    
+    const prevBtn = document.createElement('button')
+    prevBtn.className = 'diff-block__nav-btn'
+    prevBtn.innerHTML = '&larr;'
+    prevBtn.title = 'Previous edit (Shift+Tab)'
+    prevBtn.onclick = (e) => { e.stopPropagation(); onNavigatePrev() }
+    nav.appendChild(prevBtn)
+    
+    const position = document.createElement('span')
+    position.className = 'diff-block__position'
+    position.textContent = `${editNumber}/${totalEdits}`
+    nav.appendChild(position)
+    
+    const nextBtn = document.createElement('button')
+    nextBtn.className = 'diff-block__nav-btn'
+    nextBtn.innerHTML = '&rarr;'
+    nextBtn.title = 'Next edit (Tab)'
+    nextBtn.onclick = (e) => { e.stopPropagation(); onNavigateNext() }
+    nav.appendChild(nextBtn)
+    
+    header.appendChild(nav)
   }
 
-  return decorations
-}
+  container.appendChild(header)
 
-/**
- * Create the insertion widget (green text + controls)
- */
-function createInsertWidget(
-  edit: CalculatedEdit,
-  isActive: boolean,
-  onAccept: (editId: string) => void,
-  onReject: (editId: string) => void
-): HTMLElement {
-  const container = document.createElement('span')
-  container.className = `ghost-edit-insert-container${isActive ? ' ghost-edit-active' : ''}`
-  container.setAttribute('data-edit-id', edit.id)
+  // Content sections
+  const showOld = edit.type === 'delete' || edit.type === 'replace'
+  const showNew = edit.type === 'insert' || edit.type === 'replace'
 
-  // Insert text preview
-  const textSpan = document.createElement('span')
-  textSpan.className = 'ghost-edit-insert'
-  textSpan.textContent = truncateForPreview(edit.newContent, 100)
-  container.appendChild(textSpan)
-
-  // Add controls
-  container.appendChild(createControlButtons(edit, onAccept, onReject))
-
-  return container
-}
-
-/**
- * Create the replacement widget (green text + controls)
- */
-function createReplaceWidget(
-  edit: CalculatedEdit,
-  isActive: boolean,
-  onAccept: (editId: string) => void,
-  onReject: (editId: string) => void
-): HTMLElement {
-  const container = document.createElement('span')
-  container.className = `ghost-edit-replace-container${isActive ? ' ghost-edit-active' : ''}`
-  container.setAttribute('data-edit-id', edit.id)
-
-  // New content preview
-  const textSpan = document.createElement('span')
-  textSpan.className = 'ghost-edit-insert'
-  textSpan.textContent = truncateForPreview(edit.newContent, 100)
-  container.appendChild(textSpan)
-
-  // Add controls
-  container.appendChild(createControlButtons(edit, onAccept, onReject))
-
-  return container
-}
-
-/**
- * Create just the control widget (for deletions where text is inline styled)
- */
-function createControlWidget(
-  edit: CalculatedEdit,
-  onAccept: (editId: string) => void,
-  onReject: (editId: string) => void
-): HTMLElement {
-  const container = document.createElement('span')
-  container.className = 'ghost-edit-control-container'
-  container.setAttribute('data-edit-id', edit.id)
-  container.appendChild(createControlButtons(edit, onAccept, onReject))
-  return container
-}
-
-/**
- * Create accept/reject buttons
- */
-function createControlButtons(
-  edit: CalculatedEdit,
-  onAccept: (editId: string) => void,
-  onReject: (editId: string) => void
-): HTMLElement {
-  const controls = document.createElement('span')
-  controls.className = 'ghost-edit-controls'
-
-  // Accept button
-  const acceptBtn = document.createElement('button')
-  acceptBtn.className = 'ghost-edit-btn ghost-edit-accept'
-  acceptBtn.textContent = '✓'
-  acceptBtn.title = 'Accept edit (Enter)'
-  acceptBtn.onclick = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    onAccept(edit.id)
+  if (showOld && edit.oldContent) {
+    const oldSection = createContentSection(edit.oldContent, 'old')
+    container.appendChild(oldSection)
   }
 
-  // Reject button
+  if (showNew && edit.newContent) {
+    const newSection = createContentSection(edit.newContent, 'new')
+    container.appendChild(newSection)
+  }
+
+  // Actions
+  const actions = document.createElement('div')
+  actions.className = 'diff-block__actions'
+
+  const hints = document.createElement('div')
+  hints.className = 'diff-block__hints'
+  hints.innerHTML = '<kbd>Enter</kbd> accept <kbd>Esc</kbd> reject'
+  actions.appendChild(hints)
+
+  const buttons = document.createElement('div')
+  buttons.className = 'diff-block__buttons'
+
   const rejectBtn = document.createElement('button')
-  rejectBtn.className = 'ghost-edit-btn ghost-edit-reject'
-  rejectBtn.textContent = '✕'
-  rejectBtn.title = 'Reject edit (Escape)'
+  rejectBtn.className = 'diff-block__btn diff-block__btn--reject'
+  rejectBtn.innerHTML = '<span class="diff-block__btn-icon">✕</span> Reject'
   rejectBtn.onclick = (e) => {
     e.preventDefault()
     e.stopPropagation()
     onReject(edit.id)
   }
+  buttons.appendChild(rejectBtn)
 
-  controls.appendChild(acceptBtn)
-  controls.appendChild(rejectBtn)
+  const acceptBtn = document.createElement('button')
+  acceptBtn.className = 'diff-block__btn diff-block__btn--accept'
+  acceptBtn.innerHTML = '<span class="diff-block__btn-icon">✓</span> Accept'
+  acceptBtn.onclick = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onAccept(edit.id)
+  }
+  buttons.appendChild(acceptBtn)
 
-  return controls
+  actions.appendChild(buttons)
+  container.appendChild(actions)
+
+  return container
 }
 
 /**
- * Truncate text for preview display
+ * Create a content section (old or new)
  */
-function truncateForPreview(text: string, maxLength: number): string {
-  // Remove excessive whitespace/newlines for inline preview
-  const cleaned = text.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim()
-  if (cleaned.length <= maxLength) return cleaned
-  return cleaned.slice(0, maxLength) + '...'
+function createContentSection(content: string, variant: 'old' | 'new'): HTMLElement {
+  const section = document.createElement('div')
+  section.className = `diff-block__content diff-block__content--${variant}`
+
+  const labelDiv = document.createElement('div')
+  labelDiv.className = `diff-block__content-label diff-block__content-label--${variant}`
+  labelDiv.innerHTML = variant === 'old' 
+    ? '<span class="diff-block__content-icon">−</span> Current content (will be removed)'
+    : '<span class="diff-block__content-icon">+</span> New content (will be added)'
+  section.appendChild(labelDiv)
+
+  const textDiv = document.createElement('div')
+  textDiv.className = `diff-block__content-text diff-block__content-text--${variant}`
+  textDiv.textContent = content
+  section.appendChild(textDiv)
+
+  return section
+}
+
+/**
+ * Get icon SVG for edit type
+ */
+function getEditTypeIcon(type: 'delete' | 'insert' | 'replace'): string {
+  switch (type) {
+    case 'delete':
+      return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+    case 'insert':
+      return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+    case 'replace':
+      return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>'
+  }
+}
+
+/**
+ * Get label for edit type
+ */
+function getEditTypeLabel(type: 'delete' | 'insert' | 'replace'): string {
+  switch (type) {
+    case 'delete': return 'Delete'
+    case 'insert': return 'Insert'
+    case 'replace': return 'Replace'
+  }
 }
 
 /**
  * Scroll the editor view to show a specific edit
  */
-function scrollToEdit(editor: { view: { dom: HTMLElement } }, edit: CalculatedEdit): void {
-  // Find the decoration element in the DOM
+function scrollToEdit(editor: { view: { dom: HTMLElement } }, editId: string): void {
   const editorDom = editor.view.dom
-  const editElement = editorDom.querySelector(`[data-edit-id="${edit.id}"]`) as HTMLElement | null
+  // Use CSS.escape to handle any special characters in the editId
+  const escapedId = CSS.escape(editId)
+  const editElement = editorDom.querySelector(`[data-edit-id="${escapedId}"]`) as HTMLElement | null
   
   if (editElement) {
-    // Scroll the element into view with some padding
     editElement.scrollIntoView({
       behavior: 'smooth',
       block: 'center',
       inline: 'nearest',
     })
     
-    // Add a brief highlight pulse to draw attention
-    editElement.classList.add('ghost-edit-scroll-highlight')
+    // Add highlight animation
+    editElement.classList.add('diff-block--highlight')
     setTimeout(() => {
-      editElement.classList.remove('ghost-edit-scroll-highlight')
+      editElement.classList.remove('diff-block--highlight')
     }, 600)
   }
 }
@@ -298,6 +338,8 @@ export const GhostEdit = Extension.create({
             return {
               edits: [],
               activeEditId: null,
+              chunkStart: 0,
+              chunkSize: CHUNK_SIZE,
             }
           },
 
@@ -313,6 +355,8 @@ export const GhostEdit = Extension.create({
               return {
                 edits: setEdits.edits,
                 activeEditId: setEdits.edits.length > 0 ? setEdits.edits[0].id : null,
+                chunkStart: 0,
+                chunkSize: CHUNK_SIZE,
                 onAccept: setEdits.onAccept,
                 onReject: setEdits.onReject,
               }
@@ -323,6 +367,8 @@ export const GhostEdit = Extension.create({
               return {
                 edits: [],
                 activeEditId: null,
+                chunkStart: 0,
+                chunkSize: CHUNK_SIZE,
               }
             }
 
@@ -336,6 +382,15 @@ export const GhostEdit = Extension.create({
                 activeEditId: remaining.length > 0 
                   ? (value.activeEditId === clearEditId ? remaining[0].id : value.activeEditId)
                   : null,
+              }
+            }
+
+            // Check for setActiveGhostEdit meta
+            const setActiveId = tr.getMeta('setActiveGhostEdit') as string | undefined
+            if (setActiveId && value.edits.some(e => e.id === setActiveId)) {
+              return {
+                ...value,
+                activeEditId: setActiveId,
               }
             }
 
@@ -357,14 +412,15 @@ export const GhostEdit = Extension.create({
               }
             }
 
-            // If document changed while ghost edits are active, we need to clear them
+            // If document changed while ghost edits are active, clear them
             // (positions may now be invalid)
             if (tr.docChanged && value.edits.length > 0) {
-              // Check if this was an edit acceptance (shouldn't clear in that case)
               if (!tr.getMeta('ghostEditAccepted')) {
                 return {
                   edits: [],
                   activeEditId: null,
+                  chunkStart: 0,
+                  chunkSize: CHUNK_SIZE,
                 }
               }
             }
@@ -383,11 +439,38 @@ export const GhostEdit = Extension.create({
             const allDecorations: Decoration[] = []
             const onAccept = pluginState.onAccept || (() => {})
             const onReject = pluginState.onReject || (() => {})
+            const totalEdits = pluginState.edits.length
 
-            for (const edit of pluginState.edits) {
+            // Create navigation handlers
+            const createNavigateNext = () => {
+              editor.commands.navigateGhostEdit('next')
+            }
+            const createNavigatePrev = () => {
+              editor.commands.navigateGhostEdit('prev')
+            }
+
+            // Create decorations for visible edits
+            const visibleEdits = pluginState.edits.slice(
+              pluginState.chunkStart,
+              pluginState.chunkStart + pluginState.chunkSize
+            )
+
+            for (let i = 0; i < visibleEdits.length; i++) {
+              const edit = visibleEdits[i]
               const isActive = edit.id === pluginState.activeEditId
-              const editDecos = createEditDecorations(edit, isActive, onAccept, onReject)
-              allDecorations.push(...editDecos)
+              const editNumber = pluginState.chunkStart + i + 1
+
+              const decoration = createDiffBlockDecoration(
+                edit,
+                isActive,
+                editNumber,
+                totalEdits,
+                onAccept,
+                onReject,
+                createNavigateNext,
+                createNavigatePrev
+              )
+              allDecorations.push(decoration)
             }
 
             return DecorationSet.create(state.doc, allDecorations)
@@ -427,6 +510,9 @@ export const GhostEdit = Extension.create({
               return true
             }
 
+            // Cmd/Ctrl+Shift+A - accept all (handled at higher level)
+            // Cmd/Ctrl+Shift+R - reject all (handled at higher level)
+
             return false
           },
         },
@@ -451,7 +537,7 @@ export const GhostEdit = Extension.create({
           // Scroll to the first edit after a short delay to let decorations render
           if (edits.length > 0) {
             setTimeout(() => {
-              scrollToEdit(editor as { view: { dom: HTMLElement } }, edits[0])
+              scrollToEdit(editor as { view: { dom: HTMLElement } }, edits[0].id)
             }, 50)
           }
           
@@ -541,19 +627,16 @@ export const GhostEdit = Extension.create({
             dispatch(tr)
           }
 
-          // Scroll to the new active edit after a short delay to let decorations update
+          // Scroll to the new active edit after a short delay
           if (newActiveEdit) {
             setTimeout(() => {
-              scrollToEdit(editor, newActiveEdit)
+              scrollToEdit(editor as { view: { dom: HTMLElement } }, newActiveEdit.id)
             }, 10)
           }
 
           return true
         },
 
-      /**
-       * Scroll to a specific ghost edit
-       */
       scrollToGhostEdit:
         (editId: string) =>
         ({ editor }: { editor: { state: Parameters<typeof ghostEditPluginKey.getState>[0]; view: { dom: HTMLElement } } }) => {
@@ -563,7 +646,17 @@ export const GhostEdit = Extension.create({
           const edit = pluginState.edits.find(e => e.id === editId)
           if (!edit) return false
 
-          scrollToEdit(editor, edit)
+          scrollToEdit(editor, editId)
+          return true
+        },
+
+      setActiveGhostEdit:
+        (editId: string) =>
+        ({ tr, dispatch }) => {
+          if (dispatch) {
+            tr.setMeta('setActiveGhostEdit', editId)
+            dispatch(tr)
+          }
           return true
         },
     }
@@ -597,4 +690,14 @@ export function hasGhostEdits(editor: { state: { doc: unknown } }): boolean {
 export function getGhostEditCount(editor: { state: { doc: unknown } }): number {
   const state = getGhostEditState(editor)
   return state?.edits.length || 0
+}
+
+/**
+ * Get the current active edit index (1-based)
+ */
+export function getActiveEditIndex(editor: { state: { doc: unknown } }): number {
+  const state = getGhostEditState(editor)
+  if (!state || !state.activeEditId) return 0
+  const index = state.edits.findIndex(e => e.id === state.activeEditId)
+  return index >= 0 ? index + 1 : 0
 }

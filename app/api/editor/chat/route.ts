@@ -1,11 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
-import { streamText, type CoreMessage } from 'ai'
+import { streamText, type ModelMessage } from 'ai'
 import { NextRequest } from 'next/server'
 import { documentTools, getConfirmationLevel } from '@/lib/ai/tools/document-tools'
 import { ChunkRetriever } from '@/lib/rag/chunk-retriever'
 import { PromptService } from '@/lib/prompts/prompt-service'
-import { buildChatContext, formatPapersForContext } from '@/lib/prompts/costar-context'
+import { buildChatContext, formatPapersForContext, formatMentionedPapersForContext } from '@/lib/prompts/costar-context'
 
 // =============================================================================
 // TYPES
@@ -14,12 +14,16 @@ import { buildChatContext, formatPapersForContext } from '@/lib/prompts/costar-c
 // Vercel AI SDK sends messages at root level, custom body fields are merged in
 interface ChatRequest {
   // Standard Vercel AI SDK fields
-  messages: CoreMessage[]
+  messages: ModelMessage[]
   // Custom fields from useChat body option
   projectId: string
   documentContent?: string
   selectedText?: string
   documentStructure?: string  // Block IDs for precise targeting
+  // New: mentioned papers from @ mentions
+  mentionedPaperIds?: string[]
+  // New: attached images
+  attachedImages?: string[]
 }
 
 // =============================================================================
@@ -38,8 +42,15 @@ async function buildSystemPrompt(
   documentStructure: string | undefined,
   selectedText: string | undefined,
   ragContext: string,
-  papers: Array<{ id: string; title: string; authors?: string[]; year?: number }>
+  papers: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
+  mentionedPapers?: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
+  ragChunks?: Array<{ paper_id: string; content: string }>
 ): Promise<string> {
+  // Build mentioned papers context if any
+  const mentionedPapersContext = mentionedPapers && mentionedPapers.length > 0
+    ? formatMentionedPapersForContext(mentionedPapers, ragChunks)
+    : undefined
+
   // Build CO-STAR context
   const context = buildChatContext({
     topic,
@@ -49,6 +60,7 @@ async function buildSystemPrompt(
     selectedText,
     papersContext: formatPapersForContext(papers),
     ragContext: ragContext || 'No additional context retrieved.',
+    mentionedPapersContext,
   })
 
   // Build prompt from template
@@ -96,7 +108,7 @@ async function getRAGContext(
  */
 async function saveMessages(
   projectId: string,
-  userMessage: CoreMessage,
+  userMessage: ModelMessage,
   assistantResponse: { content: string; toolInvocations?: Array<Record<string, unknown>> }
 ) {
   try {
@@ -147,7 +159,15 @@ export async function POST(request: NextRequest) {
     const body: ChatRequest = await request.json()
     console.log('[Chat API] Request body keys:', Object.keys(body))
     
-    const { projectId, messages, documentContent = '', selectedText, documentStructure } = body
+    const { 
+      projectId, 
+      messages, 
+      documentContent = '', 
+      selectedText, 
+      documentStructure,
+      mentionedPaperIds = [],
+      attachedImages = [],
+    } = body
 
     if (!projectId || !messages || messages.length === 0) {
       console.log('[Chat API] Missing required fields:', { projectId: !!projectId, messagesLength: messages?.length })
@@ -155,6 +175,14 @@ export async function POST(request: NextRequest) {
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       })
+    }
+    
+    // Log mention context for debugging
+    if (mentionedPaperIds.length > 0) {
+      console.log('[Chat API] Mentioned papers:', mentionedPaperIds)
+    }
+    if (attachedImages.length > 0) {
+      console.log('[Chat API] Attached images:', attachedImages.length)
     }
 
     // Verify user owns the project and get project details
@@ -175,7 +203,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Get project papers
+    // Get project papers with abstract for mentioned papers
     const { data: projectPapers } = await supabase
       .from('project_papers')
       .select(`
@@ -184,12 +212,13 @@ export async function POST(request: NextRequest) {
           id,
           title,
           authors,
-          year
+          year,
+          abstract
         )
       `)
       .eq('project_id', projectId)
 
-    type PaperData = { id: string; title: string; authors?: string[]; year?: number }
+    type PaperData = { id: string; title: string; authors?: string[]; year?: number; abstract?: string }
     const papers: PaperData[] = (projectPapers || [])
       .map(pp => pp.papers as unknown as PaperData | null)
       .filter((p): p is PaperData => p !== null)
@@ -205,11 +234,19 @@ export async function POST(request: NextRequest) {
       ? lastUserMessage.content 
       : ''
 
-    // Get RAG context
-    const ragContext = await getRAGContext(ragQuery, projectId, paperIds)
+    // Get RAG context - prioritize mentioned papers if any
+    const ragPaperIds = mentionedPaperIds.length > 0 
+      ? [...new Set([...mentionedPaperIds, ...paperIds])] // Mentioned first, then others
+      : paperIds
+    const ragContext = await getRAGContext(ragQuery, projectId, ragPaperIds)
 
     // Get paper type from project
     const paperType = project.paper_type || 'literatureReview'
+
+    // Filter mentioned papers for enhanced context
+    const mentionedPapers = mentionedPaperIds.length > 0
+      ? papers.filter(p => mentionedPaperIds.includes(p.id))
+      : undefined
 
     // Build system prompt using CO-STAR framework
     const systemPrompt = await buildSystemPrompt(
@@ -219,7 +256,8 @@ export async function POST(request: NextRequest) {
       documentStructure,
       selectedText,
       ragContext,
-      papers
+      papers,
+      mentionedPapers
     )
 
     // Sanitize messages: remove ALL tool-related content from messages
@@ -229,6 +267,8 @@ export async function POST(request: NextRequest) {
       .filter(msg => {
         // Remove any "tool" role messages entirely
         if (msg.role === 'tool') return false
+        // Remove messages without content (invalid per ModelMessage schema)
+        if (!msg.content) return false
         return true
       })
       .map(msg => {
@@ -241,7 +281,7 @@ export async function POST(request: NextRequest) {
         // Preserve id if present
         if ('id' in msg) cleaned.id = msg.id
         
-        return cleaned as CoreMessage
+        return cleaned as ModelMessage
       })
 
     // Stream the response with tools
@@ -250,7 +290,7 @@ export async function POST(request: NextRequest) {
       system: systemPrompt,
       messages: sanitizedMessages,
       tools: documentTools,
-      maxSteps: 5,
+      maxOutputTokens: 4096,
       onFinish: async ({ text, toolCalls }) => {
         // Save messages to Supabase after completion
         if (lastUserMessage) {
@@ -258,7 +298,7 @@ export async function POST(request: NextRequest) {
             content: text,
             toolInvocations: toolCalls?.map(tc => ({
               toolName: tc.toolName,
-              args: tc.args,
+              args: 'input' in tc ? tc.input : {},
               requiresConfirmation: getConfirmationLevel(tc.toolName) !== 'none',
             })),
           })
@@ -266,7 +306,7 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    return result.toDataStreamResponse()
+    return result.toTextStreamResponse()
 
   } catch (error) {
     console.error('Editor chat error:', error)
@@ -312,7 +352,7 @@ export async function GET(request: NextRequest) {
       throw error
     }
 
-    // Transform to CoreMessage format
+    // Transform to ModelMessage format
     // NOTE: We intentionally exclude toolInvocations from loaded history
     // because they're in our custom format and cause AI_MessageConversionError
     // when sent back to the AI SDK. The conversation context is preserved in content.

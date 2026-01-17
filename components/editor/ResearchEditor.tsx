@@ -140,6 +140,11 @@ export function ResearchEditor({
   const confirmTool = chat.confirmTool
   const rejectTool = chat.rejectTool
   const clearChatHistory = chat.clearHistory
+  const confirmAllTools = chat.confirmAllTools
+  const rejectAllTools = chat.rejectAllTools
+  const activeEditIndex = chat.activeEditIndex
+  const navigateEdit = chat.navigateEdit
+  const hasGhostPreviews = chat.hasGhostPreviews
 
   // ============================================================================
   // Effects
@@ -334,6 +339,7 @@ export function ResearchEditor({
     <EditorSidebar
       activeTab={activeTab}
       onTabChange={setActiveTab}
+      projectId={projectId}
       chatMessages={chatMessages}
       onSendMessage={handleSendMessage}
       isChatLoading={isChatLoading}
@@ -341,6 +347,7 @@ export function ResearchEditor({
       onConfirmTool={confirmTool}
       onRejectTool={rejectTool}
       onClearHistory={clearChatHistory}
+      hasGhostPreviews={hasGhostPreviews}
       papers={papers}
       onInsertCitation={handleInsertCitation}
       onOpenLibrary={() => setLibraryDrawerOpen(true)}
@@ -441,6 +448,12 @@ export function ResearchEditor({
               projectTopic={projectTitle}
               papers={papers}
               citationStyle={currentCitationStyle}
+              // Review toolbar props
+              pendingEditCount={pendingTools.length}
+              activeEditIndex={activeEditIndex}
+              onNavigateEdit={navigateEdit}
+              onAcceptAllEdits={confirmAllTools}
+              onRejectAllEdits={rejectAllTools}
             />
           </div>
         </div>

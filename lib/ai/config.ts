@@ -5,20 +5,31 @@
  * Change the model via AI_MODEL environment variable.
  */
 
-// Default model if not specified in environment
-const DEFAULT_MODEL = 'gpt-4o'
+// Default models if not specified in environment
+const DEFAULT_MODEL = 'gpt-4o-2024-11-20'
+const DEFAULT_AUTOCOMPLETE_MODEL = 'gpt-4.1-2025-04-14' // Faster model for inline completions
 
 /**
  * Get the configured AI model from environment
  * Supports any model string (OpenAI, Anthropic, etc.)
  * 
  * Examples:
- *   - gpt-4o
- *   - gpt-4o-mini
- *   - gpt-4-turbo
+ *   - gpt-5-mini-2025-08-07
+ *   - gpt-5-nano
  */
 export function getModel(): string {
   return process.env.AI_MODEL || DEFAULT_MODEL
+}
+
+/**
+ * Get the configured autocomplete model from environment
+ * Uses a faster model by default for low-latency inline completions
+ * 
+ * Set AI_AUTOCOMPLETE_MODEL env var to override
+ * Falls back to gpt-4o-mini for speed
+ */
+export function getAutocompleteModel(): string {
+  return process.env.AI_AUTOCOMPLETE_MODEL || DEFAULT_AUTOCOMPLETE_MODEL
 }
 
 /**

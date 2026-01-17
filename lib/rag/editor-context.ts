@@ -1,4 +1,5 @@
 import 'server-only'
+import { LRUCache } from 'lru-cache'
 import { getSB } from '@/lib/supabase/server'
 import { generateEmbeddings } from '@/lib/utils/embedding'
 import { 
@@ -19,12 +20,39 @@ import {
  * Features:
  * - Claims retrieval for better grounding
  * - Citation verification (semantic matching)
- * - Embedding caching for verification performance
+ * - Embedding caching for verification AND query performance
+ * - RAG result caching for cross-request performance
  * - Paper metadata included for frontend display
  */
 
 // =============================================================================
-// EMBEDDING CACHE
+// RAG RESULT CACHE (Cross-request LRU)
+// =============================================================================
+
+// Forward declaration for cache - actual EditorContext type defined below
+// LRU cache for RAG results - persists across requests (Vercel Fluid Compute)
+const ragCache = new LRUCache<string, EditorContext>({
+  max: 200,           // Max 200 cached queries
+  ttl: 2 * 60 * 1000  // 2 minute TTL (short for fresh content)
+})
+
+/**
+ * Generate cache key for RAG query
+ * Uses normalized query text + sorted paper IDs for consistency
+ */
+function getRagCacheKey(query: string, paperIds: string[], options: EditorRetrievalOptions): string {
+  // Normalize query: lowercase, trim, take first 200 chars
+  const normalizedQuery = query.trim().toLowerCase().slice(0, 200)
+  // Sort paper IDs for consistent key
+  const sortedPaperIds = [...paperIds].sort().join(',')
+  // Include options in key
+  const optionsKey = `${options.maxChunks || 10}:${options.maxClaims || 7}:${options.minChunkScore || 0.3}:${options.minClaimScore || 0.3}`
+  
+  return `${normalizedQuery}|${sortedPaperIds}|${optionsKey}`
+}
+
+// =============================================================================
+// EMBEDDING CACHE (Enhanced for query embeddings too)
 // =============================================================================
 
 interface EmbeddingCacheEntry {
@@ -32,7 +60,7 @@ interface EmbeddingCacheEntry {
   timestamp: number
 }
 
-// Cache embeddings to avoid regenerating for verification
+// Cache embeddings for both verification AND query generation
 // Key: hash of content text
 const embeddingCache = new Map<string, EmbeddingCacheEntry>()
 const EMBEDDING_CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
@@ -163,6 +191,11 @@ export interface CitationVerificationResult {
 /**
  * Retrieve context for editor autocomplete
  * 
+ * Features LRU caching for cross-request performance:
+ * - Cache key: normalized query + paper IDs + options
+ * - Cache TTL: 2 minutes (short for fresh content)
+ * - Embedding cache: reuses query embeddings
+ * 
  * @param query - Context text to search against (preceding text + section)
  * @param paperIds - Paper IDs to scope the search
  * @param options - Retrieval configuration
@@ -187,10 +220,19 @@ export async function retrieveEditorContext(
     }
   }
 
+  // Check RAG cache first
+  const cacheKey = getRagCacheKey(query, paperIds, options)
+  const cached = ragCache.get(cacheKey)
+  if (cached) {
+    console.log('[RAG Cache] Hit for editor context')
+    return cached
+  }
+
+  console.log('[RAG Cache] Miss, fetching fresh context')
   const supabase = await getSB()
   
-  // Generate embedding for query
-  const [queryEmbedding] = await generateEmbeddings([query])
+  // Generate embedding for query (use cache for repeated queries)
+  const [queryEmbedding] = await getEmbeddingsWithCache([query])
 
   // Run chunk and claim searches in parallel
   const [chunksResult, claimsResult] = await Promise.all([
@@ -262,12 +304,17 @@ export async function retrieveEditorContext(
   // Fetch paper metadata
   const papers = await fetchPaperMetadata(Array.from(retrievedPaperIds), supabase)
 
-  return {
+  const result: EditorContext = {
     chunks,
     claims,
     papers,
     hasContent: chunks.length > 0 || claims.length > 0
   }
+
+  // Cache the result
+  ragCache.set(cacheKey, result)
+
+  return result
 }
 
 /**

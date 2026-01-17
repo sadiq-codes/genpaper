@@ -114,15 +114,35 @@ export async function collectPapers(
       }
       
       // Adjust recency weight and search window based on profile
-      // cutting-edge: prioritize recent papers heavily, narrow time window
-      // balanced: equal weight to recency and other factors
-      // foundational-heavy: prioritize citation count/authority, wide time window
+      // If explicit searchYearRange is provided by the AI, use it directly
+      // Otherwise, fall back to recencyProfile-based defaults
       const recencyProfile = options.recencyProfile
+      const searchYearRange = options.searchYearRange
       let recencyWeight = 0.1  // default balanced
       let authorityWeight = 0.5
-      let fromYear = 2000      // default search window
+      let fromYear: number
+      let toYear = new Date().getFullYear()
       
-      if (recencyProfile === 'cutting-edge') {
+      // Use explicit AI-determined year range if available
+      if (searchYearRange?.fromYear && searchYearRange?.toYear) {
+        fromYear = searchYearRange.fromYear
+        toYear = searchYearRange.toYear
+        console.log(`📅 AI-determined search range: ${fromYear}-${toYear}`)
+        console.log(`   📝 Rationale: ${searchYearRange.rationale}`)
+        
+        // Adjust weights based on the year range span
+        const yearSpan = toYear - fromYear
+        if (yearSpan <= 10) {
+          // Narrow window = cutting-edge field, prioritize recency
+          recencyWeight = 0.35
+          authorityWeight = 0.3
+        } else if (yearSpan >= 30) {
+          // Wide window = foundational-heavy, prioritize authority
+          recencyWeight = 0.05
+          authorityWeight = 0.6
+        }
+        // Otherwise keep balanced weights
+      } else if (recencyProfile === 'cutting-edge') {
         recencyWeight = 0.35
         authorityWeight = 0.3
         fromYear = new Date().getFullYear() - 10  // Last 10 years for fast-moving fields
@@ -141,7 +161,8 @@ export async function collectPapers(
         maxResults: remainingSlots,
         minResults: Math.min(5, remainingSlots),
         excludePaperIds: pinnedIds,
-        fromYear,  // Now dynamic based on recency profile
+        fromYear,  // Now dynamic based on AI-determined year range or recency profile
+        toYear,    // End year (usually current year, but AI can specify otherwise)
         localRegion: config?.localRegion,
         sources: (config?.sources as PaperSource[])
                   ?? ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],

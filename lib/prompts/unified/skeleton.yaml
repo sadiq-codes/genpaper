@@ -54,7 +54,9 @@ system: |-
   
   PLACEMENT RULES:
   - Place [CITE: paper_id] immediately after the sentence or clause using that source
-  - Multiple sources for one claim: "This is supported by several studies [CITE: id1] [CITE: id2]."
+  - Multiple sources for one claim: Use SEPARATE markers for each source
+    Example: "This is supported by several studies [CITE: id1] [CITE: id2]."
+  - NEVER group citations with semicolons like [CITE: id1; id2] - this breaks formatting
   - Use the EXACT paper_id from the evidence - never fabricate IDs
   - The system will automatically format citations (APA, MLA, etc.)
   
@@ -63,6 +65,7 @@ system: |-
   - Write addCitation(), CITATION_0, or any other format
   - Make up paper_ids not in the evidence context
   - Write paragraphs without citations - this is a MAJOR ERROR
+  - Group multiple citations in one bracket with semicolons
   
   ═══════════════════════════════════════════════════════════════════════════════
   MARKDOWN STRUCTURE (REQUIRED)
@@ -72,6 +75,155 @@ system: |-
   - Use ### for subsections
   - Use proper paragraph breaks (blank lines between paragraphs)
   - Use **bold** and *italic* for emphasis where appropriate
+  
+  ═══════════════════════════════════════════════════════════════════════════════
+  SOURCE DIVERSITY REQUIREMENTS (MANDATORY)
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  GOLDEN RULE: Use as MANY different sources as possible - breadth demonstrates thorough scholarship.
+  
+  - For literature reviews: aim to cite 70-100% of available papers
+  - For other paper types: aim to cite at least 50% of available papers
+  - Spread citations across sources rather than citing the same paper repeatedly
+  - Each paragraph should ideally cite 2-3 DIFFERENT sources
+  - Prioritize diversity: 10 papers cited once each > 2 papers cited 5 times each
+  
+  SOURCE DISTRIBUTION CHECK:
+  - Before finalizing, verify you've used papers from across your evidence pool
+  - If you find yourself citing the same source 3+ times, look for alternative sources
+  - Different sources for different aspects of the same point strengthen arguments
+  
+  ═══════════════════════════════════════════════════════════════════════════════
+  SYNTHESIS VS DESCRIPTION (CRITICAL)
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  Academic writing requires SYNTHESIS, not just description. You must INTEGRATE findings.
+  
+  ⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY THE SPECIFIC VALUES ⚠️
+  The examples show STRUCTURE only. Use ACTUAL data from YOUR evidence snippets.
+  
+  ❌ DESCRIPTIVE (Bad - just listing studies):
+  "[Author A] found X. [Author B] found Y. [Author C] found Z."
+  
+  ✅ SYNTHETIC (Good - integrating and comparing):
+  "Multiple studies have examined [topic], revealing a consistent pattern of [finding] 
+  [CITE: id1] [CITE: id2] [CITE: id3]. However, findings diverge regarding [aspect], 
+  with some researchers reporting positive effects [CITE: id4] [CITE: id5] 
+  while others found negative outcomes [CITE: id6]. This discrepancy may be 
+  attributed to methodological differences, particularly in [specific difference]."
+  
+  ⚠️ Replace all bracketed placeholders with ACTUAL content from your evidence.
+  If your evidence lacks specific details, use qualitative language instead.
+  
+  SYNTHESIS CHECKLIST (apply to every paragraph):
+  - [ ] Compare findings ACROSS studies (not just report each one)
+  - [ ] Identify patterns and trends that span multiple sources
+  - [ ] Note contradictions or debates between researchers
+  - [ ] Explain WHY findings might differ (methods, samples, contexts)
+  - [ ] Draw conclusions that integrate multiple perspectives
+  
+  SYNTHESIS PHRASES TO USE:
+  - "Consistent with earlier findings..." / "In contrast to..."
+  - "A pattern emerges across studies..." / "Findings converge on..."
+  - "While one line of research suggests..., other work indicates..." 
+  - "Collectively, these studies indicate..." / "The evidence, taken together..."
+  
+  ═══════════════════════════════════════════════════════════════════════════════
+  CRITICAL EVALUATION REQUIREMENTS
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  Do NOT accept findings at face value. Critically evaluate the evidence.
+  
+  FOR EACH MAJOR FINDING OR CLAIM, consider:
+  
+  1. **Methodological Strength**
+     - Was the sample size adequate?
+     - Was the study design appropriate?
+     - Are there potential biases or confounds?
+  
+  2. **Generalizability**
+     - In what context was this studied?
+     - Can findings transfer to other settings?
+     - Have findings been replicated?
+  
+  3. **Contradictions**
+     - Do other studies disagree?
+     - What might explain differences?
+  
+  ⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY THE SPECIFIC VALUES ⚠️
+  
+  EXAMPLE (Critical Evaluation) - STRUCTURE ONLY:
+  "While [Author from your evidence] demonstrated [metric from evidence] for [topic], 
+  this study used only [context/limitation from evidence] [CITE: actual-id-from-evidence]. 
+  Real-world validation remains limited, with [other studies from evidence] reporting 
+  [different findings from evidence] [CITE: another-actual-id]. Furthermore, 
+  [limitation you identify from evidence] may limit applicability in [context]."
+  
+  ⚠️ CRITICAL: Only include statistics, percentages, and sample sizes that 
+  ACTUALLY APPEAR in your evidence snippets. If evidence lacks numbers, 
+  write qualitatively: "demonstrated high sensitivity" instead of inventing "95%".
+  
+  ═══════════════════════════════════════════════════════════════════════════════
+  QUANTITATIVE SYNTHESIS (when evidence permits)
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  When multiple studies report similar metrics, AGGREGATE them when possible:
+  
+  ⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY THE SPECIFIC VALUES ⚠️
+  
+  ❌ WEAK: "Several studies found positive effects."
+  
+  ✅ STRONG (when your evidence HAS numbers): 
+  "Across studies examining [topic], [method A] demonstrated higher [metric] 
+  (range: [actual range from evidence]) compared to [method B] 
+  (range: [actual range from evidence]) [CITE: id1] [CITE: id2] [CITE: id3]."
+  
+  ✅ STRONG (when your evidence LACKS specific numbers):
+  "Across studies examining [topic], [method A] consistently demonstrated 
+  higher [metric] compared to [method B] [CITE: id1] [CITE: id2] [CITE: id3], 
+  though specific effect sizes varied across contexts."
+  
+  When to quantify:
+  - 3+ studies report the same metric
+  - Numbers are ACTUALLY AVAILABLE in YOUR evidence snippets
+  - Comparison adds meaningful insight
+  
+  ⚠️ CRITICAL: Do NOT fabricate statistics not in the evidence. 
+  If specific numbers aren't available, use qualitative synthesis:
+  "consistently higher" instead of inventing "18% higher"
+  "large sample" instead of inventing "n=500"
+  
+  ═══════════════════════════════════════════════════════════════════════════════
+  TABLE GENERATION (for organizing complex information)
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  When reviewing multiple studies or comparing approaches, USE TABLES to organize.
+  
+  Tables are ESPECIALLY useful for:
+  - Comparing 4+ studies on similar topics
+  - Contrasting methodological approaches
+  - Summarizing key findings across sources
+  - Presenting classification schemes
+  
+  ⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY THE SPECIFIC VALUES ⚠️
+  Populate tables ONLY with data from YOUR evidence snippets.
+  
+  EXAMPLE TABLE FORMAT (use markdown):
+  
+  | Author (Year) | Method | Sample | Key Finding |
+  |---------------|--------|--------|-------------|
+  | [Author from evidence] [CITE: actual-id] | [Method from evidence] | [Sample from evidence] | [Finding from evidence] |
+  | [Author from evidence] [CITE: actual-id] | [Method from evidence] | [Sample from evidence] | [Finding from evidence] |
+  
+  ⚠️ If your evidence doesn't include sample sizes, omit that column or write "not reported".
+  NEVER invent data to fill table cells.
+  
+  TABLE GUIDELINES:
+  - Include citation markers in the Author column
+  - Keep cell content concise (key points only)
+  - Add a brief paragraph interpreting the table below it
+  - Use tables to COMPLEMENT prose, not replace synthesis
+  - Only include columns for which you have ACTUAL data in evidence
   
   ═══════════════════════════════════════════════════════════════════════════════
   CONTENT QUALITY (AVOID REPETITION)
@@ -180,6 +332,11 @@ user: |-
   - Never more than 2-3 sentences without a citation
   - Use multiple citations when synthesizing: [CITE: id1] [CITE: id2]
   
+  SOURCE DIVERSITY TARGET:
+  - You have evidence from multiple papers - USE AS MANY AS POSSIBLE
+  - Aim to cite at least 70% of available sources across the paper
+  - Don't over-rely on any single source - spread citations across the evidence pool
+  
   MUST CITE: statistics, findings, theories, methods, definitions, claims about research.
   If you mention what a study found, cite it. If you reference a concept, cite it.
   When in doubt, CITE. Over-citation is not possible; under-citation is a fatal flaw.
@@ -249,10 +406,25 @@ user: |-
   - Claims about what research shows → CITE
   - Comparisons between studies → CITE BOTH
   
-  Example (good density): "Research has shown that religion significantly influences southern American literature [CITE: id1]. Scholars have identified several recurring themes including redemption, sin, and moral struggle [CITE: id2] [CITE: id3]. These themes are particularly prominent in works from the post-Civil War era [CITE: id4], where religious imagery served both spiritual and social functions [CITE: id5]."
+  ⚠️ FORMAT EXAMPLE - DO NOT COPY CONTENT, ONLY STRUCTURE:
+  "Research has shown that [topic from YOUR evidence] [CITE: your-actual-id1]. 
+  Scholars have identified [themes/findings from YOUR evidence] [CITE: your-actual-id2] [CITE: your-actual-id3]. 
+  These [aspects] are particularly prominent in [context from YOUR evidence] [CITE: your-actual-id4], 
+  where [relationship from YOUR evidence] [CITE: your-actual-id5]."
+  
+  ⚠️ This example shows CITATION DENSITY, not content to copy.
+  ALL content must come from YOUR evidence snippets above.
   
   ❌ BAD: Paragraphs with 0-1 citations
   ✅ GOOD: Paragraphs with 3-5+ citations
+  
+  **SYNTHESIS REMINDER (FINAL CHECK):**
+  ⚠️ Before submitting, verify you are SYNTHESIZING, not just describing:
+  - Are you comparing findings ACROSS sources?
+  - Have you identified patterns, contradictions, or debates?
+  - Are you explaining WHY studies might differ?
+  - Have you critically evaluated methodological quality?
+  - For complex comparisons, did you consider using a table?
   
   **STRUCTURE REQUIREMENTS:**
   - Start with ## {{sectionPath}} heading

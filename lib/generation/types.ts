@@ -4,6 +4,16 @@ import type { PaperTypeKey } from '@/lib/prompts/types'
 // Recency profile type - matches PaperProfile.sourceExpectations.recencyProfile
 export type RecencyProfile = 'cutting-edge' | 'balanced' | 'foundational-heavy'
 
+/** Search year range determined by AI based on topic context */
+export interface SearchYearRange {
+  /** Start year for paper search (e.g., 2019 for COVID-19 topics, 1980 for foundational fields) */
+  fromYear: number
+  /** End year for paper search (typically current year) */
+  toYear: number
+  /** Explanation of why this year range is appropriate for the topic */
+  rationale: string
+}
+
 // Generation types
 export interface EnhancedGenerationOptions {
   projectId: string
@@ -20,6 +30,8 @@ export interface EnhancedGenerationOptions {
   onProgress?: (progress: GenerationProgress) => void
   /** Recency profile from paper profile - affects search weighting */
   recencyProfile?: RecencyProfile
+  /** Explicit search year range from paper profile - overrides recencyProfile defaults */
+  searchYearRange?: SearchYearRange
   /** Academic discipline from paper profile - affects source filtering */
   discipline?: string
 }

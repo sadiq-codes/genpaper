@@ -124,6 +124,19 @@ Create a comprehensive paper profile by analyzing:
    - Should recent literature be prioritized, or do foundational works matter equally?
    - Provide specific recency guidance for this field
    - Are there seminal works commonly cited in this area?
+   
+   SEARCH YEAR RANGE (CRITICAL):
+   - What year range should be searched when looking for papers on this topic?
+   - Consider: When did this topic emerge? Are foundational works from decades ago relevant?
+   - The current year is ${new Date().getFullYear()}.
+   - Examples:
+     * "COVID-19 pandemic response" → fromYear: 2019, toYear: ${new Date().getFullYear()} (topic emerged in 2019)
+     * "Machine learning fundamentals" → fromYear: 1990, toYear: ${new Date().getFullYear()} (foundational works from 1990s matter)
+     * "Large language models" → fromYear: 2017, toYear: ${new Date().getFullYear()} (transformer architecture emerged 2017)
+     * "Climate change policy" → fromYear: 1990, toYear: ${new Date().getFullYear()} (IPCC started 1988, key literature from 1990s)
+     * "Quantum computing" → fromYear: 1980, toYear: ${new Date().getFullYear()} (theoretical foundations from 1980s)
+     * "Ancient Greek philosophy scholarship" → fromYear: 1900, toYear: ${new Date().getFullYear()} (scholarly tradition spans century+)
+   - Provide a rationale explaining why this year range is appropriate for the topic
 
 4. QUALITY CRITERIA
    - What specific criteria define excellence for this paper type in this discipline?
@@ -177,6 +190,11 @@ Return a JSON object with this exact structure:
       { "type": "string", "percentage": number, "importance": "required|recommended|optional" }
     ],
     "recencyProfile": "cutting-edge|balanced|foundational-heavy",
+    "searchYearRange": {
+      "fromYear": number,
+      "toYear": number,
+      "rationale": "string explaining why this year range is appropriate"
+    },
     "recencyGuidance": "string",
     "seminalWorks": ["string"] or null
   },
@@ -270,10 +288,12 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
             theoryVsEmpirical: { type: 'string' as const, enum: ['theory-heavy', 'balanced', 'empirical-heavy'] },
             practitionerRelevance: { type: 'string' as const, enum: ['high', 'medium', 'low'] }
           },
-          required: ['paceOfChange', 'theoryVsEmpirical', 'practitionerRelevance']
+          required: ['paceOfChange', 'theoryVsEmpirical', 'practitionerRelevance'],
+          additionalProperties: false
         }
       },
-      required: ['primary', 'related', 'methodologicalTraditions', 'fieldCharacteristics']
+      required: ['primary', 'related', 'methodologicalTraditions', 'fieldCharacteristics'],
+      additionalProperties: false
     },
     structure: {
       type: 'object' as const,
@@ -291,7 +311,8 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
               citationExpectation: { type: 'string' as const, enum: ['none', 'light', 'moderate', 'heavy'] },
               keyElements: { type: 'array' as const, items: { type: 'string' as const } }
             },
-            required: ['key', 'title', 'purpose', 'minWords', 'maxWords', 'citationExpectation', 'keyElements']
+            required: ['key', 'title', 'purpose', 'minWords', 'maxWords', 'citationExpectation', 'keyElements'],
+            additionalProperties: false
           }
         },
         inappropriateSections: {
@@ -302,12 +323,14 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
               name: { type: 'string' as const },
               reason: { type: 'string' as const }
             },
-            required: ['name', 'reason']
+            required: ['name', 'reason'],
+            additionalProperties: false
           }
         },
         requiredElements: { type: 'array' as const, items: { type: 'string' as const } }
       },
-      required: ['appropriateSections', 'inappropriateSections', 'requiredElements']
+      required: ['appropriateSections', 'inappropriateSections', 'requiredElements'],
+      additionalProperties: false
     },
     sourceExpectations: {
       type: 'object' as const,
@@ -323,14 +346,26 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
               percentage: { type: 'number' as const },
               importance: { type: 'string' as const, enum: ['required', 'recommended', 'optional'] }
             },
-            required: ['type', 'percentage', 'importance']
+            required: ['type', 'percentage', 'importance'],
+            additionalProperties: false
           }
         },
         recencyProfile: { type: 'string' as const, enum: ['cutting-edge', 'balanced', 'foundational-heavy'] },
+        searchYearRange: {
+          type: 'object' as const,
+          properties: {
+            fromYear: { type: 'number' as const },
+            toYear: { type: 'number' as const },
+            rationale: { type: 'string' as const }
+          },
+          required: ['fromYear', 'toYear', 'rationale'],
+          additionalProperties: false
+        },
         recencyGuidance: { type: 'string' as const },
         seminalWorks: { type: 'array' as const, items: { type: 'string' as const } }
       },
-      required: ['minimumUniqueSources', 'idealSourceCount', 'sourceTypeDistribution', 'recencyProfile', 'recencyGuidance']
+      required: ['minimumUniqueSources', 'idealSourceCount', 'sourceTypeDistribution', 'recencyProfile', 'searchYearRange', 'recencyGuidance', 'seminalWorks'],
+      additionalProperties: false
     },
     qualityCriteria: {
       type: 'array' as const,
@@ -341,7 +376,8 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
           description: { type: 'string' as const },
           howToAchieve: { type: 'string' as const }
         },
-        required: ['criterion', 'description', 'howToAchieve']
+        required: ['criterion', 'description', 'howToAchieve'],
+        additionalProperties: false
       }
     },
     coverage: {
@@ -353,7 +389,8 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
         methodologicalConsiderations: { type: 'array' as const, items: { type: 'string' as const } },
         commonPitfalls: { type: 'array' as const, items: { type: 'string' as const } }
       },
-      required: ['requiredThemes', 'recommendedThemes', 'debates', 'methodologicalConsiderations', 'commonPitfalls']
+      required: ['requiredThemes', 'recommendedThemes', 'debates', 'methodologicalConsiderations', 'commonPitfalls'],
+      additionalProperties: false
     },
     genreRules: {
       type: 'array' as const,
@@ -363,9 +400,11 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
           rule: { type: 'string' as const },
           rationale: { type: 'string' as const }
         },
-        required: ['rule', 'rationale']
+        required: ['rule', 'rationale'],
+        additionalProperties: false
       }
     }
   },
-  required: ['discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules']
+  required: ['discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules'],
+  additionalProperties: false
 }

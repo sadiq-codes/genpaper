@@ -11,8 +11,10 @@
 export { useEditorState } from './useEditorState'
 export { usePaperManagement } from './usePaperManagement'
 export { useEditorChat } from './useEditorChat'
-export type { PendingToolCall, UseEditorChatReturn } from './useEditorChat'
+export type { PendingToolCall, UseEditorChatReturn, SendMessageOptions } from './useEditorChat'
 export { useBackgroundPaperSearch } from './useBackgroundPaperSearch'
+export { usePaperSearch, searchPapers } from './usePaperSearch'
+export { useChatImageUpload } from './useChatImageUpload'
 
 // Re-export existing hooks
 export { useSmartCompletion } from './useSmartCompletion'

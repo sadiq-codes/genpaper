@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
-import { getLanguageModel } from '@/lib/ai/vercel-client'
-import { generateText } from 'ai'
+import { getAutocompleteLanguageModel } from '@/lib/ai/vercel-client'
+import { streamText } from 'ai'
 import { NextRequest, NextResponse } from 'next/server'
 import { 
   retrieveEditorContext, 
@@ -233,18 +233,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Get citation style for this project
-    const citationStyle: CitationStyle = await getProjectCitationStyle(projectId, user.id)
-
-    // RAG RETRIEVAL: Get relevant chunks and claims
+    // RAG RETRIEVAL + Citation style in parallel for better performance
     const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
     
-    const ragContext = await retrieveEditorContext(queryText, effectivePaperIds, {
-      maxChunks: 8,
-      maxClaims: 6,
-      minChunkScore: 0.25,
-      minClaimScore: 0.25
-    })
+    const [ragContext, citationStyle] = await Promise.all([
+      // RAG retrieval (uses LRU cache for repeated queries)
+      retrieveEditorContext(queryText, effectivePaperIds, {
+        maxChunks: 8,
+        maxClaims: 6,
+        minChunkScore: 0.25,
+        minClaimScore: 0.25
+      }),
+      // Citation style lookup
+      getProjectCitationStyle(projectId, user.id) as Promise<CitationStyle>
+    ])
 
     // Check if we have any content to work with
     if (!ragContext.hasContent) {
@@ -286,111 +288,151 @@ export async function POST(request: NextRequest) {
     // Build minimal user prompt - just cursor position
     const userPrompt = buildUserPrompt(context)
 
-    // Generate completion with timeout
+    // Generate completion with streaming for faster perceived performance
     const abortController = new AbortController()
     const timeout = setTimeout(() => abortController.abort(), 30000)
     
-    let rawResponse: string
     try {
-      const result = await generateText({
-        model: getLanguageModel(),
+      const result = streamText({
+        model: getAutocompleteLanguageModel(),
         system,
         prompt: userPrompt,
-        maxTokens: 300,
+        maxOutputTokens: 300,
         temperature: 0.5,
         abortSignal: abortController.signal,
       })
-      rawResponse = result.text
-    } finally {
-      clearTimeout(timeout)
-    }
 
-    // Parse response
-    let suggestion: string
-    let contextHint: string
+      // Get papers for citation processing
+      const papers = ragContextToPaperMetadata(ragContext)
 
-    try {
-      const jsonMatch = rawResponse.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0])
-        suggestion = parsed.text || ''
-        contextHint = parsed.contextHint || 'Continuing...'
-      } else {
-        suggestion = rawResponse.trim()
-        contextHint = 'Continuing...'
-      }
-    } catch {
-      suggestion = rawResponse.trim()
-      contextHint = 'Continuing...'
-    }
-
-    // Clean up
-    suggestion = suggestion.replace(/^["'\s]+|["'\s]+$/g, '').trim()
-
-    if (!suggestion) {
-      return NextResponse.json({ 
-        error: 'Could not generate completion' 
-      }, { status: 422 })
-    }
-
-    // Extract and process citation markers
-    const papers = ragContextToPaperMetadata(ragContext)
-    
-    // Keep the raw suggestion with [CITE: id] markers for the accept path
-    const rawSuggestion = suggestion
-    
-    // Process markers to get formatted display version
-    const processResult = processCitationMarkersSync(suggestion, papers, citationStyle)
-    const formattedSuggestion = processResult.content
-    
-    // Build citations array with positions in BOTH formats
-    const citations: CitationInSuggestion[] = []
-    
-    // Track positions by finding markers in raw and formatted in display
-    // We need to account for the length difference as we process
-    let rawOffset = 0
-    let displayOffset = 0
-    
-    for (const citation of processResult.citations) {
-      // Find position of marker in raw text (starting from last position)
-      const rawPos = rawSuggestion.indexOf(citation.marker, rawOffset)
-      // Find position of formatted citation in display text
-      const displayPos = formattedSuggestion.indexOf(citation.formatted, displayOffset)
+      // Create a custom stream that:
+      // 1. Streams the text as it comes
+      // 2. Sends citation metadata at the end
+      const encoder = new TextEncoder()
       
-      citations.push({
-        paperId: citation.paperId,
-        marker: citation.marker,
-        formatted: citation.formatted,
-        rawStartOffset: rawPos >= 0 ? rawPos : 0,
-        rawEndOffset: rawPos >= 0 ? rawPos + citation.marker.length : 0,
-        displayStartOffset: displayPos >= 0 ? displayPos : 0,
-        displayEndOffset: displayPos >= 0 ? displayPos + citation.formatted.length : 0,
-        paper: citation.paper
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            let fullText = ''
+            
+            // Stream text chunks
+            for await (const chunk of result.textStream) {
+              fullText += chunk
+              // Send text chunk as SSE
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: chunk })}\n\n`))
+            }
+            
+            // Parse the full response for JSON structure (if any)
+            let suggestion: string
+            let contextHint: string = 'Continuing...'
+            
+            // Log raw response for debugging
+            console.log('[Autocomplete] Raw AI response:', fullText.slice(0, 500))
+            
+            try {
+              // Strip markdown code blocks if present (AI sometimes wraps JSON in ```json...```)
+              let cleanedText = fullText.replace(/```json\s*/gi, '').replace(/```\s*/g, '')
+              
+              const jsonMatch = cleanedText.match(/\{[\s\S]*\}/)
+              if (jsonMatch) {
+                console.log('[Autocomplete] JSON match found:', jsonMatch[0].slice(0, 200))
+                const parsed = JSON.parse(jsonMatch[0])
+                suggestion = parsed.text || ''
+                contextHint = parsed.contextHint || 'Continuing...'
+                
+                // If text field was empty, try using content outside JSON
+                if (!suggestion.trim()) {
+                  console.log('[Autocomplete] Empty text field in JSON, checking for content outside JSON')
+                  const outsideJson = cleanedText.replace(/\{[\s\S]*\}/, '').trim()
+                  if (outsideJson) {
+                    suggestion = outsideJson
+                  }
+                }
+              } else {
+                console.log('[Autocomplete] No JSON found, using raw text')
+                suggestion = cleanedText.trim()
+              }
+            } catch (parseErr) {
+              console.log('[Autocomplete] JSON parse error:', parseErr)
+              suggestion = fullText.trim()
+            }
+            
+            // Clean up
+            suggestion = suggestion.replace(/^["'\s]+|["'\s]+$/g, '').trim()
+            
+            console.log('[Autocomplete] Final suggestion:', suggestion ? suggestion.slice(0, 100) : '(empty)')
+            
+            if (!suggestion) {
+              console.log('[Autocomplete] Empty suggestion, sending error')
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Could not generate completion' })}\n\n`))
+              controller.close()
+              return
+            }
+
+            // Process citation markers
+            const processResult = processCitationMarkersSync(suggestion, papers, citationStyle)
+            const formattedSuggestion = processResult.content
+            
+            // Build citations array
+            const citations: CitationInSuggestion[] = []
+            let rawOffset = 0
+            let displayOffset = 0
+            
+            for (const citation of processResult.citations) {
+              const rawPos = suggestion.indexOf(citation.marker, rawOffset)
+              const displayPos = formattedSuggestion.indexOf(citation.formatted, displayOffset)
+              
+              citations.push({
+                paperId: citation.paperId,
+                marker: citation.marker,
+                formatted: citation.formatted,
+                rawStartOffset: rawPos >= 0 ? rawPos : 0,
+                rawEndOffset: rawPos >= 0 ? rawPos + citation.marker.length : 0,
+                displayStartOffset: displayPos >= 0 ? displayPos : 0,
+                displayEndOffset: displayPos >= 0 ? displayPos + citation.formatted.length : 0,
+                paper: citation.paper
+              })
+              
+              if (rawPos >= 0) rawOffset = rawPos + citation.marker.length
+              if (displayPos >= 0) displayOffset = displayPos + citation.formatted.length
+            }
+
+            // Send final metadata
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'done',
+              suggestion,
+              displaySuggestion: formattedSuggestion,
+              citations,
+              contextHint,
+              ragInfo: {
+                chunksUsed: ragContext.chunks.length,
+                claimsUsed: ragContext.claims.length,
+                papersReferenced: ragContext.papers.size
+              }
+            })}\n\n`))
+            
+            controller.close()
+          } catch (err) {
+            console.error('Streaming error:', err)
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Streaming failed' })}\n\n`))
+            controller.close()
+          }
+        }
       })
-      
-      // Update offsets for next search
-      if (rawPos >= 0) rawOffset = rawPos + citation.marker.length
-      if (displayPos >= 0) displayOffset = displayPos + citation.formatted.length
-    }
 
-    // Log invalid paper IDs (AI hallucinated or used wrong ID)
-    if (processResult.invalidPaperIds.length > 0) {
-      console.warn('Autocomplete: Invalid paper IDs in suggestion:', processResult.invalidPaperIds)
-    }
+      clearTimeout(timeout)
 
-    const response: CompletionResponse = {
-      suggestion: rawSuggestion,           // Original text with [CITE: id] markers (for processing)
-      displaySuggestion: formattedSuggestion, // Display text with formatted citations
-      citations,
-      contextHint,
-      ragInfo: {
-        chunksUsed: ragContext.chunks.length,
-        claimsUsed: ragContext.claims.length,
-        papersReferenced: ragContext.papers.size
-      }
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      })
+    } catch (err) {
+      clearTimeout(timeout)
+      throw err
     }
-
-    return NextResponse.json(response)
 
   } catch (error) {
     console.error('Editor completion error:', error)

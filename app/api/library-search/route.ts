@@ -8,7 +8,7 @@ const LibrarySearchRequestSchema = z.object({
   query: z.string().min(1).max(500).trim(),
   options: z.object({
     maxResults: z.number().int().min(1).max(50).optional().default(20),
-    sources: z.array(z.enum(['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'])).optional().default(['openalex', 'crossref', 'semantic_scholar']),
+    sources: z.array(z.enum(['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'])).optional().default(['openalex', 'core', 'crossref', 'semantic_scholar']),
     fromYear: z.number().int().min(1900).max(new Date().getFullYear()).optional()
   }).optional().default({})
 })

@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/sidebar'
 import { Sparkles } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { useEffect } from 'react'
+import { useEffect, useCallback, useState } from 'react'
 
 const navigation = [
   {
@@ -49,11 +49,27 @@ export function AppSidebar() {
   const router = useRouter()
   const supabase = createClient()
   const { state } = useSidebar()
+  const [prefetchedRoutes, setPrefetchedRoutes] = useState<Set<string>>(new Set())
 
   // Persist sidebar state in cookies
   useEffect(() => {
     document.cookie = `sidebar:state=${state === 'expanded'}; path=/; max-age=${60 * 60 * 24 * 7}` // 7 days
   }, [state])
+
+  // Prefetch all nav routes on mount for instant navigation
+  useEffect(() => {
+    navigation.forEach((item) => {
+      router.prefetch(item.url)
+    })
+  }, [router])
+
+  // Prefetch on hover (for any routes not yet prefetched)
+  const handlePrefetch = useCallback((url: string) => {
+    if (!prefetchedRoutes.has(url)) {
+      router.prefetch(url)
+      setPrefetchedRoutes(prev => new Set(prev).add(url))
+    }
+  }, [router, prefetchedRoutes])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -93,7 +109,11 @@ export function AppSidebar() {
                     isActive={isItemActive(item)}
                     tooltip={item.title}
                   >
-                    <Link href={item.url}>
+                    <Link 
+                      href={item.url}
+                      onMouseEnter={() => handlePrefetch(item.url)}
+                      onFocus={() => handlePrefetch(item.url)}
+                    >
                       <item.icon />
                       <span>{item.title}</span>
                     </Link>

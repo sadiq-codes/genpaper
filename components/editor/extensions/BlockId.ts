@@ -117,6 +117,29 @@ export const BlockId = Extension.create<BlockIdOptions>({
           const docChanged = transactions.some(tr => tr.docChanged)
           if (!docChanged) return null
 
+          // Performance optimization: Only auto-assign IDs during AI edits, paste, or doc load
+          // Skip for regular typing to avoid unnecessary processing
+          const isAIEdit = transactions.some(tr => tr.getMeta('aiEdit'))
+          const isPaste = transactions.some(tr => tr.getMeta('paste'))
+          const isUiEvent = transactions.some(tr => tr.getMeta('uiEvent'))
+          const isInitialLoad = oldState.doc.content.size <= 2 // Empty doc
+          
+          // For regular typing, only process if new blocks were added (not just text changes)
+          const hasNewBlocks = transactions.some(tr => {
+            let addedBlock = false
+            tr.steps.forEach(step => {
+              // Check if step added new content that might be a block
+              if (step.toJSON().stepType === 'replace') {
+                addedBlock = true
+              }
+            })
+            return addedBlock
+          })
+          
+          if (!isAIEdit && !isPaste && !isUiEvent && !isInitialLoad && !hasNewBlocks) {
+            return null
+          }
+
           const tr = newState.tr
           let modified = false
 

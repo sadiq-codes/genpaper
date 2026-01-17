@@ -128,6 +128,10 @@ const PANDOC_CITE_PATTERN = /\[@([a-f0-9-]+)\]/gi
 // Legacy citation format (for backward compatibility): [CITE: paper_id]
 const LEGACY_CITE_PATTERN = /\[CITE:\s*([a-f0-9-]+)\]/gi
 
+// Plain bracket format (AI sometimes outputs this): [paper_id]
+// Only matches UUIDs to avoid matching other bracketed content
+const PLAIN_BRACKET_PATTERN = /\[([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\]/gi
+
 /**
  * Extract all citation markers from content
  * Supports both [@paper_id] (Pandoc) and [CITE: paper_id] (legacy) formats
@@ -162,6 +166,27 @@ export function extractCitationMarkers(content: string): CitationMarker[] {
         end: match.index + match[0].length
       }
     })
+  }
+  
+  // Extract plain bracket [uuid] markers (fallback for when AI doesn't use @ symbol)
+  // Only if no pandoc markers were found at that position
+  const plainPattern = new RegExp(PLAIN_BRACKET_PATTERN.source, 'gi')
+  while ((match = plainPattern.exec(content)) !== null) {
+    // Check if this position already has a marker (avoid duplicates)
+    const alreadyFound = markers.some(m => 
+      m.position.start === match!.index || m.paperId === match![1]
+    )
+    if (!alreadyFound) {
+      markers.push({
+        marker: match[0],
+        paperId: match[1],
+        format: 'pandoc', // Treat as pandoc format for processing
+        position: {
+          start: match.index,
+          end: match.index + match[0].length
+        }
+      })
+    }
   }
   
   // Sort by position for consistent processing
@@ -289,7 +314,8 @@ This is standard Pandoc/academic citation format.
 Rules:
 - Place [@paper_id] immediately after the sentence or clause using that source
 - Use the EXACT paper_id from the Available Papers list
-- You can cite multiple sources: "This is supported by research [@id1] [@id2]."
+- For multiple sources, use SEPARATE brackets: "This is supported by research [@id1] [@id2]."
+- NEVER group citations with semicolons like [@id1; @id2] - this breaks formatting
 - Do NOT write (Author, Year) format - the system will format citations automatically
 - Do NOT make up paper IDs - only use IDs from the Available Papers list`
 }

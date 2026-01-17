@@ -738,138 +738,315 @@ kbd {
 }
 
 /* =============================================================================
-   Ghost Edit Styles - AI Edit Previews
+   Diff Block Styles - Block-level AI Edit Previews
    ============================================================================= */
 
-/* Deletion styling - red strikethrough */
-.ghost-edit-delete {
+/* Main diff block container */
+.diff-block {
+  @apply my-4 rounded-xl overflow-hidden shadow-lg;
+  border-width: 2px;
+  border-style: solid;
+  animation: diffBlockSlideIn 0.3s ease-out;
+}
+
+.diff-block--delete {
+  border-color: oklch(0.75 0.12 25);
+}
+
+.diff-block--insert {
+  border-color: oklch(0.7 0.12 145);
+}
+
+.diff-block--replace {
+  border-color: oklch(0.7 0.1 250);
+}
+
+/* Active state - focused edit */
+.diff-block--active {
+  @apply ring-2 ring-primary ring-offset-2;
+}
+
+/* Highlight animation when scrolling to an edit */
+.diff-block--highlight {
+  animation: diffBlockHighlight 0.6s ease-out;
+}
+
+/* Header */
+.diff-block__header {
+  @apply flex items-center justify-between px-4 py-3;
+  border-bottom: 1px solid oklch(0.9 0 0);
+}
+
+.diff-block--delete .diff-block__header {
+  background-color: oklch(0.95 0.03 25);
+}
+
+.diff-block--insert .diff-block__header {
+  background-color: oklch(0.95 0.03 145);
+}
+
+.diff-block--replace .diff-block__header {
+  background-color: oklch(0.95 0.03 250);
+}
+
+.diff-block__header-left {
+  @apply flex items-center gap-3;
+}
+
+.diff-block__icon {
+  @apply flex items-center justify-center w-8 h-8 rounded-lg shadow-sm;
+  background-color: oklch(1 0 0 / 0.8);
+}
+
+.diff-block__icon--delete {
+  color: oklch(0.5 0.18 25);
+}
+
+.diff-block__icon--insert {
+  color: oklch(0.45 0.15 145);
+}
+
+.diff-block__icon--replace {
+  color: oklch(0.5 0.12 250);
+}
+
+.diff-block__label {
+  @apply font-semibold text-sm text-foreground;
+}
+
+/* Navigation */
+.diff-block__nav {
+  @apply flex items-center gap-1;
+}
+
+.diff-block__nav-btn {
+  @apply flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground transition-colors;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.diff-block__nav-btn:hover {
+  @apply bg-muted text-foreground;
+}
+
+.diff-block__position {
+  @apply text-xs font-medium text-muted-foreground min-w-[40px] text-center;
+}
+
+/* Content sections */
+.diff-block__content {
   @apply relative;
+}
+
+.diff-block__content--old {
+  background-color: oklch(0.97 0.02 25);
+  border-bottom: 1px dashed oklch(0.85 0.05 25);
+}
+
+.diff-block__content--new {
+  background-color: oklch(0.97 0.02 145);
+}
+
+.diff-block__content-label {
+  @apply flex items-center gap-2 px-4 py-2 text-xs font-medium;
+  border-bottom: 1px solid oklch(0.92 0 0);
+}
+
+.diff-block__content-label--old {
+  color: oklch(0.45 0.12 25);
+  background-color: oklch(0.94 0.03 25);
+}
+
+.diff-block__content-label--new {
+  color: oklch(0.4 0.12 145);
+  background-color: oklch(0.94 0.03 145);
+}
+
+.diff-block__content-icon {
+  @apply font-bold;
+}
+
+.diff-block__content-text {
+  @apply p-4 text-sm leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-y-auto;
+}
+
+.diff-block__content-text--old {
+  color: oklch(0.35 0.1 25);
   text-decoration: line-through;
-  text-decoration-color: oklch(0.55 0.2 25);
+  text-decoration-color: oklch(0.6 0.12 25 / 0.6);
   text-decoration-thickness: 2px;
-  background-color: oklch(0.95 0.05 25 / 0.5);
-  color: oklch(0.45 0.15 25);
-  border-radius: 2px;
-  padding: 0 2px;
-  margin: 0 -2px;
 }
 
-.ghost-edit-delete.ghost-edit-active {
-  background-color: oklch(0.92 0.08 25 / 0.7);
-  box-shadow: 0 0 0 2px oklch(0.7 0.15 25 / 0.3);
+.diff-block__content-text--new {
+  color: oklch(0.3 0.1 145);
 }
 
-/* Insertion styling - green highlight */
-.ghost-edit-insert {
-  background-color: oklch(0.95 0.08 145 / 0.6);
-  color: oklch(0.35 0.15 145);
-  border-radius: 2px;
-  padding: 1px 4px;
-  border: 1px dashed oklch(0.6 0.15 145 / 0.5);
+/* Actions footer */
+.diff-block__actions {
+  @apply flex items-center justify-between p-3;
+  background-color: oklch(0.97 0 0);
+  border-top: 1px solid oklch(0.92 0 0);
 }
 
-.ghost-edit-insert-container.ghost-edit-active .ghost-edit-insert,
-.ghost-edit-replace-container.ghost-edit-active .ghost-edit-insert {
-  background-color: oklch(0.92 0.12 145 / 0.7);
-  border-color: oklch(0.5 0.15 145);
-  box-shadow: 0 0 0 2px oklch(0.6 0.15 145 / 0.3);
+.diff-block__hints {
+  @apply text-xs text-muted-foreground;
 }
 
-/* Container for insert/replace widgets */
-.ghost-edit-insert-container,
-.ghost-edit-replace-container,
-.ghost-edit-control-container {
-  @apply inline-flex items-center gap-1;
-  vertical-align: baseline;
+.diff-block__hints kbd {
+  @apply px-1.5 py-0.5 bg-muted rounded font-mono text-[10px] mx-0.5;
 }
 
-/* Control buttons */
-.ghost-edit-controls {
-  @apply inline-flex items-center gap-0.5 ml-1;
+.diff-block__buttons {
+  @apply flex items-center gap-2;
 }
 
-.ghost-edit-btn {
-  @apply inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold transition-all cursor-pointer border-0;
-  line-height: 1;
+.diff-block__btn {
+  @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm transition-all cursor-pointer;
+  min-height: 44px;
+  min-width: 100px;
+  border: none;
 }
 
-.ghost-edit-btn:hover {
-  transform: scale(1.1);
+.diff-block__btn:hover {
+  transform: translateY(-1px);
 }
 
-.ghost-edit-btn:active {
-  transform: scale(0.95);
+.diff-block__btn:active {
+  transform: translateY(0);
 }
 
-/* Accept button - green */
-.ghost-edit-accept {
-  background-color: oklch(0.85 0.1 145);
-  color: oklch(0.25 0.1 145);
+.diff-block__btn-icon {
+  @apply mr-2 font-bold;
 }
 
-.ghost-edit-accept:hover {
-  background-color: oklch(0.75 0.15 145);
+.diff-block__btn--reject {
+  background-color: transparent;
+  border: 2px solid oklch(0.75 0.12 25);
+  color: oklch(0.5 0.15 25);
+}
+
+.diff-block__btn--reject:hover {
+  background-color: oklch(0.95 0.05 25);
+  border-color: oklch(0.6 0.15 25);
+  color: oklch(0.45 0.18 25);
+}
+
+.diff-block__btn--accept {
+  background-color: oklch(0.55 0.15 145);
   color: white;
 }
 
-/* Reject button - red */
-.ghost-edit-reject {
-  background-color: oklch(0.9 0.08 25);
-  color: oklch(0.35 0.15 25);
+.diff-block__btn--accept:hover {
+  background-color: oklch(0.5 0.17 145);
 }
 
-.ghost-edit-reject:hover {
-  background-color: oklch(0.65 0.2 25);
-  color: white;
+/* Dark mode */
+.dark .diff-block--delete {
+  border-color: oklch(0.45 0.12 25);
 }
 
-/* Dark mode adjustments */
-.dark .ghost-edit-delete {
-  text-decoration-color: oklch(0.65 0.2 25);
-  background-color: oklch(0.25 0.08 25 / 0.4);
-  color: oklch(0.75 0.15 25);
+.dark .diff-block--insert {
+  border-color: oklch(0.45 0.12 145);
 }
 
-.dark .ghost-edit-delete.ghost-edit-active {
-  background-color: oklch(0.3 0.1 25 / 0.5);
-  box-shadow: 0 0 0 2px oklch(0.5 0.15 25 / 0.4);
+.dark .diff-block--replace {
+  border-color: oklch(0.45 0.1 250);
 }
 
-.dark .ghost-edit-insert {
-  background-color: oklch(0.25 0.1 145 / 0.5);
-  color: oklch(0.8 0.12 145);
-  border-color: oklch(0.5 0.12 145 / 0.5);
+.dark .diff-block__header {
+  border-bottom-color: oklch(0.3 0 0);
 }
 
-.dark .ghost-edit-insert-container.ghost-edit-active .ghost-edit-insert,
-.dark .ghost-edit-replace-container.ghost-edit-active .ghost-edit-insert {
-  background-color: oklch(0.3 0.12 145 / 0.6);
-  border-color: oklch(0.6 0.12 145);
+.dark .diff-block--delete .diff-block__header {
+  background-color: oklch(0.2 0.03 25);
 }
 
-.dark .ghost-edit-accept {
-  background-color: oklch(0.35 0.12 145);
-  color: oklch(0.9 0.05 145);
+.dark .diff-block--insert .diff-block__header {
+  background-color: oklch(0.2 0.03 145);
 }
 
-.dark .ghost-edit-accept:hover {
-  background-color: oklch(0.45 0.15 145);
+.dark .diff-block--replace .diff-block__header {
+  background-color: oklch(0.2 0.03 250);
 }
 
-.dark .ghost-edit-reject {
-  background-color: oklch(0.35 0.1 25);
-  color: oklch(0.85 0.1 25);
+.dark .diff-block__icon {
+  background-color: oklch(0.15 0 0 / 0.8);
 }
 
-.dark .ghost-edit-reject:hover {
-  background-color: oklch(0.45 0.15 25);
+.dark .diff-block__icon--delete {
+  color: oklch(0.7 0.15 25);
 }
 
-/* Animation for ghost edit appearance */
-@keyframes ghostEditFadeIn {
+.dark .diff-block__icon--insert {
+  color: oklch(0.7 0.12 145);
+}
+
+.dark .diff-block__icon--replace {
+  color: oklch(0.7 0.1 250);
+}
+
+.dark .diff-block__content--old {
+  background-color: oklch(0.15 0.02 25);
+  border-bottom-color: oklch(0.3 0.05 25);
+}
+
+.dark .diff-block__content--new {
+  background-color: oklch(0.15 0.02 145);
+}
+
+.dark .diff-block__content-label {
+  border-bottom-color: oklch(0.25 0 0);
+}
+
+.dark .diff-block__content-label--old {
+  color: oklch(0.75 0.1 25);
+  background-color: oklch(0.18 0.03 25);
+}
+
+.dark .diff-block__content-label--new {
+  color: oklch(0.75 0.1 145);
+  background-color: oklch(0.18 0.03 145);
+}
+
+.dark .diff-block__content-text--old {
+  color: oklch(0.75 0.08 25);
+  text-decoration-color: oklch(0.55 0.1 25 / 0.6);
+}
+
+.dark .diff-block__content-text--new {
+  color: oklch(0.8 0.08 145);
+}
+
+.dark .diff-block__actions {
+  background-color: oklch(0.15 0 0);
+  border-top-color: oklch(0.25 0 0);
+}
+
+.dark .diff-block__btn--reject {
+  border-color: oklch(0.45 0.1 25);
+  color: oklch(0.7 0.12 25);
+}
+
+.dark .diff-block__btn--reject:hover {
+  background-color: oklch(0.25 0.05 25);
+  border-color: oklch(0.5 0.12 25);
+  color: oklch(0.8 0.1 25);
+}
+
+.dark .diff-block__btn--accept {
+  background-color: oklch(0.45 0.12 145);
+}
+
+.dark .diff-block__btn--accept:hover {
+  background-color: oklch(0.5 0.14 145);
+}
+
+/* Animations */
+@keyframes diffBlockSlideIn {
   from {
     opacity: 0;
-    transform: translateY(-2px);
+    transform: translateY(-8px);
   }
   to {
     opacity: 1;
@@ -877,97 +1054,282 @@ kbd {
   }
 }
 
-.ghost-edit-insert-container,
-.ghost-edit-replace-container,
-.ghost-edit-control-container {
-  animation: ghostEditFadeIn 0.2s ease-out;
-}
-
-/* Tooltip hint for keyboard shortcuts */
-.ghost-edit-controls::after {
-  content: 'Enter/Esc';
-  @apply absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-muted-foreground whitespace-nowrap opacity-0 transition-opacity pointer-events-none;
-}
-
-.ghost-edit-insert-container:hover .ghost-edit-controls::after,
-.ghost-edit-replace-container:hover .ghost-edit-controls::after,
-.ghost-edit-control-container:hover .ghost-edit-controls::after,
-.ghost-edit-active .ghost-edit-controls::after {
-  @apply opacity-70;
-}
-
-/* Scroll highlight animation - pulses when navigating to an edit */
-@keyframes ghostEditScrollHighlight {
+@keyframes diffBlockHighlight {
   0% {
-    box-shadow: 0 0 0 0 oklch(0.7 0.15 250 / 0.7);
+    box-shadow: 0 0 0 0 oklch(0.6 0.15 250 / 0.7);
   }
   50% {
-    box-shadow: 0 0 0 4px oklch(0.7 0.15 250 / 0.4);
-  }
-  100% {
-    box-shadow: 0 0 0 0 oklch(0.7 0.15 250 / 0);
-  }
-}
-
-.ghost-edit-scroll-highlight {
-  animation: ghostEditScrollHighlight 0.6s ease-out;
-}
-
-/* Acceptance animation - green flash when edit is applied */
-@keyframes ghostEditAccepted {
-  0% {
-    background-color: oklch(0.85 0.15 145 / 0.8);
-    transform: scale(1);
-  }
-  50% {
-    background-color: oklch(0.9 0.12 145 / 0.6);
-    transform: scale(1.02);
-  }
-  100% {
-    background-color: transparent;
-    transform: scale(1);
-  }
-}
-
-.ghost-edit-accepted {
-  animation: ghostEditAccepted 0.4s ease-out forwards;
-  border-radius: 2px;
-}
-
-/* Rejection animation - red flash when edit is rejected */
-@keyframes ghostEditRejected {
-  0% {
-    background-color: oklch(0.85 0.12 25 / 0.6);
-    transform: scale(1);
-  }
-  50% {
-    background-color: oklch(0.9 0.08 25 / 0.4);
-    transform: scale(0.98);
-  }
-  100% {
-    background-color: transparent;
-    transform: scale(1);
-  }
-}
-
-.ghost-edit-rejected {
-  animation: ghostEditRejected 0.3s ease-out forwards;
-  border-radius: 2px;
-}
-
-/* Dark mode scroll highlight */
-.dark .ghost-edit-scroll-highlight {
-  animation-name: ghostEditScrollHighlightDark;
-}
-
-@keyframes ghostEditScrollHighlightDark {
-  0% {
-    box-shadow: 0 0 0 0 oklch(0.6 0.15 250 / 0.6);
-  }
-  50% {
-    box-shadow: 0 0 0 4px oklch(0.6 0.15 250 / 0.3);
+    box-shadow: 0 0 0 6px oklch(0.6 0.15 250 / 0.3);
   }
   100% {
     box-shadow: 0 0 0 0 oklch(0.6 0.15 250 / 0);
   }
+}
+
+/* Acceptance animation */
+@keyframes diffBlockAccept {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    background-color: oklch(0.9 0.1 145 / 0.3);
+  }
+  50% {
+    transform: scale(1.01);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+.diff-block--accepted {
+  animation: diffBlockAccept 0.4s ease-out forwards;
+}
+
+/* Rejection animation */
+@keyframes diffBlockReject {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    background-color: oklch(0.9 0.08 25 / 0.3);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.95) translateX(-10px);
+  }
+}
+
+.diff-block--rejected {
+  animation: diffBlockReject 0.3s ease-out forwards;
+}
+
+/* Review Toolbar Styles */
+.review-toolbar {
+  @apply sticky top-0 z-20 flex items-center justify-between gap-4;
+  @apply px-4 py-2.5 bg-background/95 backdrop-blur-sm border-b shadow-sm;
+  animation: reviewToolbarSlideIn 0.3s ease-out;
+}
+
+@keyframes reviewToolbarSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Pending edits indicator in chat */
+.pending-indicator {
+  @apply mx-3 my-3 p-3 rounded-lg;
+  @apply bg-primary/5 border border-primary/20;
+  animation: pendingIndicatorFadeIn 0.3s ease-out;
+}
+
+@keyframes pendingIndicatorFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pending-indicator__pulse {
+  @apply w-2 h-2 rounded-full bg-primary;
+  animation: pendingPulse 2s ease-in-out infinite;
+}
+
+@keyframes pendingPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+}
+
+/* =============================================================================
+   Paper Generation Loading UI - Shimmer Animation
+   ============================================================================= */
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    oklch(0.92 0 0) 25%,
+    var(--muted) 50%,
+    oklch(0.92 0 0) 75%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+.dark .animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    oklch(0.3 0 0) 25%,
+    var(--muted) 50%,
+    oklch(0.3 0 0) 75%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+}
+
+/* =============================================================================
+   Paper Mention Styles - @ mentions for papers
+   ============================================================================= */
+
+.paper-mention {
+  @apply inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded-md;
+  @apply bg-primary/10 text-primary border border-primary/20;
+  @apply cursor-default select-none whitespace-nowrap;
+  vertical-align: baseline;
+}
+
+.paper-mention:hover {
+  @apply bg-primary/15 border-primary/30;
+}
+
+.paper-mention-text {
+  @apply max-w-[200px] truncate;
+}
+
+/* Mention in node view wrapper */
+.paper-mention-wrapper {
+  @apply inline;
+}
+
+/* Dark mode adjustments */
+.dark .paper-mention {
+  @apply bg-primary/20 border-primary/30;
+}
+
+.dark .paper-mention:hover {
+  @apply bg-primary/25 border-primary/40;
+}
+
+/* =============================================================================
+   Mention Suggestion Dropdown Styles
+   ============================================================================= */
+
+.mention-suggestion-menu {
+  @apply bg-background border border-border rounded-lg shadow-lg;
+  @apply overflow-hidden min-w-[300px] max-w-[400px] max-h-[350px] overflow-y-auto;
+}
+
+.mention-suggestion-header {
+  @apply px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide;
+  @apply border-b border-border bg-muted/50;
+}
+
+.mention-suggestion-item {
+  @apply flex items-start gap-3 w-full px-3 py-2.5 text-left;
+  @apply transition-colors hover:bg-muted cursor-pointer border-0 bg-transparent;
+}
+
+.mention-suggestion-item.is-selected {
+  @apply bg-muted;
+}
+
+.mention-suggestion-icon {
+  @apply flex items-center justify-center w-8 h-8 rounded-md;
+  @apply bg-muted text-muted-foreground shrink-0 mt-0.5;
+}
+
+.mention-suggestion-item.is-selected .mention-suggestion-icon,
+.mention-suggestion-item:hover .mention-suggestion-icon {
+  @apply bg-primary/10 text-primary;
+}
+
+.mention-suggestion-content {
+  @apply flex flex-col min-w-0 flex-1;
+}
+
+.mention-suggestion-title {
+  @apply text-sm font-medium text-foreground leading-tight;
+  @apply line-clamp-2;
+}
+
+.mention-suggestion-meta {
+  @apply flex items-center gap-2 mt-1 text-xs text-muted-foreground;
+}
+
+.mention-suggestion-authors {
+  @apply truncate max-w-[150px];
+}
+
+.mention-suggestion-year {
+  @apply shrink-0;
+}
+
+.mention-suggestion-loading {
+  @apply flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground;
+}
+
+.mention-suggestion-empty {
+  @apply px-3 py-4 text-sm text-muted-foreground text-center;
+}
+
+/* =============================================================================
+   Rich Chat Input Styles
+   ============================================================================= */
+
+.rich-chat-input-container {
+  @apply transition-all;
+}
+
+.rich-chat-input-container:focus-within {
+  @apply border-primary/50;
+}
+.rich-chat-input-editor {
+  @apply text-sm leading-relaxed;
+}
+
+.rich-chat-input-editor.ProseMirror {
+  @apply outline-none min-h-[24px];
+}
+
+.rich-chat-input-editor.ProseMirror p {
+  @apply mb-0;
+}
+
+.rich-chat-input-editor.ProseMirror p.is-editor-empty:first-child::before {
+  @apply text-muted-foreground/60;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Chat input images */
+.chat-input-image {
+  @apply max-w-[200px] max-h-[150px] rounded-md my-1;
+}
+
+/* Bubble menu styling for chat input */
+.bubble-menu {
+  @apply z-50;
+}
+
+/* Ensure tippy tooltip for mentions appears above everything */
+.tippy-box[data-placement^='bottom'] {
+  @apply z-[9999];
 }

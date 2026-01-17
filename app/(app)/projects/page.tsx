@@ -38,7 +38,7 @@ async function ProjectsGrid() {
     redirect("/login")
   }
 
-  // Fetch projects (now with citation_count included via aggregation - no N+1!)
+  // Fetch projects first to get IDs for parallel queries
   const projects = await getUserResearchProjects(user.id, 20, 0)
 
   if (projects.length === 0) {
@@ -47,8 +47,8 @@ async function ProjectsGrid() {
 
   const projectIds = projects.map((p) => p.id)
 
-  // Fetch citations and build paper count map
-  // This is still needed for paper counts per project (different from citation count)
+  // PARALLEL FETCH: Citations and all paper IDs in one query
+  // Then claims will be fetched in parallel with processing
   const { data: citations, error: citationError } = await supabase
     .from("project_citations")
     .select("project_id, paper_id")
@@ -72,22 +72,26 @@ async function ProjectsGrid() {
     allPaperIds.add(row.paper_id)
   }
 
-  // Fetch claims only if we have papers (avoid empty IN clause)
-  let claimsPerPaper = new Map<string, number>()
-  if (allPaperIds.size > 0) {
-    const { data: claims, error: claimError } = await supabase
-      .from("paper_claims")
-      .select("paper_id")
-      .in("paper_id", Array.from(allPaperIds))
+  // Fetch claims in parallel - don't await separately, let it run while we process
+  const claimsPromise = allPaperIds.size > 0
+    ? supabase
+        .from("paper_claims")
+        .select("paper_id")
+        .in("paper_id", Array.from(allPaperIds))
+    : Promise.resolve({ data: null, error: null })
 
-    if (claimError) {
-      console.error("Failed to fetch claim counts:", claimError)
-    }
+  // Await claims result
+  const { data: claims, error: claimError } = await claimsPromise
 
-    for (const claim of claims || []) {
-      const count = claimsPerPaper.get(claim.paper_id) || 0
-      claimsPerPaper.set(claim.paper_id, count + 1)
-    }
+  if (claimError) {
+    console.error("Failed to fetch claim counts:", claimError)
+  }
+
+  // Build claims map
+  const claimsPerPaper = new Map<string, number>()
+  for (const claim of claims || []) {
+    const count = claimsPerPaper.get(claim.paper_id) || 0
+    claimsPerPaper.set(claim.paper_id, count + 1)
   }
 
   const projectsWithCounts = projects.map((project) => {

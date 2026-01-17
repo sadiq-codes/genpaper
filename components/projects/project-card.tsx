@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useTransition } from "react"
+import { useState, useCallback, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -72,7 +72,18 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
   const router = useRouter()
   const [_isPending, startTransition] = useTransition()
   const [isDeleting, setIsDeleting] = useState(false)
-  const [isNavigating, setIsNavigating] = useState(false)
+  const [hasPrefetched, setHasPrefetched] = useState(false)
+
+  // Prefetch on hover for instant navigation
+  const handleMouseEnter = useCallback(() => {
+    if (hasPrefetched) return
+    
+    // Prefetch the route (Next.js will cache this)
+    router.prefetch(`/editor/${project.id}`)
+    
+    // Mark as prefetched to avoid redundant calls
+    setHasPrefetched(true)
+  }, [router, project.id, hasPrefetched])
 
   const getPaperType = (): PaperTypeKey | undefined => {
     if (project.paper_type) return project.paper_type
@@ -91,7 +102,7 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
   const typeConfig = paperType ? paperTypeConfig[paperType] : null
 
   const handleClick = () => {
-    setIsNavigating(true)
+    // Navigation is instant due to prefetching + loading.tsx skeleton
     router.push(`/editor/${project.id}`)
   }
 
@@ -163,16 +174,13 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
         "group cursor-pointer transition-all duration-200",
         "hover:shadow-md hover:border-primary/30",
         "relative overflow-hidden",
-        (isDeleting || isNavigating) && "opacity-50 pointer-events-none",
+        isDeleting && "opacity-50 pointer-events-none",
       )}
       onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onFocus={handleMouseEnter}
     >
-      {/* Loading overlay */}
-      {isNavigating && (
-        <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        </div>
-      )}
+      {/* Top accent bar on hover */}
       <div className="absolute inset-x-0 top-0 h-0.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity" />
 
       <CardHeader className="pb-3">

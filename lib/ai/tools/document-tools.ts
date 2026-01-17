@@ -45,7 +45,7 @@ Examples:
 - Insert after block: { afterBlockId: "par_abc123", content: "New text" }
 - Insert after phrase: { afterPhrase: "existing sentence.", content: "New text" }
 - Insert at section end: { location: "after:Introduction", content: "New paragraph" }`,
-  parameters: z.object({
+  inputSchema: z.object({
     content: z.string().describe('The content to insert'),
     afterBlockId: z.string().optional().describe('Insert after this block ID'),
     afterPhrase: z.string().optional().describe('Insert after this specific text'),
@@ -66,7 +66,7 @@ Examples:
 - Replace whole paragraph: { blockId: "par_abc123", newContent: "New paragraph text" }
 - Replace specific sentence: { searchPhrase: "old sentence text", newContent: "new sentence text" }
 - Replace text in specific block: { blockId: "par_abc123", searchPhrase: "old text", newContent: "new text" }`,
-  parameters: z.object({
+  inputSchema: z.object({
     blockId: z.string().optional().describe('Block ID - alone replaces entire block, with searchPhrase scopes the search'),
     section: z.string().optional().describe('Section name to scope the search'),
     searchPhrase: z.string().optional().describe('Specific text to find and replace'),
@@ -81,7 +81,7 @@ export const replaceInSection = tool({
   description: `Replace specific text within a section. Use searchPhrase to find and replace.
 
 This always does TEXT-LEVEL replacement (not block-level).`,
-  parameters: z.object({
+  inputSchema: z.object({
     section: z.string().describe('Section name (e.g., "Introduction", "Methods")'),
     searchPhrase: z.string().describe('The specific text to find and replace'),
     newContent: z.string().describe('The replacement text'),
@@ -95,7 +95,7 @@ export const rewriteSection = tool({
   description: `Completely rewrite a section. Use for major restructuring.
   
 WARNING: Replaces ALL content in the section. User will confirm.`,
-  parameters: z.object({
+  inputSchema: z.object({
     section: z.string().describe('Section name to rewrite'),
     newContent: z.string().describe('Complete new section content (excluding heading)'),
     reason: z.string().describe('Why rewriting is needed'),
@@ -117,7 +117,7 @@ Examples:
 - Delete text in specific block: { blockId: "par_abc123", searchPhrase: "text to delete", reason: "..." }
 
 User will confirm deletions.`,
-  parameters: z.object({
+  inputSchema: z.object({
     blockId: z.string().optional().describe('Block ID - alone deletes entire block, with searchPhrase scopes the search'),
     section: z.string().optional().describe('Section name to scope the search'),
     searchPhrase: z.string().optional().describe('Specific text to delete (for partial deletion)'),
@@ -139,7 +139,7 @@ Targeting (in order of preference):
 Examples:
 - After specific claim: { paperId: "...", afterPhrase: "climate change impacts are significant" }
 - At end of paragraph: { paperId: "...", blockId: "par_abc123" }`,
-  parameters: z.object({
+  inputSchema: z.object({
     paperId: z.string().describe('Paper ID from available sources'),
     afterPhrase: z.string().optional().describe('Insert citation after this text (preferred)'),
     blockId: z.string().optional().describe('Block to add citation to (adds at end)'),
@@ -159,7 +159,7 @@ For PARTIAL highlight (specific text): Use searchPhrase
 Examples:
 - Highlight paragraph: { blockId: "par_abc123", comment: "Needs citation" }
 - Highlight sentence: { searchPhrase: "This claim needs support", comment: "Add evidence" }`,
-  parameters: z.object({
+  inputSchema: z.object({
     blockId: z.string().optional().describe('Block ID - alone highlights entire block'),
     section: z.string().optional().describe('Section to scope the search'),
     searchPhrase: z.string().optional().describe('Specific text to highlight'),
@@ -175,7 +175,7 @@ export const addComment = tool({
   description: `Add a comment without modifying text.
 
 Attach to specific content using blockId or nearPhrase.`,
-  parameters: z.object({
+  inputSchema: z.object({
     blockId: z.string().optional().describe('Block to comment on'),
     section: z.string().optional().describe('Section for the comment'),
     nearPhrase: z.string().optional().describe('Place comment near this text'),

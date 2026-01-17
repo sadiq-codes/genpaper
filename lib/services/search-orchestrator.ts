@@ -23,6 +23,7 @@ export interface UnifiedSearchOptions {
   minResults?: number
   excludePaperIds?: string[]
   fromYear?: number
+  toYear?: number  // End year for search (defaults to current year)
   localRegion?: string
   sources?: PaperSource[]
   semanticWeight?: number
@@ -119,6 +120,7 @@ export async function unifiedSearch(
     minResults = 5,
     excludePaperIds = [],
     fromYear = 2000,
+    toYear = new Date().getFullYear(),
     localRegion,
     sources = ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
     semanticWeight = DEFAULT_WEIGHTS.semanticWeight,
@@ -155,6 +157,8 @@ export async function unifiedSearch(
         const academicOptions: AggregatedSearchOptions = {
           maxResults: maxResults * 2,
           sources,
+          fromYear,
+          toYear,
           semanticWeight,
           authorityWeight,
           recencyWeight,

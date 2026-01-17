@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState, useEffect } from 'react'
+import { useCallback, useState, useEffect, useRef } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
@@ -23,6 +23,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import { Undo, Redo } from 'lucide-react'
 import { FloatingToolbar } from './FloatingToolbar'
 import { CitationPopover } from '../CitationPopover'
+import { ReviewToolbar } from '../ReviewToolbar'
 import { Citation } from '../extensions/Citation'
 import { Mathematics } from '../extensions/Mathematics'
 import { GhostText } from '../extensions/GhostText'
@@ -64,6 +65,12 @@ interface DocumentEditorProps {
   papers?: ProjectPaper[]
   // Citation style for formatting (apa, mla, chicago, ieee, harvard, etc.)
   citationStyle?: string
+  // Review toolbar props for pending edits
+  pendingEditCount?: number
+  activeEditIndex?: number
+  onNavigateEdit?: (direction: 'next' | 'prev') => void
+  onAcceptAllEdits?: () => void
+  onRejectAllEdits?: () => void
 }
 
 const DEFAULT_CONTENT = `<h1></h1><p></p>`
@@ -81,10 +88,16 @@ export function DocumentEditor({
   projectTopic = '',
   papers = [],
   citationStyle = 'apa',
+  pendingEditCount = 0,
+  activeEditIndex = 0,
+  onNavigateEdit,
+  onAcceptAllEdits,
+  onRejectAllEdits,
 }: DocumentEditorProps) {
   const [mathDialogOpen, setMathDialogOpen] = useState(false)
   const [mathLatex, setMathLatex] = useState('')
   const [mathDisplayMode, setMathDisplayMode] = useState(false)
+  const [toolbarMinimized, setToolbarMinimized] = useState(false)
   
   // Process content helper function - converts markdown to TipTap JSON
   const processInitialContent = useCallback((content: string, papersList: ProjectPaper[]) => {
@@ -234,7 +247,7 @@ export function DocumentEditor({
     content: DEFAULT_CONTENT, // Initial empty state - real content set via effect
     editorProps: {
       attributes: {
-        class: 'prose prose-lg max-w-none focus:outline-none min-h-[calc(100vh-200px)] px-16 py-12 md:px-24',
+        class: 'prose prose-lg max-w-none focus:outline-none min-h-[calc(100vh-200px)] px-4 pt-3 pb-6 sm:px-8 sm:pt-4 sm:pb-8 md:px-16 md:pt-6 lg:px-24 lg:pt-8 lg:pb-12',
       },
     },
     onUpdate: ({ editor }) => {
@@ -286,10 +299,23 @@ export function DocumentEditor({
       })
     }
     
-    // Set the processed content
+    // Set the processed content, then apply citation style to build numbers
     editor.commands.setContent(processed)
+    editor.commands.setCitationStyle(citationStyle)
     setProcessedWithPapersCount(papers.length)
-  }, [editor, initialContent, papers, processedWithPapersCount, processInitialContent])
+  }, [editor, initialContent, papers, processedWithPapersCount, processInitialContent, citationStyle])
+
+  // Track previous citation style to detect changes
+  const prevCitationStyleRef = useRef(citationStyle)
+  
+  // Update citation style when it changes (not on initial load - that's handled above)
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    if (prevCitationStyleRef.current === citationStyle) return
+    
+    prevCitationStyleRef.current = citationStyle
+    editor.commands.setCitationStyle(citationStyle)
+  }, [editor, citationStyle])
 
   // Smart completion hook - ghost text appears seamlessly
   useSmartCompletion({
@@ -299,14 +325,6 @@ export function DocumentEditor({
     projectId,
     projectTopic
   })
-
-  // Update citation style when it changes
-  useEffect(() => {
-    if (!editor || editor.isDestroyed) return
-    
-    // Use the setCitationStyle command to update all citations
-    editor.commands.setCitationStyle(citationStyle)
-  }, [editor, citationStyle])
 
   const _handleInsertMath = useCallback(() => {
     setMathDialogOpen(true)
@@ -349,30 +367,43 @@ export function DocumentEditor({
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Minimal undo/redo bar - Notion-like */}
-      <div className="flex items-center justify-end px-4 py-1 border-b border-border/30">
+      <div className="flex items-center justify-end px-2 py-0.5 sm:px-4 sm:py-1 border-b border-border/30">
         <div className="flex items-center gap-0.5">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            className="h-6 w-6 sm:h-7 sm:w-7 text-muted-foreground hover:text-foreground"
             onClick={() => editor.chain().focus().undo().run()}
             disabled={!editor.can().undo()}
           >
-            <Undo className="h-4 w-4" />
+            <Undo className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            className="h-6 w-6 sm:h-7 sm:w-7 text-muted-foreground hover:text-foreground"
             onClick={() => editor.chain().focus().redo().run()}
             disabled={!editor.can().redo()}
           >
-            <Redo className="h-4 w-4" />
+            <Redo className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
           </Button>
         </div>
       </div>
       
       <div className="flex-1 overflow-auto relative">
+        {/* Review Toolbar - shows when edits are pending */}
+        {pendingEditCount > 0 && onNavigateEdit && onAcceptAllEdits && onRejectAllEdits && (
+          <ReviewToolbar
+            pendingCount={pendingEditCount}
+            currentIndex={activeEditIndex}
+            onNavigate={onNavigateEdit}
+            onAcceptAll={onAcceptAllEdits}
+            onRejectAll={onRejectAllEdits}
+            isMinimized={toolbarMinimized}
+            onToggleMinimize={() => setToolbarMinimized(!toolbarMinimized)}
+          />
+        )}
+        
         <FloatingToolbar
           editor={editor}
           onAiEdit={onAiEdit}

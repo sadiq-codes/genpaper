@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { 
   Search, 
   BookOpen, 
@@ -140,15 +140,18 @@ export default function LibraryDrawer({
   })
 
   // Online search with React Query
+  // Using keepPreviousData for smooth transitions - shows old results while loading new
   const { 
     data: onlineResults = [], 
     isLoading: isSearchingOnline,
-    isFetching: isFetchingOnline
+    isFetching: isFetchingOnline,
+    isPlaceholderData
   } = useQuery({
     queryKey: ['papers', 'search', debouncedQuery],
     queryFn: () => searchPapersOnline(debouncedQuery),
     enabled: isOpen && searchMode === 'online' && debouncedQuery.length >= 3,
     staleTime: 2 * 60 * 1000, // 2 minutes for search results
+    placeholderData: keepPreviousData, // Show previous results while fetching new ones
   })
 
   // Mutation for adding papers to library

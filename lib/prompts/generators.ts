@@ -323,9 +323,12 @@ export async function generateOutline(
   const model = getLanguageModel();
 
   const response = await model.doGenerate({
-    inputFormat: 'messages',
-    mode: {
-      type: 'object-json',
+    prompt: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: [{ type: 'text' as const, text: userPrompt }] },
+    ],
+    responseFormat: {
+      type: 'json',
       schema: {
         type: 'object',
         properties: {
@@ -352,27 +355,29 @@ export async function generateOutline(
                 'candidatePaperIds',
                 'disciplineContext',
               ],
+              additionalProperties: false,
             },
           },
         },
         required: ['sections'],
+        additionalProperties: false,
       },
     },
-    prompt: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: [{ type: 'text' as const, text: userPrompt }] },
-    ],
     temperature: 0.2,
-    maxTokens: 4000, // Increased from 2000 to handle outlines with paper IDs
+    maxOutputTokens: 4000, // Increased from 2000 to handle outlines with paper IDs
   });
+
+  // Extract text from v3 response format
+  const textPart = response.content?.find((p: { type: string }) => p.type === 'text')
+  const responseText = textPart && 'text' in textPart ? textPart.text : undefined
 
   // Check for truncation (finishReason: "length") before parsing
   // Note: Cast to string to handle different type definitions across AI SDK versions
-  const finishReason = response.finishReason as string
+  const finishReason = response.finishReason as unknown as string
   if (finishReason === 'length') {
     console.error('Outline generation was truncated due to max_tokens limit');
-    console.error('Prompt tokens:', response.usage?.promptTokens);
-    console.error('Completion tokens:', response.usage?.completionTokens);
+    console.error('Input tokens:', response.usage?.inputTokens);
+    console.error('Output tokens:', response.usage?.outputTokens);
     throw new Error('Outline generation was truncated. The response exceeded the token limit. Try reducing the number of source papers.');
   }
 
@@ -381,8 +386,8 @@ export async function generateOutline(
   
   try {
     // For object-json mode, the structured data might be in response.text as JSON
-    if (response.text) {
-      const parsedResponse = JSON.parse(response.text);
+    if (responseText) {
+      const parsedResponse = JSON.parse(responseText);
       outline = parsedResponse as GeneratedOutline;
     } else {
       console.error('Outline generation failed - no response text');
@@ -396,7 +401,7 @@ export async function generateOutline(
       throw new Error('Outline generation was truncated due to token limit');
     }
     console.error('Outline generation failed - JSON parsing error');
-    console.error('Response text:', response.text);
+    console.error('Response text:', responseText);
     console.error('Parse error:', parseError);
     console.error('Full response:', JSON.stringify(response, null, 2));
     throw new Error('Failed to parse outline JSON from model response');

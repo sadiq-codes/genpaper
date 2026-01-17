@@ -83,6 +83,15 @@ export interface SourceExpectations {
   }[]
   /** How much to prioritize recent vs foundational literature */
   recencyProfile: 'cutting-edge' | 'balanced' | 'foundational-heavy'
+  /** Explicit year range for searching papers - determined by AI based on topic context */
+  searchYearRange: {
+    /** Start year for paper search (e.g., 2019 for COVID-19 topics, 1980 for foundational fields) */
+    fromYear: number
+    /** End year for paper search (typically current year) */
+    toYear: number
+    /** Explanation of why this year range is appropriate for the topic */
+    rationale: string
+  }
   /** Specific guidance on recency for this field */
   recencyGuidance: string
   /** Seminal works that should likely be cited in this area */

@@ -9,6 +9,7 @@
 import type { Editor } from '@tiptap/react'
 import { findBlockById } from '../extensions/BlockId'
 import { fuzzyFindPhrase, findSection } from '@/lib/utils/fuzzy-match'
+import { textIndexToDocPosition } from '../utils/position-utils'
 
 // =============================================================================
 // TYPES
@@ -91,7 +92,8 @@ function calculateInsert(
   toolName: string
 ): CalculationResult {
   const content = args.content as string
-  const afterBlockId = args.afterBlockId as string | undefined || args.blockId as string | undefined
+  // Use nullish coalescing to properly handle empty string vs undefined
+  const afterBlockId = (args.afterBlockId ?? args.blockId) as string | undefined
   const afterPhrase = args.afterPhrase as string | undefined
   const location = args.location as string | undefined
 
@@ -477,34 +479,5 @@ function calculateRewriteSection(
 // POSITION HELPER
 // =============================================================================
 
-/**
- * Convert a plain text index to TipTap document position.
- * (Duplicated from tool-executor.ts to avoid circular deps)
- */
-function findTipTapPosition(editor: Editor, textIndex: number): number {
-  let charCount = 0
-  let position = 0
-  let found = false
-
-  editor.state.doc.descendants((node, pos) => {
-    if (found) return false
-
-    if (node.isText && node.text) {
-      const nodeLength = node.text.length
-      
-      if (charCount + nodeLength >= textIndex) {
-        position = pos + (textIndex - charCount)
-        found = true
-        return false
-      }
-      
-      charCount += nodeLength
-    } else if (node.isBlock && charCount > 0) {
-      charCount += 1
-    }
-
-    return true
-  })
-
-  return found ? position : editor.state.doc.content.size
-}
+// Use shared utility to avoid duplication
+const findTipTapPosition = textIndexToDocPosition

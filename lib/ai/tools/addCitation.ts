@@ -138,7 +138,7 @@ export async function executeAddCitation(payload: CitationPayload) {
 
 export const addCitation = tool({
   description: 'Call this tool IMMEDIATELY after a sentence or claim that uses information from a provided source. You must provide the exact paper_id from the context chunks you used. Do not cite your own general knowledge.',
-  parameters: citationSchema,
+  inputSchema: citationSchema,
   execute: executeAddCitation
 })
 

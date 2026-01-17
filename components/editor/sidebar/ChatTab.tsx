@@ -1,24 +1,41 @@
 'use client'
 
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useCallback } from 'react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Bot, User, Check, X, ChevronDown, ChevronUp, Wrench, Trash2 } from 'lucide-react'
-import { ChatInput } from './ChatInput'
-import type { Message } from 'ai'
+import { Bot, User, Wrench, Trash2, FileEdit } from 'lucide-react'
+import { RichChatInput } from './RichChatInput'
+import type { UIMessage } from 'ai'
 import type { PendingToolCall } from '../hooks/useEditorChat'
+import type { ProjectPaper } from '../types'
 import { cn } from '@/lib/utils'
+import { useChatImageUpload } from '../hooks/useChatImageUpload'
 
 // =============================================================================
 // TYPES
 // =============================================================================
 
+export interface ChatSendOptions {
+  content: string
+  mentionedPaperIds?: string[]
+  attachedImages?: string[]
+}
+
 interface ChatTabProps {
-  messages: Message[]
-  onSendMessage: (content: string) => void
+  messages: UIMessage[]
+  /** 
+   * Callback when message is sent. 
+   * For backward compatibility, accepts either:
+   * - (content: string) => void
+   * - (options: ChatSendOptions) => void
+   */
+  onSendMessage: (content: string | ChatSendOptions) => void
   isLoading?: boolean
-  // New props for tool support
+  // Papers for @ mentions
+  papers?: ProjectPaper[]
+  projectId?: string
+  // Tool support props (actions now handled in editor, these are for status only)
   pendingTools?: PendingToolCall[]
   onConfirmTool?: (toolId: string) => void
   onRejectTool?: (toolId: string) => void
@@ -45,107 +62,95 @@ function ToolCallBadge({ toolName }: { toolName: string }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
       <Wrench className="h-3 w-3" />
       {toolLabels[toolName] || toolName}
     </span>
   )
 }
 
-function ToolConfirmationCard({ 
-  tool, 
-  onConfirm, 
-  onReject 
+/**
+ * Pending edits indicator - shows in chat when edits are waiting in the editor
+ * This replaces the old ToolConfirmationCard - actions are now in the editor
+ */
+function PendingEditsIndicator({ 
+  count,
+  hasGhostPreviews 
 }: { 
-  tool: PendingToolCall
-  onConfirm: () => void
-  onReject: () => void
+  count: number
+  hasGhostPreviews: boolean 
 }) {
-  const [expanded, setExpanded] = useState(false)
+  if (count === 0) return null
 
   return (
-    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <ToolCallBadge toolName={tool.toolName} />
-            <span className="text-xs text-amber-700 dark:text-amber-300">
-              Needs confirmation
-            </span>
-          </div>
-          
-          {tool.preview && (
-            <div className="mt-2">
-              <button 
-                onClick={() => setExpanded(!expanded)}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                {expanded ? 'Hide' : 'Show'} preview
-              </button>
-              {expanded && (
-                <pre className="mt-2 max-h-40 overflow-auto rounded bg-background/50 p-2 text-xs whitespace-pre-wrap font-mono">
-                  {tool.preview}
-                </pre>
-              )}
-            </div>
-          )}
+    <div className="mx-3 my-3 p-3 rounded-lg bg-muted/50 border border-border animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center w-6 h-6 rounded-full bg-secondary">
+          <FileEdit className="h-3.5 w-3.5 text-foreground" />
         </div>
-        
-        <div className="flex gap-1">
-          <Button 
-            size="sm" 
-            variant="ghost" 
-            className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-100"
-            onClick={onReject}
-          >
-            <X className="h-4 w-4" />
-          </Button>
-          <Button 
-            size="sm" 
-            variant="ghost"
-            className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-100"
-            onClick={onConfirm}
-          >
-            <Check className="h-4 w-4" />
-          </Button>
-        </div>
+        <span className="text-sm font-medium text-foreground">
+          {count} edit{count !== 1 ? 's' : ''} pending
+        </span>
+        {hasGhostPreviews && (
+          <span className="text-xs text-muted-foreground">
+            - review in editor
+          </span>
+        )}
       </div>
+      <p className="text-xs text-muted-foreground mt-2 pl-8">
+        Use <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] mx-0.5">Tab</kbd> to navigate, 
+        <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] mx-0.5">Enter</kbd> to accept
+      </p>
     </div>
   )
 }
 
+// Helper to extract text content from UIMessage parts
+function getMessageText(message: UIMessage): string {
+  if (!message.parts) return ''
+  const textParts = message.parts.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+  return textParts.map(p => p.text).join('')
+}
+
+// Helper to extract tool invocations from UIMessage parts
+interface ToolInvocationDisplay {
+  toolCallId: string
+  toolName: string
+}
+
+function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
+  if (!message.parts) return []
+  // Tool parts in v6 have type starting with 'tool-' or are 'dynamic-tool'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return message.parts.filter((p: any) => {
+    return p.type?.startsWith('tool-') || p.type === 'dynamic-tool'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }).map((p: any) => ({
+    toolCallId: p.toolCallId || p.id || Math.random().toString(),
+    toolName: p.type === 'dynamic-tool' ? p.toolName : p.type?.replace('tool-', '') || 'unknown',
+  }))
+}
+
 function MessageBubble({ 
   message, 
-  pendingTools,
-  onConfirmTool,
-  onRejectTool,
 }: { 
-  message: Message
-  pendingTools?: PendingToolCall[]
-  onConfirmTool?: (toolId: string) => void
-  onRejectTool?: (toolId: string) => void
+  message: UIMessage
 }) {
   const isAssistant = message.role === 'assistant'
   
-  // Get content string
-  const content = typeof message.content === 'string' 
-    ? message.content 
-    : JSON.stringify(message.content)
+  // Get content string from parts (new v6 API)
+  const content = getMessageText(message)
 
-  // Get timestamp
-  const timestamp = message.createdAt ? new Date(message.createdAt) : new Date()
+  // Get timestamp from metadata if available
+  const timestamp = new Date()
 
-  // Get tool invocations
-  const toolInvocations = message.toolInvocations
-
-  // Find pending tools for this message
-  const messagePendingTools = pendingTools?.filter(t => t.messageId === message.id) || []
+  // Get tool invocations from parts
+  const toolInvocations = getToolInvocations(message)
   
   return (
     <div className={cn(
       "flex gap-3 p-3",
-      isAssistant ? "bg-muted/50" : ""
+      isAssistant ? "bg-muted/40" : ""
     )}>
       <Avatar className="h-7 w-7 shrink-0">
         <AvatarFallback className={cn(
@@ -170,7 +175,7 @@ function MessageBubble({
           {content}
         </div>
 
-        {/* Tool invocations */}
+        {/* Tool invocations - just show badges, no action buttons */}
         {toolInvocations && toolInvocations.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1">
             {toolInvocations.map((invocation) => (
@@ -178,16 +183,6 @@ function MessageBubble({
             ))}
           </div>
         )}
-
-        {/* Pending tool confirmations */}
-        {messagePendingTools.map(tool => (
-          <ToolConfirmationCard
-            key={tool.id}
-            tool={tool}
-            onConfirm={() => onConfirmTool?.(tool.id)}
-            onReject={() => onRejectTool?.(tool.id)}
-          />
-        ))}
       </div>
     </div>
   )
@@ -195,9 +190,9 @@ function MessageBubble({
 
 function LoadingBubble() {
   return (
-    <div className="flex gap-3 p-3 bg-muted/50">
+    <div className="flex gap-3 p-3 bg-muted/40">
       <Avatar className="h-7 w-7 shrink-0">
-        <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+        <AvatarFallback className="bg-secondary text-foreground text-xs">
           <Bot className="h-4 w-4" />
         </AvatarFallback>
       </Avatar>
@@ -213,8 +208,8 @@ function LoadingBubble() {
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center h-full text-center p-6">
-      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-        <Bot className="h-6 w-6 text-primary" />
+      <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
+        <Bot className="h-6 w-6 text-muted-foreground" />
       </div>
       <h3 className="font-medium text-sm mb-1">Research Assistant</h3>
       <p className="text-xs text-muted-foreground max-w-[200px]">
@@ -240,15 +235,20 @@ export function ChatTab({
   messages, 
   onSendMessage, 
   isLoading = false,
+  papers = [],
+  projectId,
   pendingTools = [],
-  onConfirmTool,
-  onRejectTool,
-  onConfirmAllTools,
-  onRejectAllTools,
+  onConfirmTool: _onConfirmTool,
+  onRejectTool: _onRejectTool,
+  onConfirmAllTools: _onConfirmAllTools,
+  onRejectAllTools: _onRejectAllTools,
   onClearHistory,
   hasGhostPreviews = false,
 }: ChatTabProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  
+  // Image upload hook
+  const { uploadImage, isUploading } = useChatImageUpload({ projectId })
   
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -260,70 +260,34 @@ export function ChatTab({
     }
   }, [messages, isLoading, pendingTools])
 
-  // Count tools with ghost previews (visual edits)
-  const visualEditsCount = pendingTools.filter(t => t.calculatedEdit).length
+  // Handle send from RichChatInput
+  const handleSend = useCallback((
+    content: string, 
+    mentionedPaperIds: string[], 
+    attachedImages: string[]
+  ) => {
+    // If there are mentions or images, send as object
+    if (mentionedPaperIds.length > 0 || attachedImages.length > 0) {
+      onSendMessage({
+        content,
+        mentionedPaperIds,
+        attachedImages,
+      })
+    } else {
+      // Backward compatible: just send content string
+      onSendMessage(content)
+    }
+  }, [onSendMessage])
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Batch edit controls - show when multiple edits pending */}
-      {pendingTools.length > 0 && (
-        <div className="flex-shrink-0 border-b bg-amber-50 dark:bg-amber-950/30 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="flex items-center justify-center w-6 h-6 rounded-full bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 text-xs font-bold">
-                {pendingTools.length}
-              </div>
-              <div className="text-sm">
-                <span className="font-medium text-amber-800 dark:text-amber-200">
-                  {pendingTools.length === 1 ? 'Edit' : 'Edits'} pending
-                </span>
-                {hasGhostPreviews && visualEditsCount > 0 && (
-                  <span className="text-xs text-amber-600 dark:text-amber-400 ml-2">
-                    (preview in editor)
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              {pendingTools.length > 1 && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-100 dark:hover:bg-red-900/30"
-                    onClick={onRejectAllTools}
-                  >
-                    <X className="h-3 w-3 mr-1" />
-                    Reject All
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900/30"
-                    onClick={onConfirmAllTools}
-                  >
-                    <Check className="h-3 w-3 mr-1" />
-                    Accept All
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-          {hasGhostPreviews && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-              Press <kbd className="px-1 py-0.5 bg-amber-200 dark:bg-amber-800 rounded text-[10px] mx-0.5">Enter</kbd> to accept or <kbd className="px-1 py-0.5 bg-amber-200 dark:bg-amber-800 rounded text-[10px] mx-0.5">Esc</kbd> to reject the highlighted edit in the editor.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Header with clear button */}
+      {/* Header with clear button - only show when no pending edits */}
       {messages.length > 0 && onClearHistory && pendingTools.length === 0 && (
-        <div className="flex-shrink-0 flex justify-end p-2 border-b">
+        <div className="flex-shrink-0 flex justify-end p-2 border-b border-border">
           <Button 
             variant="ghost" 
             size="sm" 
-            className="h-7 text-xs text-muted-foreground hover:text-destructive"
+            className="h-7 text-xs text-muted-foreground hover:text-foreground"
             onClick={onClearHistory}
           >
             <Trash2 className="h-3 w-3 mr-1" />
@@ -343,25 +307,32 @@ export function ChatTab({
                 <MessageBubble 
                   key={message.id} 
                   message={message}
-                  pendingTools={pendingTools}
-                  onConfirmTool={onConfirmTool}
-                  onRejectTool={onRejectTool}
                 />
               ))}
               {isLoading && <LoadingBubble />}
+              
+              {/* Pending edits indicator - shows at bottom of messages */}
+              <PendingEditsIndicator 
+                count={pendingTools.length} 
+                hasGhostPreviews={hasGhostPreviews}
+              />
             </div>
           )}
         </ScrollArea>
       </div>
       
       {/* Quick Actions - above input */}
-      <QuickActions onSend={onSendMessage} disabled={isLoading} />
+      {messages.length > 0 && <QuickActions onSend={(prompt) => handleSend(prompt, [], [])} disabled={isLoading} />}
       
-      {/* Input - always visible at bottom */}
+      {/* Rich Input - always visible at bottom */}
       <div className="flex-shrink-0">
-        <ChatInput 
-          onSend={onSendMessage} 
+        <RichChatInput 
+          onSend={handleSend} 
           disabled={isLoading}
+          papers={papers}
+          projectId={projectId}
+          onImageUpload={uploadImage}
+          isUploadingImage={isUploading}
         />
       </div>
     </div>
@@ -403,14 +374,14 @@ function QuickActions({
   disabled: boolean 
 }) {
   return (
-    <div className="flex-shrink-0 border-t bg-muted/30 p-2">
+    <div className="flex-shrink-0 border-t border-border bg-muted/20 p-2">
       <div className="flex flex-wrap gap-1.5">
         {QUICK_ACTIONS.map((action) => (
           <Button
             key={action.label}
             variant="outline"
             size="sm"
-            className="h-7 text-xs gap-1 bg-background hover:bg-primary/5"
+            className="h-7 text-xs gap-1 bg-background hover:bg-muted"
             onClick={() => onSend(action.prompt)}
             disabled={disabled}
           >
