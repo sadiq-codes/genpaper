@@ -11,7 +11,7 @@ declare module 'citation-js' {
     entry?: string
   }
 
-  export class Cite {
+  class Cite {
     data: CitationData[]
     
     constructor(data: unknown | unknown[])
@@ -21,6 +21,9 @@ declare module 'citation-js' {
     
     static async(input: unknown): Promise<Cite>
   }
+  
+  export default Cite
+  export { Cite }
 }
 
 declare module 'citation-js/build/citation.js' {
@@ -36,7 +39,7 @@ declare module 'citation-js/build/citation.js' {
     entry?: string
   }
 
-  export class Cite {
+  class Cite {
     data: CitationData[]
     
     constructor(data: unknown | unknown[])
@@ -46,6 +49,40 @@ declare module 'citation-js/build/citation.js' {
     
     static async(input: unknown): Promise<Cite>
   }
+  
+  export default Cite
+  export { Cite }
+}
+
+declare module '@citation-js/core' {
+  export const plugins: {
+    add: (name: string, config: unknown) => void
+    config: {
+      get: (name: string) => {
+        templates?: {
+          has: (id: string) => boolean
+          get: (id: string) => string
+          add: (id: string, template: string) => void
+          list?: () => string[]
+        }
+        locales?: unknown
+        engine?: unknown
+      } | undefined
+    }
+  }
+  
+  export const util: {
+    Register: new <T>(data?: Record<string, T>) => {
+      has: (id: string) => boolean
+      get: (id: string) => T
+      add: (id: string, value: T) => void
+      list?: () => string[]
+    }
+  }
+}
+
+declare module '@citation-js/plugin-csl' {
+  // This module registers itself with @citation-js/core when imported
 }
 
 declare module 'parse-author' {

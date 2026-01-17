@@ -299,11 +299,7 @@ export interface AddCitationResult {
 export class CitationService {
   private constructor() {}
   
-  // Realtime channel for citation events (singleton with cleanup)
-  private static realtimeChannel: ReturnType<Awaited<ReturnType<typeof getSB>>['channel']> | null = null
-  private static channelSubscribed = false
-  
-      static async add(params: AddCitationParams): Promise<AddCitationResult> {
+  static async add(params: AddCitationParams): Promise<AddCitationResult> {
     const requestId = citationLogger.generateRequestId()
     const timer = citationLogger.startTimer()
     
@@ -444,9 +440,6 @@ export class CitationService {
           cslJson: existing.csl_json as CSLItem // Backward compatibility
         }
         
-        // Emit realtime event even for existing citations (client might need refresh)
-        await this.emitCitationChangedEvent(params.projectId, citeKey, false)
-        
         return result
       }
       
@@ -505,9 +498,6 @@ export class CitationService {
       metrics,
       isNew: finalResult.isNew
     })
-    
-    // Emit realtime event for citation changes
-    await this.emitCitationChangedEvent(params.projectId, citeKey, finalResult.isNew)
     
     return finalResult
   }
@@ -794,12 +784,69 @@ export class CitationService {
   }
 
   /**
-   * Suggest citation keys based on context text.
-   * Currently returns empty array - feature not yet implemented.
-   * Future: Use semantic search to find relevant papers from project library.
+   * Extract citation markers from project content and create citation records.
+   * This is useful for projects where content has [CITE: uuid] markers but
+   * no corresponding records in project_citations table.
    */
-  static async suggest(_projectId: string, _context: string): Promise<string[]> {
-    return []
+  static async extractAndCreateCitationsFromContent(projectId: string): Promise<{
+    processed: number
+    errors: string[]
+    extracted: number
+  }> {
+    const supabase = await getSB()
+    const errors: string[] = []
+    let processed = 0
+    
+    // Get project content
+    const { data: project, error: projectError } = await supabase
+      .from('research_projects')
+      .select('content')
+      .eq('id', projectId)
+      .single()
+    
+    if (projectError || !project?.content) {
+      return { processed: 0, errors: ['Project not found or has no content'], extracted: 0 }
+    }
+    
+    // Extract all citation markers from content
+    // Supports both [@uuid] (Pandoc) and [CITE: uuid] (legacy) formats
+    const pandocPattern = /\[@([a-f0-9-]{36})\]/gi
+    const legacyPattern = /\[CITE:\s*([a-f0-9-]{36})\]/gi
+    
+    const paperIds = new Set<string>()
+    
+    for (const match of project.content.matchAll(pandocPattern)) {
+      paperIds.add(match[1])
+    }
+    for (const match of project.content.matchAll(legacyPattern)) {
+      paperIds.add(match[1])
+    }
+    
+    const extracted = paperIds.size
+    console.log(`[CitationService] Found ${extracted} unique paper IDs in content for project ${projectId}`)
+    
+    if (extracted === 0) {
+      return { processed: 0, errors: [], extracted: 0 }
+    }
+    
+    // Create citation records for each paper
+    for (const paperId of paperIds) {
+      try {
+        await this.add({
+          projectId,
+          sourceRef: { paperId },
+          reason: 'Extracted from existing content'
+        })
+        processed++
+        console.log(`[CitationService] Created citation for paper ${paperId}`)
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        errors.push(`Paper ${paperId}: ${errMsg}`)
+        console.warn(`[CitationService] Failed to create citation for paper ${paperId}: ${errMsg}`)
+      }
+    }
+    
+    return { processed, errors, extracted }
   }
 
   /**
@@ -854,40 +901,6 @@ export class CitationService {
     }
     
     return { processed, errors }
-  }
-
-  /**
-   * Emit realtime event for citation changes
-   * Purpose: Notify clients to refresh bibliography/inline disambiguation
-   * 
-   * NOTE: Disabled due to bufferUtil.mask WebSocket error in Node.js
-   * This is a non-critical feature - citations work without it
-   */
-  private static async emitCitationChangedEvent(
-    _projectId: string, 
-    _citeKey: string, 
-    _isNew: boolean
-  ): Promise<void> {
-    // Disabled: Supabase Realtime has WebSocket compatibility issues
-    // causing "bufferUtil.mask is not a function" errors
-    // Citations work fine without realtime notifications
-    return
-  }
-  
-  /**
-   * Clean up realtime channel (call on server shutdown if needed)
-   */
-  static async cleanup(): Promise<void> {
-    if (this.realtimeChannel) {
-      try {
-        const supabase = await getSB()
-        await supabase.removeChannel(this.realtimeChannel)
-      } catch {
-        // Ignore cleanup errors
-      }
-      this.realtimeChannel = null
-      this.channelSubscribed = false
-    }
   }
 
   static async resolveSourceRef(sourceRef: { doi?: string; title?: string; year?: number }, projectId?: string): Promise<string | null> {

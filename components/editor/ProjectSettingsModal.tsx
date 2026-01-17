@@ -20,6 +20,8 @@ interface ProjectSettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
+  /** Current citation style - passed from parent to avoid API fetch on open */
+  currentCitationStyle?: string
   onCitationStyleChange?: (style: string) => void
 }
 
@@ -27,28 +29,19 @@ export function ProjectSettingsModal({
   open,
   onOpenChange,
   projectId,
+  currentCitationStyle = 'apa',
   onCitationStyleChange,
 }: ProjectSettingsModalProps) {
-  const [citationStyle, setCitationStyle] = useState<string>('apa')
-  const [isLoading, setIsLoading] = useState(true)
+  // Local state for editing (initialized from prop)
+  const [citationStyle, setCitationStyle] = useState<string>(currentCitationStyle)
   const [isSaving, setIsSaving] = useState(false)
 
-  // Fetch current project settings when modal opens
+  // Reset to current style when modal opens (in case user canceled previous edit)
   useEffect(() => {
-    if (open && projectId) {
-      setIsLoading(true)
-      fetch(`/api/projects/${projectId}/settings`)
-        .then(res => res.json())
-        .then(data => {
-          setCitationStyle(data.citationStyle || 'apa')
-        })
-        .catch(err => {
-          console.error('Failed to load project settings:', err)
-          setCitationStyle('apa')
-        })
-        .finally(() => setIsLoading(false))
+    if (open) {
+      setCitationStyle(currentCitationStyle)
     }
-  }, [open, projectId])
+  }, [open, currentCitationStyle])
 
   const handleSave = async () => {
     if (!citationStyle) return
@@ -70,7 +63,8 @@ export function ProjectSettingsModal({
         description: `Citation style set to ${styleInfo?.shortName || styleInfo?.name || citationStyle}`,
       })
       
-      // Notify parent component of the change so it can update CitationManager
+      // Notify parent component of the change
+      // Citation formatting is now 100% local - no API re-fetch needed
       onCitationStyleChange?.(citationStyle)
       
       onOpenChange(false)
@@ -83,6 +77,7 @@ export function ProjectSettingsModal({
   }
 
   const selectedStyle = getStyleById(citationStyle)
+  const hasChanges = citationStyle !== currentCitationStyle
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -94,37 +89,31 @@ export function ProjectSettingsModal({
           </DialogDescription>
         </DialogHeader>
 
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <div className="space-y-6 py-4">
+          {/* Citation Style */}
+          <div className="space-y-3">
+            <Label htmlFor="citation-style">Citation Style</Label>
+            <CitationStyleSelector
+              value={citationStyle}
+              onValueChange={setCitationStyle}
+            />
+            
+            {/* Preview */}
+            {selectedStyle && (
+              <div className="rounded-lg bg-muted p-3 text-sm">
+                <p className="text-muted-foreground text-xs mb-1">Preview:</p>
+                <p>
+                  Research shows significant findings in this area{' '}
+                  <span className="font-medium text-primary">{selectedStyle.inlineExample}</span>.
+                </p>
+              </div>
+            )}
+            
+            <p className="text-xs text-muted-foreground">
+              This style will be used for autocomplete suggestions and paper generation.
+            </p>
           </div>
-        ) : (
-          <div className="space-y-6 py-4">
-            {/* Citation Style */}
-            <div className="space-y-3">
-              <Label htmlFor="citation-style">Citation Style</Label>
-              <CitationStyleSelector
-                value={citationStyle}
-                onValueChange={setCitationStyle}
-              />
-              
-              {/* Preview */}
-              {selectedStyle && (
-                <div className="rounded-lg bg-muted p-3 text-sm">
-                  <p className="text-muted-foreground text-xs mb-1">Preview:</p>
-                  <p>
-                    Research shows significant findings in this area{' '}
-                    <span className="font-medium text-primary">{selectedStyle.inlineExample}</span>.
-                  </p>
-                </div>
-              )}
-              
-              <p className="text-xs text-muted-foreground">
-                This style will be used for autocomplete suggestions and paper generation.
-              </p>
-            </div>
-          </div>
-        )}
+        </div>
 
         <DialogFooter>
           <Button
@@ -134,7 +123,7 @@ export function ProjectSettingsModal({
           >
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={isLoading || isSaving}>
+          <Button onClick={handleSave} disabled={isSaving || !hasChanges}>
             {isSaving ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

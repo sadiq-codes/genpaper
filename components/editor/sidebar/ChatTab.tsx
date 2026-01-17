@@ -6,7 +6,6 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Bot, User, Check, X, ChevronDown, ChevronUp, Wrench, Trash2 } from 'lucide-react'
 import { ChatInput } from './ChatInput'
-import type { ChatMessage } from '../types'
 import type { Message } from 'ai'
 import type { PendingToolCall } from '../hooks/useEditorChat'
 import { cn } from '@/lib/utils'
@@ -16,8 +15,7 @@ import { cn } from '@/lib/utils'
 // =============================================================================
 
 interface ChatTabProps {
-  // Support both old ChatMessage[] and new Message[] formats
-  messages: ChatMessage[] | Message[]
+  messages: Message[]
   onSendMessage: (content: string) => void
   isLoading?: boolean
   // New props for tool support
@@ -123,7 +121,7 @@ function MessageBubble({
   onConfirmTool,
   onRejectTool,
 }: { 
-  message: ChatMessage | Message
+  message: Message
   pendingTools?: PendingToolCall[]
   onConfirmTool?: (toolId: string) => void
   onRejectTool?: (toolId: string) => void
@@ -135,20 +133,11 @@ function MessageBubble({
     ? message.content 
     : JSON.stringify(message.content)
 
-  // Get timestamp - handle both old and new formats
-  const timestamp = 'timestamp' in message && message.timestamp instanceof Date
-    ? message.timestamp
-    : 'createdAt' in message && message.createdAt
-    ? new Date(message.createdAt)
-    : new Date()
+  // Get timestamp
+  const timestamp = message.createdAt ? new Date(message.createdAt) : new Date()
 
-  // Get tool invocations from new Message format
-  const toolInvocations = 'toolInvocations' in message 
-    ? message.toolInvocations 
-    : undefined
-
-  // Get legacy citations from old ChatMessage format
-  const legacyCitations = 'citations' in message ? message.citations : undefined
+  // Get tool invocations
+  const toolInvocations = message.toolInvocations
 
   // Find pending tools for this message
   const messagePendingTools = pendingTools?.filter(t => t.messageId === message.id) || []
@@ -181,11 +170,11 @@ function MessageBubble({
           {content}
         </div>
 
-        {/* Tool invocations (new format) */}
+        {/* Tool invocations */}
         {toolInvocations && toolInvocations.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1">
-            {toolInvocations.map((invocation, i) => (
-              <ToolCallBadge key={i} toolName={invocation.toolName} />
+            {toolInvocations.map((invocation) => (
+              <ToolCallBadge key={invocation.toolCallId} toolName={invocation.toolName} />
             ))}
           </div>
         )}
@@ -199,20 +188,6 @@ function MessageBubble({
             onReject={() => onRejectTool?.(tool.id)}
           />
         ))}
-
-        {/* Legacy citations (old format) */}
-        {legacyCitations && legacyCitations.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {legacyCitations.map((citation) => (
-              <span 
-                key={citation.id}
-                className="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-700 border border-gray-300"
-              >
-                {citation.authors[0]?.split(' ').pop()}, {citation.year}
-              </span>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   )
@@ -379,12 +354,70 @@ export function ChatTab({
         </ScrollArea>
       </div>
       
+      {/* Quick Actions - above input */}
+      <QuickActions onSend={onSendMessage} disabled={isLoading} />
+      
       {/* Input - always visible at bottom */}
       <div className="flex-shrink-0">
         <ChatInput 
           onSend={onSendMessage} 
           disabled={isLoading}
         />
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
+// QUICK ACTIONS
+// =============================================================================
+
+const QUICK_ACTIONS = [
+  {
+    label: 'Extract Claims',
+    icon: '📋',
+    prompt: 'Extract the key claims and findings from my papers. For each claim, cite the source paper.',
+  },
+  {
+    label: 'Find Gaps',
+    icon: '🔍',
+    prompt: 'Analyze my papers and identify research gaps - what questions remain unanswered? What areas need more investigation?',
+  },
+  {
+    label: 'Summarize',
+    icon: '📝',
+    prompt: 'Provide a comprehensive summary of my papers, highlighting the main themes and how they relate to each other.',
+  },
+  {
+    label: 'What Next?',
+    icon: '💡',
+    prompt: 'Based on my document and papers, suggest what I should write next. What sections or arguments would strengthen my paper?',
+  },
+]
+
+function QuickActions({ 
+  onSend, 
+  disabled 
+}: { 
+  onSend: (message: string) => void
+  disabled: boolean 
+}) {
+  return (
+    <div className="flex-shrink-0 border-t bg-muted/30 p-2">
+      <div className="flex flex-wrap gap-1.5">
+        {QUICK_ACTIONS.map((action) => (
+          <Button
+            key={action.label}
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1 bg-background hover:bg-primary/5"
+            onClick={() => onSend(action.prompt)}
+            disabled={disabled}
+          >
+            <span>{action.icon}</span>
+            {action.label}
+          </Button>
+        ))}
       </div>
     </div>
   )

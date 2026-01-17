@@ -40,4 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.claude
 .opencode.json
+.claude/skills
+.codex/skills
+.cursor/skills
+.opencode/

@@ -5,6 +5,7 @@ import { Toaster } from 'sonner'
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/app-shell/sidebar'
 import GlobalLibraryProvider from '@/components/GlobalLibraryProvider'
+import { QueryProvider } from '@/components/providers/QueryProvider'
 
 // Full-screen layout for editor with collapsible app sidebar
 // No header bar - EditorTopNav serves as the header
@@ -27,28 +28,30 @@ export default async function EditorLayout({
   const defaultOpen = sidebarState === 'true'
 
   return (
-    <SidebarProvider defaultOpen={defaultOpen}>
-      <GlobalLibraryProvider>
-        <AppSidebar />
-        
-        <SidebarInset>
-          {/* No header here - EditorTopNav is inside the editor component */}
-          <main className="flex-1 min-h-screen bg-muted/30">
-            {children}
-          </main>
-        </SidebarInset>
-        
-        <Toaster 
-          position="bottom-right"
-          toastOptions={{
-            style: {
-              background: 'var(--background)',
-              border: '1px solid var(--border)',
-              color: 'var(--foreground)',
-            },
-          }}
-        />
-      </GlobalLibraryProvider>
-    </SidebarProvider>
+    <QueryProvider>
+      <SidebarProvider defaultOpen={defaultOpen}>
+        <GlobalLibraryProvider>
+          <AppSidebar />
+          
+          <SidebarInset>
+            {/* No header here - EditorTopNav is inside the editor component */}
+            <main className="flex-1 min-h-screen bg-muted/30">
+              {children}
+            </main>
+          </SidebarInset>
+          
+          <Toaster 
+            position="bottom-right"
+            toastOptions={{
+              style: {
+                background: 'var(--background)',
+                border: '1px solid var(--border)',
+                color: 'var(--foreground)',
+              },
+            }}
+          />
+        </GlobalLibraryProvider>
+      </SidebarProvider>
+    </QueryProvider>
   )
 }

@@ -4,10 +4,14 @@ import { CitationService } from '@/lib/citations/immediate-bibliography'
 
 /**
  * POST /api/citations/backfill
- * Backfill CSL JSON for papers in a project that are missing it.
  * 
- * This is useful for existing projects where papers were added before
- * the CSL JSON generation was integrated into the add-paper flow.
+ * Two-step backfill process:
+ * 1. Extract citation markers from content and create citation records
+ * 2. Backfill CSL JSON for any citations missing it
+ * 
+ * This is useful for existing projects where:
+ * - Content has [CITE: uuid] markers but no citation records
+ * - Citation records exist but are missing CSL JSON
  */
 export async function POST(request: NextRequest) {
   try {
@@ -39,14 +43,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Run backfill
-    const result = await CitationService.backfillProjectCitations(projectId)
+    // Step 1: Extract citations from content and create records
+    const extractResult = await CitationService.extractAndCreateCitationsFromContent(projectId)
+    
+    // Step 2: Backfill CSL JSON for any existing citations missing it
+    const backfillResult = await CitationService.backfillProjectCitations(projectId)
+
+    const totalProcessed = extractResult.processed + backfillResult.processed
+    const allErrors = [...extractResult.errors, ...backfillResult.errors]
 
     return NextResponse.json({
       success: true,
-      processed: result.processed,
-      errors: result.errors,
-      message: `Backfilled ${result.processed} citations${result.errors.length > 0 ? ` with ${result.errors.length} errors` : ''}`
+      extracted: extractResult.extracted,
+      created: extractResult.processed,
+      cslBackfilled: backfillResult.processed,
+      totalProcessed,
+      errors: allErrors,
+      message: `Found ${extractResult.extracted} citations in content, created ${extractResult.processed} records, backfilled ${backfillResult.processed} CSL JSON${allErrors.length > 0 ? ` (${allErrors.length} errors)` : ''}`
     })
 
   } catch (error) {

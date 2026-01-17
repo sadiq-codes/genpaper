@@ -128,7 +128,12 @@ export function processAIContent(
  * Process plain text (not markdown) with citation markers
  * Used for simpler cases like ghost text suggestions
  * 
- * @param text - Plain text with [CONTEXT FROM: uuid] markers
+ * Supports all citation formats:
+ * - [@uuid] - Pandoc style (preferred)
+ * - [CITE: uuid] - Legacy AI format
+ * - [CONTEXT FROM: uuid] - Legacy context format
+ * 
+ * @param text - Plain text with citation markers
  * @param papers - Array of papers for citation metadata lookup
  * @returns TipTap JSON fragment (content array, not full doc)
  */
@@ -141,8 +146,8 @@ export function processPlainTextWithCitations(
   }
 
   const paperLookup = createPaperLookup(papers)
-  // Match both [CITE: id] and [CONTEXT FROM: id] patterns
-  const pattern = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  // Combined pattern: Group 1 = Pandoc UUID, Group 2 = legacy type, Group 3 = legacy UUID
+  const pattern = /\[@([a-f0-9-]+)\]|\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
   const matches = [...text.matchAll(pattern)]
 
   if (matches.length === 0) {
@@ -154,9 +159,12 @@ export function processPlainTextWithCitations(
   let lastIndex = 0
 
   for (const match of matches) {
-    const paperId = match[2] // Group 2 is the UUID (group 1 is CITE|CONTEXT FROM)
+    // Extract paper ID from either format
+    const paperId = match[1] || match[3] // Group 1 for Pandoc, Group 3 for legacy
     const matchStart = match.index!
     const matchEnd = matchStart + match[0].length
+
+    if (!paperId) continue
 
     // Add text before the marker
     if (matchStart > lastIndex) {
@@ -168,6 +176,16 @@ export function processPlainTextWithCitations(
 
     // Add citation node with paper info if available
     const paper = paperLookup[paperId]
+    
+    // Debug logging for missing papers
+    if (!paper && process.env.NODE_ENV === 'development') {
+      console.warn('[Citation] Paper not found in lookup (plain text):', {
+        paperId,
+        availableIds: Object.keys(paperLookup).slice(0, 10),
+        lookupSize: Object.keys(paperLookup).length,
+      })
+    }
+    
     result.push({
       type: 'citation',
       attrs: paper ? paperToCitationAttrs(paper) : { id: paperId },

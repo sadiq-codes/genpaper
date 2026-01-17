@@ -294,7 +294,7 @@ export function useSmartCompletion({
       if (signal.aborted || !editor || editor.isDestroyed) return
 
       // API returns:
-      // - suggestion: raw text with [CITE: id] markers (for processing)
+      // - suggestion: raw text with [@id] markers (Pandoc format, for processing)
       // - displaySuggestion: formatted text (for display)
       // - citations: array with positions in both formats
       if (data.suggestion && data.displaySuggestion) {

@@ -13,12 +13,48 @@
 
 import { useChat } from 'ai/react'
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Editor } from '@tiptap/react'
 import type { Message, ToolInvocation } from 'ai'
 import { getConfirmationLevel, type ToolConfirmationLevel } from '@/lib/ai/tools/document-tools'
 import { getDocumentStructure } from '../extensions/BlockId'
 import { calculateEdit, type CalculatedEdit } from '../services/edit-calculator'
 import { hasGhostEdits } from '../extensions/GhostEdit'
+
+// =============================================================================
+// API FUNCTIONS
+// =============================================================================
+
+interface ChatHistoryMessage {
+  id: string
+  role: string
+  content: string
+  toolInvocations?: ToolInvocation[]
+}
+
+async function fetchChatHistory(projectId: string): Promise<Message[]> {
+  const response = await fetch(`/api/editor/chat?projectId=${projectId}`)
+  if (!response.ok) {
+    if (response.status === 404) return []
+    throw new Error('Failed to load chat history')
+  }
+  const data = await response.json()
+  if (!data.messages) return []
+  
+  return data.messages.map((m: ChatHistoryMessage) => ({
+    id: m.id,
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+    toolInvocations: m.toolInvocations,
+  }))
+}
+
+async function clearChatHistoryApi(projectId: string): Promise<void> {
+  const response = await fetch(`/api/editor/chat?projectId=${projectId}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) throw new Error('Failed to clear chat history')
+}
 
 // =============================================================================
 // TYPES
@@ -79,8 +115,11 @@ export interface UseEditorChatReturn {
 
 export function useEditorChat({ 
   projectId, 
-  editor 
-}: UseEditorChatOptions): UseEditorChatReturn {
+  editor,
+  enabled = true, // Allows lazy loading - set to false until chat tab is opened
+}: UseEditorChatOptions & { enabled?: boolean }): UseEditorChatReturn {
+  const queryClient = useQueryClient()
+  
   // Track pending tool confirmations
   const [pendingTools, setPendingTools] = useState<PendingToolCall[]>([])
   
@@ -89,6 +128,9 @@ export function useEditorChat({
   
   // Track if ghost previews are active
   const [hasGhostPreviews, setHasGhostPreviews] = useState(false)
+  
+  // Track if initial history has been loaded
+  const historyLoaded = useRef(false)
 
   // Get current editor content - use ref to avoid stale closures
   const editorRef = useRef<Editor | null>(editor)
@@ -416,50 +458,51 @@ export function useEditorChat({
     })
   }, [append, projectId, getEditorContext])
 
+  // Fetch chat history with React Query - cached per project
+  // Only fetch when enabled (e.g., when chat tab is opened)
+  const { data: historyData, refetch: refetchHistory } = useQuery({
+    queryKey: ['project', projectId, 'chat', 'history'],
+    queryFn: () => fetchChatHistory(projectId),
+    enabled: enabled && !!projectId, // Lazy load - only fetch when enabled
+    staleTime: Infinity, // Chat history doesn't go stale
+  })
+
+  // Load history into chat state when fetched
+  useEffect(() => {
+    if (historyData && !historyLoaded.current) {
+      setMessages(historyData)
+      historyLoaded.current = true
+    }
+  }, [historyData, setMessages])
+
+  // Clear history mutation
+  const clearHistoryMutation = useMutation({
+    mutationFn: () => clearChatHistoryApi(projectId),
+    onSuccess: () => {
+      setMessages([])
+      executedTools.current.clear()
+      setPendingTools([])
+      queryClient.invalidateQueries({ queryKey: ['project', projectId, 'chat', 'history'] })
+    },
+    onError: (error) => {
+      console.error('Failed to clear chat history:', error)
+    },
+  })
+
   /**
    * Clear chat history.
    */
   const clearHistory = useCallback(async () => {
-    try {
-      await fetch(`/api/editor/chat?projectId=${projectId}`, {
-        method: 'DELETE',
-      })
-      setMessages([])
-      executedTools.current.clear()
-      setPendingTools([])
-    } catch (error) {
-      console.error('Failed to clear chat history:', error)
-    }
-  }, [projectId, setMessages])
+    clearHistoryMutation.mutate()
+  }, [clearHistoryMutation])
 
   /**
    * Reload chat history from server.
    */
   const reloadHistory = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/editor/chat?projectId=${projectId}`)
-      if (response.ok) {
-        const data = await response.json()
-        if (data.messages) {
-          setMessages(data.messages.map((m: { id: string; role: string; content: string; toolInvocations?: ToolInvocation[] }) => ({
-            id: m.id,
-            role: m.role as 'user' | 'assistant',
-            content: m.content,
-            toolInvocations: m.toolInvocations,
-          })))
-        }
-      }
-    } catch (error) {
-      console.error('Failed to reload chat history:', error)
-    }
-  }, [projectId, setMessages])
-
-  // Load history on mount
-  useEffect(() => {
-    if (projectId) {
-      reloadHistory()
-    }
-  }, [projectId, reloadHistory])
+    historyLoaded.current = false
+    await refetchHistory()
+  }, [refetchHistory])
 
   return {
     messages,

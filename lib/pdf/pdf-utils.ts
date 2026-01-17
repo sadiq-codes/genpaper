@@ -10,7 +10,7 @@ import { getSB } from '@/lib/supabase/server'
 // Configuration constants
 export const PDF_BUCKET = 'papers-pdfs'
 export const MAX_PDF_SIZE = 50 * 1024 * 1024 // 50MB limit
-export const DOWNLOAD_TIMEOUT = 30000 // 30 seconds
+export const DOWNLOAD_TIMEOUT = 60000 // 60 seconds (increased from 30s for slower academic servers)
 
 // Academic-friendly user agents to rotate through
 const USER_AGENTS = [

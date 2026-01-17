@@ -1,30 +1,64 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import type { Editor } from '@tiptap/react'
 import { Button } from '@/components/ui/button'
-import { ExternalLink, Copy, Trash2, Loader2, Pencil } from 'lucide-react'
+import { ExternalLink, Copy, Trash2, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { getCitationManager, type CitationData } from './services/CitationManager'
 import { CitationEditModal } from './CitationEditModal'
+import type { ProjectPaper } from './types'
 
 interface CitationPopoverProps {
   editor: Editor | null
   projectId?: string
+  papers?: ProjectPaper[]  // Papers are passed directly, no API calls needed
 }
 
-export function CitationPopover({ editor, projectId }: CitationPopoverProps) {
+/**
+ * Paper info for display in popover
+ * Now derived locally from papers prop instead of CitationManager
+ */
+interface PaperInfo {
+  id: string
+  title: string
+  authors: string[]
+  year: number | null
+  journal?: string
+  doi?: string
+}
+
+export function CitationPopover({ editor, projectId, papers = [] }: CitationPopoverProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [position, setPosition] = useState({ top: 0, left: 0 })
   const [citationId, setCitationId] = useState<string | null>(null)
-  const [citationData, setCitationData] = useState<CitationData | null>(null)
   const [_targetElement, setTargetElement] = useState<HTMLElement | null>(null)
   const [isMounted, setIsMounted] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const manager = getCitationManager()
+
+  // Create a quick lookup map from papers
+  const paperMap = useMemo(() => {
+    const map = new Map<string, PaperInfo>()
+    for (const paper of papers) {
+      map.set(paper.id, {
+        id: paper.id,
+        title: paper.title || 'Untitled',
+        authors: paper.authors || [],
+        year: paper.year || null,
+        journal: paper.journal,
+        doi: paper.doi,
+      })
+    }
+    return map
+  }, [papers])
+
+  // Get paper info from local papers (instant, no API)
+  const paper = useMemo(() => {
+    if (!citationId) return null
+    return paperMap.get(citationId) || null
+  }, [citationId, paperMap])
 
   // Track mount state for SSR
   useEffect(() => {
@@ -60,32 +94,8 @@ export function CitationPopover({ editor, projectId }: CitationPopoverProps) {
       setCitationId(id)
       setTargetElement(citation)
       setIsOpen(true)
-      setCitationData(null)
-
-      // Fetch citation data
-      if (manager.isConfigured()) {
-        manager.getCitation(id).then((data) => {
-          setCitationData(data)
-        }).catch((err) => {
-          console.error('[CitationPopover] Failed to fetch citation:', err)
-          setCitationData({
-            id,
-            renderedText: citation.textContent || '',
-            status: 'error',
-            error: err instanceof Error ? err.message : 'Failed to load citation'
-          })
-        })
-      } else {
-        // Still show popover with basic info from DOM
-        setCitationData({
-          id,
-          renderedText: citation.textContent || '',
-          status: 'error',
-          error: 'Citation manager not configured'
-        })
-      }
     }
-  }, [manager])
+  }, [])
 
   // Close on click outside
   const handleClickOutside = useCallback((e: MouseEvent) => {
@@ -137,8 +147,8 @@ export function CitationPopover({ editor, projectId }: CitationPopoverProps) {
 
   // Copy BibTeX
   const handleCopyBibtex = useCallback(() => {
-    if (!citationData?.paper) return
-    const { title, year, journal, doi, authors } = citationData.paper
+    if (!paper) return
+    const { title, year, journal, doi, authors } = paper
     const bibtex = `@article{${citationId},
   author = {${(authors || []).join(' and ') || 'Unknown'}},
   title = {${title || ''}},
@@ -147,7 +157,7 @@ export function CitationPopover({ editor, projectId }: CitationPopoverProps) {
 }`
     navigator.clipboard.writeText(bibtex)
     toast.success('BibTeX copied')
-  }, [citationData, citationId])
+  }, [paper, citationId])
 
   // Handle edit click
   const handleEdit = useCallback(() => {
@@ -173,23 +183,36 @@ export function CitationPopover({ editor, projectId }: CitationPopoverProps) {
     page?: string
     publisher?: string
   }) => {
-    if (!citationId) {
+    if (!citationId || !projectId) {
       throw new Error('No citation selected')
     }
 
-    await manager.updateCitation(citationId, cslJson)
-    
-    // Refresh the citation data displayed in the popover
-    const updatedData = await manager.getCitation(citationId)
-    setCitationData(updatedData)
-  }, [citationId, manager])
+    // Save to database via API
+    const response = await fetch(`/api/citations/${citationId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        csl_json: cslJson
+      })
+    })
+
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.message || 'Failed to update citation')
+    }
+
+    // Close the modal - changes will reflect on next page load/refresh
+    toast.success('Citation updated')
+    setIsEditModalOpen(false)
+  }, [citationId, projectId])
 
   if (!isOpen) return null
 
-  const paper = citationData?.paper
-  const isLoading = !citationData || citationData.status === 'loading'
-  const hasError = citationData?.status === 'error'
-  const renderedText = citationData?.renderedText || ''
+  // Get rendered text from the citation element in DOM (for fallback display)
+  const renderedText = citationId 
+    ? document.querySelector(`[data-citation="${citationId}"]`)?.textContent || `[${citationId.slice(0, 8)}...]`
+    : ''
 
   return (
     <>
@@ -201,12 +224,7 @@ export function CitationPopover({ editor, projectId }: CitationPopoverProps) {
           )}
           style={{ top: position.top, left: position.left }}
         >
-          {isLoading ? (
-            <div className="p-4 flex items-center justify-center">
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              <span className="text-sm text-muted-foreground">Loading...</span>
-            </div>
-          ) : paper ? (
+          {paper ? (
             <>
               <div className="p-4 space-y-2">
                 <h4 className="font-medium text-sm line-clamp-2">{paper.title}</h4>
@@ -253,16 +271,11 @@ export function CitationPopover({ editor, projectId }: CitationPopoverProps) {
           ) : (
             <div className="p-4 space-y-2">
               <div className="text-sm font-medium text-muted-foreground">
-                {hasError ? 'Unable to load citation details' : 'Citation not found'}
+                Citation not found in project papers
               </div>
               {renderedText && (
                 <div className="text-xs text-muted-foreground">
                   Citation text: <span className="font-mono">{renderedText}</span>
-                </div>
-              )}
-              {hasError && citationData?.error && (
-                <div className="text-xs text-destructive mt-1">
-                  {citationData.error}
                 </div>
               )}
               {citationId && (

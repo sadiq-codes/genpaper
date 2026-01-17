@@ -23,7 +23,6 @@ import TaskItem from '@tiptap/extension-task-item'
 import { Undo, Redo } from 'lucide-react'
 import { FloatingToolbar } from './FloatingToolbar'
 import { CitationPopover } from '../CitationPopover'
-import { CitationUpdater } from '../CitationUpdater'
 import { Citation } from '../extensions/Citation'
 import { Mathematics } from '../extensions/Mathematics'
 import { GhostText } from '../extensions/GhostText'
@@ -63,6 +62,8 @@ interface DocumentEditorProps {
   projectId?: string
   projectTopic?: string
   papers?: ProjectPaper[]
+  // Citation style for formatting (apa, mla, chicago, ieee, harvard, etc.)
+  citationStyle?: string
 }
 
 const DEFAULT_CONTENT = `<h1></h1><p></p>`
@@ -79,13 +80,11 @@ export function DocumentEditor({
   projectId = '',
   projectTopic = '',
   papers = [],
+  citationStyle = 'apa',
 }: DocumentEditorProps) {
   const [mathDialogOpen, setMathDialogOpen] = useState(false)
   const [mathLatex, setMathLatex] = useState('')
   const [mathDisplayMode, setMathDisplayMode] = useState(false)
-
-  // Track if initial content has been set
-  const [hasSetInitialContent, setHasSetInitialContent] = useState(false)
   
   // Process content helper function - converts markdown to TipTap JSON
   const processInitialContent = useCallback((content: string, papersList: ProjectPaper[]) => {
@@ -134,6 +133,17 @@ export function DocumentEditor({
       const { json, isFullDoc } = processContent(trimmedContent, papersList)
       if (isFullDoc && json) {
         return json
+      }
+      
+      // Handle plain text with citations (returns a fragment, not full doc)
+      if (Array.isArray(json) && json.length > 0) {
+        return {
+          type: 'doc',
+          content: [{
+            type: 'paragraph',
+            content: json
+          }]
+        }
       }
     } catch (err) {
       console.error('Failed to process markdown content:', err)
@@ -208,7 +218,9 @@ export function DocumentEditor({
         types: ['heading', 'paragraph'],
       }),
       Typography,
-      Citation,
+      Citation.configure({
+        citationStyle: citationStyle,
+      }),
       Mathematics,
       GhostText,
       GhostEdit,
@@ -235,19 +247,30 @@ export function DocumentEditor({
     },
   })
 
+  // Track the papers count we used for initial content processing
+  const [processedWithPapersCount, setProcessedWithPapersCount] = useState<number>(-1)
+  
   // Set initial content after editor is created - handles markdown processing
   useEffect(() => {
-    if (!editor || editor.isDestroyed || hasSetInitialContent) return
+    if (!editor || editor.isDestroyed) return
     if (!initialContent || initialContent.trim() === '') return
+    
+    // Skip if we already processed with the same papers count
+    if (processedWithPapersCount === papers.length) return
     
     // Process and set the initial content
     const processed = processInitialContent(initialContent, papers)
     
-    // Always log content processing in development for debugging
+    // Log content processing in development
     if (process.env.NODE_ENV === 'development') {
       const contentPreview = initialContent.slice(0, 200)
       const isHtml = /^<(h[1-6]|p|div|ul|ol|blockquote|pre|table)[^>]*>/i.test(initialContent.trim())
       const hasRawMarkdown = /^#{1,6}\s+/m.test(initialContent)
+      
+      // Extract citation IDs from content for debugging
+      const citationPattern = /\[@([a-f0-9-]+)\]|\[CITE:\s*([a-f0-9-]+)\]/gi
+      const citationIds = [...initialContent.matchAll(citationPattern)].map(m => m[1] || m[2])
+      
       console.log('[DocumentEditor] Processing initial content:', {
         contentLength: initialContent.length,
         isHtml,
@@ -256,14 +279,17 @@ export function DocumentEditor({
         processedType: typeof processed === 'object' ? 'JSON' : 'string',
         processedIsDoc: typeof processed === 'object' && processed?.type === 'doc',
         papersCount: papers.length,
+        paperIds: papers.map(p => p.id),
+        citationIdsInContent: citationIds,
+        missingPapers: citationIds.filter(id => !papers.some(p => p.id === id)),
         contentPreview: contentPreview + (initialContent.length > 200 ? '...' : ''),
       })
     }
     
     // Set the processed content
     editor.commands.setContent(processed)
-    setHasSetInitialContent(true)
-  }, [editor, initialContent, papers, hasSetInitialContent, processInitialContent])
+    setProcessedWithPapersCount(papers.length)
+  }, [editor, initialContent, papers, processedWithPapersCount, processInitialContent])
 
   // Smart completion hook - ghost text appears seamlessly
   useSmartCompletion({
@@ -273,6 +299,14 @@ export function DocumentEditor({
     projectId,
     projectTopic
   })
+
+  // Update citation style when it changes
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    
+    // Use the setCitationStyle command to update all citations
+    editor.commands.setCitationStyle(citationStyle)
+  }, [editor, citationStyle])
 
   const _handleInsertMath = useCallback(() => {
     setMathDialogOpen(true)
@@ -346,8 +380,8 @@ export function DocumentEditor({
           onChat={onChat}
         />
         <EditorContent editor={editor} className="h-full" />
-        <CitationPopover editor={editor} projectId={projectId} />
-        <CitationUpdater editor={editor} />
+        <CitationPopover editor={editor} projectId={projectId} papers={papers} />
+        {/* CitationUpdater removed - citations now format locally via CitationNodeView */}
       </div>
 
       {/* Math Input Dialog */}

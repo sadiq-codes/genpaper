@@ -363,7 +363,9 @@ export class GenerationContextService {
       evidence_strength: (chunk.evidence_strength || 'full_text') as EvidenceStrength
     }))
     
-    // Validate chunk content
+    const originalCount = allChunks.length
+    
+    // Validate chunk content with strict filtering first
     allChunks = allChunks.filter(chunk => {
       const content = chunk.content.trim()
       return content.length >= 30 &&
@@ -371,12 +373,40 @@ export class GenerationContextService {
              !/^[\d\s.,-]+$/.test(content)
     })
     
-    // Abstract fallback
-    if (allChunks.length === 0) {
-      console.warn('⚠️ No relevant chunks found. Using paper abstracts as fallback.')
+    // If strict filtering removes too many chunks, try relaxed filtering
+    // This helps when coverage is low and we only have short abstract-based chunks
+    const MIN_CHUNKS_THRESHOLD = 5
+    if (allChunks.length < MIN_CHUNKS_THRESHOLD && originalCount > allChunks.length) {
+      console.log(`⚠️ Strict filtering reduced ${originalCount} → ${allChunks.length} chunks. Trying relaxed filtering...`)
+      
+      // Relaxed filter: only require minimal content
+      allChunks = result.chunks
+        .map((chunk, index) => ({
+          ...chunk,
+          id: chunk.id || createDeterministicChunkId(chunk.paper_id, chunk.content, index),
+          paper: allPapers.find(p => p.id === chunk.paper_id),
+          metadata: { source: 'generation_context_service', score: chunk.score },
+          evidence_strength: (chunk.evidence_strength || 'full_text') as EvidenceStrength
+        }))
+        .filter(chunk => {
+          const content = chunk.content.trim()
+          // Relaxed: only 20 chars and 3 words minimum
+          return content.length >= 20 &&
+                 content.split(/\s+/).length >= 3 &&
+                 !/^[\d\s.,-]+$/.test(content)
+        })
+      
+      console.log(`✅ Relaxed filtering recovered ${allChunks.length} chunks`)
+    }
+    
+    // Abstract fallback - only if we still have very few chunks
+    if (allChunks.length < MIN_CHUNKS_THRESHOLD) {
+      console.warn(`⚠️ Only ${allChunks.length} chunks found. Supplementing with paper abstracts.`)
       const abstractChunks = allPapers
         .filter(p => p.abstract && p.abstract.trim().length >= 100)
-        .slice(0, 10)
+        // Don't include papers we already have chunks for
+        .filter(p => !allChunks.some(c => c.paper_id === p.id))
+        .slice(0, Math.max(10 - allChunks.length, 5))
         .map(p => ({
           id: `abstract-${p.id}`,
           paper_id: p.id,
@@ -388,23 +418,22 @@ export class GenerationContextService {
           evidence_strength: 'abstract' as EvidenceStrength
         }))
 
-      if (abstractChunks.length === 0) {
+      if (allChunks.length === 0 && abstractChunks.length === 0) {
         throw new NoRelevantContentError(
           'Could not find any relevant content or abstracts for the selected papers.'
         )
       }
       
-      console.log(`✅ Using ${abstractChunks.length} abstracts as fallback context.`)
-      return abstractChunks
+      // Combine existing chunks with abstract supplements
+      allChunks = [...allChunks, ...abstractChunks]
+      console.log(`✅ Using ${allChunks.length} total chunks (${abstractChunks.length} from abstracts)`)
     }
     
-    // Quality check
+    // Quality check - only throw if we have zero usable chunks
+    // Relaxed from 0.18 threshold since we may have lower-quality but still useful content
     const avgScore = allChunks.reduce((sum, chunk) => sum + normalizeScore(chunk.score), 0) / allChunks.length
-    if (avgScore < 0.18) {
-      throw new ContentQualityError(
-        `Content relevance scores too low (avg: ${avgScore.toFixed(3)}). Consider adding more relevant papers.`,
-        { scores: allChunks.map(c => c.score) }
-      )
+    if (allChunks.length > 0 && avgScore < 0.1) {
+      console.warn(`⚠️ Low average relevance score (${avgScore.toFixed(3)}), but proceeding with available content`)
     }
     
     // Final limit (dedup and balance already done by ChunkRetriever)

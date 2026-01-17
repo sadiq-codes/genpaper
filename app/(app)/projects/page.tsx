@@ -38,6 +38,7 @@ async function ProjectsGrid() {
     redirect("/login")
   }
 
+  // Fetch projects (now with citation_count included via aggregation - no N+1!)
   const projects = await getUserResearchProjects(user.id, 20, 0)
 
   if (projects.length === 0) {
@@ -46,6 +47,8 @@ async function ProjectsGrid() {
 
   const projectIds = projects.map((p) => p.id)
 
+  // Fetch citations and build paper count map
+  // This is still needed for paper counts per project (different from citation count)
   const { data: citations, error: citationError } = await supabase
     .from("project_citations")
     .select("project_id, paper_id")
@@ -55,37 +58,36 @@ async function ProjectsGrid() {
     console.error("Failed to fetch citation counts:", citationError)
   }
 
+  // Build paper count map and collect all paper IDs
   const paperCountMap = new Map<string, Set<string>>()
+  const allPaperIds = new Set<string>()
+  
   for (const row of citations || []) {
-    // Skip rows with null project_id or paper_id
     if (!row.project_id || !row.paper_id) continue
     
     if (!paperCountMap.has(row.project_id)) {
       paperCountMap.set(row.project_id, new Set())
     }
     paperCountMap.get(row.project_id)!.add(row.paper_id)
+    allPaperIds.add(row.paper_id)
   }
 
-  const allPaperIds = new Set<string>()
-  for (const row of citations || []) {
-    if (row.paper_id) {
-      allPaperIds.add(row.paper_id)
+  // Fetch claims only if we have papers (avoid empty IN clause)
+  let claimsPerPaper = new Map<string, number>()
+  if (allPaperIds.size > 0) {
+    const { data: claims, error: claimError } = await supabase
+      .from("paper_claims")
+      .select("paper_id")
+      .in("paper_id", Array.from(allPaperIds))
+
+    if (claimError) {
+      console.error("Failed to fetch claim counts:", claimError)
     }
-  }
 
-  const { data: claims, error: claimError } = await supabase
-    .from("paper_claims")
-    .select("paper_id")
-    .in("paper_id", Array.from(allPaperIds))
-
-  if (claimError) {
-    console.error("Failed to fetch claim counts:", claimError)
-  }
-
-  const claimsPerPaper = new Map<string, number>()
-  for (const claim of claims || []) {
-    const count = claimsPerPaper.get(claim.paper_id) || 0
-    claimsPerPaper.set(claim.paper_id, count + 1)
+    for (const claim of claims || []) {
+      const count = claimsPerPaper.get(claim.paper_id) || 0
+      claimsPerPaper.set(claim.paper_id, count + 1)
+    }
   }
 
   const projectsWithCounts = projects.map((project) => {

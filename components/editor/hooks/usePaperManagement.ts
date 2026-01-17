@@ -1,6 +1,11 @@
 /**
  * usePaperManagement - Manages project papers (add/remove)
  * 
+ * Uses React Query for:
+ * - Optimistic updates on add/remove
+ * - Automatic cache invalidation
+ * - Deduplication of requests
+ * 
  * Responsibilities:
  * - Papers list state
  * - Adding papers to project
@@ -9,6 +14,7 @@
  */
 
 import { useState, useCallback } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { ProjectPaper } from '../types'
 
@@ -47,14 +53,55 @@ interface UsePaperManagementReturn {
   isLoading: boolean
 }
 
+// API functions
+async function addPaperToProject(
+  projectId: string, 
+  paperId: string
+): Promise<{ paper: ProjectPaper; alreadyExists: boolean }> {
+  const response = await fetch('/api/editor/papers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId, paperId }),
+  })
+
+  const data = await response.json()
+
+  if (response.status === 409) {
+    return { paper: data.paper, alreadyExists: true }
+  }
+
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to add paper')
+  }
+
+  return { paper: data.paper, alreadyExists: false }
+}
+
+async function removePaperFromProject(
+  projectId: string,
+  paperId: string,
+  deleteClaims: boolean
+): Promise<{ claimsDeleted: number }> {
+  const response = await fetch(
+    `/api/editor/papers?projectId=${projectId}&paperId=${paperId}&deleteClaims=${deleteClaims}`,
+    { method: 'DELETE' }
+  )
+
+  if (!response.ok) {
+    throw new Error('Failed to remove paper')
+  }
+
+  return response.json()
+}
+
 export function usePaperManagement({
   projectId,
   initialPapers = [],
   onPaperAdded,
   onPaperRemoved,
 }: UsePaperManagementOptions): UsePaperManagementReturn {
+  const queryClient = useQueryClient()
   const [papers, setPapers] = useState<ProjectPaper[]>(initialPapers)
-  const [isLoading, setIsLoading] = useState(false)
   const [removePaperDialog, setRemovePaperDialog] = useState<RemovePaperDialogState>({
     open: false,
     paperId: '',
@@ -62,29 +109,41 @@ export function usePaperManagement({
     claimCount: 0,
   })
 
-  const addPaper = useCallback(async (paperId: string, title: string) => {
-    if (!projectId) return
-
-    setIsLoading(true)
-    try {
-      const response = await fetch('/api/editor/papers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, paperId }),
+  // Add paper mutation with optimistic update
+  const addPaperMutation = useMutation({
+    mutationFn: ({ paperId }: { paperId: string; title: string }) => 
+      addPaperToProject(projectId!, paperId),
+    onMutate: async ({ paperId, title }) => {
+      // Optimistically add a placeholder paper
+      const optimisticPaper: ProjectPaper = {
+        id: paperId,
+        title,
+        authors: [],
+        year: new Date().getFullYear(),
+      }
+      
+      setPapers(prev => {
+        // Check if already exists
+        if (prev.some(p => p.id === paperId)) return prev
+        return [...prev, optimisticPaper]
       })
-
-      const data = await response.json()
-
-      if (response.status === 409) {
+      
+      return { optimisticPaper }
+    },
+    onSuccess: (data, { title }) => {
+      if (data.alreadyExists) {
         toast.info('Paper already in project')
         return
       }
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to add paper')
-      }
+      // Replace optimistic paper with real data
+      setPapers(prev => 
+        prev.map(p => p.id === data.paper.id ? data.paper : p)
+      )
 
-      setPapers(prev => [...prev, data.paper])
+      // Invalidate related queries
+      queryClient.invalidateQueries({ queryKey: ['project', projectId, 'papers'] })
+      queryClient.invalidateQueries({ queryKey: ['library', 'papers'] })
 
       toast.success('Paper added to project', {
         description: title.slice(0, 50) + (title.length > 50 ? '...' : ''),
@@ -93,13 +152,57 @@ export function usePaperManagement({
           onClick: onPaperAdded,
         } : undefined,
       })
-    } catch (error) {
+    },
+    onError: (error, { paperId }) => {
+      // Rollback optimistic update
+      setPapers(prev => prev.filter(p => p.id !== paperId))
       console.error('Error adding paper:', error)
       toast.error('Failed to add paper')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [projectId, onPaperAdded])
+    },
+  })
+
+  // Remove paper mutation
+  const removePaperMutation = useMutation({
+    mutationFn: ({ paperId, deleteClaims }: { paperId: string; deleteClaims: boolean }) =>
+      removePaperFromProject(projectId!, paperId, deleteClaims),
+    onMutate: async ({ paperId }) => {
+      // Store current papers for potential rollback
+      const previousPapers = papers
+      
+      // Optimistically remove
+      setPapers(prev => prev.filter(p => p.id !== paperId))
+      
+      return { previousPapers }
+    },
+    onSuccess: (data, { paperId, deleteClaims }) => {
+      // Invalidate related queries
+      queryClient.invalidateQueries({ queryKey: ['project', projectId, 'papers'] })
+      
+      if (deleteClaims) {
+        onPaperRemoved?.(paperId)
+      }
+
+      toast.success('Paper removed', {
+        description: data.claimsDeleted > 0 ? `${data.claimsDeleted} claims also removed` : undefined,
+      })
+    },
+    onError: (error, _, context) => {
+      // Rollback optimistic update
+      if (context?.previousPapers) {
+        setPapers(context.previousPapers)
+      }
+      console.error('Error removing paper:', error)
+      toast.error('Failed to remove paper')
+    },
+    onSettled: () => {
+      setRemovePaperDialog({ open: false, paperId: '', paperTitle: '', claimCount: 0 })
+    },
+  })
+
+  const addPaper = useCallback(async (paperId: string, title: string) => {
+    if (!projectId) return
+    addPaperMutation.mutate({ paperId, title })
+  }, [projectId, addPaperMutation])
 
   const removePaper = useCallback((paperId: string, claimCount: number) => {
     const paper = papers.find(p => p.id === paperId)
@@ -115,39 +218,9 @@ export function usePaperManagement({
 
   const confirmRemovePaper = useCallback(async (deleteClaims: boolean) => {
     if (!projectId) return
-
     const { paperId } = removePaperDialog
-
-    setIsLoading(true)
-    try {
-      const response = await fetch(
-        `/api/editor/papers?projectId=${projectId}&paperId=${paperId}&deleteClaims=${deleteClaims}`,
-        { method: 'DELETE' }
-      )
-
-      if (!response.ok) {
-        throw new Error('Failed to remove paper')
-      }
-
-      const data = await response.json()
-
-      setPapers(prev => prev.filter(p => p.id !== paperId))
-
-      if (deleteClaims) {
-        onPaperRemoved?.(paperId)
-      }
-
-      toast.success('Paper removed', {
-        description: data.claimsDeleted > 0 ? `${data.claimsDeleted} claims also removed` : undefined,
-      })
-    } catch (error) {
-      console.error('Error removing paper:', error)
-      toast.error('Failed to remove paper')
-    } finally {
-      setIsLoading(false)
-      setRemovePaperDialog({ open: false, paperId: '', paperTitle: '', claimCount: 0 })
-    }
-  }, [projectId, removePaperDialog, onPaperRemoved])
+    removePaperMutation.mutate({ paperId, deleteClaims })
+  }, [projectId, removePaperDialog, removePaperMutation])
 
   const closeRemovePaperDialog = useCallback(() => {
     setRemovePaperDialog(prev => ({ ...prev, open: false }))
@@ -161,6 +234,6 @@ export function usePaperManagement({
     confirmRemovePaper,
     removePaperDialog,
     closeRemovePaperDialog,
-    isLoading,
+    isLoading: addPaperMutation.isPending || removePaperMutation.isPending,
   }
 }

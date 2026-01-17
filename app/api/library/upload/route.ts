@@ -150,13 +150,14 @@ export async function POST(request: NextRequest) {
     info('Starting paper ingestion')
     
     // Ingest paper using the unified system
+    // Set ownerId to current user for uploaded papers (private by default)
     const text = tieredResult.fullText?.slice(0, 1_000_000)   // 1 MB safety cap to prevent network choking
     const result = await ingestPaper(validationResult.data, {
-      fullText: text || undefined
-      // Process immediately for uploads (default behavior)
+      fullText: text || undefined,
+      ownerId: user.id  // User-uploaded papers are owned by the uploader
     })
     const paperId = result.paperId
-    info('Paper ingested successfully', { paperId })
+    info('Paper ingested successfully', { paperId, ownerId: user.id })
 
     // Store the original PDF file in Supabase storage for future reference
     info('Uploading PDF to storage')

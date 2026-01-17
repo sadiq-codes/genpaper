@@ -15,8 +15,11 @@ import type { CSLItem } from '@/lib/utils/csl'
  * 4. Easy to debug and test
  */
 
-// Pattern to match [CITE: paper_id] markers
-const CITE_MARKER_PATTERN = /\[CITE:\s*([a-f0-9-]+)\]/gi
+// Patterns to match citation markers
+// Pandoc-style (preferred, new format): [@paper_id]
+const PANDOC_CITE_PATTERN = /\[@([a-f0-9-]+)\]/gi
+// Legacy format (for backward compatibility): [CITE: paper_id]
+const LEGACY_CITE_PATTERN = /\[CITE:\s*([a-f0-9-]+)\]/gi
 
 export interface CitationProcessResult {
   /** Processed content with formatted citations */
@@ -36,15 +39,23 @@ export interface CitationProcessResult {
 
 /**
  * Extract all citation markers from content
+ * Supports both [@paper_id] (Pandoc) and [CITE: paper_id] (legacy) formats
  */
 export function extractCitationMarkers(content: string): Array<{ marker: string; paperId: string }> {
   const markers: Array<{ marker: string; paperId: string }> = []
-  let match: RegExpExecArray | null
   
-  // Reset regex state
-  CITE_MARKER_PATTERN.lastIndex = 0
+  // Extract Pandoc-style [@paper_id] markers (preferred format)
+  const pandocPattern = new RegExp(PANDOC_CITE_PATTERN.source, 'gi')
+  for (const match of content.matchAll(pandocPattern)) {
+    markers.push({
+      marker: match[0],
+      paperId: match[1]
+    })
+  }
   
-  while ((match = CITE_MARKER_PATTERN.exec(content)) !== null) {
+  // Extract legacy [CITE: paper_id] markers (backward compatibility)
+  const legacyPattern = new RegExp(LEGACY_CITE_PATTERN.source, 'gi')
+  for (const match of content.matchAll(legacyPattern)) {
     markers.push({
       marker: match[0],
       paperId: match[1]
@@ -55,11 +66,12 @@ export function extractCitationMarkers(content: string): Array<{ marker: string;
 }
 
 /**
- * Check if content contains citation markers
+ * Check if content contains citation markers (either format)
  */
 export function hasCitationMarkers(content: string): boolean {
-  CITE_MARKER_PATTERN.lastIndex = 0
-  return CITE_MARKER_PATTERN.test(content)
+  PANDOC_CITE_PATTERN.lastIndex = 0
+  LEGACY_CITE_PATTERN.lastIndex = 0
+  return PANDOC_CITE_PATTERN.test(content) || LEGACY_CITE_PATTERN.test(content)
 }
 
 /**
@@ -133,13 +145,17 @@ export async function processCitationMarkers(
     }
   }
   
-  // Replace all markers in content
+  // Replace all markers in content (both Pandoc and legacy formats)
   let processedContent = content
   
   for (const [paperId, formattedCitation] of replacements) {
-    // Create pattern that matches this specific paper_id (case-insensitive)
-    const pattern = new RegExp(`\\[CITE:\\s*${paperId}\\]`, 'gi')
-    processedContent = processedContent.replace(pattern, formattedCitation)
+    // Replace Pandoc-style [@paper_id] markers
+    const pandocPattern = new RegExp(`\\[@${paperId}\\]`, 'gi')
+    processedContent = processedContent.replace(pandocPattern, formattedCitation)
+    
+    // Replace legacy [CITE: paper_id] markers
+    const legacyPattern = new RegExp(`\\[CITE:\\s*${paperId}\\]`, 'gi')
+    processedContent = processedContent.replace(legacyPattern, formattedCitation)
   }
   
   return {
@@ -179,7 +195,10 @@ export function cleanNonCitationArtifacts(content: string): string {
 export function cleanRemainingArtifacts(content: string): string {
   let cleaned = content
   
-  // Remove any remaining [CITE: ...] markers that weren't processed
+  // Remove any remaining [@...] Pandoc markers that weren't processed
+  cleaned = cleaned.replace(/\[@[a-f0-9-]+\]/gi, '')
+  
+  // Remove any remaining [CITE: ...] legacy markers that weren't processed
   cleaned = cleaned.replace(/\[CITE:\s*[^\]]*\]/gi, '')
   
   // Also clean non-citation artifacts

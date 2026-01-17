@@ -3,15 +3,14 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { ProjectPaper } from '../types'
 import { processContent } from '../utils/content-processor'
-import { getCitationManager } from '../services/CitationManager'
 
 // Types for ghost text state
 export interface GhostTextState {
-  // Raw text with [CITE: id] markers - used for accept/processing
+  // Raw text with [@id] markers (Pandoc format) - used for accept/processing
   rawText: string | null
   // Display text with formatted citations - used for rendering
   displayText: string | null
-  // Citation metadata for display styling and CitationManager integration
+  // Citation metadata for display styling
   citations: GhostTextCitation[]
   // Papers for content processing
   papers: ProjectPaper[]
@@ -21,12 +20,12 @@ export interface GhostTextState {
 
 export interface GhostTextCitation {
   paperId: string
-  marker: string       // Original [CITE: id] marker
+  marker: string       // Original [@id] marker (Pandoc format)
   formatted: string    // Formatted display text (Smith et al., 2024)
   // Positions in display text (for rendering)
   displayStartOffset: number
   displayEndOffset: number
-  // Paper metadata for CitationManager
+  // Paper metadata (for content processing)
   paper?: {
     id: string
     title: string
@@ -46,7 +45,7 @@ declare module '@tiptap/core' {
     ghostText: {
       /**
        * Set ghost text suggestion at current cursor position
-       * @param rawText - Text with [CITE: id] markers (for processing on accept)
+       * @param rawText - Text with [@id] markers (Pandoc format, for processing on accept)
        * @param displayText - Text with formatted citations (for display)
        * @param citations - Citation metadata array
        * @param papers - Project papers for content processing
@@ -274,7 +273,7 @@ export const GhostText = Extension.create({
           }
 
           // Capture all needed data before any state changes
-          const { rawText, citations, papers, position } = pluginState
+          const { rawText, citations: _citations, papers, position } = pluginState
 
           if (dispatch) {
             // Clear ghost text state FIRST
@@ -282,23 +281,11 @@ export const GhostText = Extension.create({
             dispatch(tr)
           }
 
-          // Pre-populate CitationManager cache with optimistic data
-          // This ensures citations render immediately after insert
-          const citationManager = getCitationManager()
-          for (const citation of citations) {
-            if (citation.paper) {
-              citationManager.setOptimistic(citation.paperId, {
-                id: citation.paper.id,
-                title: citation.paper.title,
-                authors: citation.paper.authors,
-                year: citation.paper.year,
-                journal: citation.paper.journal,
-                doi: citation.paper.doi,
-              } as ProjectPaper)
-            }
-          }
+          // Citation formatting is now 100% local via CitationNodeView
+          // The papers array passed to processContent provides all metadata needed
+          // No need for CitationManager cache population
 
-          // Process rawText (with [CITE: id] markers) through unified pipeline
+          // Process rawText (with [@id] markers) through unified pipeline
           try {
             const { json: processedContent, isFullDoc } = processContent(rawText, papers)
 

@@ -145,9 +145,9 @@ export default function LandingPage() {
           <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 w-full">
             <div className="text-center" style={{ animation: "fade-in-up 0.8s ease-out" }}>
               <div className="mb-8 flex justify-center">
-                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-accent/10 border border-accent/20">
-                  <Zap className="h-4 w-4 text-accent" />
-                  <span className="text-sm font-medium text-accent">Powered by AI</span>
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/5 border border-primary/20">
+                  <Zap className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium text-primary">Powered by AI</span>
                 </div>
               </div>
 
@@ -198,15 +198,15 @@ export default function LandingPage() {
 
               <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-accent" />
+                  <CheckCircle className="w-4 h-4 text-primary" />
                   <span>No credit card required</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-accent" />
+                  <CheckCircle className="w-4 h-4 text-primary" />
                   <span>Instant results</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-accent" />
+                  <CheckCircle className="w-4 h-4 text-primary" />
                   <span>Perfect citations</span>
                 </div>
               </div>
@@ -227,8 +227,8 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
-                  <Brain className="h-6 w-6 text-accent" />
+                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+                  <Brain className="h-6 w-6 text-primary" />
                 </div>
                 <CardTitle className="text-foreground">Write Full Papers</CardTitle>
                 <CardDescription className="text-muted-foreground">
@@ -239,8 +239,8 @@ export default function LandingPage() {
 
             <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
-                  <Search className="h-6 w-6 text-accent" />
+                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+                  <Search className="h-6 w-6 text-primary" />
                 </div>
                 <CardTitle className="text-foreground">Find Trusted Sources</CardTitle>
                 <CardDescription className="text-muted-foreground">
@@ -251,8 +251,8 @@ export default function LandingPage() {
 
             <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
-                  <FileText className="h-6 w-6 text-accent" />
+                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+                  <FileText className="h-6 w-6 text-primary" />
                 </div>
                 <CardTitle className="text-foreground">Perfect Citations</CardTitle>
                 <CardDescription className="text-muted-foreground">
@@ -263,8 +263,8 @@ export default function LandingPage() {
 
             <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
-                  <BookOpen className="h-6 w-6 text-accent" />
+                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+                  <BookOpen className="h-6 w-6 text-primary" />
                 </div>
                 <CardTitle className="text-foreground">Organize Everything</CardTitle>
                 <CardDescription className="text-muted-foreground">
@@ -275,8 +275,8 @@ export default function LandingPage() {
 
             <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
-                  <Clock className="h-6 w-6 text-accent" />
+                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+                  <Clock className="h-6 w-6 text-primary" />
                 </div>
                 <CardTitle className="text-foreground">Version History</CardTitle>
                 <CardDescription className="text-muted-foreground">
@@ -287,8 +287,8 @@ export default function LandingPage() {
 
             <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
               <CardHeader>
-                <div className="w-12 h-12 bg-accent/15 rounded-lg flex items-center justify-center mb-4">
-                  <Shield className="h-6 w-6 text-accent" />
+                <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+                  <Shield className="h-6 w-6 text-primary" />
                 </div>
                 <CardTitle className="text-foreground">Private & Secure</CardTitle>
                 <CardDescription className="text-muted-foreground">
@@ -312,8 +312,8 @@ export default function LandingPage() {
 
               <div className="space-y-6">
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 bg-accent/15 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                    <Zap className="h-5 w-5 text-accent" />
+                  <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                    <Zap className="h-5 w-5 text-primary" />
                   </div>
                   <div>
                     <h3 className="font-semibold text-foreground mb-2">Save Hours of Work</h3>
@@ -322,8 +322,8 @@ export default function LandingPage() {
                 </div>
 
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 bg-accent/15 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                    <Users className="h-5 w-5 text-accent" />
+                  <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                    <Users className="h-5 w-5 text-primary" />
                   </div>
                   <div>
                     <h3 className="font-semibold text-foreground mb-2">For Any Assignment</h3>
@@ -334,8 +334,8 @@ export default function LandingPage() {
                 </div>
 
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 bg-accent/15 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                    <Shield className="h-5 w-5 text-accent" />
+                  <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
+                    <Shield className="h-5 w-5 text-primary" />
                   </div>
                   <div>
                     <h3 className="font-semibold text-foreground mb-2">Trustworthy & Transparent</h3>
@@ -348,26 +348,26 @@ export default function LandingPage() {
             </div>
 
             <div className="relative">
-              <div className="bg-gradient-to-br from-primary/5 to-accent/5 rounded-2xl p-8 border border-border">
+              <div className="bg-gradient-to-br from-primary/5 to-primary/10 rounded-2xl p-8 border border-border">
                 <div className="space-y-6">
                   <div className="bg-background/80 backdrop-blur-sm rounded-lg p-4 border border-border">
                     <div className="flex items-center gap-3 mb-3">
-                      <div className="w-3 h-3 bg-accent rounded-full"></div>
+                      <div className="w-3 h-3 bg-primary rounded-full"></div>
                       <span className="text-sm font-medium text-foreground">Research Complete</span>
                     </div>
                     <div className="bg-muted rounded-full h-2 mb-2 overflow-hidden">
-                      <div className="bg-accent h-2 rounded-full w-full"></div>
+                      <div className="bg-primary h-2 rounded-full w-full"></div>
                     </div>
                     <p className="text-sm text-muted-foreground">Found 47 relevant sources</p>
                   </div>
 
                   <div className="bg-background/80 backdrop-blur-sm rounded-lg p-4 border border-border">
                     <div className="flex items-center gap-3 mb-3">
-                      <div className="w-3 h-3 bg-accent rounded-full animate-pulse"></div>
+                      <div className="w-3 h-3 bg-primary rounded-full animate-pulse"></div>
                       <span className="text-sm font-medium text-foreground">Formatting...</span>
                     </div>
                     <div className="bg-muted rounded-full h-2 mb-2 overflow-hidden">
-                      <div className="bg-accent h-2 rounded-full w-3/4 animate-pulse"></div>
+                      <div className="bg-primary h-2 rounded-full w-3/4 animate-pulse"></div>
                     </div>
                     <p className="text-sm text-muted-foreground">Processing APA format</p>
                   </div>

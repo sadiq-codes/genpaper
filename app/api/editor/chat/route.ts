@@ -4,6 +4,8 @@ import { streamText, type CoreMessage } from 'ai'
 import { NextRequest } from 'next/server'
 import { documentTools, getConfirmationLevel } from '@/lib/ai/tools/document-tools'
 import { ChunkRetriever } from '@/lib/rag/chunk-retriever'
+import { PromptService } from '@/lib/prompts/prompt-service'
+import { buildChatContext, formatPapersForContext } from '@/lib/prompts/costar-context'
 
 // =============================================================================
 // TYPES
@@ -25,64 +27,32 @@ interface ChatRequest {
 // =============================================================================
 
 /**
- * Build system prompt with document and research context.
+ * Build system prompt with document and research context using CO-STAR framework.
+ * 
+ * CO-STAR: Context, Objective, Style, Tone, Audience, Response
  */
-function buildSystemPrompt(
+async function buildSystemPrompt(
   topic: string,
+  paperType: string,
   documentContent: string,
   documentStructure: string | undefined,
   selectedText: string | undefined,
   ragContext: string,
-  papers: Array<{ id: string; title: string; authors?: string[] }>
-): string {
-  const papersContext = papers.slice(0, 10).map(p => {
-    const authorStr = p.authors?.slice(0, 2).join(', ') || 'Unknown'
-    return `- [${p.id}] "${p.title}" by ${authorStr}`
-  }).join('\n')
+  papers: Array<{ id: string; title: string; authors?: string[]; year?: number }>
+): Promise<string> {
+  // Build CO-STAR context
+  const context = buildChatContext({
+    topic,
+    paperType: paperType || 'research-article',
+    documentContent,
+    documentStructure,
+    selectedText,
+    papersContext: formatPapersForContext(papers),
+    ragContext: ragContext || 'No additional context retrieved.',
+  })
 
-  // Truncate document content but always show full structure
-  const truncatedContent = documentContent.slice(0, 3000)
-  const contentNote = documentContent.length > 3000 ? '\n[...document continues...]' : ''
-
-  return `You are an AI research assistant helping edit an academic document on: "${topic}"
-
-## Document Structure (use blockId for precise edits)
-${documentStructure || 'No structure available - use section names instead'}
-
-## Current Document Content
-${truncatedContent}${contentNote}
-
-${selectedText ? `## Selected Text (user is asking about this)
-${selectedText}
-` : ''}
-
-## Available Sources for Citations
-${papersContext || 'No papers available'}
-
-## Relevant Context from Sources
-${ragContext || 'No additional context retrieved.'}
-
-## Your Capabilities
-You have tools to edit the document:
-- insertContent: Add content (use blockId to insert after a specific block)
-- replaceBlock: Replace a block's content (PREFERRED - use blockId)
-- replaceInSection: Replace content using text search (fallback)
-- rewriteSection: Rewrite entire section (requires confirmation)
-- deleteContent: Delete content (use blockId when available, requires confirmation)
-- addCitation: Insert citation (use blockId to target specific block)
-- highlightText: Highlight for review
-- addComment: Add a comment
-
-## Guidelines
-1. ALWAYS explain what you're about to do before using a tool
-2. **PREFER using blockId** from the Document Structure for precise targeting
-3. Fall back to section names + searchPhrase only when blockId isn't suitable
-4. When referencing sources, use the paper ID in your tool calls
-5. For destructive operations (delete, rewrite), explain why
-6. Maintain academic tone and precision
-7. If you can't find the target, ask the user to clarify
-
-Respond helpfully and cite sources when relevant.`
+  // Build prompt from template
+  return PromptService.buildChatPrompt(context)
 }
 
 /**
@@ -127,8 +97,7 @@ async function getRAGContext(
 async function saveMessages(
   projectId: string,
   userMessage: CoreMessage,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  assistantResponse: { content: string; toolInvocations?: any[] }
+  assistantResponse: { content: string; toolInvocations?: Array<Record<string, unknown>> }
 ) {
   try {
     const supabase = await createClient()
@@ -193,7 +162,7 @@ export async function POST(request: NextRequest) {
     
     const { data: project, error: projectError } = await supabase
       .from('research_projects')
-      .select('id, topic')
+      .select('id, topic, paper_type')
       .eq('id', projectId)
       .eq('user_id', user.id)
       .single()
@@ -205,8 +174,6 @@ export async function POST(request: NextRequest) {
         headers: { 'Content-Type': 'application/json' }
       })
     }
-    
-    console.log('[Chat API] Project found:', project.id, project.topic)
 
     // Get project papers
     const { data: projectPapers } = await supabase
@@ -216,22 +183,16 @@ export async function POST(request: NextRequest) {
         papers (
           id,
           title,
-          authors
+          authors,
+          year
         )
       `)
       .eq('project_id', projectId)
 
-    const papers = (projectPapers || [])
-      .map(pp => pp.papers)
-      .filter(Boolean)
-      .map(p => ({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        id: (p as any).id,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        title: (p as any).title,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        authors: (p as any).authors,
-      }))
+    type PaperData = { id: string; title: string; authors?: string[]; year?: number }
+    const papers: PaperData[] = (projectPapers || [])
+      .map(pp => pp.papers as unknown as PaperData | null)
+      .filter((p): p is PaperData => p !== null)
 
     const paperIds = papers.map(p => p.id)
 
@@ -247,9 +208,13 @@ export async function POST(request: NextRequest) {
     // Get RAG context
     const ragContext = await getRAGContext(ragQuery, projectId, paperIds)
 
-    // Build system prompt
-    const systemPrompt = buildSystemPrompt(
+    // Get paper type from project
+    const paperType = project.paper_type || 'literatureReview'
+
+    // Build system prompt using CO-STAR framework
+    const systemPrompt = await buildSystemPrompt(
       project.topic || 'Research',
+      paperType,
       documentContent,
       documentStructure,
       selectedText,

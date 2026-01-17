@@ -1,0 +1,52 @@
+# Suggestion-Type Specific Objectives for Autocomplete
+#
+# Each suggestion type has a tailored objective that guides the AI
+# to generate contextually appropriate completions.
+
+opening_sentence:
+  objective: |-
+    Generate an **opening sentence** for this paragraph that:
+    - Introduces the paragraph's main claim or topic
+    - Connects logically to the section's overall purpose
+    - Sets up for supporting evidence to follow
+    - Grounds the statement in the provided source material
+
+complete_sentence:
+  objective: |-
+    **Complete the unfinished sentence** by:
+    - Maintaining grammatical consistency with what precedes
+    - Finishing the thought naturally and coherently
+    - Adding relevant detail, qualification, or evidence
+    - Citing sources when introducing factual claims
+
+next_sentence:
+  objective: |-
+    Write the **next logical sentence** that:
+    - Advances the argument or narrative logically
+    - Builds on the previous statement with new information
+    - Introduces supporting evidence or elaboration
+    - Maintains the paragraph's thematic coherence
+
+provide_examples:
+  objective: |-
+    **Provide concrete examples** by:
+    - Listing specific, cited instances from the source material
+    - Using natural phrasing ("such as", "including", "for example")
+    - Drawing examples directly from the research papers
+    - Ensuring examples genuinely support the preceding claim
+
+contrast_point:
+  objective: |-
+    Present a **contrasting perspective** by:
+    - Acknowledging limitations, exceptions, or opposing views
+    - Using appropriate hedging ("however", "although", "while", "nevertheless")
+    - Citing evidence that supports the alternative viewpoint
+    - Maintaining scholarly balance and objectivity
+
+contextual:
+  objective: |-
+    Provide an **appropriate continuation** based on context:
+    - Analyze what logically follows from the text
+    - Match the rhetorical flow and purpose of the paragraph
+    - Add value through evidence, elaboration, or connection
+    - If starting fresh, introduce the section's topic clearly

@@ -1,4 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core'
+import { ReactNodeViewRenderer } from '@tiptap/react'
+import { CitationNodeView, formatCitationByStyle, type CitationStyleType } from './CitationNodeView'
 
 export interface CitationAttributes {
   id: string
@@ -9,51 +11,51 @@ export interface CitationAttributes {
   doi?: string
 }
 
+export interface CitationOptions {
+  /** Citation style: apa, mla, chicago, ieee, harvard, etc. */
+  citationStyle: CitationStyleType
+  /** Map of paper IDs to citation numbers (for IEEE/Vancouver styles) */
+  citationNumbers: Map<string, number>
+}
+
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     citation: {
       insertCitation: (attrs: CitationAttributes) => ReturnType
+      setCitationStyle: (style: CitationStyleType) => ReturnType
     }
   }
 }
 
 /**
- * Generate APA-style citation text from attributes
+ * Generate citation text based on current style
+ * Used for renderHTML (SSR) and renderText (clipboard)
  */
-function formatCitation(attrs: CitationAttributes): string {
-  const authors = attrs.authors || []
-  const year = attrs.year
-
-  if (authors.length === 0) {
-    return `(${year || 'n.d.'})`
-  }
-
-  // Extract last name from first author
-  const firstAuthor = authors[0]
-  const lastName = firstAuthor.includes(',')
-    ? firstAuthor.split(',')[0].trim()
-    : firstAuthor.split(' ').pop() || firstAuthor
-
-  if (authors.length === 1) {
-    return `(${lastName}, ${year || 'n.d.'})`
-  } else if (authors.length === 2) {
-    const secondAuthor = authors[1]
-    const lastName2 = secondAuthor.includes(',')
-      ? secondAuthor.split(',')[0].trim()
-      : secondAuthor.split(' ').pop() || secondAuthor
-    return `(${lastName} & ${lastName2}, ${year || 'n.d.'})`
-  } else {
-    return `(${lastName} et al., ${year || 'n.d.'})`
-  }
+function formatCitation(attrs: CitationAttributes, style: CitationStyleType = 'apa'): string {
+  return formatCitationByStyle(attrs, style)
 }
 
-export const Citation = Node.create({
+export const Citation = Node.create<CitationOptions>({
   name: 'citation',
   group: 'inline',
   inline: true,
   atom: true,
   selectable: true,
   draggable: false,
+
+  addOptions() {
+    return {
+      citationStyle: 'apa' as CitationStyleType,
+      citationNumbers: new Map<string, number>(),
+    }
+  },
+
+  addStorage() {
+    return {
+      citationStyle: this.options.citationStyle,
+      citationNumbers: this.options.citationNumbers,
+    }
+  },
 
   addAttributes() {
     return {
@@ -92,7 +94,9 @@ export const Citation = Node.create({
 
   renderHTML({ node, HTMLAttributes }) {
     const attrs = node.attrs as CitationAttributes
-    const text = formatCitation(attrs)
+    const style = this.storage?.citationStyle || this.options.citationStyle
+    const citationNumber = this.storage?.citationNumbers?.get(attrs.id)
+    const text = formatCitationByStyle(attrs, style, citationNumber)
 
     return [
       'span',
@@ -113,7 +117,13 @@ export const Citation = Node.create({
 
   // This is what gets copied to clipboard as plain text
   renderText({ node }) {
-    return formatCitation(node.attrs as CitationAttributes)
+    const style = this.storage?.citationStyle || this.options.citationStyle
+    const citationNumber = this.storage?.citationNumbers?.get(node.attrs.id)
+    return formatCitationByStyle(node.attrs as CitationAttributes, style, citationNumber)
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(CitationNodeView)
   },
 
   addCommands() {
@@ -123,6 +133,42 @@ export const Citation = Node.create({
           type: this.name,
           attrs,
         })
+      },
+      setCitationStyle: (style: CitationStyleType) => ({ editor }) => {
+        // Update storage
+        this.storage.citationStyle = style
+        
+        // Check if this is a numeric style (IEEE, Vancouver, Nature, etc.)
+        const isNumericStyle = ['ieee', 'vancouver', 'nature', 'science', 'numbered']
+          .some(s => style.toLowerCase().includes(s))
+        
+        // Build citation numbers for numeric styles
+        if (isNumericStyle) {
+          const numbers = new Map<string, number>()
+          let counter = 1
+          
+          // Traverse document to assign numbers in order of appearance
+          editor.state.doc.descendants((node) => {
+            if (node.type.name === 'citation') {
+              const id = node.attrs.id
+              if (id && !numbers.has(id)) {
+                numbers.set(id, counter++)
+              }
+            }
+          })
+          
+          this.storage.citationNumbers = numbers
+        } else {
+          // Clear numbers for non-numeric styles
+          this.storage.citationNumbers = new Map<string, number>()
+        }
+        
+        // Force re-render by dispatching a transaction
+        // Using setMeta to mark this as a style change
+        const tr = editor.state.tr.setMeta('citationStyleChange', style)
+        editor.view.dispatch(tr)
+        
+        return true
       },
     }
   },

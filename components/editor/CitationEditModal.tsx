@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   Dialog,
   DialogContent,
@@ -47,6 +48,9 @@ interface CSLItem {
   publisher?: string
 }
 
+// Extended CSL data type that includes common lowercase variants
+type CSLData = CSLItem & { doi?: string; url?: string }
+
 const PUBLICATION_TYPES = [
   { value: 'article-journal', label: 'Journal Article' },
   { value: 'article', label: 'Article' },
@@ -66,6 +70,17 @@ interface CitationEditModalProps {
   projectId: string
   initialData?: CSLItem | null
   onSave: (cslJson: CSLItem) => Promise<void>
+}
+
+// API function
+async function fetchCitationData(paperId: string, projectId: string): Promise<CSLData | null> {
+  const res = await fetch(`/api/citations/${paperId}?projectId=${projectId}`)
+  if (!res.ok) {
+    if (res.status === 404) return null
+    throw new Error('Failed to fetch citation data')
+  }
+  const data = await res.json()
+  return data.data?.csl_json || null
 }
 
 export function CitationEditModal({
@@ -88,46 +103,30 @@ export function CitationEditModal({
   const [pages, setPages] = useState('')
   const [publisher, setPublisher] = useState('')
   const [pubType, setPubType] = useState('article-journal')
-  
-  const [isLoading, setIsLoading] = useState(false)
-  const [isFetching, setIsFetching] = useState(false)
 
-  // Fetch citation data from API
-  const fetchCitationData = useCallback(async () => {
-    setIsFetching(true)
-    try {
-      const res = await fetch(`/api/citations/${paperId}?projectId=${projectId}`)
-      if (!res.ok) {
-        throw new Error('Failed to fetch citation data')
-      }
-      const data = await res.json()
-      if (data.data?.csl_json) {
-        populateForm(data.data.csl_json)
-      }
-    } catch (err) {
-      console.error('Failed to fetch citation:', err)
-      toast.error('Failed to load citation data')
-    } finally {
-      setIsFetching(false)
-    }
-  }, [paperId, projectId])
+  // Fetch citation data with React Query
+  const { data: citationData, isLoading: isFetching } = useQuery({
+    queryKey: ['citation', paperId, projectId],
+    queryFn: () => fetchCitationData(paperId, projectId),
+    enabled: open && !initialData && !!paperId && !!projectId,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  })
 
-  // Load initial data or fetch from API
-  useEffect(() => {
-    if (!open) return
+  // Save mutation
+  const saveMutation = useMutation({
+    mutationFn: onSave,
+    onSuccess: () => {
+      toast.success('Citation updated successfully')
+      onOpenChange(false)
+    },
+    onError: (err) => {
+      console.error('Failed to save citation:', err)
+      toast.error(err instanceof Error ? err.message : 'Failed to save citation')
+    },
+  })
 
-    if (initialData) {
-      populateForm(initialData)
-    } else {
-      // Fetch CSL JSON from API
-      fetchCitationData()
-    }
-  }, [open, initialData, fetchCitationData])
-
-  // CSL data from API may have lowercase variants (doi vs DOI, url vs URL)
-  type CSLData = CSLItem & { doi?: string; url?: string }
-  
-  const populateForm = (csl: CSLData) => {
+  // Populate form from CSL data
+  const populateForm = useCallback((csl: CSLData) => {
     setTitle(csl.title || '')
     setAuthors(
       csl.author?.length > 0 
@@ -145,9 +144,18 @@ export function CitationEditModal({
     setPages(csl.page || '')
     setPublisher(csl.publisher || '')
     setPubType(csl.type || 'article-journal')
-  }
+  }, [])
 
+  // Load data when modal opens or data changes
+  useEffect(() => {
+    if (!open) return
 
+    if (initialData) {
+      populateForm(initialData)
+    } else if (citationData) {
+      populateForm(citationData)
+    }
+  }, [open, initialData, citationData, populateForm])
 
   // Author management
   const addAuthor = useCallback(() => {
@@ -190,56 +198,46 @@ export function CitationEditModal({
       return
     }
 
-    setIsLoading(true)
-    try {
-      // Build CSL JSON
-      const cslJson: CSLItem = {
-        id: paperId,
-        type: pubType,
-        title: title.trim(),
-        author: authors
-          .filter(a => a.family.trim())
-          .map(a => ({
-            family: a.family.trim(),
-            given: a.given.trim(),
-          })),
-      }
-
-      // Add optional fields if present
-      if (journal.trim()) {
-        cslJson['container-title'] = journal.trim()
-      }
-      if (year) {
-        cslJson.issued = { 'date-parts': [[Number(year)]] }
-      }
-      if (doi.trim()) {
-        cslJson.DOI = doi.trim()
-      }
-      if (url.trim()) {
-        cslJson.URL = url.trim()
-      }
-      if (volume.trim()) {
-        cslJson.volume = volume.trim()
-      }
-      if (issue.trim()) {
-        cslJson.issue = issue.trim()
-      }
-      if (pages.trim()) {
-        cslJson.page = pages.trim()
-      }
-      if (publisher.trim()) {
-        cslJson.publisher = publisher.trim()
-      }
-
-      await onSave(cslJson)
-      toast.success('Citation updated successfully')
-      onOpenChange(false)
-    } catch (err) {
-      console.error('Failed to save citation:', err)
-      toast.error(err instanceof Error ? err.message : 'Failed to save citation')
-    } finally {
-      setIsLoading(false)
+    // Build CSL JSON
+    const cslJson: CSLItem = {
+      id: paperId,
+      type: pubType,
+      title: title.trim(),
+      author: authors
+        .filter(a => a.family.trim())
+        .map(a => ({
+          family: a.family.trim(),
+          given: a.given.trim(),
+        })),
     }
+
+    // Add optional fields if present
+    if (journal.trim()) {
+      cslJson['container-title'] = journal.trim()
+    }
+    if (year) {
+      cslJson.issued = { 'date-parts': [[Number(year)]] }
+    }
+    if (doi.trim()) {
+      cslJson.DOI = doi.trim()
+    }
+    if (url.trim()) {
+      cslJson.URL = url.trim()
+    }
+    if (volume.trim()) {
+      cslJson.volume = volume.trim()
+    }
+    if (issue.trim()) {
+      cslJson.issue = issue.trim()
+    }
+    if (pages.trim()) {
+      cslJson.page = pages.trim()
+    }
+    if (publisher.trim()) {
+      cslJson.publisher = publisher.trim()
+    }
+
+    saveMutation.mutate(cslJson)
   }
 
   return (
@@ -433,11 +431,11 @@ export function CitationEditModal({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saveMutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={isLoading || isFetching}>
-            {isLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+          <Button onClick={handleSave} disabled={saveMutation.isPending || isFetching}>
+            {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
             Save Changes
           </Button>
         </DialogFooter>

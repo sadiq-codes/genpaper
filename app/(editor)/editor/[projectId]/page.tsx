@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { ResearchEditor } from '@/components/editor/ResearchEditor'
-import type { ProjectPaper, ExtractedClaim, ResearchGap, AnalysisOutput } from '@/components/editor/types'
+import type { ProjectPaper } from '@/components/editor/types'
 
 interface EditorPageProps {
   params: Promise<{ projectId: string }>
@@ -21,188 +21,154 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     redirect('/login')
   }
 
-  // Get project from research_projects table
-  const { data: project, error: projectError } = await supabase
-    .from('research_projects')
-    .select('*')
-    .eq('id', projectId)
-    .eq('user_id', user.id)
-    .single()
+  // Fetch project and citation paper IDs first
+  const [projectResult, citationsResult] = await Promise.all([
+    // Get project - only select needed columns
+    supabase
+      .from('research_projects')
+      .select('id, user_id, topic, content, status, citation_style, paper_type, generation_config')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .single(),
+    
+    // Get citation records (paper_ids and csl_json) - no join, just the citation data
+    supabase
+      .from('project_citations')
+      .select('paper_id, csl_json')
+      .eq('project_id', projectId)
+  ])
+
+  const { data: project, error: projectError } = projectResult
+  const { data: citations, error: citationsError } = citationsResult
+
+  // Now fetch the actual papers using the paper_ids from citations
+  const paperIds = citations?.map(c => c.paper_id).filter(Boolean) || []
+  let papersData: Array<{
+    id: string
+    title: string
+    authors: string[]
+    publication_date: string | null
+    venue: string | null
+    doi: string | null
+  }> = []
+
+  if (paperIds.length > 0) {
+    const { data: fetchedPapers, error: papersError } = await supabase
+      .from('papers')
+      .select('id, title, authors, publication_date, venue, doi')
+      .in('id', paperIds)
+    
+    if (papersError) {
+      console.error('[EditorPage] Error fetching papers:', papersError.message)
+    } else {
+      papersData = (fetchedPapers || []) as typeof papersData
+    }
+  }
+
+  // Create a map of paper_id -> paper data for quick lookup
+  const papersById = new Map(papersData.map(p => [p.id, p]))
+  
+  // Create a map of paper_id -> csl_json for fallback
+  const cslJsonById = new Map(
+    (citations || [])
+      .filter(c => c.csl_json)
+      .map(c => [c.paper_id, c.csl_json])
+  )
+
+  // Debug logging for paper fetching issues
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[EditorPage] Paper fetch results:', {
+      citationsCount: citations?.length || 0,
+      citationsError: citationsError?.message,
+      paperIdsFromCitations: paperIds,
+      papersFoundInDb: papersData.length,
+      papersWithCslJson: cslJsonById.size,
+      missingPapers: paperIds.filter(id => !papersById.has(id)),
+    })
+  }
 
   if (projectError || !project) {
     notFound()
   }
 
-  // Get project papers from research_project_papers junction table
-  const { data: projectPapers } = await supabase
-    .from('research_project_papers')
-    .select(`
-      paper_id,
-      papers (
-        id,
-        title,
-        authors,
-        publication_date,
-        abstract,
-        venue,
-        doi
-      )
-    `)
-    .eq('research_project_id', projectId)
-
-  // Transform papers to the expected format
-  interface PaperData {
-    id: string
-    title: string
-    authors: string[]
-    publication_date: string | null
-    abstract: string | null
-    venue: string | null
-    doi: string | null
+  // Build papers array by combining:
+  // 1. Papers found in the papers table (via paper_id from citations)
+  // 2. Fallback to csl_json from citations for papers not in DB
+  const paperMap = new Map<string, ProjectPaper>()
+  
+  // First, add papers found in the database
+  for (const paper of papersData) {
+    paperMap.set(paper.id, {
+      id: paper.id,
+      title: paper.title || 'Untitled',
+      authors: paper.authors || [],
+      year: paper.publication_date 
+        ? new Date(paper.publication_date).getFullYear() 
+        : new Date().getFullYear(),
+      journal: paper.venue || undefined,
+      doi: paper.doi || undefined,
+    })
   }
   
-  const papers: ProjectPaper[] = (projectPapers || [])
-    .filter(pp => pp.papers)
-    .map(pp => {
-      const paperData = Array.isArray(pp.papers) ? pp.papers[0] : pp.papers
-      const paper = paperData as unknown as PaperData
-      return {
-        id: paper.id,
-        title: paper.title || 'Untitled',
-        authors: paper.authors || [],
-        year: paper.publication_date 
-          ? new Date(paper.publication_date).getFullYear() 
-          : new Date().getFullYear(),
-        abstract: paper.abstract || undefined,
-        journal: paper.venue || undefined,
-        doi: paper.doi || undefined,
-      }
-    })
+  // Then, for any paper_ids not found in DB, try to use csl_json as fallback
+  for (const paperId of paperIds) {
+    if (!paperMap.has(paperId) && cslJsonById.has(paperId)) {
+      try {
+        const csl = cslJsonById.get(paperId) as Record<string, unknown>
+        
+        // Format authors from CSL JSON
+        const authors = Array.isArray(csl.author) 
+          ? (csl.author as Array<{literal?: string; given?: string; family?: string}>).map((a) => {
+              if (a.literal) return a.literal
+              if (a.given && a.family) return `${a.given} ${a.family}`
+              return a.family || 'Unknown'
+            })
+          : []
 
-  // Fetch existing analysis data
-  let claims: ExtractedClaim[] = []
-  let gaps: ResearchGap[] = []
-  let synthesis: AnalysisOutput | null = null
-
-  // Get claims for papers
-  if (papers.length > 0) {
-    const { data: claimsData } = await supabase
-      .from('paper_claims')
-      .select('*')
-      .in('paper_id', papers.map(p => p.id))
-      .order('confidence', { ascending: false })
-      .limit(100)
-
-    if (claimsData) {
-      claims = claimsData.map(claim => {
-        const paper = papers.find(p => p.id === claim.paper_id)
-        return {
-          id: claim.id,
-          paper_id: claim.paper_id,
-          claim_text: claim.claim_text,
-          evidence_quote: claim.evidence_quote,
-          section: claim.section,
-          claim_type: claim.claim_type,
-          confidence: claim.confidence,
-          paper_title: paper?.title,
-          paper_authors: paper?.authors,
-          paper_year: paper?.year,
-          // New fields for original research support
-          source: 'literature' as const,
-          relationship_to_user: 'not_analyzed' as const,
+        paperMap.set(paperId, {
+          id: paperId,
+          title: (csl.title as string) || 'Untitled',
+          authors,
+          year: ((csl.issued as {['date-parts']?: number[][]})?.['date-parts']?.[0]?.[0]) || new Date().getFullYear(),
+          journal: csl['container-title'] as string | undefined,
+          doi: csl.DOI as string | undefined,
+        })
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[EditorPage] Used CSL JSON fallback for paper ${paperId}`)
         }
-      })
+      } catch (e) {
+        console.error(`[EditorPage] Failed to parse CSL JSON for paper ${paperId}:`, e)
+      }
     }
   }
+  
+  const papers: ProjectPaper[] = Array.from(paperMap.values())
 
-  // Get research gaps
-  const { data: gapsData } = await supabase
-    .from('research_gaps')
-    .select('*')
-    .eq('project_id', projectId)
-    .order('confidence', { ascending: false })
-
-  if (gapsData) {
-    gaps = gapsData.map(gap => ({
-      id: gap.id,
-      project_id: gap.project_id,
-      gap_type: gap.gap_type,
-      description: gap.description,
-      confidence: gap.confidence,
-      supporting_paper_ids: gap.supporting_paper_ids || [],
-      research_opportunity: gap.research_opportunity,
-      evidence: gap.evidence,
-      // New fields for original research support
-      addressed_status: 'not_analyzed' as const,
-    }))
-  }
-
-  // Get synthesis analysis
-  const { data: analysisData } = await supabase
-    .from('project_analysis')
-    .select('*')
-    .eq('project_id', projectId)
-    .eq('analysis_type', 'synthesis')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (analysisData) {
-    synthesis = {
-      id: analysisData.id,
-      project_id: analysisData.project_id,
-      analysis_type: analysisData.analysis_type,
-      status: analysisData.status,
-      structured_output: analysisData.structured_output,
-      markdown_output: analysisData.markdown_output,
-      created_at: analysisData.created_at,
-      completed_at: analysisData.completed_at,
-    }
-  }
-
-  // Build initial analysis state
-  const initialAnalysis = claims.length > 0 || gaps.length > 0 || synthesis
-    ? { claims, gaps, synthesis }
-    : undefined
+  // NOTE: Claims, gaps, and analysis are NOT fetched here anymore.
+  // The useAnalysis hook handles this client-side with React Query,
+  // which provides caching and avoids duplicate fetches.
 
   // Get citation style - project setting > user default > 'apa'
   const citationStyle = project.citation_style || 'apa'
 
   // Determine if we need to show generation progress
-  // Show if newly created AND status is 'generating' AND no content yet
-  // Never show generation progress in write mode - user wants blank document
   const shouldShowGeneration = !isWriteMode && 
     isNewlyCreated && 
     project.status === 'generating' && 
     !project.content
 
-  // Determine paperType with explicit logging for debugging
+  // Determine paperType
   const resolvedPaperType = (() => {
     if (project.paper_type) {
-      console.log('📋 Using paper_type from DB column:', project.paper_type)
       return project.paper_type
     }
     const configPaperType = (project.generation_config as Record<string, unknown> | null)?.paper_settings as Record<string, unknown> | undefined
     if (configPaperType?.paperType) {
-      console.log('📋 Using paperType from generation_config (DB column was null):', configPaperType.paperType)
       return configPaperType.paperType as string
     }
-    console.warn('⚠️ No paperType found in DB or config, defaulting to literatureReview')
     return 'literatureReview'
   })()
-
-  // Debug logging for generation state
-  if (isNewlyCreated || isWriteMode) {
-    console.log('📋 Editor page loaded for new project:', {
-      projectId,
-      isNewlyCreated,
-      isWriteMode,
-      projectStatus: project.status,
-      hasContent: !!project.content,
-      shouldShowGeneration,
-      resolvedPaperType
-    })
-  }
 
   return (
     <div className="h-screen w-full p-2 md:p-4">
@@ -213,7 +179,6 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         paperType={resolvedPaperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'}
         initialContent={project.content || undefined}
         initialPapers={papers}
-        initialAnalysis={initialAnalysis}
         citationStyle={citationStyle}
         onSave={undefined}
         isGenerating={shouldShowGeneration}

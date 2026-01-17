@@ -12,12 +12,8 @@ import { ChatTab } from './ChatTab'
 import { ResearchTab } from './ResearchTab'
 import type { Message } from 'ai'
 import type { 
-  ChatMessage, 
   ProjectPaper, 
   Citation, 
-  ExtractedClaim, 
-  ResearchGap,
-  AnalysisState,
 } from '../types'
 import type { PendingToolCall } from '../hooks/useEditorChat'
 import { cn } from '@/lib/utils'
@@ -25,8 +21,8 @@ import { cn } from '@/lib/utils'
 interface EditorSidebarProps {
   activeTab: 'chat' | 'research'
   onTabChange: (tab: 'chat' | 'research') => void
-  // Chat props - supports both old and new message formats
-  chatMessages: ChatMessage[] | Message[]
+  // Chat props
+  chatMessages: Message[]
   onSendMessage: (content: string) => void
   isChatLoading?: boolean
   // New tool-related props (optional for backward compatibility)
@@ -36,11 +32,7 @@ interface EditorSidebarProps {
   onClearHistory?: () => void
   // Research props
   papers: ProjectPaper[]
-  analysisState: AnalysisState
   onInsertCitation: (citation: Citation) => void
-  onInsertClaim: (claim: ExtractedClaim) => void
-  onInsertGap: (gap: ResearchGap) => void
-  onRunAnalysis: () => void
   onOpenLibrary: () => void
   onRemovePaper: (paperId: string, claimCount: number) => void
   // History
@@ -58,11 +50,7 @@ export function EditorSidebar({
   onRejectTool,
   onClearHistory,
   papers,
-  analysisState,
   onInsertCitation,
-  onInsertClaim,
-  onInsertGap,
-  onRunAnalysis,
   onOpenLibrary,
   onRemovePaper,
   onOpenHistory,
@@ -98,7 +86,7 @@ export function EditorSidebar({
           </button>
         </div>
         
-{onOpenHistory && (
+        {onOpenHistory && (
           <TooltipProvider delayDuration={300}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -132,9 +120,6 @@ export function EditorSidebar({
         ) : (
           <ResearchTab 
             papers={papers}
-            analysisState={analysisState}
-            onInsertClaim={onInsertClaim}
-            onInsertGap={onInsertGap}
             onInsertCitation={(paper) => onInsertCitation({
               id: paper.id,
               authors: paper.authors,
@@ -143,7 +128,6 @@ export function EditorSidebar({
               journal: paper.journal,
               doi: paper.doi,
             })}
-            onRunAnalysis={onRunAnalysis}
             onOpenLibrary={onOpenLibrary}
             onRemovePaper={onRemovePaper}
           />

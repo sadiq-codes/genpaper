@@ -7,6 +7,7 @@
 
 import Mustache from 'mustache'
 import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
+import type { ChatCOStarContext, CompleteCOStarContext } from '@/lib/prompts/costar-context'
 
 export interface PromptData {
   // Paper-level context
@@ -273,6 +274,26 @@ Provide specific, actionable feedback on:
     }
 
     return wordEstimates[paperType]?.[sectionKey] || 500
+  }
+
+  /**
+   * Build chat system prompt from template and CO-STAR context
+   */
+  static buildChatPrompt(
+    template: PromptTemplate,
+    context: ChatCOStarContext
+  ): string {
+    return Mustache.render(template.system, context)
+  }
+
+  /**
+   * Build autocomplete system prompt from template and CO-STAR context
+   */
+  static buildCompletePrompt(
+    template: PromptTemplate,
+    context: CompleteCOStarContext
+  ): string {
+    return Mustache.render(template.system, context)
   }
 
   /**

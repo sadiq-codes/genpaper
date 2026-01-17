@@ -3,34 +3,18 @@ import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
 
 import { CitationService } from '@/lib/citations/immediate-bibliography'
-import { validateCSL as _validateCSL } from '@/lib/utils/csl'
 
 // Schema for citation creation/updates
 const CitationCreateSchema = z.object({
   projectId: z.string().uuid(),
-  key: z.string().min(1),
-  paperId: z.string().optional(),
-  // Make csl_json optional so tool calls with only paperId pass validation
-  csl_json: z.object({}).passthrough().optional(),
-  citation_text: z.string().optional(),
-  context: z.string().optional()
+  paperId: z.string().uuid(),
+  reason: z.string().optional(),
+  quote: z.string().optional()
 })
 
 const CitationUpdateSchema = z.object({
-  csl_json: z.object({}).passthrough().optional(),
-  citation_text: z.string().optional(),
-  context: z.string().optional()
-})
-
-const BatchCreateSchema = z.object({
-  projectId: z.string().uuid(),
-  citations: z.array(z.object({
-    key: z.string().min(1),
-    paperId: z.string().optional(),
-    csl_json: z.object({}).passthrough(),
-    citation_text: z.string().optional(),
-    context: z.string().optional()
-  }))
+  reason: z.string().optional(),
+  quote: z.string().optional()
 })
 
 // Schema for batch citation resolution (placeholder-based)
@@ -57,42 +41,73 @@ export async function GET(request: NextRequest) {
 
     const url = new URL(request.url)
     const projectId = url.searchParams.get('projectId')
-    const key = url.searchParams.get('key')
-    const style = url.searchParams.get('style') || 'apa'
+    const paperId = url.searchParams.get('paperId')
 
     // Get citations for a specific project
     if (projectId) {
-      let query = supabase
-        .from('citations')
-        .select('*')
-        .eq('project_id', projectId)
+      // Verify project ownership
+      const { data: project, error: projectError } = await supabase
+        .from('research_projects')
+        .select('id')
+        .eq('id', projectId)
+        .eq('user_id', user.id)
+        .single()
 
-      if (key) {
-        query = query.eq('key', key)
+      if (projectError || !project) {
+        return NextResponse.json({ error: 'Project not found or access denied' }, { status: 404 })
       }
 
-      const { data: citations, error } = await query.order('created_at')
+      let query = supabase
+        .from('project_citations')
+        .select(`
+          id,
+          paper_id,
+          citation_number,
+          reason,
+          quote,
+          csl_json,
+          cite_key,
+          first_seen_order,
+          created_at,
+          updated_at,
+          papers (
+            id,
+            title,
+            authors,
+            publication_date,
+            venue,
+            doi
+          )
+        `)
+        .eq('project_id', projectId)
+
+      if (paperId) {
+        query = query.eq('paper_id', paperId)
+      }
+
+      const { data: citations, error } = await query.order('first_seen_order', { ascending: true })
 
       if (error) throw error
 
-      if (key && citations.length === 0) {
+      if (paperId && citations.length === 0) {
         return NextResponse.json({ error: 'Citation not found' }, { status: 404 })
       }
 
       return NextResponse.json({
-        citations: citations.map((citation: any) => ({
+        citations: citations.map((citation) => ({
           id: citation.id,
-          key: citation.key,
-          projectId: citation.project_id,
+          projectId,
           paperId: citation.paper_id,
+          citeKey: citation.cite_key,
+          citationNumber: citation.first_seen_order || citation.citation_number,
           csl_json: citation.csl_json,
-          citation_text: citation.citation_text,
-          context: citation.context,
+          reason: citation.reason,
+          quote: citation.quote,
+          paper: citation.papers,
           createdAt: citation.created_at,
           updatedAt: citation.updated_at
         })),
-        count: citations.length,
-        style
+        count: citations.length
       })
     }
 
@@ -104,16 +119,34 @@ export async function GET(request: NextRequest) {
 
     if (projectsError) throw projectsError
 
-    const projectIds = projects.map((p: any) => p.id)
+    const projectIds = projects.map((p) => p.id)
 
     if (projectIds.length === 0) {
       return NextResponse.json({ citations: [], count: 0 })
     }
 
     const { data: citations, error } = await supabase
-      .from('citations')
+      .from('project_citations')
       .select(`
-        *,
+        id,
+        project_id,
+        paper_id,
+        citation_number,
+        reason,
+        quote,
+        csl_json,
+        cite_key,
+        first_seen_order,
+        created_at,
+        updated_at,
+        papers (
+          id,
+          title,
+          authors,
+          publication_date,
+          venue,
+          doi
+        ),
         research_projects!inner (
           id,
           topic,
@@ -126,15 +159,17 @@ export async function GET(request: NextRequest) {
     if (error) throw error
 
     return NextResponse.json({
-      citations: citations.map((citation: any) => ({
+      citations: citations.map((citation) => ({
         id: citation.id,
-        key: citation.key,
         projectId: citation.project_id,
-        projectTopic: citation.research_projects?.topic,
+        projectTopic: (citation.research_projects as { topic?: string })?.topic,
         paperId: citation.paper_id,
+        citeKey: citation.cite_key,
+        citationNumber: citation.first_seen_order || citation.citation_number,
         csl_json: citation.csl_json,
-        citation_text: citation.citation_text,
-        context: citation.context,
+        reason: citation.reason,
+        quote: citation.quote,
+        paper: citation.papers,
         createdAt: citation.created_at,
         updatedAt: citation.updated_at
       })),
@@ -161,15 +196,13 @@ export async function POST(request: NextRequest) {
 
     // Handle batch resolution (placeholder-based citations)
     if (body.refs && Array.isArray(body.refs)) {
-      // Batch resolution is always enabled (unified path)
-
       const validationResult = BatchResolveSchema.safeParse(body)
       
       if (!validationResult.success) {
         return NextResponse.json(
           { 
             error: 'Invalid batch resolve data',
-            details: validationResult.error.errors.map((e: any) => ({
+            details: validationResult.error.errors.map((e) => ({
               path: e.path.join('.'),
               message: e.message
             }))
@@ -194,7 +227,7 @@ export async function POST(request: NextRequest) {
 
       // Process batch citations via CitationService with DOI/title resolution
       const citeKeyMap: Record<string, string> = {}
-      const results: Array<{ ref: any; success: boolean; citation?: any; error?: string }> = []
+      const results: Array<{ ref: typeof refs[0]; success: boolean; citation?: unknown; error?: string }> = []
 
       for (const ref of refs) {
         try {
@@ -223,9 +256,9 @@ export async function POST(request: NextRequest) {
 
             const citeKey = `${ref.type}:${ref.value}`
             const inlineText = await CitationService.renderInline(
-              result.cslJson as any,
+              result.cslJson as Parameters<typeof CitationService.renderInline>[0],
               style,
-              (result as any).citationNumber ?? 1
+              1
             )
 
             citeKeyMap[citeKey] = inlineText
@@ -234,7 +267,6 @@ export async function POST(request: NextRequest) {
               success: true, 
               citation: {
                 citeKey: result.citeKey,
-                citationNumber: result.citationNumber,
                 isNew: result.isNew,
                 formatted: inlineText
               }
@@ -263,69 +295,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Handle batch creation (legacy)
-    if (body.citations && Array.isArray(body.citations)) {
-      const validationResult = BatchCreateSchema.safeParse(body)
-      
-      if (!validationResult.success) {
-        return NextResponse.json(
-          { 
-            error: 'Invalid batch citation data',
-            details: validationResult.error.errors.map((e: any) => ({
-              path: e.path.join('.'),
-              message: e.message
-            }))
-          },
-          { status: 400 }
-        )
-      }
-
-      const { projectId, citations } = validationResult.data
-
-      // Verify project ownership
-      const { data: project, error: projectError } = await supabase
-        .from('research_projects')
-        .select('id')
-        .eq('id', projectId)
-        .eq('user_id', user.id)
-        .single()
-
-      if (projectError || !project) {
-        return NextResponse.json({ error: 'Project not found or access denied' }, { status: 404 })
-      }
-
-      // Insert citations in batch
-      const citationInserts = citations.map((citation: any) => ({
-        project_id: projectId,
-        key: citation.key,
-        paper_id: citation.paperId,
-        csl_json: citation.csl_json,
-        citation_text: citation.citation_text,
-        context: citation.context
-      }))
-
-      const { data, error } = await supabase
-        .from('citations')
-        .insert(citationInserts)
-        .select()
-
-      if (error) throw error
-
-      return NextResponse.json({
-        success: true,
-        citations: data,
-        count: data.length
-      }, { status: 201 })
-    }
-
-    // Handle single citation creation
-      const validationResult = CitationCreateSchema.safeParse(body)
+    // Handle single citation creation via CitationService
+    const validationResult = CitationCreateSchema.safeParse(body)
     
     if (!validationResult.success) {
       return NextResponse.json(
         { 
           error: 'Invalid citation data',
-          details: validationResult.error.errors.map((e: { path: (string|number)[]; message: string }) => ({
+          details: validationResult.error.errors.map((e) => ({
             path: e.path.join('.'),
             message: e.message
           }))
@@ -334,7 +311,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { projectId, key, paperId, csl_json: _csl_json, citation_text, context } = validationResult.data
+    const { projectId, paperId, reason, quote } = validationResult.data
 
     // Verify project ownership
     const { data: project, error: projectError } = await supabase
@@ -348,59 +325,59 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Project not found or access denied' }, { status: 404 })
     }
 
-    // Idempotency: prevent duplicate key within project
-    const { data: existing, error: existingErr } = await supabase
-      .from('citations')
-      .select('id, key')
-      .eq('project_id', projectId)
-      .eq('key', key)
-      .maybeSingle()
-    if (!existingErr && existing) {
-      return NextResponse.json({ error: 'Citation with this key already exists for this project' }, { status: 409 })
-    }
+    // Use CitationService for consistent citation handling
+    try {
+      const result = await CitationService.add({
+        projectId,
+        sourceRef: { paperId },
+        reason: reason || 'manual',
+        quote: quote || null
+      })
+      
+      // Fetch the full citation record
+      const { data: citation } = await supabase
+        .from('project_citations')
+        .select(`
+          id,
+          paper_id,
+          first_seen_order,
+          csl_json,
+          cite_key,
+          created_at,
+          papers (
+            id,
+            title,
+            authors,
+            publication_date,
+            venue,
+            doi
+          )
+        `)
+        .eq('id', result.projectCitationId)
+        .single()
 
-    // Unified path: always use CitationService when paperId provided
-    if (paperId) {
-      try {
-        const result = await CitationService.add({
+      return NextResponse.json({ 
+        success: true, 
+        citation: {
+          id: citation?.id || result.projectCitationId,
           projectId,
-          sourceRef: { paperId },
-          reason: citation_text || 'manual',
-          quote: context || null
-        })
-        
-        // Fetch first_seen_order for render numbering
-        const { data: citation } = await supabase
-          .from('project_citations')
-          .select('first_seen_order')
-          .eq('id', result.projectCitationId)
-          .single()
-
-        return NextResponse.json({ 
-          success: true, 
-          citation: {
-            id: result.citeKey, // Use citeKey as ID for consistency
-            key,
-            project_id: projectId,
-            paper_id: paperId,
-            csl_json: result.cslJson,
-            citation_text,
-            context,
-            citation_number: citation?.first_seen_order || 1, // Use first_seen_order
-            is_new: result.isNew,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }
-        }, { status: 201 })
-      } catch (error) {
-        console.error('CitationService.add failed:', error)
-        return NextResponse.json({ 
-          error: error instanceof Error ? error.message : 'Citation service error' 
-        }, { status: 400 })
-      }
+          paperId,
+          citeKey: result.citeKey,
+          citationNumber: citation?.first_seen_order || 1,
+          csl_json: result.cslJson,
+          reason,
+          quote,
+          paper: citation?.papers,
+          isNew: result.isNew,
+          createdAt: citation?.created_at || new Date().toISOString()
+        }
+      }, { status: 201 })
+    } catch (error) {
+      console.error('CitationService.add failed:', error)
+      return NextResponse.json({ 
+        error: error instanceof Error ? error.message : 'Citation service error' 
+      }, { status: 400 })
     }
-    // Manual creation without paperId is not supported in the unified path
-    return NextResponse.json({ error: 'paperId is required' }, { status: 400 })
 
   } catch (error) {
     console.error('Error in citations POST:', error)
@@ -432,7 +409,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json(
         { 
           error: 'Invalid update data',
-          details: validationResult.error.errors.map((e: { path: (string|number)[]; message: string }) => ({
+          details: validationResult.error.errors.map((e) => ({
             path: e.path.join('.'),
             message: e.message
           }))
@@ -445,9 +422,10 @@ export async function PUT(request: NextRequest) {
 
     // Verify citation ownership through project
     const { data: citation, error: citationError } = await supabase
-      .from('citations')
+      .from('project_citations')
       .select(`
         id,
+        project_id,
         research_projects!inner (
           user_id
         )
@@ -455,19 +433,32 @@ export async function PUT(request: NextRequest) {
       .eq('id', citationId)
       .single()
 
-    if (citationError || !citation || (citation as any).research_projects?.user_id !== user.id) {
+    if (citationError || !citation || (citation.research_projects as { user_id?: string })?.user_id !== user.id) {
       return NextResponse.json({ error: 'Citation not found or access denied' }, { status: 404 })
     }
 
     // Update citation
     const { data, error } = await supabase
-      .from('citations')
+      .from('project_citations')
       .update({
-        ...updates,
+        reason: updates.reason,
+        quote: updates.quote,
         updated_at: new Date().toISOString()
       })
       .eq('id', citationId)
-      .select()
+      .select(`
+        id,
+        project_id,
+        paper_id,
+        citation_number,
+        reason,
+        quote,
+        csl_json,
+        cite_key,
+        first_seen_order,
+        created_at,
+        updated_at
+      `)
       .single()
 
     if (error) throw error
@@ -476,12 +467,13 @@ export async function PUT(request: NextRequest) {
       success: true,
       citation: {
         id: data.id,
-        key: data.key,
         projectId: data.project_id,
         paperId: data.paper_id,
+        citeKey: data.cite_key,
+        citationNumber: data.first_seen_order || data.citation_number,
         csl_json: data.csl_json,
-        citation_text: data.citation_text,
-        context: data.context,
+        reason: data.reason,
+        quote: data.quote,
         createdAt: data.created_at,
         updatedAt: data.updated_at
       }
@@ -510,7 +502,7 @@ export async function DELETE(request: NextRequest) {
     if (citationId) {
       // Delete single citation
       const { data: citation, error: citationError } = await supabase
-        .from('citations')
+        .from('project_citations')
         .select(`
           id,
           research_projects!inner (
@@ -520,12 +512,12 @@ export async function DELETE(request: NextRequest) {
         .eq('id', citationId)
         .single()
 
-      if (citationError || !citation || (citation.research_projects as any)?.user_id !== user.id) {
+      if (citationError || !citation || (citation.research_projects as { user_id?: string })?.user_id !== user.id) {
         return NextResponse.json({ error: 'Citation not found or access denied' }, { status: 404 })
       }
 
       const { error } = await supabase
-        .from('citations')
+        .from('project_citations')
         .delete()
         .eq('id', citationId)
 
@@ -547,7 +539,7 @@ export async function DELETE(request: NextRequest) {
       }
 
       const { data, error } = await supabase
-        .from('citations')
+        .from('project_citations')
         .delete()
         .eq('project_id', projectId)
         .select('id')
@@ -570,4 +562,4 @@ export async function DELETE(request: NextRequest) {
     console.error('Error in citations DELETE:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-} 
+}

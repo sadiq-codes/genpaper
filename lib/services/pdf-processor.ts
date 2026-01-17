@@ -7,6 +7,45 @@ export interface PdfExtractionOptions {
   paperId?: string // existing DB id if known
   ocr?: boolean
   timeoutMs?: number
+  maxRetries?: number
+}
+
+/**
+ * Download PDF with retry logic and exponential backoff
+ */
+async function downloadWithRetry(
+  url: string, 
+  maxRetries: number = 3
+): Promise<Buffer> {
+  let lastError: Error | null = null
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await downloadPdfBuffer(url)
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      
+      // Don't retry for certain error types
+      const errorMsg = lastError.message.toLowerCase()
+      if (
+        errorMsg.includes('html page') ||
+        errorMsg.includes('invalid pdf') ||
+        errorMsg.includes('too large') ||
+        errorMsg.includes('http 4')  // 4xx errors (not found, forbidden, etc.)
+      ) {
+        throw lastError
+      }
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff: 2s, 4s, 8s...
+        const delay = 2000 * Math.pow(2, attempt - 1)
+        console.log(`⚠️ PDF download attempt ${attempt}/${maxRetries} failed, retrying in ${delay/1000}s...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+  
+  throw lastError || new Error('PDF download failed after retries')
 }
 
 /**
@@ -17,7 +56,7 @@ export interface PdfExtractionOptions {
  *   and persists pdf_content when paperId provided.
  */
 export async function getOrExtractFullText(options: PdfExtractionOptions): Promise<string | null> {
-  const { pdfUrl, paperId, ocr = true, timeoutMs = 60000 } = options
+  const { pdfUrl, paperId, ocr = true, timeoutMs = 60000, maxRetries = 3 } = options
 
   // 1) If we have a DB id, skip only if paper has full-text content (≥5 chunks)
   if (paperId) {
@@ -41,8 +80,8 @@ export async function getOrExtractFullText(options: PdfExtractionOptions): Promi
     if (stored && stored.length > 200) return stored
   }
 
-  // 3) Download and extract
-  const pdfBuffer = await downloadPdfBuffer(pdfUrl)
+  // 3) Download with retry logic and extract
+  const pdfBuffer = await downloadWithRetry(pdfUrl, maxRetries)
   const extraction = await extractPdfMetadataTiered(pdfBuffer, {
     enableOcr: ocr,
     maxTimeoutMs: timeoutMs,

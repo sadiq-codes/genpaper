@@ -576,10 +576,49 @@ export async function generatePaper(
     
     // Build citations map from allCitations (already collected during section generation)
     // No need to re-extract from content - unified-generator already did that
-    const citedPaperIds = new Set(allCitations.map(c => c.paperId))
-    const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
+    
+    // VALIDATION: Create set of valid paper IDs to filter out hallucinated citations
+    const validPaperIds = new Set(allPapers.map(p => p.id))
+    
+    // Filter and validate citations
+    const validCitations: Array<{ paperId: string; citationText: string }> = []
+    const invalidCitations: Array<{ paperId: string; citationText: string }> = []
     
     for (const citation of allCitations) {
+      if (validPaperIds.has(citation.paperId)) {
+        validCitations.push(citation)
+      } else {
+        invalidCitations.push(citation)
+      }
+    }
+    
+    // Log warnings for invalid citations (hallucinated or malformed paper IDs)
+    if (invalidCitations.length > 0) {
+      warn({
+        invalidCount: invalidCitations.length,
+        totalCitations: allCitations.length,
+        invalidIds: invalidCitations.slice(0, 5).map(c => c.paperId), // Log first 5 for debugging
+      }, 'Filtered out citations with invalid/hallucinated paper IDs')
+      
+      // Remove invalid citation markers from content to prevent "(Untitled, n.d.)" rendering
+      for (const invalidCitation of invalidCitations) {
+        // Remove Pandoc-style [@paper_id] markers
+        const pandocPattern = new RegExp(`\\[@${invalidCitation.paperId}\\]`, 'g')
+        fullContent = fullContent.replace(pandocPattern, '')
+        
+        // Remove legacy [CITE: paper_id] markers
+        const legacyPattern = new RegExp(`\\[CITE:\\s*${invalidCitation.paperId}\\]`, 'g')
+        fullContent = fullContent.replace(legacyPattern, '')
+      }
+      
+      // Clean up any double spaces left by removed citations
+      fullContent = fullContent.replace(/\s{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1')
+    }
+    
+    const citedPaperIds = new Set(validCitations.map(c => c.paperId))
+    const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
+    
+    for (const citation of validCitations) {
       // Deduplicate by paperId
       const key = `cite-${citation.paperId}`
       if (!citationsMap[key]) {
@@ -590,7 +629,11 @@ export async function generatePaper(
       }
     }
     
-    info({ citationCount: citedPaperIds.size }, 'Citations collected from sections')
+    info({ 
+      validCitations: citedPaperIds.size,
+      invalidCitations: invalidCitations.length,
+      totalGenerated: allCitations.length
+    }, 'Citations validated and filtered')
     
     await updateProjectContent(projectId, fullContent.trim(), citationsMap)
     

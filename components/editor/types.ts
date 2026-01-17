@@ -1,5 +1,4 @@
 // Editor types
-import type { Editor } from '@tiptap/react'
 
 export interface Citation {
   id: string
@@ -8,14 +7,6 @@ export interface Citation {
   year: number
   journal?: string
   doi?: string
-}
-
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-  citations?: Citation[]
 }
 
 export interface ProjectPaper {
@@ -136,25 +127,7 @@ export interface AnalysisState {
   error?: string
 }
 
-export interface EditorContextType {
-  editor: Editor | null
-  sidebarOpen: boolean
-  setSidebarOpen: (open: boolean) => void
-  activeTab: 'chat' | 'research'
-  setActiveTab: (tab: 'chat' | 'research') => void
-  projectId?: string
-  projectPapers: ProjectPaper[]
-  chatMessages: ChatMessage[]
-  addChatMessage: (message: Omit<ChatMessage, 'id' | 'timestamp'>) => void
-  isAiLoading: boolean
-  insertCitation: (citation: Citation) => void
-  insertClaim: (claim: ExtractedClaim) => void
-  insertGap: (gap: ResearchGap) => void
-  autocompleteEnabled: boolean
-  setAutocompleteEnabled: (enabled: boolean) => void
-  analysisState: AnalysisState
-  runAnalysis: () => Promise<void>
-}
+
 
 export interface ExportFormat {
   type: 'pdf' | 'docx' | 'latex'

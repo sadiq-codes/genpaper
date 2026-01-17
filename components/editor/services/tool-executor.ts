@@ -12,6 +12,19 @@ import type { Editor } from '@tiptap/react'
 import { findBlockById } from '../extensions/BlockId'
 import { fuzzyFindPhrase, findSection, findInSection } from '@/lib/utils/fuzzy-match'
 import { toast } from 'sonner'
+import { hasMarkdownFormatting, processAIContent } from '../utils/content-processor'
+import type { ProjectPaper } from '../types'
+
+// Papers context for citation resolution - set externally
+let papersContext: ProjectPaper[] = []
+
+/**
+ * Set the papers context for markdown processing
+ * Call this when papers change in the editor
+ */
+export function setToolExecutorPapers(papers: ProjectPaper[]): void {
+  papersContext = papers
+}
 
 // =============================================================================
 // TYPES
@@ -171,24 +184,47 @@ export function executeDocumentTool(
 // =============================================================================
 
 /**
+ * Prepare content for insertion - converts markdown to TipTap JSON if needed
+ */
+function prepareContent(content: string): string | Record<string, unknown> {
+  if (hasMarkdownFormatting(content)) {
+    // Convert markdown to TipTap JSON for proper rendering (tables, lists, etc.)
+    const doc = processAIContent(content, papersContext)
+    // Return the content array, not the full doc wrapper
+    return doc.content || content
+  }
+  return content
+}
+
+/**
  * Insert content at a specified location.
  * 
  * Supports:
  * 1. afterBlockId - Insert after a specific block
  * 2. afterPhrase - Insert after specific text
  * 3. location - General positioning (cursor, end, after:Section, start:Section)
+ * 
+ * Automatically detects and converts markdown (tables, lists, etc.) to TipTap nodes.
  */
 function executeInsertContent(
   editor: Editor,
   args: Record<string, unknown>
 ): ToolExecutionResult {
-  const content = args.content as string
+  const rawContent = args.content as string
   const afterBlockId = args.afterBlockId as string | undefined || args.blockId as string | undefined
   const afterPhrase = args.afterPhrase as string | undefined
   const location = args.location as string | undefined
 
-  if (!content) {
+  if (!rawContent) {
     return { success: false, message: 'No content provided' }
+  }
+
+  // Prepare content - convert markdown to TipTap JSON if needed
+  const content = prepareContent(rawContent)
+  const isMarkdown = typeof content !== 'string'
+  
+  if (isMarkdown) {
+    console.log('[ToolExecutor] Detected markdown content, converted to TipTap JSON')
   }
 
   // Priority 1: Insert after specific phrase (most precise)
@@ -201,7 +237,7 @@ function executeInsertContent(
       editor.chain()
         .focus()
         .setTextSelection(insertPos)
-        .insertContent(' ' + content)
+        .insertContent(isMarkdown ? content : ' ' + content)
         .run()
       toast.success('Content inserted after phrase')
       return { success: true, message: 'Inserted after phrase' }
@@ -217,7 +253,7 @@ function executeInsertContent(
       editor.chain()
         .focus()
         .setTextSelection(insertPos)
-        .insertContent('\n\n' + content)
+        .insertContent(isMarkdown ? content : '\n\n' + content)
         .run()
       toast.success('Content inserted')
       return { success: true, message: `Inserted after block ${afterBlockId}`, blockId: afterBlockId }
@@ -236,7 +272,7 @@ function executeInsertContent(
     editor.chain()
       .focus()
       .setTextSelection(editor.state.doc.content.size)
-      .insertContent('\n\n' + content)
+      .insertContent(isMarkdown ? content : '\n\n' + content)
       .run()
     toast.success('Content appended')
     return { success: true, message: 'Appended to document' }
@@ -257,7 +293,7 @@ function executeInsertContent(
     }
 
     const insertPos = findTipTapPosition(editor, section.contentEnd)
-    editor.chain().focus().setTextSelection(insertPos).insertContent('\n\n' + content).run()
+    editor.chain().focus().setTextSelection(insertPos).insertContent(isMarkdown ? content : '\n\n' + content).run()
     toast.success(`Content added to ${sectionName}`)
     return { success: true, message: `Inserted at end of ${sectionName}` }
   }
@@ -273,7 +309,7 @@ function executeInsertContent(
     }
 
     const insertPos = findTipTapPosition(editor, section.contentStart)
-    editor.chain().focus().setTextSelection(insertPos).insertContent(content + '\n\n').run()
+    editor.chain().focus().setTextSelection(insertPos).insertContent(isMarkdown ? content : content + '\n\n').run()
     toast.success(`Content added to ${sectionName}`)
     return { success: true, message: `Inserted at start of ${sectionName}` }
   }
@@ -289,6 +325,8 @@ function executeInsertContent(
  * - blockId alone → replace entire block
  * - searchPhrase alone → replace specific text
  * - blockId + searchPhrase → replace text within that block
+ * 
+ * Automatically detects and converts markdown (tables, lists, etc.) to TipTap nodes.
  */
 function executeReplaceBlock(
   editor: Editor,
@@ -297,11 +335,15 @@ function executeReplaceBlock(
   const blockId = args.blockId as string | undefined
   const section = args.section as string | undefined
   const searchPhrase = args.searchPhrase as string | undefined
-  const newContent = args.newContent as string
+  const rawContent = args.newContent as string
 
-  if (!newContent) {
+  if (!rawContent) {
     return { success: false, message: 'No new content provided' }
   }
+
+  // Prepare content - convert markdown to TipTap JSON if needed
+  const newContent = prepareContent(rawContent)
+  const isMarkdown = typeof newContent !== 'string'
 
   // If searchPhrase is provided, do text-level replacement
   if (searchPhrase) {
@@ -367,6 +409,7 @@ function executeReplaceBlock(
 
 /**
  * Replace content within a section (legacy support).
+ * Automatically detects and converts markdown to TipTap nodes.
  */
 function executeReplaceInSection(
   editor: Editor,
@@ -374,11 +417,14 @@ function executeReplaceInSection(
 ): ToolExecutionResult {
   const section = args.section as string
   const searchPhrase = args.searchPhrase as string
-  const newContent = args.newContent as string
+  const rawContent = args.newContent as string
 
-  if (!searchPhrase || !newContent) {
+  if (!searchPhrase || !rawContent) {
     return { success: false, message: 'Missing search phrase or new content' }
   }
+
+  // Prepare content - convert markdown to TipTap JSON if needed
+  const newContent = prepareContent(rawContent)
 
   const target = findTargetBlock(editor, { section, searchPhrase })
 
@@ -404,17 +450,22 @@ function executeReplaceInSection(
 
 /**
  * Rewrite an entire section.
+ * Automatically detects and converts markdown to TipTap nodes.
  */
 function executeRewriteSection(
   editor: Editor,
   args: Record<string, unknown>
 ): ToolExecutionResult {
   const sectionName = args.section as string
-  const newContent = args.newContent as string
+  const rawContent = args.newContent as string
 
-  if (!sectionName || !newContent) {
+  if (!sectionName || !rawContent) {
     return { success: false, message: 'Missing section name or new content' }
   }
+
+  // Prepare content - convert markdown to TipTap JSON if needed
+  const newContent = prepareContent(rawContent)
+  const isMarkdown = typeof newContent !== 'string'
 
   const docText = editor.getText()
   const section = findSection(docText, sectionName)
@@ -430,7 +481,7 @@ function executeRewriteSection(
   editor.chain()
     .focus()
     .setTextSelection({ from, to })
-    .insertContent('\n\n' + newContent + '\n\n')
+    .insertContent(isMarkdown ? newContent : '\n\n' + newContent + '\n\n')
     .run()
 
   toast.success(`Rewrote ${sectionName}`)

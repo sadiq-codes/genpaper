@@ -9,11 +9,13 @@ import {
 } from '@/lib/rag'
 import {
   processCitationMarkersSync,
-  buildCitationInstructions,
   type PaperMetadata,
   type CitationStyle
 } from '@/lib/citations/unified-service'
 import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
+import { PromptService } from '@/lib/prompts/prompt-service'
+import { buildCompleteContext, formatPapersForContext } from '@/lib/prompts/costar-context'
+import { getUserLibraryPapers } from '@/lib/db/library'
 
 // Suggestion types for smart context-aware completion
 type SuggestionType =
@@ -39,7 +41,7 @@ interface CompletionRequest {
 
 interface CitationInSuggestion {
   paperId: string
-  marker: string           // Original marker [CITE: id]
+  marker: string           // Original marker [@id] (Pandoc format)
   formatted: string        // Formatted (Smith et al., 2023)
   // Positions in the DISPLAY text (formattedSuggestion)
   displayStartOffset: number
@@ -51,7 +53,7 @@ interface CitationInSuggestion {
 }
 
 interface CompletionResponse {
-  suggestion: string       // Text with [CITE: id] markers (for accept/processing)
+  suggestion: string       // Text with [@id] markers (for accept/processing)
   displaySuggestion: string // Text with formatted citations (for display)
   citations: CitationInSuggestion[]
   contextHint: string
@@ -62,143 +64,67 @@ interface CompletionResponse {
   }
 }
 
-// Get section-specific writing guidance
-function getSectionGuidance(section: string): string {
-  const sectionLower = section.toLowerCase()
-  
-  if (sectionLower.includes('introduction') || sectionLower.includes('background')) {
-    return 'Focus on establishing context, defining key terms, and stating the research problem or motivation.'
-  }
-  if (sectionLower.includes('method')) {
-    return 'Focus on describing procedures, materials, participants, or analytical approaches.'
-  }
-  if (sectionLower.includes('result')) {
-    return 'Focus on reporting findings and observations without interpretation.'
-  }
-  if (sectionLower.includes('discussion')) {
-    return 'Focus on interpreting results, comparing with prior work, and explaining implications.'
-  }
-  if (sectionLower.includes('conclusion')) {
-    return 'Focus on summarizing key findings and their broader significance.'
-  }
-  if (sectionLower.includes('literature') || sectionLower.includes('review')) {
-    return 'Focus on synthesizing prior research, identifying themes, and positioning the current work.'
-  }
-  
-  return 'Continue in an appropriate academic tone.'
-}
+// Section guidance is now provided by costar-context.ts
 
-// Format papers list for AI prompt with explicit IDs
-function formatPapersForAI(ragContext: EditorContext): string {
-  const papers: string[] = []
-  
-  for (const [id, paper] of ragContext.papers) {
-    const authorStr = paper.authors?.length > 0 
-      ? paper.authors.slice(0, 2).join(', ') + (paper.authors.length > 2 ? ' et al.' : '')
-      : 'Unknown'
-    
-    papers.push(`- Paper ID: ${id}
-  Title: "${paper.title}"
-  Authors: ${authorStr}
-  Year: ${paper.year}`)
-  }
-  
-  return papers.length > 0 ? papers.join('\n\n') : 'No papers available.'
-}
+// Paper formatting is now handled by formatPapersForContext from costar-context.ts
 
-// Build RAG-grounded prompt with unified citation format
-function buildRAGPrompt(
+/**
+ * Build system prompt using CO-STAR framework template
+ */
+async function buildSystemPromptFromTemplate(
   suggestionType: SuggestionType,
   context: CompletionRequest['context'],
   topic: string,
-  sectionGuidance: string,
+  paperType: string,
   ragFormatted: { chunksText: string; claimsText: string },
-  papersForAI: string,
+  papersContext: string,
   outlineContext: string
-): { system: string; user: string } {
+): Promise<string> {
+  // Get objective for this suggestion type
+  const suggestionObjective = await PromptService.getSuggestionObjective(suggestionType)
   
-  const citationInstructions = buildCitationInstructions()
+  // Build CO-STAR context
+  const costarContext = buildCompleteContext({
+    topic,
+    paperType: paperType || 'research-article',
+    currentSection: context.currentSection,
+    suggestionType,
+    suggestionObjective,
+    precedingText: context.precedingText,
+    outlineContext,
+    chunksText: ragFormatted.chunksText,
+    claimsText: ragFormatted.claimsText,
+    papersContext,
+  })
+
+  // Build prompt from template
+  return PromptService.buildCompletePrompt(costarContext)
+}
+
+/**
+ * Build user prompt - minimal trigger approach
+ * 
+ * The system prompt (CO-STAR template) already contains:
+ * - suggestionType and suggestionObjective
+ * - precedingText and section context
+ * - All source material and instructions
+ * 
+ * The user prompt just shows cursor position for the model to continue from.
+ */
+function buildUserPrompt(context: CompletionRequest['context']): string {
+  const preceding = context.precedingText.trim()
   
-  const baseSystemPrompt = `You are an expert academic writing assistant. You MUST ground your writing in the provided source material.
-
-## Research Topic
-${topic}
-
-## Current Section: ${context.currentSection}
-${sectionGuidance}
-
-## Document Structure
-${outlineContext}
-
-## SOURCE MATERIAL (Ground your writing in these sources)
-
-### Relevant Text Excerpts from Papers:
-${ragFormatted.chunksText}
-
-### Key Claims from Research:
-${ragFormatted.claimsText}
-
-### Available Papers for Citation:
-${papersForAI}
-
-${citationInstructions}
-
-## CRITICAL RULES
-- You MUST ONLY make claims that are supported by the source material above
-- You MUST cite sources using [CITE: paper_id] format when referencing their content
-- You MUST ONLY cite papers from the "Available Papers for Citation" list - use the exact Paper ID
-- Do NOT invent facts or citations - if you can't support a claim, don't make it
-- Write 1-2 sentences maximum
-- Use academic tone
-
-## Output Format
-Return ONLY a JSON object:
-{"text": "your completion with [CITE: paper_id] markers", "contextHint": "2-4 word description"}`
-
-  let userPrompt: string
-  let systemAddendum = ''
-
-  switch (suggestionType) {
-    case 'opening_sentence':
-      systemAddendum = '\n\n## Task: Write an Opening Sentence\nStart this section with a clear topic sentence based on the source material.'
-      userPrompt = `Write an opening sentence for the "${context.currentSection}" section using the provided sources.`
-      break
-
-    case 'complete_sentence':
-      systemAddendum = '\n\n## Task: Complete the Sentence\nFinish the incomplete sentence using information from the sources.'
-      userPrompt = `Complete this sentence using the source material:\n"${context.precedingText.slice(-200)}"`
-      break
-
-    case 'next_sentence':
-      systemAddendum = '\n\n## Task: Continue with Next Sentence\nAdd the next logical sentence based on the source material.'
-      userPrompt = `Continue after this text using the sources:\n"${context.precedingText.slice(-300)}"`
-      break
-
-    case 'provide_examples':
-      systemAddendum = '\n\n## Task: Provide Examples\nProvide specific examples FROM the source material with citations.'
-      userPrompt = `Provide examples from the sources following:\n"${context.precedingText.slice(-200)}"`
-      break
-
-    case 'contrast_point':
-      systemAddendum = '\n\n## Task: Complete Contrasting Point\nComplete the contrast using evidence from the sources.'
-      userPrompt = `Complete this contrasting statement using the sources:\n"${context.precedingText.slice(-200)}"`
-      break
-
-    case 'contextual':
-    default:
-      systemAddendum = '\n\n## Task: Contextual Completion\nContinue appropriately using the source material.'
-      if (!context.precedingText.trim()) {
-        userPrompt = `Write an appropriate opening for the "${context.currentSection}" section using the provided sources.`
-      } else {
-        userPrompt = `Continue this text using the sources:\n"${context.precedingText.slice(-300)}"`
-      }
-      break
+  if (!preceding) {
+    // Starting fresh - indicate section start
+    return `[START OF ${context.currentSection.toUpperCase()}]`
   }
-
-  return {
-    system: baseSystemPrompt + systemAddendum,
-    user: userPrompt
-  }
+  
+  // Show where cursor is - model continues from here
+  // Use last 150 chars to give enough context without redundancy
+  const snippet = preceding.slice(-150)
+  const ellipsis = preceding.length > 150 ? '...' : ''
+  
+  return `${ellipsis}"${snippet}" [CURSOR]`
 }
 
 // Convert RAG context papers to PaperMetadata format
@@ -252,10 +178,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
     }
 
-    // Verify project ownership
+    // Verify project ownership and get metadata
     const { data: project, error: projectError } = await supabase
       .from('research_projects')
-      .select('id, topic')
+      .select('id, topic, paper_type')
       .eq('id', projectId)
       .eq('user_id', user.id)
       .single()
@@ -264,12 +190,47 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Check if papers are available
-    if (!paperIds || paperIds.length === 0) {
-      return NextResponse.json({ 
-        error: 'No papers available',
-        message: 'Add papers to your project to enable AI-assisted writing. This ensures suggestions are grounded in real sources.'
-      }, { status: 422 })
+    // Determine effective paper IDs - fall back to library if no project papers
+    let effectivePaperIds = paperIds || []
+    
+    if (effectivePaperIds.length === 0) {
+      console.log('[Autocomplete] No project papers, falling back to user library')
+      
+      // Get user's library papers
+      const libraryPapers = await getUserLibraryPapers(user.id, {}, 50, 0)
+      
+      if (libraryPapers.length === 0) {
+        return NextResponse.json({ 
+          error: 'No papers available',
+          message: 'Add papers to your library to enable AI-assisted writing.'
+        }, { status: 422 })
+      }
+      
+      // Use RAG to find top N most relevant papers to current context
+      const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
+      const allLibraryIds = libraryPapers.map(lp => lp.paper.id)
+      
+      // Retrieve with broader pool to find most relevant papers
+      const relevanceCheck = await retrieveEditorContext(queryText, allLibraryIds, {
+        maxChunks: 20,
+        maxClaims: 0,
+        minChunkScore: 0.2,
+        minClaimScore: 0.5
+      })
+      
+      // Get unique paper IDs from top chunks (preserves relevance order)
+      const relevantPaperIds = [...new Set(
+        relevanceCheck.chunks.map(c => c.paper_id)
+      )].slice(0, 10)  // Top 10 most relevant
+      
+      if (relevantPaperIds.length > 0) {
+        effectivePaperIds = relevantPaperIds
+        console.log(`[Autocomplete] Using ${effectivePaperIds.length} relevant library papers`)
+      } else {
+        // Fallback: use most recent library papers if RAG finds nothing
+        effectivePaperIds = allLibraryIds.slice(0, 10)
+        console.log(`[Autocomplete] RAG found no relevant content, using ${effectivePaperIds.length} recent library papers`)
+      }
     }
 
     // Get citation style for this project
@@ -278,7 +239,7 @@ export async function POST(request: NextRequest) {
     // RAG RETRIEVAL: Get relevant chunks and claims
     const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
     
-    const ragContext = await retrieveEditorContext(queryText, paperIds, {
+    const ragContext = await retrieveEditorContext(queryText, effectivePaperIds, {
       maxChunks: 8,
       maxClaims: 6,
       minChunkScore: 0.25,
@@ -295,24 +256,35 @@ export async function POST(request: NextRequest) {
 
     // Format RAG context for the prompt
     const ragFormatted = formatEditorContextForPrompt(ragContext)
-    const papersForAI = formatPapersForAI(ragContext)
+    const papersContext = formatPapersForContext(
+      Array.from(ragContext.papers.entries()).map(([id, paper]) => ({
+        id,
+        title: paper.title,
+        authors: paper.authors,
+        year: paper.year,
+      }))
+    )
 
     const outlineContext = context.documentOutline.length > 0
       ? context.documentOutline.map(h => `- ${h}`).join('\n')
       : 'No outline.'
 
-    const sectionGuidance = getSectionGuidance(context.currentSection)
+    // Get paper type from project
+    const paperType = project.paper_type || 'literatureReview'
 
-    // Build RAG-grounded prompt with unified citation format
-    const { system, user: userPrompt } = buildRAGPrompt(
+    // Build system prompt using CO-STAR framework
+    const system = await buildSystemPromptFromTemplate(
       suggestionType,
       context,
       topic || project.topic,
-      sectionGuidance,
+      paperType,
       ragFormatted,
-      papersForAI,
+      papersContext,
       outlineContext
     )
+    
+    // Build minimal user prompt - just cursor position
+    const userPrompt = buildUserPrompt(context)
 
     // Generate completion with timeout
     const abortController = new AbortController()

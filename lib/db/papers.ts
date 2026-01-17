@@ -504,11 +504,12 @@ export async function searchPaperChunks(
  * 
  * @param paperData - Complete paper metadata
  * @param options - Processing configuration
+ * @param options.ownerId - User ID for ownership. NULL/undefined = global paper, UUID = user-uploaded
  * @returns Result with paper ID and processing status
  */
 export async function ingestPaper(
   paperData: PaperDTO,
-  options: { fullText?: string; pdfUrl?: string; background?: boolean; priority?: 'low' | 'normal' | 'high' } = {}
+  options: { fullText?: string; pdfUrl?: string; background?: boolean; priority?: 'low' | 'normal' | 'high'; ownerId?: string | null } = {}
 ): Promise<{ paperId: string; isNew: boolean; status: 'metadata_only' | 'processed' | 'queued' }> {
   
   // 1. Check for duplicates (idempotent)
@@ -528,8 +529,8 @@ export async function ingestPaper(
     return { paperId: existingId, isNew: false, status: 'metadata_only' }
   }
 
-  // 2. Create the basic paper metadata record
-  const newPaperId = await createPaperMetadata(paperData)
+  // 2. Create the basic paper metadata record (with ownership)
+  const newPaperId = await createPaperMetadata(paperData, options.ownerId)
   debug({ paperId: newPaperId }, 'Created new paper')
 
   // 3. Decide how to handle content
@@ -558,9 +559,12 @@ export async function ingestPaper(
  * 2. Papers may be cited much later, after the API data is gone
  * 3. CSL JSON generation reads from papers.metadata for these fields
  * 
+ * @param paperData - Paper metadata to store
+ * @param ownerId - Optional user ID for ownership. NULL = global/API paper, UUID = user-uploaded
+ * 
  * NOTE: Uses service role client to bypass RLS (papers are shared resources)
  */
-export async function createPaperMetadata(paperData: PaperDTO): Promise<string> {
+export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string | null): Promise<string> {
   const supabase = getServiceClient()
   
   // Generate embedding from title + abstract before inserting
@@ -576,7 +580,7 @@ export async function createPaperMetadata(paperData: PaperDTO): Promise<string> 
   if (paperData.pages) metadata.pages = paperData.pages
   if (paperData.publisher) metadata.publisher = paperData.publisher
   
-  // Insert paper metadata with embedding and authors
+  // Insert paper metadata with embedding, authors, and ownership
   const { data, error } = await supabase
     .from('papers')
     .insert({
@@ -590,7 +594,9 @@ export async function createPaperMetadata(paperData: PaperDTO): Promise<string> 
       source: paperData.source || 'unknown',
       citation_count: paperData.citation_count || 0,
       embedding: embedding, // Generate embedding immediately to satisfy NOT NULL constraint
-      metadata: Object.keys(metadata).length > 0 ? metadata : null // Store bibliographic fields
+      metadata: Object.keys(metadata).length > 0 ? metadata : null, // Store bibliographic fields
+      owner_id: ownerId || null, // NULL = global paper, UUID = user-uploaded
+      is_public: false // User papers are private by default
     })
     .select('id')
     .single()

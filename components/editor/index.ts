@@ -18,7 +18,6 @@ export { Mathematics } from './extensions/Mathematics'
 // Types
 export type {
   Citation as CitationType,
-  ChatMessage,
   ProjectPaper,
   ExtractedClaim,
   ResearchGap,
@@ -26,6 +25,5 @@ export type {
   AnalysisState,
   ClaimType,
   GapType,
-  EditorContextType,
   ExportFormat,
 } from './types'

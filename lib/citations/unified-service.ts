@@ -28,8 +28,9 @@ export interface PaperMetadata {
 }
 
 export interface CitationMarker {
-  marker: string        // "[CITE: abc123]"
+  marker: string        // "[@abc123]" (Pandoc format)
   paperId: string       // "abc123"
+  format: 'pandoc' | 'legacy'  // Which format was matched
   position: {
     start: number
     end: number
@@ -121,22 +122,27 @@ function formatHarvard(lastNames: string[], year: number): string {
 // Citation Marker Processing
 // ============================================================================
 
-const CITE_MARKER_PATTERN = /\[CITE:\s*([a-f0-9-]+)\]/gi
+// Pandoc-style citation format (preferred, new format): [@paper_id]
+const PANDOC_CITE_PATTERN = /\[@([a-f0-9-]+)\]/gi
+
+// Legacy citation format (for backward compatibility): [CITE: paper_id]
+const LEGACY_CITE_PATTERN = /\[CITE:\s*([a-f0-9-]+)\]/gi
 
 /**
- * Extract all [CITE: paper_id] markers from content
+ * Extract all citation markers from content
+ * Supports both [@paper_id] (Pandoc) and [CITE: paper_id] (legacy) formats
  */
 export function extractCitationMarkers(content: string): CitationMarker[] {
   const markers: CitationMarker[] = []
   let match: RegExpExecArray | null
   
-  // Reset regex state
-  const pattern = new RegExp(CITE_MARKER_PATTERN.source, 'gi')
-  
-  while ((match = pattern.exec(content)) !== null) {
+  // Extract Pandoc-style [@paper_id] markers (preferred format)
+  const pandocPattern = new RegExp(PANDOC_CITE_PATTERN.source, 'gi')
+  while ((match = pandocPattern.exec(content)) !== null) {
     markers.push({
       marker: match[0],
       paperId: match[1],
+      format: 'pandoc',
       position: {
         start: match.index,
         end: match.index + match[0].length
@@ -144,14 +150,33 @@ export function extractCitationMarkers(content: string): CitationMarker[] {
     })
   }
   
+  // Extract legacy [CITE: paper_id] markers (backward compatibility)
+  const legacyPattern = new RegExp(LEGACY_CITE_PATTERN.source, 'gi')
+  while ((match = legacyPattern.exec(content)) !== null) {
+    markers.push({
+      marker: match[0],
+      paperId: match[1],
+      format: 'legacy',
+      position: {
+        start: match.index,
+        end: match.index + match[0].length
+      }
+    })
+  }
+  
+  // Sort by position for consistent processing
+  markers.sort((a, b) => a.position.start - b.position.start)
+  
   return markers
 }
 
 /**
- * Check if content contains citation markers
+ * Check if content contains citation markers (either format)
  */
 export function hasCitationMarkers(content: string): boolean {
-  return CITE_MARKER_PATTERN.test(content)
+  PANDOC_CITE_PATTERN.lastIndex = 0
+  LEGACY_CITE_PATTERN.lastIndex = 0
+  return PANDOC_CITE_PATTERN.test(content) || LEGACY_CITE_PATTERN.test(content)
 }
 
 /**
@@ -239,16 +264,13 @@ export function buildCitationContextForAI(papers: PaperMetadata[]): string {
       ? paper.authors.slice(0, 3).join(', ') + (paper.authors.length > 3 ? ' et al.' : '')
       : 'Unknown'
     
-    return `- ID: ${paper.id}
-  Title: "${paper.title}"
-  Authors: ${authorStr}
-  Year: ${paper.year}`
-  }).join('\n\n')
+    return `- [@${paper.id}] "${paper.title}" by ${authorStr} (${paper.year})`
+  }).join('\n')
   
   return `## Available Papers for Citation
 
-When citing, use the format: [CITE: paper_id]
-Example: "Recent studies show promising results [CITE: abc123-def456]."
+Use Pandoc-style citations: [@paper_id]
+Example: "Recent studies show promising results [@abc123-def456]."
 
 ${paperList}`
 }
@@ -260,12 +282,14 @@ export function buildCitationInstructions(): string {
   return `## Citation Format
 
 When you reference information from the provided sources, insert a citation marker:
-[CITE: paper_id]
+[@paper_id]
+
+This is standard Pandoc/academic citation format.
 
 Rules:
-- Place [CITE: paper_id] immediately after the sentence or clause using that source
+- Place [@paper_id] immediately after the sentence or clause using that source
 - Use the EXACT paper_id from the Available Papers list
-- You can cite multiple sources: "This is supported by research [CITE: id1] [CITE: id2]."
+- You can cite multiple sources: "This is supported by research [@id1] [@id2]."
 - Do NOT write (Author, Year) format - the system will format citations automatically
 - Do NOT make up paper IDs - only use IDs from the Available Papers list`
 }
@@ -280,10 +304,13 @@ Rules:
 export function cleanCitationArtifacts(content: string): string {
   let cleaned = content
   
-  // Remove any remaining [CITE: ...] markers
+  // Remove any remaining [@...] markers (Pandoc format)
+  cleaned = cleaned.replace(/\[@[^\]]*\]/gi, '')
+  
+  // Remove any remaining [CITE: ...] markers (legacy format)
   cleaned = cleaned.replace(/\[CITE:\s*[^\]]*\]/gi, '')
   
-  // Remove [CONTEXT FROM: ...] markers
+  // Remove [CONTEXT FROM: ...] markers (legacy evidence format)
   cleaned = cleaned.replace(/\[CONTEXT FROM:\s*[^\]]+\]/gi, '')
   
   // Remove addCitation(...) text

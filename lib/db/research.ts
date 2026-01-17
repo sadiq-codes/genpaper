@@ -82,7 +82,39 @@ export async function createResearchProject(
 }
 
 /**
- * Update project with generated content and mark as complete
+ * Extract citation paper IDs from content
+ * Supports both [@uuid] (Pandoc) and [CITE: uuid] (legacy) formats
+ */
+function extractCitationPaperIds(content: string): string[] {
+  const paperIds = new Set<string>()
+  
+  // Pandoc format: [@uuid]
+  const pandocPattern = /\[@([a-f0-9-]{36})\]/gi
+  for (const match of content.matchAll(pandocPattern)) {
+    paperIds.add(match[1])
+  }
+  
+  // Legacy format: [CITE: uuid]
+  const legacyPattern = /\[CITE:\s*([a-f0-9-]{36})\]/gi
+  for (const match of content.matchAll(legacyPattern)) {
+    paperIds.add(match[1])
+  }
+  
+  return Array.from(paperIds)
+}
+
+/**
+ * Update a project's content and automatically create citation records
+ * 
+ * This function:
+ * 1. Saves the content to research_projects
+ * 2. Extracts [CITE: uuid] markers from content
+ * 3. Validates paper IDs exist in papers table
+ * 4. Creates/updates project_citations records
+ * 
+ * @param projectId - Project to update
+ * @param content - Markdown content with [CITE: uuid] markers
+ * @param citations - Optional explicit citations (legacy support)
  */
 export async function updateProjectContent(
   projectId: string,
@@ -107,49 +139,70 @@ export async function updateProjectContent(
     throw new Error(`Failed to save project content: ${error.message}`)
   }
   
-  // Save citations if provided
-  if (citations) {
-    // Deduplicate citations by paper_id to avoid "ON CONFLICT DO UPDATE cannot affect row a second time" error
-    // When the same paper is cited multiple times, we only need one entry per paper
-    const seenPaperIds = new Set<string>()
-    const citationInserts: Array<{
-      project_id: string
-      paper_id: string
-      citation_number: number
-      quote: string
-    }> = []
-    
-    for (const [key, citation] of Object.entries(citations)) {
-      // Skip if we've already seen this paper
-      if (seenPaperIds.has(citation.paperId)) {
-        continue
-      }
-      seenPaperIds.add(citation.paperId)
-      
+  // Collect paper IDs from both explicit citations and content extraction
+  const paperIdsFromContent = extractCitationPaperIds(content)
+  const paperIdsFromCitations = citations 
+    ? Object.values(citations).map(c => c.paperId) 
+    : []
+  
+  // Merge and deduplicate
+  const allPaperIds = [...new Set([...paperIdsFromContent, ...paperIdsFromCitations])]
+  
+  console.log(`📚 Found ${allPaperIds.length} unique paper IDs (${paperIdsFromContent.length} from content, ${paperIdsFromCitations.length} from citations param)`)
+  
+  if (allPaperIds.length === 0) {
+    console.log('✅ Project content saved successfully (no citations)')
+    return
+  }
+  
+  // Validate paper IDs exist in the papers table
+  const { data: validPapers, error: validationError } = await supabase
+    .from('papers')
+    .select('id')
+    .in('id', allPaperIds)
+  
+  if (validationError) {
+    console.warn('⚠️ Failed to validate paper IDs:', validationError)
+  }
+  
+  const validPaperIds = new Set(validPapers?.map(p => p.id) || [])
+  const invalidPaperIds = allPaperIds.filter(id => !validPaperIds.has(id))
+  
+  if (invalidPaperIds.length > 0) {
+    console.warn(`⚠️ ${invalidPaperIds.length} paper IDs not found in database:`, invalidPaperIds.slice(0, 5))
+  }
+  
+  // Build citation inserts for valid papers only
+  const citationInserts: Array<{
+    project_id: string
+    paper_id: string
+    first_seen_order: number
+  }> = []
+  
+  let order = 1
+  for (const paperId of allPaperIds) {
+    if (validPaperIds.has(paperId)) {
       citationInserts.push({
         project_id: projectId,
-        paper_id: citation.paperId,
-        citation_number: parseInt(key.replace('citation-', '')) + 1,
-        quote: citation.citationText
+        paper_id: paperId,
+        first_seen_order: order++
       })
     }
+  }
+  
+  if (citationInserts.length > 0) {
+    // Use upsert to handle cases where citation already exists
+    const { error: citationError } = await supabase
+      .from('project_citations')
+      .upsert(citationInserts, {
+        onConflict: 'project_id,paper_id',
+        ignoreDuplicates: false
+      })
     
-    if (citationInserts.length > 0) {
-      // Use upsert to handle cases where citation already exists
-      // onConflict specifies the unique constraint columns
-      const { error: citationError } = await supabase
-        .from('project_citations')
-        .upsert(citationInserts, {
-          onConflict: 'project_id,paper_id',
-          ignoreDuplicates: false // Update existing records
-        })
-      
-      if (citationError) {
-        console.warn('⚠️ Failed to save citations:', citationError)
-        // Don't throw - content was saved successfully
-      } else {
-        console.log(`✅ Saved ${citationInserts.length} citations (deduplicated from ${Object.keys(citations).length} total)`)
-      }
+    if (citationError) {
+      console.warn('⚠️ Failed to save citations:', citationError)
+    } else {
+      console.log(`✅ Saved ${citationInserts.length} citations (${invalidPaperIds.length} invalid IDs skipped)`)
     }
   }
   
@@ -261,26 +314,43 @@ export async function getUserResearchProjects(
   offset = 0
 ): Promise<ResearchProjectWithLatestVersion[]> {
   const supabase = await getSB()
+  
+  // Fetch projects
   const { data, error } = await supabase
     .from('research_projects')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
-    .limit(limit)
     .range(offset, offset + limit - 1)
 
   if (error) throw error
+  if (!data || data.length === 0) return []
 
-  // Get citation counts for each project
-  const projectsWithCitations = await Promise.all(
-    data.map(async (project) => {
-      return {
-        ...project,
-        latest_version: null, // No longer using versions
-        citation_count: await getProjectCitationCount(project.id)
-      }
-    })
-  )
+  // Fetch citation counts for all projects in ONE query (fixes N+1 problem)
+  // Group by project_id and count
+  const projectIds = data.map(p => p.id)
+  const { data: citationCounts, error: countError } = await supabase
+    .from('project_citations')
+    .select('project_id')
+    .in('project_id', projectIds)
+
+  if (countError) {
+    console.error('Error fetching citation counts:', countError)
+  }
+
+  // Build a map of project_id -> count
+  const countMap = new Map<string, number>()
+  for (const row of citationCounts || []) {
+    const current = countMap.get(row.project_id) || 0
+    countMap.set(row.project_id, current + 1)
+  }
+
+  // Map projects with their citation counts
+  const projectsWithCitations = data.map((project) => ({
+    ...project,
+    latest_version: null,
+    citation_count: countMap.get(project.id) || 0
+  }))
 
   return projectsWithCitations
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect, useMemo } from "react"
+import { useState, useCallback, useEffect } from "react"
 import type { Editor } from "@tiptap/react"
 import { EditorTopNav } from "./EditorTopNav"
 import { EditorSidebar } from "./sidebar/EditorSidebar"
@@ -22,30 +22,20 @@ import { toast } from "sonner"
 import type {
   ProjectPaper,
   Citation,
-  ExtractedClaim,
-  ResearchGap,
-  AnalysisOutput,
 } from "./types"
 import { cn } from "@/lib/utils"
 import { processContent } from "./utils/content-processor"
 import { editorToMarkdown } from "./utils/tiptap-to-markdown"
 import { GenerationProgress } from "./GenerationProgress"
+import { setToolExecutorPapers } from "./services/tool-executor"
 
 // Hooks
 import {
   useEditorState,
-  useAnalysis,
   usePaperManagement,
-  useChat,
   useEditorChat,
   useBackgroundPaperSearch,
-  useCitationManagerConfig,
-  useCitationPrefetch,
-  extractCitationIdsFromEditor,
 } from "./hooks"
-
-// Feature flag for new streaming chat with tools
-const USE_STREAMING_CHAT = true
 
 // CitationStyleType now accepts any CSL style ID string
 export type CitationStyleType = string
@@ -57,11 +47,6 @@ interface ResearchEditorProps {
   paperType?: "researchArticle" | "literatureReview" | "capstoneProject" | "mastersThesis" | "phdDissertation"
   initialContent?: string
   initialPapers?: ProjectPaper[]
-  initialAnalysis?: {
-    claims: ExtractedClaim[]
-    gaps: ResearchGap[]
-    synthesis: AnalysisOutput | null
-  }
   citationStyle?: string
   onSave?: (content: string) => void
   isGenerating?: boolean
@@ -76,7 +61,6 @@ export function ResearchEditor({
   paperType = "literatureReview",
   initialContent,
   initialPapers = [],
-  initialAnalysis,
   citationStyle = "apa",
   onSave,
   isGenerating: initialIsGenerating = false,
@@ -102,7 +86,7 @@ export function ResearchEditor({
 
   // Editor content state & auto-save
   const {
-    content,
+    content: _content, // Content tracked for auto-save but not directly used here
     hasUnsavedChanges,
     setContent,
     markAsEdited,
@@ -125,25 +109,6 @@ export function ResearchEditor({
   } = usePaperManagement({
     projectId,
     initialPapers,
-    onPaperAdded: () => runAnalysis(),
-    onPaperRemoved: (paperId) => {
-      setAnalysisState(prev => ({
-        ...prev,
-        claims: prev.claims.filter(c => c.paper_id !== paperId),
-      }))
-    },
-  })
-
-  // Analysis state
-  const {
-    analysisState,
-    runAnalysis,
-    setAnalysisState,
-  } = useAnalysis({
-    projectId,
-    projectTitle,
-    papers,
-    initialAnalysis,
   })
 
   // Background paper search for write mode
@@ -158,29 +123,23 @@ export function ResearchEditor({
     },
   })
 
-  // Chat - use new streaming hook if feature flag is enabled AND we have a projectId
-  const legacyChat = useChat({
-    projectId,
-    editor,
-    papers,
-    analysisState,
-  })
-
-  const streamingChat = useEditorChat({
+  // Streaming chat with tools support
+  // Lazy load chat - only fetch history when chat tab is active
+  // This speeds up initial editor load significantly
+  const chat = useEditorChat({
     projectId: projectId || '',
     editor,
+    enabled: activeTab === 'chat', // Only load chat history when chat tab is opened
   })
 
-  // Select which chat implementation to use
-  // Fall back to legacy chat if no projectId (streaming requires project persistence)
-  const useStreamingChat = USE_STREAMING_CHAT && !!projectId
-  const chatMessages = useStreamingChat ? streamingChat.messages : legacyChat.messages
-  const isChatLoading = useStreamingChat ? streamingChat.isLoading : legacyChat.isLoading
-  const handleSendMessage = useStreamingChat ? streamingChat.sendMessage : legacyChat.sendMessage
-  const pendingTools = useStreamingChat ? streamingChat.pendingTools : []
-  const confirmTool = useStreamingChat ? streamingChat.confirmTool : undefined
-  const rejectTool = useStreamingChat ? streamingChat.rejectTool : undefined
-  const clearChatHistory = useStreamingChat ? streamingChat.clearHistory : undefined
+  // Extract chat properties
+  const chatMessages = chat.messages
+  const isChatLoading = chat.isLoading
+  const handleSendMessage = chat.sendMessage
+  const pendingTools = chat.pendingTools
+  const confirmTool = chat.confirmTool
+  const rejectTool = chat.rejectTool
+  const clearChatHistory = chat.clearHistory
 
   // ============================================================================
   // Effects
@@ -216,6 +175,11 @@ export function ResearchEditor({
     })
   }, [isWriteMode, projectId, projectTopic])
 
+  // Sync papers with tool executor for markdown processing (tables, citations, etc.)
+  useEffect(() => {
+    setToolExecutorPapers(papers)
+  }, [papers])
+
   // ============================================================================
   // Handlers
   // ============================================================================
@@ -245,58 +209,6 @@ export function ResearchEditor({
     (citation: Citation) => {
       if (!editor) return
       editor.chain().focus().insertCitation(citation).run()
-      if (isMobile) setMobileMenuOpen(false)
-    },
-    [editor, isMobile]
-  )
-
-  // Handle inserting a claim as plain text with citation
-  const handleInsertClaim = useCallback(
-    (claim: ExtractedClaim) => {
-      if (!editor) return
-
-      const authorName = claim.paper_authors?.[0]?.split(" ").pop() || "Unknown"
-      const year = claim.paper_year || "n.d."
-      const hasMultipleAuthors = claim.paper_authors && claim.paper_authors.length > 1
-      const citationText = ` (${authorName}${hasMultipleAuthors ? " et al." : ""}, ${year})`
-
-      editor
-        .chain()
-        .focus()
-        .insertContent(claim.claim_text + citationText + " ")
-        .run()
-
-      if (isMobile) setMobileMenuOpen(false)
-    },
-    [editor, isMobile]
-  )
-
-  // Handle inserting a gap
-  const handleInsertGap = useCallback(
-    (gap: ResearchGap) => {
-      if (!editor) return
-
-      let gapText: string
-      switch (gap.gap_type) {
-        case "unstudied":
-          gapText = `Further research is needed to explore ${gap.description.toLowerCase()}`
-          break
-        case "contradiction":
-          gapText = `There are conflicting findings regarding ${gap.description.toLowerCase()}`
-          break
-        case "limitation":
-          gapText = `Current research is limited by ${gap.description.toLowerCase()}`
-          break
-        default:
-          gapText = gap.description
-      }
-
-      editor
-        .chain()
-        .focus()
-        .insertContent(gapText + ". ")
-        .run()
-
       if (isMobile) setMobileMenuOpen(false)
     },
     [editor, isMobile]
@@ -410,17 +322,9 @@ export function ResearchEditor({
   )
 
   // ============================================================================
-  // Citation Manager
+  // Citation formatting is now 100% local via CitationNodeView + local-formatter
+  // No more CitationManager or server-side rendering needed
   // ============================================================================
-
-  const isCitationManagerConfigured = useCitationManagerConfig(projectId, currentCitationStyle)
-
-  const citationIds = useMemo(() => {
-    if (!editor) return []
-    return extractCitationIdsFromEditor(editor.getJSON())
-  }, [editor, content]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useCitationPrefetch(citationIds, citationIds.length > 0, isCitationManagerConfigured)
 
   // ============================================================================
   // Sidebar Content
@@ -438,11 +342,7 @@ export function ResearchEditor({
       onRejectTool={rejectTool}
       onClearHistory={clearChatHistory}
       papers={papers}
-      analysisState={analysisState}
       onInsertCitation={handleInsertCitation}
-      onInsertClaim={handleInsertClaim}
-      onInsertGap={handleInsertGap}
-      onRunAnalysis={runAnalysis}
       onOpenLibrary={() => setLibraryDrawerOpen(true)}
       onRemovePaper={removePaper}
     />
@@ -540,6 +440,7 @@ export function ResearchEditor({
               projectId={projectId}
               projectTopic={projectTitle}
               papers={papers}
+              citationStyle={currentCitationStyle}
             />
           </div>
         </div>
@@ -559,6 +460,7 @@ export function ResearchEditor({
           open={settingsModalOpen}
           onOpenChange={setSettingsModalOpen}
           projectId={projectId}
+          currentCitationStyle={currentCitationStyle}
           onCitationStyleChange={(style) => setCurrentCitationStyle(style as CitationStyleType)}
         />
       )}

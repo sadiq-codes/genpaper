@@ -58,19 +58,21 @@ export async function GET(
 
     // Get citations if requested
     if (includeCitations) {
-      const { data: addCitationData, error: addCitationError } = await supabase
-        .from('citations')
-        .select('id, key, csl_json')
+      const { data: citationData, error: citationError } = await supabase
+        .from('project_citations')
+        .select('id, paper_id, cite_key, csl_json')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: true })
+        .order('first_seen_order', { ascending: true })
 
-      if (addCitationError) {
-        console.error('Error loading citations:', addCitationError)
+      if (citationError) {
+        console.error('Error loading citations:', citationError)
       }
 
       const map: Record<string, unknown> = {}
-      ;(addCitationData || []).forEach(rec => {
-        map[rec.key] = rec.csl_json
+      ;(citationData || []).forEach(rec => {
+        // Use cite_key if available, otherwise fall back to paper_id
+        const key = rec.cite_key || rec.paper_id
+        map[key] = rec.csl_json
       })
       citations = map
     }

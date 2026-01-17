@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { 
   Search, 
   BookOpen, 
@@ -49,6 +50,70 @@ interface SearchResult {
 
 type SearchMode = 'library' | 'online'
 
+// API fetchers
+async function fetchLibraryPapers(): Promise<SearchResult[]> {
+  const response = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=100')
+  if (!response.ok) throw new Error('Failed to load library')
+  
+  const data = await response.json()
+  return data.papers.map((item: any) => ({
+    id: item.paper.id,
+    title: item.paper.title,
+    authors: item.paper.author_names || [],
+    year: item.paper.publication_date ? new Date(item.paper.publication_date).getFullYear() : null,
+    journal: item.paper.venue,
+    abstract: item.paper.abstract,
+    doi: item.paper.doi,
+    url: item.paper.pdf_url || (item.paper.doi ? `https://doi.org/${item.paper.doi}` : undefined),
+    citationCount: item.paper.citation_count,
+    source: item.paper.source || 'library',
+    type: 'library' as const
+  }))
+}
+
+async function searchPapersOnline(query: string): Promise<SearchResult[]> {
+  const response = await fetch('/api/library-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query,
+      options: {
+        maxResults: 25,
+        sources: ['openalex', 'crossref', 'semantic_scholar']
+      }
+    })
+  })
+
+  if (!response.ok) throw new Error('Search failed')
+  
+  const data = await response.json()
+  if (!data.success) throw new Error('Search failed')
+  
+  return data.papers.map((paper: any) => ({
+    id: paper.canonical_id,
+    title: paper.title,
+    authors: paper.authors || [],
+    year: paper.year,
+    journal: paper.venue,
+    abstract: paper.abstract,
+    doi: paper.doi,
+    url: paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : undefined),
+    citationCount: paper.citationCount,
+    relevanceScore: paper.relevanceScore,
+    source: paper.source,
+    type: 'search' as const
+  }))
+}
+
+async function addPaperToLibrary(paperId: string): Promise<void> {
+  const response = await fetch('/api/library', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paperId })
+  })
+  if (!response.ok) throw new Error('Failed to add paper to library')
+}
+
 export default function LibraryDrawer({ 
   isOpen, 
   onClose, 
@@ -56,189 +121,122 @@ export default function LibraryDrawer({
   currentProjectId,
   initialQuery = ''
 }: LibraryDrawerProps) {
+  const queryClient = useQueryClient()
   const [query, setQuery] = useState(initialQuery)
-  const [results, setResults] = useState<SearchResult[]>([])
-  const [isSearching, setIsSearching] = useState(false)
-  const [libraryPapers, setLibraryPapers] = useState<SearchResult[]>([])
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searchMode, setSearchMode] = useState<SearchMode>('library')
   const [expandedAbstract, setExpandedAbstract] = useState<string | null>(null)
-  const [processingPapers, setProcessingPapers] = useState<Set<string>>(new Set())
   const [addedPapers, setAddedPapers] = useState<Set<string>>(new Set())
 
-  // Load user's library
-  const loadLibrary = useCallback(async () => {
-    try {
-      const response = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=100')
-      if (response.ok) {
-        const data = await response.json()
-        const transformed: SearchResult[] = data.papers.map((item: any) => ({
-          id: item.paper.id,
-          title: item.paper.title,
-          authors: item.paper.author_names || [],
-          year: item.paper.publication_date ? new Date(item.paper.publication_date).getFullYear() : null,
-          journal: item.paper.venue,
-          abstract: item.paper.abstract,
-          doi: item.paper.doi,
-          url: item.paper.pdf_url || (item.paper.doi ? `https://doi.org/${item.paper.doi}` : undefined),
-          citationCount: item.paper.citation_count,
-          source: item.paper.source || 'library',
-          type: 'library' as const
-        }))
-        setLibraryPapers(transformed)
-        if (!query && searchMode === 'library') {
-          setResults(transformed)
-        }
-      }
-    } catch (error) {
-      console.error('Error loading library:', error)
+  // Fetch library papers with React Query - cached across drawer opens
+  const { 
+    data: libraryPapers = [], 
+    isLoading: isLoadingLibrary 
+  } = useQuery({
+    queryKey: ['library', 'papers'],
+    queryFn: fetchLibraryPapers,
+    enabled: isOpen,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  })
+
+  // Online search with React Query
+  const { 
+    data: onlineResults = [], 
+    isLoading: isSearchingOnline,
+    isFetching: isFetchingOnline
+  } = useQuery({
+    queryKey: ['papers', 'search', debouncedQuery],
+    queryFn: () => searchPapersOnline(debouncedQuery),
+    enabled: isOpen && searchMode === 'online' && debouncedQuery.length >= 3,
+    staleTime: 2 * 60 * 1000, // 2 minutes for search results
+  })
+
+  // Mutation for adding papers to library
+  const addToLibraryMutation = useMutation({
+    mutationFn: addPaperToLibrary,
+    onSuccess: () => {
+      // Invalidate library to refetch
+      queryClient.invalidateQueries({ queryKey: ['library', 'papers'] })
     }
+  })
+
+  // Debounce search query
+  useEffect(() => {
+    // For online search, require minimum 3 characters
+    if (searchMode === 'online' && query.trim().length < 3) {
+      setDebouncedQuery('')
+      return
+    }
+    
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query)
+    }, searchMode === 'online' ? 800 : 150)
+    
+    return () => clearTimeout(timer)
   }, [query, searchMode])
 
-  // Search functionality
-  const searchPapers = useCallback(async (searchQuery: string) => {
-    if (searchMode === 'library') {
-      // Local library search
-      if (!searchQuery.trim()) {
-        setResults(libraryPapers)
-        return
-      }
-      const q = searchQuery.toLowerCase()
-      const matches = libraryPapers.filter(paper =>
-        paper.title.toLowerCase().includes(q) ||
-        paper.authors.some(author => author.toLowerCase().includes(q)) ||
-        paper.journal?.toLowerCase().includes(q) ||
-        paper.abstract?.toLowerCase().includes(q)
-      )
-      setResults(matches)
-      return
-    }
-
-    // Online search
-    if (!searchQuery.trim()) {
-      setResults([])
-      return
-    }
-
-    setIsSearching(true)
-    try {
-      const response = await fetch('/api/library-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: searchQuery,
-          options: {
-            maxResults: 25,
-            sources: ['openalex', 'crossref', 'semantic_scholar']
-          }
-        })
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        if (data.success) {
-          const libraryIds = new Set(libraryPapers.map(p => p.id))
-          const onlineResults: SearchResult[] = data.papers.map((paper: any) => ({
-            id: paper.canonical_id,
-            title: paper.title,
-            authors: paper.authors || [],
-            year: paper.year,
-            journal: paper.venue,
-            abstract: paper.abstract,
-            doi: paper.doi,
-            url: paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : undefined),
-            citationCount: paper.citationCount,
-            relevanceScore: paper.relevanceScore,
-            source: paper.source,
-            type: libraryIds.has(paper.canonical_id) ? 'library' as const : 'search' as const
-          }))
-          // Results are already sorted by relevance from the API
-          setResults(onlineResults)
+  // Reset when drawer opens
+  useEffect(() => {
+    if (isOpen) {
+      setAddedPapers(new Set())
+      if (initialQuery) {
+        setQuery(initialQuery)
+        if (initialQuery.trim()) {
+          setSearchMode('online')
         }
       }
-    } catch (error) {
-      console.error('Search error:', error)
     }
-    setIsSearching(false)
-  }, [libraryPapers, searchMode])
+  }, [isOpen, initialQuery])
+
+  // Filter library papers locally (instant)
+  const filteredLibraryPapers = useMemo(() => {
+    if (!query.trim()) return libraryPapers
+    
+    const q = query.toLowerCase()
+    return libraryPapers.filter(paper =>
+      paper.title.toLowerCase().includes(q) ||
+      paper.authors.some(author => author.toLowerCase().includes(q)) ||
+      paper.journal?.toLowerCase().includes(q) ||
+      paper.abstract?.toLowerCase().includes(q)
+    )
+  }, [libraryPapers, query])
+
+  // Mark online results that are already in library
+  const enrichedOnlineResults = useMemo(() => {
+    const libraryIds = new Set(libraryPapers.map(p => p.id))
+    return onlineResults.map(paper => ({
+      ...paper,
+      type: libraryIds.has(paper.id) ? 'library' as const : 'search' as const
+    }))
+  }, [onlineResults, libraryPapers])
+
+  // Determine which results to show
+  const results = searchMode === 'library' ? filteredLibraryPapers : enrichedOnlineResults
+  const isSearching = searchMode === 'online' && (isSearchingOnline || isFetchingOnline)
 
   // Add paper to project
   const handleAddToProject = useCallback(async (paper: SearchResult) => {
     if (!currentProjectId || addedPapers.has(paper.id)) return
 
-    setProcessingPapers(prev => new Set(prev).add(paper.id))
-    
     try {
       // If from online search, add to library first
       if (paper.type === 'search') {
-        const addResponse = await fetch('/api/library', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paperId: paper.id })
-        })
-        if (!addResponse.ok) {
-          throw new Error('Failed to add paper to library')
-        }
+        await addToLibraryMutation.mutateAsync(paper.id)
       }
 
       onAddToProject?.(paper.id, paper.title)
       setAddedPapers(prev => new Set(prev).add(paper.id))
-      
-      // Update paper type in results
-      setResults(prev => prev.map(p => 
-        p.id === paper.id ? { ...p, type: 'library' } : p
-      ))
     } catch (error) {
       console.error('Error adding paper:', error)
     }
-    
-    setProcessingPapers(prev => {
-      const next = new Set(prev)
-      next.delete(paper.id)
-      return next
-    })
-  }, [currentProjectId, onAddToProject, addedPapers])
-
-  // Initialize
-  useEffect(() => {
-    if (isOpen) {
-      loadLibrary()
-      setAddedPapers(new Set())
-    }
-  }, [isOpen, loadLibrary])
-
-  // Debounced search
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      searchPapers(query)
-    }, searchMode === 'online' ? 400 : 150)
-    return () => clearTimeout(timer)
-  }, [query, searchPapers, searchMode])
-
-  // Initial query
-  useEffect(() => {
-    if (isOpen && initialQuery) {
-      setQuery(initialQuery)
-      if (initialQuery.trim()) {
-        setSearchMode('online')
-      }
-    }
-  }, [isOpen, initialQuery])
-
-  // Reset when mode changes
-  useEffect(() => {
-    if (searchMode === 'library' && !query) {
-      setResults(libraryPapers)
-    } else {
-      searchPapers(query)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only trigger on searchMode change
-  }, [searchMode])
+  }, [currentProjectId, onAddToProject, addedPapers, addToLibraryMutation])
 
   if (!isOpen) return null
 
-  const showEmptyLibrary = searchMode === 'library' && libraryPapers.length === 0 && !query
-  const showNoResults = results.length === 0 && query && !isSearching
+  const showEmptyLibrary = searchMode === 'library' && libraryPapers.length === 0 && !query && !isLoadingLibrary
+  const showNoResults = results.length === 0 && query.trim().length >= 3 && !isSearching
   const showSearchPrompt = searchMode === 'online' && !query && !isSearching
+  const showMinCharsHint = searchMode === 'online' && query.trim().length > 0 && query.trim().length < 3
 
   return (
     <div className="fixed inset-0 z-50">
@@ -321,10 +319,12 @@ export default function LibraryDrawer({
         <ScrollArea className="flex-1">
           <div className="p-4">
             {/* Loading State */}
-            {isSearching && results.length === 0 && (
+            {(isSearching || isLoadingLibrary) && results.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-                <p className="text-sm text-muted-foreground">Searching papers...</p>
+                <p className="text-sm text-muted-foreground">
+                  {isLoadingLibrary ? 'Loading library...' : 'Searching papers...'}
+                </p>
               </div>
             )}
 
@@ -349,6 +349,15 @@ export default function LibraryDrawer({
                 icon={Sparkles}
                 title="Search academic papers"
                 description="Find papers from OpenAlex, CrossRef, and Semantic Scholar"
+              />
+            )}
+
+            {/* Minimum characters hint */}
+            {showMinCharsHint && (
+              <EmptyState
+                icon={Search}
+                title="Keep typing..."
+                description="Enter at least 3 characters to search"
               />
             )}
 
@@ -377,7 +386,7 @@ export default function LibraryDrawer({
                     key={paper.id}
                     paper={paper}
                     onAdd={() => handleAddToProject(paper)}
-                    isProcessing={processingPapers.has(paper.id)}
+                    isProcessing={addToLibraryMutation.isPending && addToLibraryMutation.variables === paper.id}
                     isAdded={addedPapers.has(paper.id)}
                     showAddButton={!!currentProjectId}
                     isExpanded={expandedAbstract === paper.id}

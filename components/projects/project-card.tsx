@@ -27,6 +27,7 @@ import {
   GraduationCap,
   ScrollText,
   Briefcase,
+  Loader2,
   type LucideIcon,
 } from "lucide-react"
 import { deleteProjectAction } from "@/components/dashboard/actions"
@@ -71,6 +72,7 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
   const router = useRouter()
   const [_isPending, startTransition] = useTransition()
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isNavigating, setIsNavigating] = useState(false)
 
   const getPaperType = (): PaperTypeKey | undefined => {
     if (project.paper_type) return project.paper_type
@@ -89,6 +91,7 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
   const typeConfig = paperType ? paperTypeConfig[paperType] : null
 
   const handleClick = () => {
+    setIsNavigating(true)
     router.push(`/editor/${project.id}`)
   }
 
@@ -160,10 +163,16 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
         "group cursor-pointer transition-all duration-200",
         "hover:shadow-md hover:border-primary/30",
         "relative overflow-hidden",
-        isDeleting && "opacity-50 pointer-events-none",
+        (isDeleting || isNavigating) && "opacity-50 pointer-events-none",
       )}
       onClick={handleClick}
     >
+      {/* Loading overlay */}
+      {isNavigating && (
+        <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      )}
       <div className="absolute inset-x-0 top-0 h-0.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity" />
 
       <CardHeader className="pb-3">
