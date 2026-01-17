@@ -2,6 +2,7 @@ import type React from "react"
 import type { Metadata } from "next"
 import { Geist, Geist_Mono, Caveat } from "next/font/google"
 import "./globals.css"
+import { AuthProvider } from "@/components/providers/AuthProvider"
 
 // Global error handler removed - using unified API error handling
 
@@ -33,7 +34,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} ${caveat.variable} antialiased`} suppressHydrationWarning={true}>
-        {children}
+        <AuthProvider>
+          {children}
+        </AuthProvider>
       </body>
     </html>
   )

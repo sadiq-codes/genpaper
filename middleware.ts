@@ -23,7 +23,8 @@ export async function middleware(request: NextRequest) {
           return request.cookies.getAll()
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
+          // Note: request.cookies.set only accepts (name, value) - options are applied on the response
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           supabaseResponse = NextResponse.next({
             request,
           })
@@ -35,10 +36,15 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // IMPORTANT: Do not remove this line
-  // This refreshes the session if it's expired and updates the cookies
-  // The getUser() call is what triggers the session refresh
-  await supabase.auth.getUser()
+  try {
+    // IMPORTANT: This refreshes the session if it's expired and updates the cookies
+    // The getUser() call is what triggers the session refresh
+    await supabase.auth.getUser()
+  } catch (error) {
+    // If Supabase is unreachable, don't clear the session
+    // Just pass through the request with existing cookies
+    console.error('Middleware: Supabase auth check failed:', error)
+  }
 
   return supabaseResponse
 }

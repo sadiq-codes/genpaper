@@ -64,7 +64,14 @@ export async function createClient(): Promise<SupabaseClient> {
           if (!cookieStore) return // Nothing to persist in a background context
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
+              cookieStore.set(name, value, {
+                ...options,
+                httpOnly: true,
+                path: '/',
+                sameSite: 'lax',
+                secure: process.env.NODE_ENV === 'production',
+                maxAge: 60 * 60 * 24 * 7, // 7 days
+              })
             )
           } catch {
             /* ignore */
