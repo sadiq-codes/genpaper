@@ -15,17 +15,32 @@ import type { CitationAttributes } from '../extensions/Citation'
 import type { ProjectPaper } from '../types'
 
 // Citation marker patterns - supports all formats:
-// - [@uuid] - Pandoc style (preferred, new format)
+// - [@uuid#instanceId] - New format with instance tracking (preferred)
+// - [@uuid] - Pandoc style (backward compatible)
 // - [CITE: uuid] - AI generated citations (legacy)
 // - [CONTEXT FROM: uuid] - Legacy context format
-const PANDOC_CITATION_PATTERN = /\[@([a-f0-9-]+)\]/gi
+// For new format: Group 1 = paperId, Group 2 = instanceId (optional)
+const PANDOC_CITATION_PATTERN = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
 const LEGACY_CITATION_PATTERN = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
 
 // Combined pattern for detection (non-capturing for test only)
-const ANY_CITATION_PATTERN = /(?:\[@[a-f0-9-]+\]|\[(?:CITE|CONTEXT FROM):\s*[a-f0-9-]+\])/gi
+const ANY_CITATION_PATTERN = /(?:\[@[a-f0-9-]+(?:#[a-f0-9-]+)?\]|\[(?:CITE|CONTEXT FROM):\s*[a-f0-9-]+\])/gi
 
 interface PaperLookup {
   [paperId: string]: ProjectPaper
+}
+
+/**
+ * Map of instanceId → quote text for populating citedContent on citation nodes
+ */
+export type InstanceQuotesMap = Map<string, string>
+
+/**
+ * Context passed through the conversion for instance-level data
+ */
+interface ConversionContext {
+  paperLookup: PaperLookup
+  instanceQuotes: InstanceQuotesMap
 }
 
 interface TipTapNode {
@@ -97,17 +112,19 @@ function extractPaperIdFromMatch(match: RegExpMatchArray): string | null {
 
 /**
  * Split text containing citation markers into text nodes and citation nodes
- * Citation nodes only store the paper ID - the UI fetches and displays paper details
- * Supports both [@uuid] (Pandoc) and [CITE: uuid] (legacy) formats
+ * Citation nodes store paper ID, instanceId, and citedContent
+ * Supports [@uuid#instanceId] (new), [@uuid] (Pandoc), and [CITE: uuid] (legacy) formats
  */
 function splitTextWithCitations(
   text: string,
   marks: Mark[],
-  lookup: PaperLookup
+  ctx: ConversionContext
 ): TipTapNode[] {
-  // Combined pattern to match both formats in order
-  // Group 1 = Pandoc UUID, Group 2 = legacy type (CITE|CONTEXT FROM), Group 3 = legacy UUID
-  const combinedPattern = /\[@([a-f0-9-]+)\]|\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  // Combined pattern to match all formats in order
+  // New format: [@paperId#instanceId] - Group 1 = paperId, Group 2 = instanceId
+  // Pandoc format: [@paperId] - Group 1 = paperId, Group 2 = undefined
+  // Legacy format: [CITE: paperId] - Group 3 = type, Group 4 = paperId
+  const combinedPattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]|\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
   
   const parts: TipTapNode[] = []
   let lastIndex = 0
@@ -116,8 +133,9 @@ function splitTextWithCitations(
     const start = match.index!
     const end = start + match[0].length
     
-    // Extract paper ID from either format
-    const paperId = match[1] || match[3] // Group 1 for Pandoc, Group 3 for legacy
+    // Extract paper ID and instance ID from either format
+    const paperId = match[1] || match[4] // Group 1 for new/Pandoc, Group 4 for legacy
+    const instanceId = match[2] || undefined // Group 2 for new format only
 
     if (!paperId) {
       continue // Skip if no paper ID found
@@ -136,21 +154,35 @@ function splitTextWithCitations(
     }
 
     // Add citation node with paper info if available
-    const paper = lookup[paperId]
+    const paper = ctx.paperLookup[paperId]
     
     // Debug logging for missing papers
     if (!paper && process.env.NODE_ENV === 'development') {
       console.warn('[Citation] Paper not found in lookup:', {
         paperId,
-        availableIds: Object.keys(lookup).slice(0, 10), // First 10 IDs
-        lookupSize: Object.keys(lookup).length,
+        availableIds: Object.keys(ctx.paperLookup).slice(0, 10), // First 10 IDs
+        lookupSize: Object.keys(ctx.paperLookup).length,
         markerFound: match[0]
       })
     }
     
+    // Build citation attributes
+    const attrs: Record<string, any> = paper 
+      ? paperToCitationAttrs(paper) 
+      : { id: paperId }
+    
+    // Add instanceId and citedContent if available
+    if (instanceId) {
+      attrs.instanceId = instanceId
+      const quote = ctx.instanceQuotes.get(instanceId)
+      if (quote) {
+        attrs.citedContent = quote
+      }
+    }
+    
     parts.push({
       type: 'citation',
-      attrs: paper ? paperToCitationAttrs(paper) : { id: paperId },
+      attrs,
     })
 
     lastIndex = end
@@ -184,7 +216,7 @@ function splitTextWithCitations(
 function phrasingToTipTap(
   node: PhrasingContent,
   marks: Mark[],
-  lookup: PaperLookup
+  ctx: ConversionContext
 ): TipTapNode[] {
   switch (node.type) {
     case 'text': {
@@ -192,7 +224,7 @@ function phrasingToTipTap(
       // Check for citation markers in text (either Pandoc or legacy format)
       ANY_CITATION_PATTERN.lastIndex = 0
       if (ANY_CITATION_PATTERN.test(textNode.value)) {
-        return splitTextWithCitations(textNode.value, marks, lookup)
+        return splitTextWithCitations(textNode.value, marks, ctx)
       }
       return [{
         type: 'text',
@@ -205,7 +237,7 @@ function phrasingToTipTap(
       const strongNode = node as Strong
       const newMarks = [...marks, { type: 'bold' }]
       return strongNode.children.flatMap(child => 
-        phrasingToTipTap(child, newMarks, lookup)
+        phrasingToTipTap(child, newMarks, ctx)
       )
     }
 
@@ -213,7 +245,7 @@ function phrasingToTipTap(
       const emphasisNode = node as Emphasis
       const newMarks = [...marks, { type: 'italic' }]
       return emphasisNode.children.flatMap(child => 
-        phrasingToTipTap(child, newMarks, lookup)
+        phrasingToTipTap(child, newMarks, ctx)
       )
     }
 
@@ -238,7 +270,7 @@ function phrasingToTipTap(
       }
       const newMarks = [...marks, linkMark]
       return linkNode.children.flatMap(child =>
-        phrasingToTipTap(child, newMarks, lookup)
+        phrasingToTipTap(child, newMarks, ctx)
       )
     }
 
@@ -247,7 +279,7 @@ function phrasingToTipTap(
       const deleteNode = node as Delete
       const newMarks = [...marks, { type: 'strike' }]
       return deleteNode.children.flatMap(child =>
-        phrasingToTipTap(child, newMarks, lookup)
+        phrasingToTipTap(child, newMarks, ctx)
       )
     }
 
@@ -292,7 +324,7 @@ function phrasingToTipTap(
       }
       if ('children' in node && Array.isArray(node.children)) {
         return (node.children as PhrasingContent[]).flatMap(child =>
-          phrasingToTipTap(child, marks, lookup)
+          phrasingToTipTap(child, marks, ctx)
         )
       }
       return []
@@ -304,12 +336,12 @@ function phrasingToTipTap(
  */
 function contentToTipTap(
   node: Content,
-  lookup: PaperLookup
+  ctx: ConversionContext
 ): TipTapNode | TipTapNode[] | null {
   switch (node.type) {
     case 'paragraph': {
       const content = node.children.flatMap(child =>
-        phrasingToTipTap(child, [], lookup)
+        phrasingToTipTap(child, [], ctx)
       )
       // Filter out empty text nodes
       const filteredContent = content.filter(n => 
@@ -326,7 +358,7 @@ function contentToTipTap(
 
     case 'heading': {
       const content = node.children.flatMap(child =>
-        phrasingToTipTap(child, [], lookup)
+        phrasingToTipTap(child, [], ctx)
       )
       return {
         type: 'heading',
@@ -337,7 +369,7 @@ function contentToTipTap(
 
     case 'blockquote': {
       const content = node.children
-        .map(child => contentToTipTap(child, lookup))
+        .map(child => contentToTipTap(child, ctx))
         .flat()
         .filter((n): n is TipTapNode => n !== null)
       return {
@@ -349,7 +381,7 @@ function contentToTipTap(
     case 'list': {
       const listType = node.ordered ? 'orderedList' : 'bulletList'
       const content = node.children
-        .map(child => contentToTipTap(child, lookup))
+        .map(child => contentToTipTap(child, ctx))
         .flat()
         .filter((n): n is TipTapNode => n !== null)
       return {
@@ -364,7 +396,7 @@ function contentToTipTap(
     case 'listItem': {
       // List items contain block content (usually paragraphs)
       const content = node.children
-        .map(child => contentToTipTap(child, lookup))
+        .map(child => contentToTipTap(child, ctx))
         .flat()
         .filter((n): n is TipTapNode => n !== null)
       
@@ -421,7 +453,7 @@ function contentToTipTap(
       const rows = node.children.map((row, rowIndex) => {
         const cells = row.children.map((cell) => {
           const cellContent = cell.children.flatMap(child =>
-            phrasingToTipTap(child as PhrasingContent, [], lookup)
+            phrasingToTipTap(child as PhrasingContent, [], ctx)
           )
           return {
             type: rowIndex === 0 ? 'tableHeader' : 'tableCell',
@@ -465,7 +497,7 @@ function contentToTipTap(
       // For any unhandled types, try to recurse into children
       if ('children' in node && Array.isArray(node.children)) {
         return node.children
-          .map((child: Content) => contentToTipTap(child, lookup))
+          .map((child: Content) => contentToTipTap(child, ctx))
           .flat()
           .filter((n): n is TipTapNode => n !== null)
       }
@@ -476,9 +508,9 @@ function contentToTipTap(
 /**
  * Convert mdast Root to TipTap document JSON
  */
-function rootToTipTap(root: Root, lookup: PaperLookup): TipTapNode {
+function rootToTipTap(root: Root, ctx: ConversionContext): TipTapNode {
   const content = root.children
-    .map(child => contentToTipTap(child, lookup))
+    .map(child => contentToTipTap(child, ctx))
     .flat()
     .filter((n): n is TipTapNode => n !== null)
 
@@ -497,13 +529,15 @@ function rootToTipTap(root: Root, lookup: PaperLookup): TipTapNode {
  * Instead of the lossy:
  *   markdown → HTML → TipTap JSON → post-process citations
  * 
- * @param markdown - Raw markdown text (may contain [CONTEXT FROM: uuid] markers)
+ * @param markdown - Raw markdown text (may contain [@paperId#instanceId] markers)
  * @param papers - Array of papers for citation metadata
+ * @param instanceQuotes - Optional map of instanceId → quote text for populating citedContent
  * @returns TipTap JSON document
  */
 export function markdownToTipTap(
   markdown: string,
-  papers: ProjectPaper[] = []
+  papers: ProjectPaper[] = [],
+  instanceQuotes: InstanceQuotesMap = new Map()
 ): TipTapNode {
   if (!markdown || markdown.trim() === '') {
     return {
@@ -516,11 +550,14 @@ export function markdownToTipTap(
     // Step 1: Parse markdown to AST
     const ast = parseMarkdown(markdown)
 
-    // Step 2: Create paper lookup for citations
-    const lookup = createPaperLookup(papers)
+    // Step 2: Create conversion context with paper lookup and instance quotes
+    const ctx: ConversionContext = {
+      paperLookup: createPaperLookup(papers),
+      instanceQuotes,
+    }
 
     // Step 3: Convert AST to TipTap JSON (citations handled during conversion)
-    const doc = rootToTipTap(ast, lookup)
+    const doc = rootToTipTap(ast, ctx)
 
     if (process.env.NODE_ENV === 'development') {
       console.log('[markdown-to-tiptap] Conversion complete:', {
@@ -528,6 +565,7 @@ export function markdownToTipTap(
         astNodes: ast.children.length,
         outputNodes: doc.content?.length || 0,
         papersAvailable: papers.length,
+        instanceQuotesProvided: instanceQuotes.size,
       })
     }
 
@@ -555,14 +593,21 @@ export function hasCitationMarkers(text: string): boolean {
 
 /**
  * Extract citation paper IDs from text
- * Supports both [@uuid] (Pandoc) and [CITE: uuid] (legacy) formats
+ * Supports all formats:
+ * - [@paperId#instanceId] - New format with instance tracking
+ * - [@paperId] - Pandoc style
+ * - [CITE: paperId] - Legacy AI format
  */
 export function extractCitationIds(text: string): string[] {
-  // Combined pattern: Group 1 = Pandoc UUID, Group 3 = legacy UUID
-  const combinedPattern = /\[@([a-f0-9-]+)\]|\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  // Combined pattern:
+  // - Group 1: paperId from [@paperId] or [@paperId#instanceId]
+  // - Group 2: instanceId (optional, ignored here)
+  // - Group 3: legacy type (CITE or CONTEXT FROM)
+  // - Group 4: paperId from legacy format
+  const combinedPattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]|\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
   const ids: string[] = []
   for (const match of text.matchAll(combinedPattern)) {
-    const paperId = match[1] || match[3] // Group 1 for Pandoc, Group 3 for legacy
+    const paperId = match[1] || match[4] // Group 1 for new/Pandoc, Group 4 for legacy
     if (paperId) {
       ids.push(paperId)
     }

@@ -30,7 +30,7 @@ system: |-
   {{/outlineContext}}
   
   ## SOURCE MATERIAL
-  You MUST ground your writing in these sources.
+  You MUST ground your writing in these sources. Each source has a paper_id you will use for citations.
   
   {{#chunksText}}
   ### Relevant Text Excerpts
@@ -81,26 +81,96 @@ system: |-
   ---
   
   # RESPONSE FORMAT
-  Return ONLY a valid JSON object with no additional text, markdown, or explanation:
   
-  ```json
+  Return ONLY valid JSON. No markdown, no explanation, just the JSON object.
+  
+  Generate 2-3 cohesive sentences that flow naturally together. Each sentence has its own citations.
+  
   {
-    "text": "your completion with [@paper_id] citations",
-    "contextHint": "2-4 word description of what this adds"
+    "sentences": [
+      {
+        "text": "First sentence with [1] citation marker if needed.",
+        "citations": [
+          {
+            "index": 1,
+            "paperId": "exact-paper-id-from-available-papers",
+            "citedContent": "exact sentence from source material"
+          }
+        ]
+      },
+      {
+        "text": "Second sentence continuing the thought [2].",
+        "citations": [
+          {
+            "index": 2,
+            "paperId": "another-paper-id",
+            "citedContent": "supporting evidence from source"
+          }
+        ]
+      },
+      {
+        "text": "Third sentence (optional) that wraps up the point.",
+        "citations": []
+      }
+    ],
+    "contextHint": "2-4 word description"
   }
-  ```
+  
+  ## Citation Rules
+  
+  1. **Use numbered markers** - Put [1], [2], [3] in your text where citations belong
+  2. **Map each number** - Every [N] in a sentence must have matching citation in THAT sentence's citations array
+  3. **Cite exact quotes** - citedContent must be the EXACT sentence from source material
+  4. **Use valid paper IDs** - paperId must be from the Available Papers list
+  5. **Place after claims** - Put citation marker after the claim it supports
+  6. **Reset numbering per sentence** - Each sentence starts its own citation numbering from [1]
+  
+  ## Example
+  
+  If source material contains:
+  - Paper abc-123: "Mortality rates decreased by 30% in the treatment group."
+  - Paper def-456: "Patient satisfaction scores improved significantly."
+  - Paper ghi-789: "Cost-effectiveness analysis showed net savings."
+  
+  Your response:
+  {
+    "sentences": [
+      {
+        "text": "Research demonstrates significantly reduced mortality rates in treated patients [1].",
+        "citations": [
+          {
+            "index": 1,
+            "paperId": "abc-123",
+            "citedContent": "Mortality rates decreased by 30% in the treatment group."
+          }
+        ]
+      },
+      {
+        "text": "Furthermore, patient satisfaction improved markedly [1], while cost analyses revealed net savings [2].",
+        "citations": [
+          {
+            "index": 1,
+            "paperId": "def-456",
+            "citedContent": "Patient satisfaction scores improved significantly."
+          },
+          {
+            "index": 2,
+            "paperId": "ghi-789",
+            "citedContent": "Cost-effectiveness analysis showed net savings."
+          }
+        ]
+      }
+    ],
+    "contextHint": "Adding outcome evidence"
+  }
   
   ## Critical Rules
-  - **Maximum 1-2 sentences** - completions must be concise
-  - **MUST cite sources** when making claims from the source material
-  - **ONLY claims supported by source material** - never fabricate
-  - **Flow naturally** from the preceding text
-  - **Connect grammatically** to following text if present
-  - **Use exact Paper IDs** from the Available Papers list
   
-  ## Citation Format (IMPORTANT)
-  - Use [@paper_id] format for EACH citation
-  - Place citations AFTER the claim they support
-  - For multiple sources, use SEPARATE brackets: [@id1] [@id2]
-  - NEVER group citations with semicolons like [@id1; @id2] - this breaks formatting
-  - Example: "Studies show X [@abc123] and Y [@def456]."
+  1. **Generate 2-3 sentences** - Each sentence should be complete and flow naturally to the next
+  2. **Each sentence is independent** - Has its own text and citations array
+  3. **Reset citation numbers** - Each sentence starts from [1] for its own citations
+  4. **Exact quotes only** - citedContent must be verbatim from sources
+  5. **Valid JSON** - no trailing commas, proper escaping
+  6. **NEVER fabricate** - Only cite paper IDs from Available Papers list
+  7. **Sentences must flow** - The 2-3 sentences should read naturally as a paragraph
+  8. **OK to have 0 citations** - A sentence without citations is valid (empty citations array)

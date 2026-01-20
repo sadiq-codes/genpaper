@@ -1,9 +1,12 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 import { CitationNodeView, formatCitationByStyle, type CitationStyleType } from './CitationNodeView'
+import type { ProjectPaper } from '../types'
 
 export interface CitationAttributes {
   id: string
+  instanceId?: string   // Citation instance ID for quote lookup
+  citedContent?: string // The quote from source (populated on load)
   authors?: string[]
   title?: string
   year?: number
@@ -16,6 +19,8 @@ export interface CitationOptions {
   citationStyle: CitationStyleType
   /** Map of paper IDs to citation numbers (for IEEE/Vancouver styles) */
   citationNumbers: Map<string, number>
+  /** Papers array for looking up paper metadata at render time */
+  papers: ProjectPaper[]
 }
 
 declare module '@tiptap/core' {
@@ -23,6 +28,7 @@ declare module '@tiptap/core' {
     citation: {
       insertCitation: (attrs: CitationAttributes) => ReturnType
       setCitationStyle: (style: CitationStyleType) => ReturnType
+      setPapers: (papers: ProjectPaper[]) => ReturnType
     }
   }
 }
@@ -47,6 +53,7 @@ export const Citation = Node.create<CitationOptions>({
     return {
       citationStyle: 'apa' as CitationStyleType,
       citationNumbers: new Map<string, number>(),
+      papers: [] as ProjectPaper[],
     }
   },
 
@@ -54,12 +61,15 @@ export const Citation = Node.create<CitationOptions>({
     return {
       citationStyle: this.options.citationStyle,
       citationNumbers: this.options.citationNumbers,
+      papers: this.options.papers,
     }
   },
 
   addAttributes() {
     return {
       id: { default: null },
+      instanceId: { default: null },
+      citedContent: { default: null },
       authors: { default: [] },
       title: { default: '' },
       year: { default: null },
@@ -77,6 +87,8 @@ export const Citation = Node.create<CitationOptions>({
           const element = dom as HTMLElement
           return {
             id: element.getAttribute('data-citation'),
+            instanceId: element.getAttribute('data-instance-id') || null,
+            citedContent: element.getAttribute('data-cited-content') || null,
             authors: element.getAttribute('data-authors')
               ? JSON.parse(element.getAttribute('data-authors') || '[]')
               : [],
@@ -102,6 +114,8 @@ export const Citation = Node.create<CitationOptions>({
       'span',
       mergeAttributes(HTMLAttributes, {
         'data-citation': attrs.id,
+        'data-instance-id': attrs.instanceId || '',
+        'data-cited-content': attrs.citedContent || '',
         'data-type': 'citation',
         'data-authors': JSON.stringify(attrs.authors || []),
         'data-title': attrs.title || '',
@@ -166,6 +180,17 @@ export const Citation = Node.create<CitationOptions>({
         // Force re-render by dispatching a transaction
         // Using setMeta to mark this as a style change
         const tr = editor.state.tr.setMeta('citationStyleChange', style)
+        editor.view.dispatch(tr)
+        
+        return true
+      },
+      
+      setPapers: (papers: ProjectPaper[]) => ({ editor }) => {
+        // Update storage with new papers array
+        this.storage.papers = papers
+        
+        // Force re-render by dispatching a transaction
+        const tr = editor.state.tr.setMeta('papersUpdated', true)
         editor.view.dispatch(tr)
         
         return true

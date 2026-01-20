@@ -156,10 +156,18 @@ ACTUALLY APPEAR in your evidence snippets. If evidence lacks numbers, write qual
 
 ✅ **USE (Integrated synthesis) - STRUCTURE ONLY:**
 > "A consistent pattern emerges across recent studies: researchers examining [topic from YOUR evidence] 
-> have consistently found [finding from YOUR evidence] [CITE: your-actual-id1] [CITE: your-actual-id2] [CITE: your-actual-id3]. 
+> have consistently found [finding from YOUR evidence] [1] [2] [3]. 
 > However, findings diverge sharply regarding [aspect from YOUR evidence], with [some studies from YOUR evidence] suggesting 
-> [one finding] [CITE: your-actual-id4] while [other studies from YOUR evidence] reveal [different finding] [CITE: your-actual-id5]. 
+> [one finding] [4] while [other studies from YOUR evidence] reveal [different finding] [5]. 
 > This [type of divide you identify] may explain the apparent contradiction, as..."
+>
+> <!-- CITATIONS
+> [1] paper_id: actual-id | quote: "exact quote"
+> [2] paper_id: actual-id | quote: "exact quote"
+> [3] paper_id: actual-id | quote: "exact quote"
+> [4] paper_id: actual-id | quote: "exact quote"
+> [5] paper_id: actual-id | quote: "exact quote"
+> -->
 
 ⚠️ Replace ALL bracketed content with ACTUAL information from your evidence snippets.
 
@@ -206,18 +214,24 @@ Populate tables ONLY with data from YOUR evidence snippets.
 **Table 1: Summary of Reviewed Studies**
 | Author (Year) | Sample/Context | Method | Key Findings |
 |---------------|----------------|--------|--------------|
-| [Author from evidence] [CITE: actual-id] | [Sample IF in evidence, else "not reported"] | [Method from evidence] | [Finding from evidence] |
-| [Author from evidence] [CITE: actual-id] | [Sample IF in evidence, else "not reported"] | [Method from evidence] | [Finding from evidence] |
+| [Author from evidence] [1] | [Sample IF in evidence, else "not reported"] | [Method from evidence] | [Finding from evidence] |
+| [Author from evidence] [2] | [Sample IF in evidence, else "not reported"] | [Method from evidence] | [Finding from evidence] |
 
 **Table 2: Comparison of Approaches/Methods**
 | Approach | Advantages | Limitations | Supporting Studies |
 |----------|------------|-------------|-------------------|
-| [Method from evidence] | [Advantage from evidence] | [Limitation from evidence] | [CITE: actual-id1] [CITE: actual-id2] |
+| [Method from evidence] | [Advantage from evidence] | [Limitation from evidence] | [3] [4] |
 
 **Table 3: Contradictory Findings**
 | Finding | Studies Supporting | Studies Contradicting | Possible Explanation |
 |---------|-------------------|----------------------|---------------------|
-| [Finding from evidence] | [CITE: actual-ids] | [CITE: actual-ids] | [Your analysis] |
+| [Finding from evidence] | [5] [6] | [7] | [Your analysis] |
+
+<!-- CITATIONS
+[1] paper_id: actual-id | quote: "exact quote"
+[2] paper_id: actual-id | quote: "exact quote"
+... (continue for all)
+-->
 
 ⚠️ CRITICAL: If your evidence doesn't include sample sizes, methods, or other details, 
 either omit that column OR write "not reported" - NEVER invent data.

@@ -33,11 +33,52 @@ import { BlockId } from '../extensions/BlockId'
 import { useSmartCompletion } from '../hooks/useSmartCompletion'
 import { processContent, hasMarkdownFormatting } from '../utils/content-processor'
 import { editorToMarkdown } from '../utils/tiptap-to-markdown'
+import type { InstanceQuotesMap } from '../utils/markdown-to-tiptap'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
+
+/**
+ * Extract all instanceIds from content that uses [@paperId#instanceId] format
+ */
+function extractInstanceIds(content: string): string[] {
+  const pattern = /\[@[a-f0-9-]{36}#([a-f0-9-]{36})\]/gi
+  const instanceIds: string[] = []
+  for (const match of content.matchAll(pattern)) {
+    instanceIds.push(match[1])
+  }
+  return instanceIds
+}
+
+/**
+ * Fetch citation instance quotes from the server
+ */
+async function fetchInstanceQuotes(projectId: string, instanceIds: string[]): Promise<InstanceQuotesMap> {
+  const quotesMap: InstanceQuotesMap = new Map()
+  
+  if (!projectId || instanceIds.length === 0) {
+    return quotesMap
+  }
+  
+  try {
+    const response = await fetch(`/api/citation-instances?projectId=${projectId}&instanceIds=${instanceIds.join(',')}`)
+    if (response.ok) {
+      const data = await response.json()
+      const instances = Array.isArray(data.instances) ? data.instances : []
+      for (const instance of instances) {
+        if (instance.id && instance.quote) {
+          quotesMap.set(instance.id, instance.quote)
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[DocumentEditor] Failed to fetch instance quotes:', error)
+  }
+  
+  return quotesMap
+}
 import {
   Dialog,
   DialogContent,
@@ -316,6 +357,57 @@ export function DocumentEditor({
     prevCitationStyleRef.current = citationStyle
     editor.commands.setCitationStyle(citationStyle)
   }, [editor, citationStyle])
+  
+  // Sync papers to Citation extension storage
+  // This allows CitationNodeView to look up paper metadata at render time,
+  // ensuring citations always display correctly even when node.attrs are incomplete
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    
+    // Update Citation extension storage with current papers
+    editor.commands.setPapers(papers)
+    
+    if (process.env.NODE_ENV === 'development' && papers.length > 0) {
+      console.log(`[DocumentEditor] Synced ${papers.length} papers to Citation extension storage`)
+    }
+  }, [editor, papers])
+  
+  // Fetch citation instance quotes after content is loaded
+  // This populates citedContent for hover previews
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !projectId || !initialContent) return
+    if (processedWithPapersCount === -1) return // Wait for initial content to be set
+    
+    const instanceIds = extractInstanceIds(initialContent)
+    if (instanceIds.length === 0) return
+    
+    // Fetch quotes and update citation nodes
+    fetchInstanceQuotes(projectId, instanceIds).then(quotesMap => {
+      if (quotesMap.size === 0 || !editor || editor.isDestroyed) return
+      
+      // Walk the document and update citation nodes with citedContent
+      const { tr } = editor.state
+      let modified = false
+      
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'citation' && node.attrs.instanceId) {
+          const quote = quotesMap.get(node.attrs.instanceId)
+          if (quote && !node.attrs.citedContent) {
+            tr.setNodeMarkup(pos, undefined, {
+              ...node.attrs,
+              citedContent: quote,
+            })
+            modified = true
+          }
+        }
+      })
+      
+      if (modified) {
+        editor.view.dispatch(tr)
+        console.log(`[DocumentEditor] Populated citedContent for ${quotesMap.size} citation instances`)
+      }
+    })
+  }, [editor, projectId, initialContent, processedWithPapersCount])
 
   // Smart completion hook - ghost text appears seamlessly
   useSmartCompletion({
@@ -325,6 +417,80 @@ export function DocumentEditor({
     projectId,
     projectTopic
   })
+
+  // Pre-warm RAG cache on editor load for faster autocomplete
+  // This runs once when the editor is ready with papers
+  const prewarmCalledRef = useRef(false)
+  
+  useEffect(() => {
+    if (!projectId || papers.length === 0 || prewarmCalledRef.current) return
+    prewarmCalledRef.current = true
+    
+    // Extract section titles from document outline for targeted pre-warming
+    const sections = initialContent
+      .match(/^#{1,3}\s+.+$/gm)
+      ?.map(h => h.replace(/^#+\s+/, '').trim())
+      .slice(0, 5) || []
+    
+    // Fire and forget - don't block editor
+    fetch('/api/editor/prewarm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        paperIds: papers.map(p => p.id),
+        sections
+      })
+    }).then(res => {
+      if (res.ok) {
+        res.json().then(data => {
+          console.log(`[DocumentEditor] RAG cache pre-warmed: ${data.prewarmed} queries in ${data.duration}ms`)
+        })
+      }
+    }).catch(err => {
+      // Silently ignore pre-warm errors - it's just an optimization
+      console.warn('[DocumentEditor] Pre-warm failed:', err)
+    })
+  }, [projectId, papers, initialContent])
+
+  // Listen for citations accepted event to save citedContent to database
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !projectId) return
+
+    const handleCitationsAccepted = async (event: Event) => {
+      const customEvent = event as CustomEvent<{ citations: Array<{ paperId: string; citedContent?: string }> }>
+      const { citations } = customEvent.detail
+
+      if (!citations || citations.length === 0) return
+
+      // Save each citation's citedContent to the database
+      for (const citation of citations) {
+        if (!citation.citedContent) continue
+
+        try {
+          await fetch('/api/citations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId,
+              paperId: citation.paperId,
+              quote: citation.citedContent,
+              reason: 'AI-generated citation'
+            })
+          })
+        } catch (error) {
+          console.error('[DocumentEditor] Failed to save citation quote:', error)
+        }
+      }
+    }
+
+    const editorDom = editor.view.dom
+    editorDom.addEventListener('ghosttext:citations-accepted', handleCitationsAccepted)
+
+    return () => {
+      editorDom.removeEventListener('ghosttext:citations-accepted', handleCitationsAccepted)
+    }
+  }, [editor, projectId])
 
   const _handleInsertMath = useCallback(() => {
     setMathDialogOpen(true)

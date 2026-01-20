@@ -6,6 +6,7 @@ import { PromptBuilder, type PromptTemplate } from '@/lib/core/prompt-builder'
 import type { PaperTypeKey, SectionKey } from './types'
 import type { PromptData, BuiltPrompt, TemplateOptions } from '@/lib/core/prompt-builder'
 import type { ChatCOStarContext, CompleteCOStarContext } from './costar-context'
+import type { ChatAUTOMATContext } from './automat-context'
 
 /**
  * PromptService - Template Loading Wrapper
@@ -43,11 +44,26 @@ export class PromptService {
   }
 
   /**
-   * Build chat system prompt using CO-STAR framework
+   * Build chat system prompt using CO-STAR framework (legacy)
+   * @deprecated Use buildChatAUTOMATPrompt for new code
    */
   static async buildChatPrompt(context: ChatCOStarContext): Promise<string> {
     const template = await this.loadTemplate('chat')
     return PromptBuilder.buildChatPrompt(template, context)
+  }
+
+  /**
+   * Build chat system prompt using AUTOMAT framework
+   * AUTOMAT: Action, Usage, Target, Output, Method, Appearance, Tone
+   * 
+   * Optimized for action-oriented chat/editor interactions:
+   * - Action-first: Chat is imperative ("rewrite this", "add citations")
+   * - Method is critical: Explicit HOW instructions for tool use
+   * - Usage provides context: How output will be used (inserted, replaced)
+   */
+  static async buildChatAUTOMATPrompt(context: ChatAUTOMATContext): Promise<string> {
+    const template = await this.loadTemplate('chat-automat')
+    return PromptBuilder.buildChatAUTOMATPrompt(template, context)
   }
 
   /**
@@ -117,6 +133,9 @@ export class PromptService {
       switch (templateName) {
         case 'chat':
           templatePath = path.join(process.cwd(), 'lib/prompts/chat/system.yaml')
+          break
+        case 'chat-automat':
+          templatePath = path.join(process.cwd(), 'lib/prompts/chat/automat-system.yaml')
           break
         case 'complete':
           templatePath = path.join(process.cwd(), 'lib/prompts/complete/system.yaml')

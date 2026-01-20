@@ -470,6 +470,30 @@ export type Database = {
         }
         Relationships: []
       }
+      citation_instances: {
+        Row: {
+          id: string
+          project_id: string
+          paper_id: string
+          quote: string
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          paper_id: string
+          quote: string
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          paper_id?: string
+          quote?: string
+          created_at?: string | null
+        }
+        Relationships: []
+      }
       project_evidence_usage: {
         Row: {
           content_hash: string

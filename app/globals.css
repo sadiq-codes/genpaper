@@ -29,6 +29,7 @@
   --chart-3: oklch(0.45 0.18 160);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
+  --diff-insert: oklch(0.45 0.12 145);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.15 0 0);
@@ -65,6 +66,7 @@
   --chart-3: oklch(0.6 0.14 160);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
+  --diff-insert: oklch(0.55 0.12 145);
   --sidebar: oklch(0.15 0 0);
   --sidebar-foreground: oklch(0.95 0 0);
   --sidebar-primary: oklch(0.85 0.02 240);
@@ -615,16 +617,18 @@ kbd {
 
 /* Citation styling in editor */
 .citation-inline {
-  @apply text-primary hover:text-primary/80 cursor-pointer transition-colors select-text;
+  @apply text-primary hover:text-primary/80 cursor-pointer transition-colors select-text outline-none ring-0;
 }
 
-.citation-inline:hover {
-  @apply underline;
+.citation-inline:hover,
+.citation-inline:focus,
+.citation-inline:focus-visible {
+  @apply underline outline-none ring-0;
 }
 
-/* Selected citation in editor */
+/* Selected citation in editor - no ring/outline on click or hover */
 .ProseMirror .citation-inline.ProseMirror-selectednode {
-  @apply ring-2 ring-primary ring-offset-1 rounded bg-primary/10;
+  @apply bg-primary/10 rounded;
 }
 
 /* Editor accent color for Chat tab */
@@ -739,31 +743,45 @@ kbd {
 
 /* =============================================================================
    Diff Block Styles - Block-level AI Edit Previews
+   Redesigned to match app's design language:
+   - Neutral palette with primary accent
+   - Subtle borders and shadows
+   - Left accent bar for type indication
+   - CSS variables for automatic dark mode support
    ============================================================================= */
 
 /* Main diff block container */
 .diff-block {
-  @apply my-4 rounded-xl overflow-hidden shadow-lg;
-  border-width: 2px;
-  border-style: solid;
+  @apply my-4 rounded-xl overflow-hidden bg-card;
+  position: relative;
   animation: diffBlockSlideIn 0.3s ease-out;
 }
 
-.diff-block--delete {
-  border-color: oklch(0.75 0.12 25);
+/* Left accent bar - indicates edit type */
+.diff-block::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
 }
 
-.diff-block--insert {
-  border-color: oklch(0.7 0.12 145);
+.diff-block--delete::before {
+  background-color: var(--destructive);
 }
 
-.diff-block--replace {
-  border-color: oklch(0.7 0.1 250);
+.diff-block--insert::before {
+  background-color: var(--diff-insert);
+}
+
+.diff-block--replace::before {
+  background-color: var(--primary);
 }
 
 /* Active state - focused edit */
 .diff-block--active {
-  @apply ring-2 ring-primary ring-offset-2;
+  @apply ring-2 ring-primary ring-offset-2 ring-offset-background;
 }
 
 /* Highlight animation when scrolling to an edit */
@@ -771,22 +789,9 @@ kbd {
   animation: diffBlockHighlight 0.6s ease-out;
 }
 
-/* Header */
+/* Header - unified styling */
 .diff-block__header {
-  @apply flex items-center justify-between px-4 py-3;
-  border-bottom: 1px solid oklch(0.9 0 0);
-}
-
-.diff-block--delete .diff-block__header {
-  background-color: oklch(0.95 0.03 25);
-}
-
-.diff-block--insert .diff-block__header {
-  background-color: oklch(0.95 0.03 145);
-}
-
-.diff-block--replace .diff-block__header {
-  background-color: oklch(0.95 0.03 250);
+  @apply flex items-center justify-between px-4 py-3 bg-muted/30 border-b border-border;
 }
 
 .diff-block__header-left {
@@ -794,20 +799,19 @@ kbd {
 }
 
 .diff-block__icon {
-  @apply flex items-center justify-center w-8 h-8 rounded-lg shadow-sm;
-  background-color: oklch(1 0 0 / 0.8);
+  @apply flex items-center justify-center w-8 h-8 rounded-lg bg-background border border-border;
 }
 
 .diff-block__icon--delete {
-  color: oklch(0.5 0.18 25);
+  @apply text-destructive;
 }
 
 .diff-block__icon--insert {
-  color: oklch(0.45 0.15 145);
+  color: var(--diff-insert);
 }
 
 .diff-block__icon--replace {
-  color: oklch(0.5 0.12 250);
+  @apply text-primary;
 }
 
 .diff-block__label {
@@ -820,10 +824,7 @@ kbd {
 }
 
 .diff-block__nav-btn {
-  @apply flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground transition-colors;
-  background: transparent;
-  border: none;
-  cursor: pointer;
+  @apply flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground transition-colors bg-transparent border-none cursor-pointer;
 }
 
 .diff-block__nav-btn:hover {
@@ -840,27 +841,24 @@ kbd {
 }
 
 .diff-block__content--old {
-  background-color: oklch(0.97 0.02 25);
-  border-bottom: 1px dashed oklch(0.85 0.05 25);
+  @apply bg-muted/30 border-b border-dashed border-border;
 }
 
 .diff-block__content--new {
-  background-color: oklch(0.97 0.02 145);
+  @apply bg-background;
 }
 
 .diff-block__content-label {
-  @apply flex items-center gap-2 px-4 py-2 text-xs font-medium;
-  border-bottom: 1px solid oklch(0.92 0 0);
+  @apply flex items-center gap-2 px-4 py-2 text-xs font-medium border-b border-border/50;
 }
 
 .diff-block__content-label--old {
-  color: oklch(0.45 0.12 25);
-  background-color: oklch(0.94 0.03 25);
+  @apply text-destructive bg-destructive/5;
 }
 
 .diff-block__content-label--new {
-  color: oklch(0.4 0.12 145);
-  background-color: oklch(0.94 0.03 145);
+  color: var(--diff-insert);
+  background-color: color-mix(in oklch, var(--diff-insert) 5%, transparent);
 }
 
 .diff-block__content-icon {
@@ -868,25 +866,23 @@ kbd {
 }
 
 .diff-block__content-text {
-  @apply p-4 text-sm leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-y-auto;
+  @apply p-4 text-sm leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-y-auto text-foreground;
 }
 
 .diff-block__content-text--old {
-  color: oklch(0.35 0.1 25);
+  @apply text-muted-foreground;
   text-decoration: line-through;
-  text-decoration-color: oklch(0.6 0.12 25 / 0.6);
-  text-decoration-thickness: 2px;
+  text-decoration-color: var(--destructive);
+  text-decoration-thickness: 1.5px;
 }
 
 .diff-block__content-text--new {
-  color: oklch(0.3 0.1 145);
+  @apply text-foreground;
 }
 
 /* Actions footer */
 .diff-block__actions {
-  @apply flex items-center justify-between p-3;
-  background-color: oklch(0.97 0 0);
-  border-top: 1px solid oklch(0.92 0 0);
+  @apply flex items-center justify-between p-3 bg-muted/20 border-t border-border;
 }
 
 .diff-block__hints {
@@ -894,7 +890,7 @@ kbd {
 }
 
 .diff-block__hints kbd {
-  @apply px-1.5 py-0.5 bg-muted rounded font-mono text-[10px] mx-0.5;
+  @apply px-1.5 py-0.5 bg-muted rounded font-mono text-[10px] mx-0.5 border border-border/50;
 }
 
 .diff-block__buttons {
@@ -903,9 +899,8 @@ kbd {
 
 .diff-block__btn {
   @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm transition-all cursor-pointer;
-  min-height: 44px;
-  min-width: 100px;
-  border: none;
+  min-height: 40px;
+  min-width: 90px;
 }
 
 .diff-block__btn:hover {
@@ -917,129 +912,25 @@ kbd {
 }
 
 .diff-block__btn-icon {
-  @apply mr-2 font-bold;
+  @apply mr-2;
 }
 
+/* Reject button - outlined style */
 .diff-block__btn--reject {
-  background-color: transparent;
-  border: 2px solid oklch(0.75 0.12 25);
-  color: oklch(0.5 0.15 25);
+  @apply bg-background border border-border text-muted-foreground;
 }
 
 .diff-block__btn--reject:hover {
-  background-color: oklch(0.95 0.05 25);
-  border-color: oklch(0.6 0.15 25);
-  color: oklch(0.45 0.18 25);
+  @apply bg-destructive/10 border-destructive/50 text-destructive;
 }
 
+/* Accept button - primary filled style */
 .diff-block__btn--accept {
-  background-color: oklch(0.55 0.15 145);
-  color: white;
+  @apply bg-primary text-primary-foreground border-none;
 }
 
 .diff-block__btn--accept:hover {
-  background-color: oklch(0.5 0.17 145);
-}
-
-/* Dark mode */
-.dark .diff-block--delete {
-  border-color: oklch(0.45 0.12 25);
-}
-
-.dark .diff-block--insert {
-  border-color: oklch(0.45 0.12 145);
-}
-
-.dark .diff-block--replace {
-  border-color: oklch(0.45 0.1 250);
-}
-
-.dark .diff-block__header {
-  border-bottom-color: oklch(0.3 0 0);
-}
-
-.dark .diff-block--delete .diff-block__header {
-  background-color: oklch(0.2 0.03 25);
-}
-
-.dark .diff-block--insert .diff-block__header {
-  background-color: oklch(0.2 0.03 145);
-}
-
-.dark .diff-block--replace .diff-block__header {
-  background-color: oklch(0.2 0.03 250);
-}
-
-.dark .diff-block__icon {
-  background-color: oklch(0.15 0 0 / 0.8);
-}
-
-.dark .diff-block__icon--delete {
-  color: oklch(0.7 0.15 25);
-}
-
-.dark .diff-block__icon--insert {
-  color: oklch(0.7 0.12 145);
-}
-
-.dark .diff-block__icon--replace {
-  color: oklch(0.7 0.1 250);
-}
-
-.dark .diff-block__content--old {
-  background-color: oklch(0.15 0.02 25);
-  border-bottom-color: oklch(0.3 0.05 25);
-}
-
-.dark .diff-block__content--new {
-  background-color: oklch(0.15 0.02 145);
-}
-
-.dark .diff-block__content-label {
-  border-bottom-color: oklch(0.25 0 0);
-}
-
-.dark .diff-block__content-label--old {
-  color: oklch(0.75 0.1 25);
-  background-color: oklch(0.18 0.03 25);
-}
-
-.dark .diff-block__content-label--new {
-  color: oklch(0.75 0.1 145);
-  background-color: oklch(0.18 0.03 145);
-}
-
-.dark .diff-block__content-text--old {
-  color: oklch(0.75 0.08 25);
-  text-decoration-color: oklch(0.55 0.1 25 / 0.6);
-}
-
-.dark .diff-block__content-text--new {
-  color: oklch(0.8 0.08 145);
-}
-
-.dark .diff-block__actions {
-  background-color: oklch(0.15 0 0);
-  border-top-color: oklch(0.25 0 0);
-}
-
-.dark .diff-block__btn--reject {
-  border-color: oklch(0.45 0.1 25);
-  color: oklch(0.7 0.12 25);
-}
-
-.dark .diff-block__btn--reject:hover {
-  background-color: oklch(0.25 0.05 25);
-  border-color: oklch(0.5 0.12 25);
-  color: oklch(0.8 0.1 25);
-}
-
-.dark .diff-block__btn--accept {
-  background-color: oklch(0.45 0.12 145);
-}
-
-.dark .diff-block__btn--accept:hover {
-  background-color: oklch(0.5 0.14 145);
+  @apply bg-primary/90;
 }
 
 /* Animations */
@@ -1056,13 +947,13 @@ kbd {
 
 @keyframes diffBlockHighlight {
   0% {
-    box-shadow: 0 0 0 0 oklch(0.6 0.15 250 / 0.7);
+    box-shadow: 0 0 0 0 var(--ring);
   }
   50% {
-    box-shadow: 0 0 0 6px oklch(0.6 0.15 250 / 0.3);
+    box-shadow: 0 0 0 6px color-mix(in oklch, var(--ring) 30%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 oklch(0.6 0.15 250 / 0);
+    box-shadow: 0 0 0 0 transparent;
   }
 }
 
@@ -1071,7 +962,7 @@ kbd {
   0% {
     opacity: 1;
     transform: scale(1);
-    background-color: oklch(0.9 0.1 145 / 0.3);
+    background-color: color-mix(in oklch, var(--diff-insert) 15%, transparent);
   }
   50% {
     transform: scale(1.01);
@@ -1091,7 +982,7 @@ kbd {
   0% {
     opacity: 1;
     transform: scale(1);
-    background-color: oklch(0.9 0.08 25 / 0.3);
+    background-color: color-mix(in oklch, var(--destructive) 10%, transparent);
   }
   100% {
     opacity: 0;
@@ -1293,35 +1184,47 @@ kbd {
    ============================================================================= */
 
 .rich-chat-input-container {
-  @apply transition-all;
+  @apply transition-all duration-200 ease-out;
+}
+
+.rich-chat-input-container:hover:not(:focus-within) {
+  @apply border-muted-foreground/30;
 }
 
 .rich-chat-input-container:focus-within {
-  @apply border-primary/50;
+  @apply border-primary ring-2 ring-primary/20 shadow-md;
 }
+
+/* Text field area - the actual editable zone */
 .rich-chat-input-editor {
-  @apply text-sm leading-relaxed;
+  @apply text-sm leading-relaxed cursor-text;
 }
 
 .rich-chat-input-editor.ProseMirror {
-  @apply outline-none min-h-[24px];
+  @apply outline-none min-h-[28px];
+  caret-color: hsl(var(--primary));
 }
 
 .rich-chat-input-editor.ProseMirror p {
-  @apply mb-0;
+  @apply mb-0 leading-relaxed;
 }
 
+/* Placeholder styling */
 .rich-chat-input-editor.ProseMirror p.is-editor-empty:first-child::before {
-  @apply text-muted-foreground/60;
+  @apply text-muted-foreground/40 text-sm pointer-events-none select-none;
   content: attr(data-placeholder);
   float: left;
   height: 0;
-  pointer-events: none;
+}
+
+/* Selection styling within chat input */
+.rich-chat-input-editor.ProseMirror ::selection {
+  @apply bg-primary/20;
 }
 
 /* Chat input images */
 .chat-input-image {
-  @apply max-w-[200px] max-h-[150px] rounded-md my-1;
+  @apply max-w-[200px] max-h-[150px] rounded-md my-2 border border-border;
 }
 
 /* Bubble menu styling for chat input */

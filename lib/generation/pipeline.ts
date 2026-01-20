@@ -16,10 +16,58 @@ import { warn, error as logError, info } from '@/lib/utils/logger'
 import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
 import { logSectionCitations } from '@/lib/rag/relevance-feedback'
 import { extractThemes, mergeThemeAnalysisIntoProfile, buildThemeGuidanceForOutline } from '@/lib/generation/theme-extraction'
+import { getServiceClient } from '@/lib/supabase/service'
 import type { PaperProfile, ThemeAnalysis } from '@/lib/generation/paper-profile-types'
-import type { PaperStatus, OriginalResearchConfig } from '@/types/simplified'
+import type { PaperStatus, OriginalResearchConfig, PaperTypeKey as SimplifiedPaperTypeKey } from '@/types/simplified'
+import { PAPER_TYPE_SEARCH_MULTIPLIERS, PAPER_TYPE_MIN_SEARCH } from '@/types/simplified'
 import type { GeneratedOutline, SectionContext, PaperTypeKey } from '@/lib/prompts/types'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
+
+/**
+ * Pipeline performance metrics for bottleneck analysis
+ */
+export interface PipelineMetrics {
+  // Timing (in milliseconds)
+  totalDuration: number
+  paperDiscoveryDuration: number
+  themeExtractionDuration: number
+  outlineGenerationDuration: number
+  contextBuildingDuration: number
+  sectionGenerationDuration: number
+  qualityCheckDuration: number
+  
+  // Section generation breakdown
+  sectionTimings: Array<{
+    title: string
+    generationMs: number
+    qualityCheckMs: number
+    wasRewritten: boolean
+    rewriteReason?: 'overlap' | 'citation_verification'
+  }>
+  
+  // Overlap detection stats
+  overlapStats: {
+    sectionsChecked: number
+    sectionsExceedingThreshold: number
+    rewritesTriggered: number
+    avgOverlapRatio: number
+    maxOverlapRatio: number
+  }
+  
+  // PDF processing stats
+  pdfStats: {
+    papersWithFullText: number
+    papersAbstractOnly: number
+    avgChunksPerPaper: number
+  }
+  
+  // Citation stats
+  citationStats: {
+    sectionsVerified: number
+    sectionsFailed: number
+    regenerationsTriggered: number
+  }
+}
 
 /**
  * Minimal configuration object for paper generation
@@ -60,6 +108,8 @@ export interface PipelineResult {
     qualityScore: number
     generationTime: number
   }
+  /** Detailed performance metrics for bottleneck analysis */
+  performanceMetrics?: PipelineMetrics
 }
 
 /**
@@ -93,6 +143,35 @@ export async function generatePaper(
   signal?: AbortSignal
 ): Promise<PipelineResult> {
   const startTime = Date.now()
+  
+  // Initialize performance metrics for bottleneck analysis
+  const metrics: PipelineMetrics = {
+    totalDuration: 0,
+    paperDiscoveryDuration: 0,
+    themeExtractionDuration: 0,
+    outlineGenerationDuration: 0,
+    contextBuildingDuration: 0,
+    sectionGenerationDuration: 0,
+    qualityCheckDuration: 0,
+    sectionTimings: [],
+    overlapStats: {
+      sectionsChecked: 0,
+      sectionsExceedingThreshold: 0,
+      rewritesTriggered: 0,
+      avgOverlapRatio: 0,
+      maxOverlapRatio: 0
+    },
+    pdfStats: {
+      papersWithFullText: 0,
+      papersAbstractOnly: 0,
+      avgChunksPerPaper: 0
+    },
+    citationStats: {
+      sectionsVerified: 0,
+      sectionsFailed: 0,
+      regenerationsTriggered: 0
+    }
+  }
   
   // Check for cancellation at pipeline start
   if (signal?.aborted) {
@@ -140,6 +219,7 @@ export async function generatePaper(
     })
     
     // Step 1: Collect Papers (Search + Ingestion) - now uses profile for guidance
+    const discoveryStartTime = Date.now()
     onProgress?.('search', 10, 'Collecting and ingesting papers...', { 
       useLibraryOnly: config.useLibraryOnly,
       libraryPapers: config.libraryPaperIds?.length || 0,
@@ -158,9 +238,18 @@ export async function generatePaper(
         temperature: config.temperature || 0.2,
         max_tokens: config.maxTokens || 16000,
         sources: config.sources || ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
-        // Use profile's ideal source count to determine paper limit
-        // Fetch more papers than needed to ensure diversity after filtering
-        limit: Math.max(50, paperProfile.sourceExpectations.idealSourceCount * 2),
+        // Dynamic search limit based on paper type
+        // Different paper types need different search volumes to account for filtering losses
+        limit: (() => {
+          const paperType = config.paperType as SimplifiedPaperTypeKey
+          const searchMultiplier = PAPER_TYPE_SEARCH_MULTIPLIERS[paperType] ?? 2.5
+          const minSearch = PAPER_TYPE_MIN_SEARCH[paperType] ?? 50
+          const idealSourceCount = paperProfile.sourceExpectations.idealSourceCount
+          const calculatedLimit = Math.ceil(idealSourceCount * searchMultiplier)
+          const finalLimit = Math.max(minSearch, calculatedLimit)
+          info({ paperType, idealSourceCount, searchMultiplier, minSearch, calculatedLimit, finalLimit }, 'Dynamic search limit calculated')
+          return finalLimit
+        })(),
         library_papers_used: config.libraryPaperIds || [],
         length: config.length,
         paperType: config.paperType,
@@ -224,14 +313,18 @@ export async function generatePaper(
       })
     }
     
+    metrics.paperDiscoveryDuration = Date.now() - discoveryStartTime
+    
     onProgress?.('search', 20, 'Papers collected successfully', {
       papersFound: allPapers.length,
-      minRequiredByProfile: minRequiredSources
+      minRequiredByProfile: minRequiredSources,
+      durationMs: metrics.paperDiscoveryDuration
     })
 
     // Step 1.5: Theme Extraction (NEW - Scribbr-aligned approach)
     // Analyze collected papers to identify emergent themes BEFORE outline generation
     // This ensures themes come from actual literature, not guesses
+    const themeStartTime = Date.now()
     onProgress?.('themes', 22, 'Analyzing literature for themes and patterns...')
     
     let themeAnalysis: ThemeAnalysis | undefined
@@ -252,19 +345,24 @@ export async function generatePaper(
         confidence: themeAnalysis.confidence
       }, 'Theme extraction completed')
       
+      metrics.themeExtractionDuration = Date.now() - themeStartTime
+      
       onProgress?.('themes', 24, 'Theme analysis complete', {
         themesFound: themeAnalysis.emergentThemes.length,
         debatesFound: themeAnalysis.debates.length,
         gapsFound: themeAnalysis.gaps.length,
-        suggestedOrganization: themeAnalysis.organizationSuggestion.approach
+        suggestedOrganization: themeAnalysis.organizationSuggestion.approach,
+        durationMs: metrics.themeExtractionDuration
       })
     } catch (themeError) {
+      metrics.themeExtractionDuration = Date.now() - themeStartTime
       // Theme extraction is an enhancement - don't fail the pipeline if it fails
       warn({ error: themeError }, 'Theme extraction failed, continuing with original profile')
       onProgress?.('themes', 24, 'Theme analysis skipped (using default structure)')
     }
 
     // Step 2: Generate Outline (now with theme-informed profile)
+    const outlineStartTime = Date.now()
     onProgress?.('outline', 25, 'Generating paper outline...')
     
     // Limit paper IDs passed to outline generation to prevent token overflow
@@ -313,11 +411,15 @@ export async function generatePaper(
       localRegion: undefined
     }
     
+    metrics.outlineGenerationDuration = Date.now() - outlineStartTime
+    
     onProgress?.('outline', 30, 'Outline generated with profile-guided structure', {
-      sectionsPlanned: typedOutline.sections.length
+      sectionsPlanned: typedOutline.sections.length,
+      durationMs: metrics.outlineGenerationDuration
     })
 
     // Step 3: Build Section Contexts (RAG)
+    const contextStartTime = Date.now()
     onProgress?.('context', 35, 'Building section contexts...')
     
     const sectionContexts = await GenerationContextService.buildContexts(
@@ -326,11 +428,21 @@ export async function generatePaper(
       allPapers
     )
     
+    metrics.contextBuildingDuration = Date.now() - contextStartTime
+    
+    // Calculate PDF stats from section contexts
+    const allChunkCounts = sectionContexts.map(ctx => ctx.contextChunks?.length || 0)
+    const totalChunks = allChunkCounts.reduce((a, b) => a + b, 0)
+    metrics.pdfStats.avgChunksPerPaper = allPapers.length > 0 ? totalChunks / allPapers.length : 0
+    
     onProgress?.('context', 40, 'Section contexts prepared', {
-      sectionsWithContext: sectionContexts.length
+      sectionsWithContext: sectionContexts.length,
+      durationMs: metrics.contextBuildingDuration,
+      avgChunksPerSection: totalChunks / sectionContexts.length
     })
 
     // Step 4: Generate Content
+    const generationStartTime = Date.now()
     onProgress?.('generation', 45, 'Starting unified content generation...')
     
     let completedSections = 0
@@ -387,21 +499,36 @@ export async function generatePaper(
     )
 
     // Step 5: Quality Checks and Assembly
+    metrics.sectionGenerationDuration = Date.now() - generationStartTime
+    const qualityStartTime = Date.now()
     onProgress?.('quality', 85, 'Running quality checks...')
     
     let totalQualityScore = 0
     let qualityIssues: string[] = []
     const OVERLAP_THRESHOLD = 0.22
     
+    // Track overlap ratios for metrics
+    const overlapRatios: number[] = []
+    
     for (let i = 0; i < results.length; i++) {
+      const sectionQualityStart = Date.now()
       let result = results[i]
       const sectionContext = sectionContexts[i]
+      let wasRewritten = false
+      let rewriteReason: 'overlap' | 'citation_verification' | undefined
       
       // Check cross-section overlap and rewrite if necessary
       const overlap = fourGramOverlapRatio(result.content, fullContent)
+      overlapRatios.push(overlap)
+      metrics.overlapStats.sectionsChecked++
+      
       if (fullContent && overlap > OVERLAP_THRESHOLD) {
+        metrics.overlapStats.sectionsExceedingThreshold++
         warn({ section: sectionContext.title, overlap: overlap.toFixed(2) }, 'High overlap detected, triggering rewrite')
         try {
+          metrics.overlapStats.rewritesTriggered++
+          wasRewritten = true
+          rewriteReason = 'overlap'
           const prevSummary = `Avoid repeating earlier content; focus only on new insights for ${sectionContext.title}.`
           const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
           result = await generateWithUnifiedTemplate({
@@ -475,7 +602,10 @@ export async function generatePaper(
           sectionContext.contextChunks || []
         )
         
+        metrics.citationStats.sectionsVerified++
+        
         if (!citationReport.passed && citationReport.totalCitations > 0) {
+          metrics.citationStats.sectionsFailed++
           warn({ 
             section: sectionContext.title, 
             verified: citationReport.verifiedCitations,
@@ -488,6 +618,10 @@ export async function generatePaper(
           
           // Regenerate with citation feedback
           try {
+            metrics.citationStats.regenerationsTriggered++
+            wasRewritten = true
+            rewriteReason = 'citation_verification'
+            
             const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
             const regenerated = await generateWithUnifiedTemplate({
               context: sectionContext,
@@ -550,7 +684,24 @@ export async function generatePaper(
       fullContent += sectionContent + '\n\n'
       allCitations.push(...result.citations)
       completedSections++
+      
+      // Track section timing for metrics
+      metrics.sectionTimings.push({
+        title: sectionContext.title,
+        generationMs: 0, // Generation time is tracked at unified-generator level
+        qualityCheckMs: Date.now() - sectionQualityStart,
+        wasRewritten,
+        rewriteReason
+      })
     }
+    
+    // Finalize overlap stats
+    if (overlapRatios.length > 0) {
+      metrics.overlapStats.avgOverlapRatio = overlapRatios.reduce((a, b) => a + b, 0) / overlapRatios.length
+      metrics.overlapStats.maxOverlapRatio = Math.max(...overlapRatios)
+    }
+    
+    metrics.qualityCheckDuration = Date.now() - qualityStartTime
     
     const avgQualityScore = totalQualityScore / results.length
     
@@ -582,14 +733,66 @@ export async function generatePaper(
     
     onProgress?.('saving', 95, 'Saving content...')
     
-    // Clean non-citation artifacts (leaked tool syntax, etc.) but KEEP [CITE: ...] markers
-    // Content is saved as markdown with citation markers intact
-    // The UI renders them as formatted citations (e.g., "Smith et al., 2024")
-    const { cleanNonCitationArtifacts } = await import('@/lib/citations/post-processor')
-    fullContent = cleanNonCitationArtifacts(fullContent)
+    // Extract citations from CITATIONS blocks BEFORE converting markers
+    // This captures paper IDs and quotes for database storage
+    const { cleanNonCitationArtifacts, convertNumberedToStorageFormat, parseNumberedCitationsBlock } = await import('@/lib/citations/post-processor')
     
-    // Build citations map from allCitations (already collected during section generation)
-    // No need to re-extract from content - unified-generator already did that
+    // Parse all CITATIONS blocks from the full content to build allCitations
+    // This replaces the broken extractCitationMarkers approach
+    const citationsFromBlock = parseNumberedCitationsBlock(fullContent)
+    for (const [, entry] of citationsFromBlock) {
+      allCitations.push({
+        paperId: entry.paperId,
+        citationText: `[@${entry.paperId}]`
+      })
+    }
+    
+    // Convert numbered [1], [2] markers to [@paperId#instanceId] format for storage
+    // Returns both converted content and instances to save
+    const conversionResult = convertNumberedToStorageFormat(fullContent)
+    fullContent = conversionResult.content
+    
+    // Save citation instances to database (direct insert, no HTTP round-trip)
+    if (conversionResult.instancesToCreate.length > 0) {
+      try {
+        const serviceSupabase = getServiceClient()
+        
+        // Filter out instances without quotes and prepare for insert
+        const validInstances = conversionResult.instancesToCreate
+          .filter(i => i.instanceId && i.paperId && i.quote)
+          .map(inst => ({
+            id: inst.instanceId,
+            project_id: projectId,
+            paper_id: inst.paperId,
+            // Truncate quote to 100 words max (same as API route)
+            quote: inst.quote.split(/\s+/).slice(0, 100).join(' ')
+          }))
+        
+        if (validInstances.length > 0) {
+          const { error: insertError } = await serviceSupabase
+            .from('citation_instances')
+            .upsert(validInstances, { onConflict: 'id', ignoreDuplicates: true })
+          
+          if (insertError) {
+            // If the migration for citation_instances hasn't been applied yet,
+            // PostgREST returns PGRST205 (table missing from schema cache). Treat as optional.
+            const code = (insertError as { code?: string }).code
+            if (code === 'PGRST205') {
+              info({ code }, 'citation_instances not available (migration not applied); skipping instance save')
+            } else {
+              warn({ error: insertError }, 'Failed to save citation instances')
+            }
+          } else {
+            info({ count: validInstances.length }, 'Saved citation instances to database')
+          }
+        }
+      } catch (err) {
+        warn({ error: err }, 'Error saving citation instances')
+      }
+    }
+    
+    // Clean non-citation artifacts (leaked tool syntax, etc.)
+    fullContent = cleanNonCitationArtifacts(fullContent)
     
     // VALIDATION: Create set of valid paper IDs to filter out hallucinated citations
     const validPaperIds = new Set(allPapers.map(p => p.id))
@@ -626,7 +829,11 @@ export async function generatePaper(
       }
       
       // Clean up any double spaces left by removed citations
-      fullContent = fullContent.replace(/\s{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1')
+      // IMPORTANT: do not collapse newlines, or markdown headings/paragraphs break.
+      // Collapse only repeated spaces/tabs within a line, and normalize space-before-punctuation.
+      fullContent = fullContent
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/[ \t]+([.,;:])/g, '$1')
     }
     
     const citedPaperIds = new Set(validCitations.map(c => c.paperId))
@@ -655,9 +862,38 @@ export async function generatePaper(
     // This enables cross-session deduplication for resumable generation
     await EvidenceTracker.flush(projectId)
     
+    // Finalize metrics
+    metrics.totalDuration = Date.now() - startTime
+    
+    // Log comprehensive performance metrics for bottleneck analysis
+    info({
+      totalDurationMs: metrics.totalDuration,
+      paperDiscoveryMs: metrics.paperDiscoveryDuration,
+      themeExtractionMs: metrics.themeExtractionDuration,
+      outlineGenerationMs: metrics.outlineGenerationDuration,
+      contextBuildingMs: metrics.contextBuildingDuration,
+      sectionGenerationMs: metrics.sectionGenerationDuration,
+      qualityCheckMs: metrics.qualityCheckDuration,
+      overlapStats: {
+        checked: metrics.overlapStats.sectionsChecked,
+        exceededThreshold: metrics.overlapStats.sectionsExceedingThreshold,
+        rewrites: metrics.overlapStats.rewritesTriggered,
+        avgOverlap: (metrics.overlapStats.avgOverlapRatio * 100).toFixed(1) + '%',
+        maxOverlap: (metrics.overlapStats.maxOverlapRatio * 100).toFixed(1) + '%'
+      },
+      citationStats: {
+        verified: metrics.citationStats.sectionsVerified,
+        failed: metrics.citationStats.sectionsFailed,
+        regenerations: metrics.citationStats.regenerationsTriggered
+      },
+      sectionsRewritten: metrics.sectionTimings.filter(s => s.wasRewritten).length,
+      totalSections: metrics.sectionTimings.length
+    }, 'Pipeline performance metrics')
+    
     onProgress?.('complete', 100, 'Paper generation completed successfully', {
       totalWords: fullContent.split(' ').length,
-      qualityScore: avgQualityScore
+      qualityScore: avgQualityScore,
+      performanceMetrics: metrics
     })
 
     return {
@@ -673,7 +909,8 @@ export async function generatePaper(
         totalWords: fullContent.split(' ').length,
         qualityScore: avgQualityScore,
         generationTime: (Date.now() - startTime) / 1000
-      }
+      },
+      performanceMetrics: metrics
     }
 
   } catch (err) {

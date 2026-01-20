@@ -9,6 +9,7 @@
  */
 
 import type { Editor } from '@tiptap/react'
+import { v4 as uuidv4 } from 'uuid'
 import { findBlockById } from '../extensions/BlockId'
 import { fuzzyFindPhrase, findSection, findInSection } from '@/lib/utils/fuzzy-match'
 import { toast } from 'sonner'
@@ -19,6 +20,7 @@ import type { ProjectPaper } from '../types'
 // Papers context for citation resolution
 // Note: This is a fallback. Prefer passing papers via options when possible.
 let _globalPapersContext: ProjectPaper[] = []
+let _globalProjectId: string | undefined
 
 /**
  * Set the global papers context for markdown processing.
@@ -27,6 +29,13 @@ let _globalPapersContext: ProjectPaper[] = []
  */
 export function setToolExecutorPapers(papers: ProjectPaper[]): void {
   _globalPapersContext = papers
+}
+
+/**
+ * Set the global project ID for citation saving.
+ */
+export function setToolExecutorProjectId(projectId: string): void {
+  _globalProjectId = projectId
 }
 
 // =============================================================================
@@ -46,6 +55,15 @@ export interface ToolExecutionOptions {
   ghostEditId?: string
   /** Papers context for citation resolution in markdown content */
   papers?: ProjectPaper[]
+  /** Project ID for saving citations to database */
+  projectId?: string
+}
+
+/** Citation instance extracted from CITATIONS block */
+interface ExtractedCitationInstance {
+  instanceId: string      // UUID for this specific citation instance
+  paperId: string         // UUID of the paper being cited
+  quote: string           // The exact quote/context for this citation
 }
 
 interface BlockTarget {
@@ -300,20 +318,126 @@ function executeWithGhostMeta(
 // =============================================================================
 
 /**
+ * Convert numbered citation markers [1], [2] to [@paperId#instanceId] format
+ * Uses the CITATIONS block at the end of content to map numbers to paper IDs
+ * Also extracts citation instances with their quotes for saving to database
+ * 
+ * Each citation occurrence gets a unique instanceId for tracking the specific quote used.
+ */
+function convertNumberedCitations(content: string): { content: string; instances: ExtractedCitationInstance[] } {
+  // Pattern to extract the CITATIONS block
+  const citationsBlockPattern = /<!--\s*CITATIONS\s*([\s\S]*?)-->/i
+  const blockMatch = content.match(citationsBlockPattern)
+  
+  if (!blockMatch) {
+    // No CITATIONS block, return as-is
+    return { content, instances: [] }
+  }
+  
+  // Parse citation entries: [N] paper_id: xxx | quote: "yyy"
+  const entryPattern = /\[(\d+)\]\s*paper_id:\s*([a-f0-9-]+)(?:\s*\|\s*quote:\s*"([^"]*)")?/gi
+  const citationsMap = new Map<number, { paperId: string; quote?: string }>()
+  
+  for (const match of blockMatch[1].matchAll(entryPattern)) {
+    citationsMap.set(parseInt(match[1], 10), {
+      paperId: match[2],
+      quote: match[3] || undefined
+    })
+  }
+  
+  if (citationsMap.size === 0) {
+    return { content: content.replace(citationsBlockPattern, '').trim(), instances: [] }
+  }
+  
+  let result = content
+  const instances: ExtractedCitationInstance[] = []
+  
+  // Replace each [N] marker with [@paperId#instanceId]
+  // Each occurrence gets a unique instanceId
+  for (const [index, { paperId, quote }] of citationsMap) {
+    const pattern = new RegExp(`\\[${index}\\]`, 'g')
+    
+    // Replace each occurrence with a unique instanceId
+    result = result.replace(pattern, () => {
+      const instanceId = uuidv4()
+      
+      // Track this instance for DB insertion
+      instances.push({
+        instanceId,
+        paperId,
+        quote: quote || '',
+      })
+      
+      return `[@${paperId}#${instanceId}]`
+    })
+  }
+  
+  // Remove the CITATIONS block
+  result = result.replace(citationsBlockPattern, '').trim()
+  
+  // Strip any orphaned [N] markers that weren't in the CITATIONS block
+  result = result.replace(/\[(\d+)\]/g, '')
+  
+  console.log(`[ToolExecutor] Converted ${citationsMap.size} citation types to ${instances.length} instances with [@paperId#instanceId] format`)
+  
+  return { content: result, instances }
+}
+
+/**
+ * Result of preparing content for insertion
+ */
+interface PreparedContent {
+  content: string | Record<string, unknown>
+  instances: ExtractedCitationInstance[]
+}
+
+/**
  * Prepare content for insertion - converts markdown to TipTap JSON if needed
  * @param content - Raw content string
  * @param papers - Papers context for citation resolution
  */
-function prepareContent(content: string, papers: ProjectPaper[] = []): string | Record<string, unknown> {
-  if (hasMarkdownFormatting(content)) {
+function prepareContent(content: string, papers: ProjectPaper[] = []): PreparedContent {
+  // First, convert numbered [1], [2] citations to [@paperId#instanceId] format
+  const { content: contentWithCitations, instances } = convertNumberedCitations(content)
+  
+  if (hasMarkdownFormatting(contentWithCitations)) {
     // Convert markdown to TipTap JSON for proper rendering (tables, lists, etc.)
     // Use provided papers or fall back to global context
     const papersContext = papers.length > 0 ? papers : _globalPapersContext
-    const doc = processAIContent(content, papersContext)
+    const doc = processAIContent(contentWithCitations, papersContext)
     // Return the content array, not the full doc wrapper
-    return doc.content || content
+    return { content: doc.content || contentWithCitations, instances }
   }
-  return content
+  return { content: contentWithCitations, instances }
+}
+
+/**
+ * Save citation instances to database
+ * Called after content with citations is inserted
+ */
+async function saveCitationInstancesToDatabase(
+  projectId: string,
+  instances: ExtractedCitationInstance[]
+): Promise<void> {
+  if (!projectId || instances.length === 0) return
+
+  try {
+    await fetch('/api/citation-instances', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        instances: instances.map(inst => ({
+          id: inst.instanceId,
+          paperId: inst.paperId,
+          quote: inst.quote,
+        }))
+      })
+    })
+    console.log(`[ToolExecutor] Saved ${instances.length} citation instances to database`)
+  } catch (error) {
+    console.error('[ToolExecutor] Failed to save citation instances:', error)
+  }
 }
 
 /**
@@ -329,7 +453,8 @@ function prepareContent(content: string, papers: ProjectPaper[] = []): string | 
 function executeInsertContent(
   editor: Editor,
   args: Record<string, unknown>,
-  papers: ProjectPaper[] = []
+  papers: ProjectPaper[] = [],
+  projectId?: string
 ): ToolExecutionResult {
   const rawContent = args.content as string
   const afterBlockId = args.afterBlockId as string | undefined || args.blockId as string | undefined
@@ -341,11 +466,16 @@ function executeInsertContent(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const content = prepareContent(rawContent, papers)
+  const { content, instances } = prepareContent(rawContent, papers)
   const isMarkdown = typeof content !== 'string'
   
   if (isMarkdown) {
     console.log('[ToolExecutor] Detected markdown content, converted to TipTap JSON')
+  }
+  
+  // Save citation instances to database (async, don't block)
+  if (projectId && instances.length > 0) {
+    saveCitationInstancesToDatabase(projectId, instances)
   }
 
   // Priority 1: Insert after specific phrase (most precise)
@@ -374,7 +504,7 @@ function executeInsertContent(
       editor.chain()
         .focus()
         .setTextSelection(insertPos)
-        .insertContent(isMarkdown ? content : '\n\n' + content)
+        .insertContent(content)  // TipTap handles paragraph spacing automatically
         .run()
       toast.success('Content inserted')
       return { success: true, message: `Inserted after block ${afterBlockId}`, blockId: afterBlockId }
@@ -393,7 +523,7 @@ function executeInsertContent(
     editor.chain()
       .focus()
       .setTextSelection(editor.state.doc.content.size)
-      .insertContent(isMarkdown ? content : '\n\n' + content)
+      .insertContent(content)  // TipTap handles paragraph spacing automatically
       .run()
     toast.success('Content appended')
     return { success: true, message: 'Appended to document' }
@@ -414,7 +544,7 @@ function executeInsertContent(
     }
 
     const insertPos = findTipTapPosition(editor, section.contentEnd)
-    editor.chain().focus().setTextSelection(insertPos).insertContent(isMarkdown ? content : '\n\n' + content).run()
+    editor.chain().focus().setTextSelection(insertPos).insertContent(content).run()
     toast.success(`Content added to ${sectionName}`)
     return { success: true, message: `Inserted at end of ${sectionName}` }
   }
@@ -430,7 +560,7 @@ function executeInsertContent(
     }
 
     const insertPos = findTipTapPosition(editor, section.contentStart)
-    editor.chain().focus().setTextSelection(insertPos).insertContent(isMarkdown ? content : content + '\n\n').run()
+    editor.chain().focus().setTextSelection(insertPos).insertContent(content).run()
     toast.success(`Content added to ${sectionName}`)
     return { success: true, message: `Inserted at start of ${sectionName}` }
   }
@@ -464,7 +594,7 @@ function executeReplaceBlock(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const newContent = prepareContent(rawContent, papers)
+  const { content: newContent, instances } = prepareContent(rawContent, papers)
   // Note: isMarkdown available for future logging/debugging
   const _isMarkdown = typeof newContent !== 'string'
 
@@ -504,6 +634,11 @@ function executeReplaceBlock(
       .insertContent(newContent)
       .run()
 
+    // Save citation instances (async, don't block) - projectId passed via global or options
+    if (instances.length > 0 && _globalProjectId) {
+      saveCitationInstancesToDatabase(_globalProjectId, instances)
+    }
+
     toast.success('Text replaced')
     return { 
       success: true, 
@@ -533,6 +668,11 @@ function executeReplaceBlock(
     .setTextSelection({ from: validated.from, to: validated.to })
     .insertContent(newContent)
     .run()
+  
+  // Save citation instances (async, don't block)
+  if (instances.length > 0 && _globalProjectId) {
+    saveCitationInstancesToDatabase(_globalProjectId, instances)
+  }
 
   const methodNote = target.method === 'blockId' ? ' (entire block)' : ` (found via ${target.method})`
   toast.success(`Content replaced${methodNote}`)
@@ -563,7 +703,7 @@ function executeReplaceInSection(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const newContent = prepareContent(rawContent, papers)
+  const { content: newContent, instances } = prepareContent(rawContent, papers)
 
   const target = findTargetBlock(editor, { section, searchPhrase })
 
@@ -585,6 +725,11 @@ function executeReplaceInSection(
     .setTextSelection({ from: validated.from, to: validated.to })
     .insertContent(newContent)
     .run()
+
+  // Save citation instances (async, don't block)
+  if (instances.length > 0 && _globalProjectId) {
+    saveCitationInstancesToDatabase(_globalProjectId, instances)
+  }
 
   toast.success('Content replaced')
   return { 
@@ -611,7 +756,7 @@ function executeRewriteSection(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const newContent = prepareContent(rawContent, papers)
+  const { content: newContent, instances } = prepareContent(rawContent, papers)
   const isMarkdown = typeof newContent !== 'string'
 
   const docText = editor.getText()
@@ -638,6 +783,11 @@ function executeRewriteSection(
     .setTextSelection({ from, to })
     .insertContent(isMarkdown ? newContent : '\n\n' + newContent + '\n\n')
     .run()
+
+  // Save citation instances (async, don't block)
+  if (instances.length > 0 && _globalProjectId) {
+    saveCitationInstancesToDatabase(_globalProjectId, instances)
+  }
 
   toast.success(`Rewrote ${sectionName}`)
   return { 
@@ -747,6 +897,7 @@ function executeDeleteContent(
 
 /**
  * Add a citation marker.
+ * Inserts a proper citation node (not raw text) so it renders formatted.
  */
 function executeAddCitation(
   editor: Editor,
@@ -756,12 +907,40 @@ function executeAddCitation(
   const blockId = args.blockId as string | undefined
   const afterPhrase = args.afterPhrase as string | undefined
   const section = args.section as string | undefined
+  const quote = args.quote as string | undefined  // Optional quote for the citation
 
   if (!paperId) {
     return { success: false, message: 'Missing paper ID' }
   }
 
-  const citationMarker = ` [CITE: ${paperId}]`
+  // Generate instanceId for this citation occurrence
+  const instanceId = uuidv4()
+  
+  // Build citation node content (TipTap JSON format)
+  // CitationNodeView will look up paper metadata from editor.storage.citation.papers at render time
+  const citationNode = {
+    type: 'citation',
+    attrs: {
+      id: paperId,
+      instanceId,
+      citedContent: quote || undefined,
+    }
+  }
+  
+  // Include a space before the citation for readability
+  const contentToInsert = [
+    { type: 'text', text: ' ' },
+    citationNode
+  ]
+  
+  // Save citation instance to database (async, don't block)
+  if (_globalProjectId) {
+    saveCitationInstancesToDatabase(_globalProjectId, [{
+      instanceId,
+      paperId,
+      quote: quote || '',
+    }])
+  }
 
   // Priority 1: Add at end of specific block
   if (blockId) {
@@ -772,7 +951,7 @@ function executeAddCitation(
       editor.chain()
         .focus()
         .setTextSelection(insertPos)
-        .insertContent(citationMarker)
+        .insertContent(contentToInsert)
         .run()
       toast.success('Citation added')
       return { success: true, message: 'Citation added to block', blockId }
@@ -791,7 +970,7 @@ function executeAddCitation(
       editor.chain()
         .focus()
         .setTextSelection(insertPos)
-        .insertContent(citationMarker)
+        .insertContent(contentToInsert)
         .run()
       toast.success('Citation added')
       return { success: true, message: 'Citation added' }
@@ -799,7 +978,7 @@ function executeAddCitation(
   }
 
   // Fallback: Insert at cursor
-  editor.chain().focus().insertContent(citationMarker).run()
+  editor.chain().focus().insertContent(contentToInsert).run()
   toast.warning('Could not find location, added at cursor')
   return { success: true, message: 'Citation added at cursor (location not found)' }
 }

@@ -25,6 +25,8 @@ interface UseSmartCompletionOptions {
 interface UseSmartCompletionReturn {
   isGenerating: boolean
   triggerCompletion: () => void
+  showNextQueuedSentence: () => boolean  // Returns true if there was a queued sentence to show
+  hasQueuedSentences: boolean
 }
 
 interface EditorContext {
@@ -200,6 +202,13 @@ function detectSuggestionType(context: EditorContext): SuggestionType | null {
   return null
 }
 
+// Processed sentence from API response
+interface QueuedSentence {
+  text: string           // Raw text with [@paperId#instanceId] markers
+  displayText: string    // Formatted with (Author, Year)
+  citations: GhostTextCitation[]
+}
+
 export function useSmartCompletion({
   editor,
   enabled,
@@ -222,6 +231,11 @@ export function useSmartCompletion({
   // In-flight request promise cache for deduplication
   // Key: context hash, Value: pending promise
   const inFlightRequestRef = useRef<Map<string, Promise<void>>>(new Map())
+  
+  // SENTENCE QUEUE: Store remaining sentences for instant display on accept
+  const sentenceQueueRef = useRef<QueuedSentence[]>([])
+  // Track the context when sentences were fetched (to invalidate queue on context change)
+  const queueContextRef = useRef<string>('')
   
   // Track mounted state and cleanup on unmount
   useEffect(() => {
@@ -399,25 +413,27 @@ export function useSmartCompletion({
       }
 
       const decoder = new TextDecoder()
+      // Updated to handle sentence-based response
       let finalData: {
-        suggestion?: string
-        displaySuggestion?: string
-        citations?: Array<{
-          paperId: string
-          marker: string
-          formatted: string
-          displayStartOffset: number
-          displayEndOffset: number
-          rawStartOffset: number
-          rawEndOffset: number
-          paper?: {
-            id: string
-            title: string
-            authors: string[]
-            year: number
-            doi?: string
-            venue?: string
-          }
+        sentences?: Array<{
+          text: string
+          displayText: string
+          citations: Array<{
+            paperId: string
+            marker: string
+            formatted: string
+            citedContent?: string
+            displayStartOffset: number
+            displayEndOffset: number
+            paper?: {
+              id: string
+              title: string
+              authors: string[]
+              year: number
+              doi?: string
+              venue?: string
+            }
+          }>
         }>
       } | null = null
 
@@ -447,13 +463,11 @@ export function useSmartCompletion({
                   // Accumulate text silently - don't update UI during streaming
                   // This avoids showing raw JSON or unformatted citations
                 } else if (data.type === 'done') {
-                  // Final data with properly formatted citations
+                  // Final data with sentences array
                   finalData = data
                   console.log('[Autocomplete] Stream complete:', {
-                    hasSuggestion: !!data.suggestion,
-                    hasDisplaySuggestion: !!data.displaySuggestion,
-                    citationsCount: data.citations?.length || 0,
-                    suggestionPreview: data.suggestion?.slice(0, 50)
+                    sentencesCount: data.sentences?.length || 0,
+                    firstSentencePreview: data.sentences?.[0]?.displayText?.slice(0, 50)
                   })
                 } else if (data.type === 'error') {
                   console.log('[Autocomplete] Stream error:', data.error)
@@ -475,55 +489,46 @@ export function useSmartCompletion({
         return
       }
 
-      // Update with final data including citations
-      if (finalData?.suggestion && finalData?.displaySuggestion) {
-        // Convert API citations to ghost text format
-        const ghostCitations: GhostTextCitation[] = (finalData.citations || []).map((c: {
-          paperId: string
-          marker: string
-          formatted: string
-          displayStartOffset: number
-          displayEndOffset: number
-          rawStartOffset: number
-          rawEndOffset: number
-          paper?: {
-            id: string
-            title: string
-            authors: string[]
-            year: number
-            doi?: string
-            venue?: string
-          }
-        }) => ({
-          paperId: c.paperId,
-          marker: c.marker,
-          formatted: c.formatted,
-          displayStartOffset: c.displayStartOffset,
-          displayEndOffset: c.displayEndOffset,
-          paper: c.paper ? {
-            id: c.paper.id,
-            title: c.paper.title,
-            authors: c.paper.authors,
-            year: c.paper.year,
-            journal: c.paper.venue,
-            doi: c.paper.doi
-          } : undefined
+      // Process sentences array from API
+      if (finalData?.sentences && finalData.sentences.length > 0) {
+        // Convert API sentences to QueuedSentence format
+        const queuedSentences: QueuedSentence[] = finalData.sentences.map(s => ({
+          text: s.text,
+          displayText: s.displayText,
+          citations: s.citations.map(c => ({
+            paperId: c.paperId,
+            marker: c.marker,
+            formatted: c.formatted,
+            citedContent: c.citedContent,
+            displayStartOffset: c.displayStartOffset,
+            displayEndOffset: c.displayEndOffset,
+            paper: c.paper ? {
+              id: c.paper.id,
+              title: c.paper.title,
+              authors: c.paper.authors,
+              year: c.paper.year,
+              journal: c.paper.venue,
+              doi: c.paper.doi
+            } : undefined
+          }))
         }))
-
-        // Set ghost text with both raw (for accept) and display (for rendering)
+        
+        // Show FIRST sentence as ghost text
+        const firstSentence = queuedSentences[0]
         editor.commands.setGhostText(
-          finalData.suggestion,        // rawText with [CITE: id] markers
-          finalData.displaySuggestion, // displayText with formatted citations
-          ghostCitations,
+          firstSentence.text,        // rawText with [@paperId#instanceId] markers
+          firstSentence.displayText, // displayText with formatted citations
+          firstSentence.citations,
           currentPapers
         )
         
+        // Queue remaining sentences for instant display on accept
+        sentenceQueueRef.current = queuedSentences.slice(1)
+        queueContextRef.current = contextKey
+        
+        console.log('[Autocomplete] Showing first sentence, queued:', sentenceQueueRef.current.length)
+        
         // Reset context key after successful ghost text display
-        // This allows new requests if user dismisses ghost text and triggers again
-        lastContextKeyRef.current = ''
-      } else if (finalData?.suggestion) {
-        // Fallback: no displaySuggestion (shouldn't happen with new API)
-        editor.commands.setGhostText(finalData.suggestion, finalData.suggestion, [], currentPapers)
         lastContextKeyRef.current = ''
       }
     } catch (error: unknown) {
@@ -671,19 +676,89 @@ export function useSmartCompletion({
     const context = extractEditorContext(editor)
     if (!context) return
 
+    // Clear the sentence queue when manually triggering (fresh context)
+    sentenceQueueRef.current = []
+    queueContextRef.current = ''
+
     // For manual trigger, determine type or use contextual
     const suggestionType = detectSuggestionType(context) || 'contextual'
     generateCompletion(context, suggestionType)
   }, [editor, enabled, generateCompletion])
 
+  // Show next queued sentence as ghost text (called after user accepts current sentence)
+  const showNextQueuedSentence = useCallback((): boolean => {
+    if (!editor || editor.isDestroyed) return false
+    
+    const queue = sentenceQueueRef.current
+    if (queue.length === 0) {
+      console.log('[Autocomplete] No queued sentences')
+      return false
+    }
+    
+    // Pop the next sentence from queue
+    const nextSentence = queue.shift()!
+    sentenceQueueRef.current = queue
+    
+    console.log('[Autocomplete] Showing queued sentence, remaining:', queue.length)
+    
+    // Show it as ghost text immediately (no API call!)
+    editor.commands.setGhostText(
+      nextSentence.text,
+      nextSentence.displayText,
+      nextSentence.citations,
+      papersRef.current
+    )
+    
+    // If queue is getting low (1 or 0 left), trigger background refetch
+    if (queue.length <= 1 && enabled) {
+      console.log('[Autocomplete] Queue low, scheduling background refetch')
+      // Delay slightly to let the current sentence be processed
+      setTimeout(() => {
+        if (!editor || editor.isDestroyed || !mountedRef.current) return
+        
+        const context = extractEditorContext(editor)
+        if (!context) return
+        
+        const suggestionType = detectSuggestionType(context) || 'contextual'
+        // This will fetch new sentences in the background
+        generateCompletion(context, suggestionType)
+      }, 500)
+    }
+    
+    return true
+  }, [editor, enabled, generateCompletion])
+
   // Store callbacks in refs to avoid effect re-runs when they change
   const scheduleAutoTriggerRef = useRef(scheduleAutoTrigger)
   const cancelPendingRequestRef = useRef(cancelPendingRequest)
+  const showNextQueuedSentenceRef = useRef(showNextQueuedSentence)
   
   useEffect(() => {
     scheduleAutoTriggerRef.current = scheduleAutoTrigger
     cancelPendingRequestRef.current = cancelPendingRequest
-  }, [scheduleAutoTrigger, cancelPendingRequest])
+    showNextQueuedSentenceRef.current = showNextQueuedSentence
+  }, [scheduleAutoTrigger, cancelPendingRequest, showNextQueuedSentence])
+
+  // Listen for ghost text acceptance to show next queued sentence
+  useEffect(() => {
+    if (!editor || !enabled) return
+
+    const handleGhostTextAccepted = () => {
+      console.log('[Autocomplete] Ghost text accepted, checking for queued sentences')
+      // Small delay to let the accepted text be inserted first
+      setTimeout(() => {
+        if (!editor || editor.isDestroyed || !mountedRef.current) return
+        showNextQueuedSentenceRef.current()
+      }, 50)
+    }
+
+    const editorDom = editor.view.dom
+    editorDom.addEventListener('ghosttext:accepted', handleGhostTextAccepted)
+
+    return () => {
+      editorDom.removeEventListener('ghosttext:accepted', handleGhostTextAccepted)
+    }
+  }, [editor, enabled])
 
   // Track edits with debounced auto-trigger
   useEffect(() => {
@@ -773,8 +848,13 @@ export function useSmartCompletion({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [editor, enabled, triggerCompletion])
 
+  // Check if there are queued sentences available
+  const hasQueuedSentences = sentenceQueueRef.current.length > 0
+
   return {
     isGenerating,
-    triggerCompletion
+    triggerCompletion,
+    showNextQueuedSentence,
+    hasQueuedSentences
   }
 }

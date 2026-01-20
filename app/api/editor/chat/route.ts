@@ -1,20 +1,25 @@
 import { createClient } from '@/lib/supabase/server'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
-import { streamText, type ModelMessage } from 'ai'
+import { streamText, convertToModelMessages, type UIMessage } from 'ai'
 import { NextRequest } from 'next/server'
 import { documentTools, getConfirmationLevel } from '@/lib/ai/tools/document-tools'
 import { ChunkRetriever } from '@/lib/rag/chunk-retriever'
 import { PromptService } from '@/lib/prompts/prompt-service'
-import { buildChatContext, formatPapersForContext, formatMentionedPapersForContext } from '@/lib/prompts/costar-context'
+import { 
+  buildChatAUTOMATContext, 
+  formatPapersForContext, 
+  formatMentionedPapersForContext,
+  DEFAULT_CHAT_TOOLS,
+} from '@/lib/prompts/automat-context'
 
 // =============================================================================
 // TYPES
 // =============================================================================
 
-// Vercel AI SDK sends messages at root level, custom body fields are merged in
+// Vercel AI SDK v6 sends UIMessage[] with parts array, not ModelMessage[] with content
 interface ChatRequest {
-  // Standard Vercel AI SDK fields
-  messages: ModelMessage[]
+  // Standard Vercel AI SDK v6 fields
+  messages: UIMessage[]
   // Custom fields from useChat body option
   projectId: string
   documentContent?: string
@@ -31,11 +36,17 @@ interface ChatRequest {
 // =============================================================================
 
 /**
- * Build system prompt with document and research context using CO-STAR framework.
+ * Build system prompt with document and research context using AUTOMAT framework.
  * 
- * CO-STAR: Context, Objective, Style, Tone, Audience, Response
+ * AUTOMAT: Action, Usage, Target, Output, Method, Appearance, Tone
+ * 
+ * Optimized for action-oriented chat/editor interactions:
+ * - Action-first: Chat is imperative ("rewrite this", "add citations")
+ * - Method is critical: Explicit HOW instructions for tool use
+ * - Usage provides context: How output will be used (inserted, replaced)
  */
 async function buildSystemPrompt(
+  userMessage: string,
   topic: string,
   paperType: string,
   documentContent: string,
@@ -51,9 +62,10 @@ async function buildSystemPrompt(
     ? formatMentionedPapersForContext(mentionedPapers, ragChunks)
     : undefined
 
-  // Build CO-STAR context
-  const context = buildChatContext({
-    topic,
+  // Build AUTOMAT context
+  const context = buildChatAUTOMATContext({
+    userMessage,
+    projectTopic: topic,
     paperType: paperType || 'research-article',
     documentContent,
     documentStructure,
@@ -61,10 +73,11 @@ async function buildSystemPrompt(
     papersContext: formatPapersForContext(papers),
     ragContext: ragContext || 'No additional context retrieved.',
     mentionedPapersContext,
+    tools: DEFAULT_CHAT_TOOLS,
   })
 
-  // Build prompt from template
-  return PromptService.buildChatPrompt(context)
+  // Build prompt from AUTOMAT template
+  return PromptService.buildChatAUTOMATPrompt(context)
 }
 
 /**
@@ -104,11 +117,20 @@ async function getRAGContext(
 }
 
 /**
+ * Extract text content from a UIMessage.
+ * UIMessage uses parts array, not content field.
+ */
+function getTextFromUIMessage(message: UIMessage): string {
+  const textParts = message.parts.filter(p => p.type === 'text')
+  return textParts.map(p => 'text' in p ? p.text : '').join('')
+}
+
+/**
  * Save messages to Supabase.
  */
 async function saveMessages(
   projectId: string,
-  userMessage: ModelMessage,
+  userMessageContent: string,
   assistantResponse: { content: string; toolInvocations?: Array<Record<string, unknown>> }
 ) {
   try {
@@ -118,9 +140,7 @@ async function saveMessages(
     await supabase.from('chat_messages').insert({
       project_id: projectId,
       role: 'user',
-      content: typeof userMessage.content === 'string' 
-        ? userMessage.content 
-        : JSON.stringify(userMessage.content),
+      content: userMessageContent,
       tool_invocations: [],
     })
 
@@ -230,8 +250,9 @@ export async function POST(request: NextRequest) {
       .filter(m => m.role === 'user')
       .pop()
     
-    const ragQuery = typeof lastUserMessage?.content === 'string' 
-      ? lastUserMessage.content 
+    // Extract text content from UIMessage parts
+    const ragQuery = lastUserMessage 
+      ? getTextFromUIMessage(lastUserMessage)
       : ''
 
     // Get RAG context - prioritize mentioned papers if any
@@ -248,8 +269,9 @@ export async function POST(request: NextRequest) {
       ? papers.filter(p => mentionedPaperIds.includes(p.id))
       : undefined
 
-    // Build system prompt using CO-STAR framework
+    // Build system prompt using AUTOMAT framework
     const systemPrompt = await buildSystemPrompt(
+      ragQuery || '',  // User message for action inference
       project.topic || 'Research',
       paperType,
       documentContent,
@@ -260,41 +282,42 @@ export async function POST(request: NextRequest) {
       mentionedPapers
     )
 
-    // Sanitize messages: remove ALL tool-related content from messages
-    // The AI SDK requires tool calls to have proper state/result format.
-    // We strip them entirely to avoid AI_MessageConversionError.
-    const sanitizedMessages = messages
-      .filter(msg => {
-        // Remove any "tool" role messages entirely
-        if (msg.role === 'tool') return false
-        // Remove messages without content (invalid per ModelMessage schema)
-        if (!msg.content) return false
-        return true
-      })
-      .map(msg => {
-        // Deep clone and remove any tool-related fields
-        const cleaned: Record<string, unknown> = {
-          role: msg.role,
-          content: msg.content,
+    // Filter out tool-related parts from message history before converting
+    // Our tools execute on the client side, so we don't want to send tool calls/results
+    // back to OpenAI (which would expect tool results we don't have)
+    const filteredMessages = messages.map(msg => {
+      if (msg.role === 'assistant' && msg.parts) {
+        // Filter out tool invocation parts, keep only text parts
+        const textParts = msg.parts.filter(p => p.type === 'text')
+        // If we have text parts, keep the message with only those
+        if (textParts.length > 0) {
+          return { ...msg, parts: textParts }
         }
-        
-        // Preserve id if present
-        if ('id' in msg) cleaned.id = msg.id
-        
-        return cleaned as ModelMessage
-      })
+        // If only tool parts (no text), skip this message entirely by returning null
+        return null
+      }
+      return msg
+    }).filter((msg): msg is UIMessage => msg !== null)
+
+    // Convert UIMessage[] to ModelMessage[] using SDK's official converter
+    // This handles the parts -> content transformation correctly
+    const modelMessages = await convertToModelMessages(filteredMessages)
 
     // Stream the response with tools
     const result = streamText({
       model: getLanguageModel(),
       system: systemPrompt,
-      messages: sanitizedMessages,
+      messages: modelMessages,
       tools: documentTools,
+      // IMPORTANT: tools execute on the client (browser). Stop after emitting tool calls
+      // so the provider never expects tool outputs from the server.
+      // stopWhen defaults to stepCountIs(1), which is what we want - no auto-continuation.
       maxOutputTokens: 4096,
+      abortSignal: request.signal,
       onFinish: async ({ text, toolCalls }) => {
         // Save messages to Supabase after completion
-        if (lastUserMessage) {
-          await saveMessages(projectId, lastUserMessage, {
+        if (ragQuery) {
+          await saveMessages(projectId, ragQuery, {
             content: text,
             toolInvocations: toolCalls?.map(tc => ({
               toolName: tc.toolName,
@@ -306,7 +329,9 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    return result.toTextStreamResponse()
+    // Use toUIMessageStreamResponse for useChat compatibility (Vercel AI SDK v6)
+    // This returns the proper format with parts array that useChat expects
+    return result.toUIMessageStreamResponse()
 
   } catch (error) {
     console.error('Editor chat error:', error)
@@ -352,15 +377,13 @@ export async function GET(request: NextRequest) {
       throw error
     }
 
-    // Transform to ModelMessage format
-    // NOTE: We intentionally exclude toolInvocations from loaded history
-    // because they're in our custom format and cause AI_MessageConversionError
-    // when sent back to the AI SDK. The conversation context is preserved in content.
-    const formattedMessages = (messages || []).map(m => ({
+    // Transform to UIMessage format with parts array (Vercel AI SDK v6 format)
+    // This ensures consistency between what client sends and receives
+    const formattedMessages: UIMessage[] = (messages || []).map(m => ({
       id: m.id,
       role: m.role as 'user' | 'assistant' | 'system',
-      content: m.content,
-      createdAt: m.created_at,
+      parts: [{ type: 'text' as const, text: m.content }],
+      createdAt: new Date(m.created_at),
     }))
 
     return new Response(JSON.stringify({ messages: formattedMessages }), {

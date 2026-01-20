@@ -94,19 +94,25 @@ Doctoral dissertations demand the HIGHEST level of synthesis. You must demonstra
 > "[Author A] found X. [Author B] found Y. [Author C] found Z."
 
 ❌ **AVOID (Basic Synthesis - Master's Level):**
-> "Several studies have found X [CITE: id1-3], though some disagree [CITE: id4]."
+> "Several studies have found X [1] [2] [3], though some disagree [4]."
 
 ✅ **USE (Deep Synthesis - Doctoral Level) - STRUCTURE ONLY:**
 > "The relationship between [topic from YOUR evidence] has been the subject of sustained scholarly 
 > attention, yielding a complex evidentiary landscape. 
 > [Type of studies from YOUR evidence] consistently demonstrate 
-> [finding from YOUR evidence] [CITE: your-actual-id1] [CITE: your-actual-id2] [CITE: your-actual-id3], with 
-> [additional evidence IF available in YOUR sources] [CITE: your-actual-id4]. However, this apparent 
+> [finding from YOUR evidence] [1] [2] [3], with 
+> [additional evidence IF available in YOUR sources] [4]. However, this apparent 
 > consensus masks important methodological heterogeneity. [Studies with different approach from YOUR evidence] 
-> yield [different findings from YOUR evidence] [CITE: your-actual-id5], suggesting [your interpretation]. 
+> yield [different findings from YOUR evidence] [5], suggesting [your interpretation]. 
 > Moreover, [other type of research from YOUR evidence] challenge [aspect], revealing 
-> [nuances from YOUR evidence] [CITE: your-actual-id6] [CITE: your-actual-id7]. This [gap you identify] 
+> [nuances from YOUR evidence] [6] [7]. This [gap you identify] 
 > represents a significant gap that this dissertation addresses through [your approach]."
+>
+> <!-- CITATIONS
+> [1] paper_id: actual-id | quote: "exact quote"
+> [2] paper_id: actual-id | quote: "exact quote"
+> ... (continue for all citations)
+> -->
 
 ⚠️ CRITICAL: Do NOT invent sample sizes ("N > 10,000") or effect sizes ("r = 0.35-0.42").
 Only include statistics that ACTUALLY APPEAR in your evidence snippets.
@@ -128,13 +134,13 @@ For EVERY major body of work you discuss, provide:
 
 ### Example (Doctoral-Level Critical Evaluation) - STRUCTURE ONLY:
 > "The theoretical foundation of [topic] has undergone significant revision since 
-> [foundational work from YOUR evidence] [CITE: your-actual-id1]. While the original model 
+> [foundational work from YOUR evidence] [1]. While the original model 
 > posited [original claim from YOUR evidence], subsequent empirical tests revealed [findings from YOUR evidence] 
-> [CITE: your-actual-id2] [CITE: your-actual-id3], prompting [later work from YOUR evidence] 
-> [CITE: your-actual-id4] to propose [modification from YOUR evidence]. However, this revised model 
-> has itself been challenged on [grounds from YOUR evidence]. [Other researchers from YOUR evidence] [CITE: your-actual-id5] 
+> [2] [3], prompting [later work from YOUR evidence] 
+> [4] to propose [modification from YOUR evidence]. However, this revised model 
+> has itself been challenged on [grounds from YOUR evidence]. [Other researchers from YOUR evidence] [5] 
 > demonstrated [contradicting finding from YOUR evidence], suggesting [interpretation]. 
-> Meanwhile, [yet another perspective from YOUR evidence] [CITE: your-actual-id6] has argued [alternative view]. 
+> Meanwhile, [yet another perspective from YOUR evidence] [6] has argued [alternative view]. 
 > This ongoing theoretical ferment represents both a challenge and an opportunity for the 
 > present dissertation, which adopts [your approach]."
 
@@ -153,22 +159,22 @@ Populate tables ONLY with data from YOUR evidence snippets.
 **Table 1: Comprehensive Study Summary**
 | Author (Year) | Research Question | Design | Sample | Measures | Key Findings | Limitations | Quality Rating |
 |---------------|-------------------|--------|--------|----------|--------------|-------------|----------------|
-| [Author from evidence] [CITE: actual-id] | [RQ from evidence] | [Design from evidence] | [Sample IF in evidence] | [Measures from evidence] | [Finding from evidence] | [Limitation] | [Your rating] |
+| [Author from evidence] [1] | [RQ from evidence] | [Design from evidence] | [Sample IF in evidence] | [Measures from evidence] | [Finding from evidence] | [Limitation] | [Your rating] |
 
 **Table 2: Theoretical Framework Comparison**
 | Theory | Key Propositions | Predictions for This Study | Supporting Evidence | Contradicting Evidence |
 |--------|-----------------|---------------------------|---------------------|----------------------|
-| [Theory from evidence] | [Props from evidence] | [Your prediction] | [CITE: actual-ids] | [CITE: actual-ids] |
+| [Theory from evidence] | [Props from evidence] | [Your prediction] | [1] [2] | [1] [2] |
 
 **Table 3: Methodological Quality Assessment**
 | Study | Sample Adequacy | Measure Validity | Design Rigor | Confound Control | Overall Rating |
 |-------|----------------|------------------|--------------|------------------|----------------|
-| [CITE: actual-id] | [Your assessment] | [Your assessment] | [Your assessment] | [Your assessment] | [Your rating] |
+| [1] | [Your assessment] | [Your assessment] | [Your assessment] | [Your assessment] | [Your rating] |
 
 **Table 4: Meta-Analytic Summary** (if applicable - ONLY if meta-analyses are in YOUR evidence)
 | Meta-Analysis | Studies Included | Overall Effect | Heterogeneity | Moderators Identified |
 |---------------|------------------|----------------|---------------|----------------------|
-| [CITE: actual-id] | [k from evidence] | [Effect from evidence] | [I² from evidence] | [Moderators from evidence] |
+| [1] | [k from evidence] | [Effect from evidence] | [I² from evidence] | [Moderators from evidence] |
 
 ⚠️ CRITICAL: If your evidence doesn't include effect sizes, heterogeneity statistics, or quality ratings,
 either omit those columns OR write "not reported" - NEVER invent meta-analytic statistics.

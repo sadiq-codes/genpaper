@@ -79,6 +79,31 @@ export type PaperTypeKey =
   | 'mastersThesis' 
   | 'phdDissertation'
 
+/**
+ * Search multipliers by paper type - determines how many papers to search for
+ * relative to the ideal source count. Higher multipliers account for filtering losses.
+ * E.g., if idealSourceCount is 40 and multiplier is 5, search for 200 papers.
+ */
+export const PAPER_TYPE_SEARCH_MULTIPLIERS: Record<PaperTypeKey, number> = {
+  literatureReview: 5,      // Needs most sources, heavy filtering expected
+  phdDissertation: 4,       // Comprehensive coverage needed
+  mastersThesis: 3,         // Substantial but focused
+  capstoneProject: 3,       // Similar to thesis
+  researchArticle: 2.5,     // Focused, fewer sources needed
+}
+
+/**
+ * Minimum number of papers to search for by paper type.
+ * Ensures adequate coverage even if idealSourceCount is low.
+ */
+export const PAPER_TYPE_MIN_SEARCH: Record<PaperTypeKey, number> = {
+  literatureReview: 150,
+  phdDissertation: 120,
+  mastersThesis: 80,
+  capstoneProject: 80,
+  researchArticle: 50,
+}
+
 export interface OriginalResearchConfig {
   has_original_research: boolean
   research_question?: string

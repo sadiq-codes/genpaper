@@ -205,6 +205,7 @@ export async function retrieveEditorContext(
   paperIds: string[],
   options: EditorRetrievalOptions = {}
 ): Promise<EditorContext> {
+  const startTime = Date.now()
   const {
     maxChunks = 10,
     maxClaims = 7,
@@ -232,9 +233,12 @@ export async function retrieveEditorContext(
   const supabase = await getSB()
   
   // Generate embedding for query (use cache for repeated queries)
+  const embeddingStartTime = Date.now()
   const [queryEmbedding] = await getEmbeddingsWithCache([query])
+  const embeddingTime = Date.now() - embeddingStartTime
 
   // Run chunk and claim searches in parallel
+  const searchStartTime = Date.now()
   const [chunksResult, claimsResult] = await Promise.all([
     // Search paper chunks
     supabase.rpc('match_paper_chunks', {
@@ -243,13 +247,16 @@ export async function retrieveEditorContext(
       min_score: minChunkScore,
       paper_ids: paperIds
     }),
-    // Search paper claims
-    supabase.rpc('match_paper_claims', {
-      query_embedding: queryEmbedding,
-      paper_ids: paperIds,
-      match_count: maxClaims * 2
-    })
+    // Search paper claims (skip if maxClaims is 0)
+    maxClaims > 0 
+      ? supabase.rpc('match_paper_claims', {
+          query_embedding: queryEmbedding,
+          paper_ids: paperIds,
+          match_count: maxClaims * 2
+        })
+      : Promise.resolve({ data: [], error: null })
   ])
+  const searchTime = Date.now() - searchStartTime
 
   // Process chunks
   let chunks: RetrievedChunk[] = []
@@ -302,7 +309,9 @@ export async function retrieveEditorContext(
   ])
 
   // Fetch paper metadata
+  const metadataStartTime = Date.now()
   const papers = await fetchPaperMetadata(Array.from(retrievedPaperIds), supabase)
+  const metadataTime = Date.now() - metadataStartTime
 
   const result: EditorContext = {
     chunks,
@@ -313,6 +322,18 @@ export async function retrieveEditorContext(
 
   // Cache the result
   ragCache.set(cacheKey, result)
+
+  // Log timing breakdown
+  const totalTime = Date.now() - startTime
+  console.log('[RAG] Retrieval timing (ms):', {
+    embedding: embeddingTime,
+    search: searchTime,
+    metadata: metadataTime,
+    total: totalTime,
+    chunks: chunks.length,
+    claims: claims.length,
+    papers: papers.size
+  })
 
   return result
 }

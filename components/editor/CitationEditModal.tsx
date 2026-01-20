@@ -104,11 +104,15 @@ export function CitationEditModal({
   const [publisher, setPublisher] = useState('')
   const [pubType, setPubType] = useState('article-journal')
 
-  // Fetch citation data with React Query
+  // Track if form has been populated with initial data
+  const [hasPopulatedInitial, setHasPopulatedInitial] = useState(false)
+  
+  // Fetch citation data with React Query (for additional fields like volume, issue, pages)
+  // Fetch even if initialData exists to get full CSL JSON with extra fields
   const { data: citationData, isLoading: isFetching } = useQuery({
     queryKey: ['citation', paperId, projectId],
     queryFn: () => fetchCitationData(paperId, projectId),
-    enabled: open && !initialData && !!paperId && !!projectId,
+    enabled: open && !!paperId && !!projectId,
     staleTime: 5 * 60 * 1000, // 5 minutes
   })
 
@@ -146,16 +150,46 @@ export function CitationEditModal({
     setPubType(csl.type || 'article-journal')
   }, [])
 
-  // Load data when modal opens or data changes
+  // Reset populated flag when modal closes
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      setHasPopulatedInitial(false)
+    }
+  }, [open])
+
+  // Load initial data immediately when modal opens (instant form display)
+  useEffect(() => {
+    if (!open || hasPopulatedInitial) return
 
     if (initialData) {
       populateForm(initialData)
-    } else if (citationData) {
-      populateForm(citationData)
+      setHasPopulatedInitial(true)
     }
-  }, [open, initialData, citationData, populateForm])
+  }, [open, initialData, hasPopulatedInitial, populateForm])
+
+  // Merge additional CSL fields when they load (without overwriting existing values)
+  useEffect(() => {
+    if (!open || !citationData) return
+
+    // If no initial data was provided, populate entire form from CSL
+    if (!initialData) {
+      populateForm(citationData)
+      setHasPopulatedInitial(true)
+      return
+    }
+
+    // If we had initial data, only merge in fields that are empty in the form
+    // This adds volume, issue, pages, etc. from CSL without overwriting user input
+    if (hasPopulatedInitial) {
+      // Only update empty fields with CSL data
+      if (!volume && citationData.volume) setVolume(citationData.volume)
+      if (!issue && citationData.issue) setIssue(citationData.issue)
+      if (!pages && citationData.page) setPages(citationData.page)
+      if (!publisher && citationData.publisher) setPublisher(citationData.publisher)
+      if (!url && (citationData.URL || citationData.url)) setUrl(citationData.URL || citationData.url || '')
+      // Don't overwrite DOI, title, authors, year, journal as those came from initialData
+    }
+  }, [open, citationData, initialData, hasPopulatedInitial, populateForm, volume, issue, pages, publisher, url])
 
   // Author management
   const addAuthor = useCallback(() => {
@@ -250,7 +284,8 @@ export function CitationEditModal({
           </DialogDescription>
         </DialogHeader>
 
-        {isFetching ? (
+        {/* Only show loading if we have no initial data AND we're fetching */}
+        {isFetching && !initialData && !hasPopulatedInitial ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin mr-2" />
             <span className="text-muted-foreground">Loading citation data...</span>
@@ -270,9 +305,9 @@ export function CitationEditModal({
 
             {/* Publication Type */}
             <div className="space-y-2">
-              <Label htmlFor="type">Publication Type</Label>
+              <Label htmlFor="pub-type">Publication Type</Label>
               <Select value={pubType} onValueChange={setPubType}>
-                <SelectTrigger>
+                <SelectTrigger id="pub-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -286,9 +321,9 @@ export function CitationEditModal({
             </div>
 
             {/* Authors */}
-            <div className="space-y-2">
+            <fieldset className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label>Authors *</Label>
+                <legend className="text-sm font-medium">Authors *</legend>
                 <Button
                   type="button"
                   variant="outline"
@@ -305,13 +340,19 @@ export function CitationEditModal({
                   <div key={index} className="flex items-center gap-2">
                     <GripVertical className="h-4 w-4 text-muted-foreground/50 cursor-grab" />
                     <Input
+                      id={`author-family-${index}`}
+                      name={`author-family-${index}`}
                       placeholder="Family name"
+                      aria-label={`Author ${index + 1} family name`}
                       value={author.family}
                       onChange={(e) => updateAuthor(index, 'family', e.target.value)}
                       className="flex-1"
                     />
                     <Input
+                      id={`author-given-${index}`}
+                      name={`author-given-${index}`}
                       placeholder="Given name(s)"
+                      aria-label={`Author ${index + 1} given name`}
                       value={author.given}
                       onChange={(e) => updateAuthor(index, 'given', e.target.value)}
                       className="flex-1"
@@ -322,6 +363,7 @@ export function CitationEditModal({
                       size="icon"
                       onClick={() => removeAuthor(index)}
                       disabled={authors.length <= 1}
+                      aria-label={`Remove author ${index + 1}`}
                       className={cn(
                         "h-8 w-8 shrink-0",
                         authors.length <= 1 && "opacity-30"
@@ -335,7 +377,7 @@ export function CitationEditModal({
               <p className="text-xs text-muted-foreground">
                 Enter family name (surname) and given name(s) separately for proper formatting.
               </p>
-            </div>
+            </fieldset>
 
             {/* Year and Journal in a row */}
             <div className="grid grid-cols-2 gap-4">

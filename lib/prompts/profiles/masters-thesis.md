@@ -82,9 +82,9 @@ Master's theses demand SYNTHESIS, not just summary. You must demonstrate analyti
 
 ✅ **USE (Synthetic - Master's Level) - STRUCTURE ONLY:**
 > "A convergent pattern emerges from [type of research from YOUR evidence]: [description of studies from YOUR evidence] 
-> consistently link [topic] to [outcome] [CITE: your-actual-id1] [CITE: your-actual-id2] [CITE: your-actual-id3]. However, 
+> consistently link [topic] to [outcome] [1] [2] [3]. However, 
 > [other type of research from YOUR evidence] reveal a more nuanced picture, with [factors from YOUR evidence] 
-> moderating this relationship [CITE: your-actual-id4] [CITE: your-actual-id5]. This [type of divide you identify] 
+> moderating this relationship [4] [5]. This [type of divide you identify] 
 > suggests that [your synthesis/interpretation]."
 
 ⚠️ Replace ALL bracketed content with ACTUAL information from your evidence.
@@ -104,9 +104,9 @@ For EVERY major claim or finding you discuss, evaluate:
 ⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
 
 ### Example (Good Critical Evaluation) - STRUCTURE ONLY:
-> "While [evidence type from YOUR sources] suggests [finding from YOUR evidence] [CITE: your-actual-id], 
+> "While [evidence type from YOUR sources] suggests [finding from YOUR evidence] [1], 
 > [limitation you identify] limits confidence. Specifically, 
-> [pattern you observe in YOUR evidence] [CITE: your-actual-id]. This [gap/artifact you identify] has not been 
+> [pattern you observe in YOUR evidence] [1]. This [gap/artifact you identify] has not been 
 > adequately addressed in subsequent research, representing a significant methodological 
 > gap that this thesis aims to address through [your approach]."
 
@@ -125,17 +125,17 @@ Populate tables ONLY with data from YOUR evidence snippets.
 **Table 1: Summary of Key Studies** (in Literature Review)
 | Author (Year) | Sample | Design | Key Finding | Limitation |
 |---------------|--------|--------|-------------|------------|
-| [Author from evidence] [CITE: actual-id] | [Sample IF in evidence] | [Design from evidence] | [Finding from evidence] | [Limitation from evidence] |
+| [Author from evidence] [1] | [Sample IF in evidence] | [Design from evidence] | [Finding from evidence] | [Limitation from evidence] |
 
 **Table 2: Comparison of Theoretical Frameworks** (if applicable)
 | Theory | Key Propositions | Supporting Evidence | Critiques |
 |--------|-----------------|---------------------|-----------|
-| [Theory from evidence] | [Propositions from evidence] | [CITE: actual-ids] | [Critiques from evidence] |
+| [Theory from evidence] | [Propositions from evidence] | [1] [2] | [Critiques from evidence] |
 
 **Table 3: Methodological Comparison** (if discussing methods)
 | Method | Strengths | Weaknesses | Studies Using |
 |--------|-----------|------------|---------------|
-| [Method from evidence] | [Strengths from evidence] | [Weaknesses from evidence] | [CITE: actual-ids] |
+| [Method from evidence] | [Strengths from evidence] | [Weaknesses from evidence] | [1] [2] |
 
 ⚠️ CRITICAL: If your evidence doesn't include sample sizes, designs, or limitations, 
 either omit that column OR write "not reported" - NEVER invent data.

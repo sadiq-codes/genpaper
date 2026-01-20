@@ -57,13 +57,6 @@ function generateSafeToolId(messageId: string, toolName: string, args: Record<st
 // API FUNCTIONS
 // =============================================================================
 
-interface ChatHistoryMessage {
-  id: string
-  role: string
-  content: string
-  toolInvocations?: ToolInvocation[]
-}
-
 async function fetchChatHistory(projectId: string): Promise<UIMessage[]> {
   const response = await fetch(`/api/editor/chat?projectId=${projectId}`)
   if (!response.ok) {
@@ -73,12 +66,8 @@ async function fetchChatHistory(projectId: string): Promise<UIMessage[]> {
   const data = await response.json()
   if (!data.messages) return []
   
-  return data.messages.map((m: ChatHistoryMessage) => ({
-    id: m.id,
-    role: m.role as 'user' | 'assistant',
-    content: m.content,
-    parts: m.toolInvocations ? m.toolInvocations.map(ti => ({ type: 'tool-invocation' as const, ...ti })) : [],
-  }))
+  // Server now returns UIMessage format directly with parts array
+  return data.messages as UIMessage[]
 }
 
 async function clearChatHistoryApi(projectId: string): Promise<void> {
@@ -127,6 +116,8 @@ export interface UseEditorChatReturn {
   sendMessage: (contentOrOptions: string | SendMessageOptions) => void
   /** Is AI currently responding */
   isLoading: boolean
+  /** Is chat history being loaded */
+  isLoadingHistory: boolean
   /** Error if any */
   error: Error | undefined
   /** Tool calls waiting for confirmation */
@@ -195,12 +186,46 @@ export function useEditorChat({
       setHasGhostPreviews(hasGhostEdits(editor))
     }
   }, [editor, pendingTools])
+  
+  // Listen for ghost edits invalidation (when document changes externally)
+  // This keeps pendingTools state in sync with editor ghost preview state
+  useEffect(() => {
+    if (!editor) return
+    
+    const handleGhostEditsInvalidated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ editIds: string[]; reason: string }>
+      const { editIds, reason } = customEvent.detail
+      
+      console.log('[useEditorChat] Ghost edits invalidated:', { editIds, reason })
+      
+      // Mark all invalidated edits as executed (so they won't be reprocessed)
+      editIds.forEach(id => executedTools.current.add(id))
+      
+      // Clear all pending tools since document changed
+      setPendingTools([])
+      setHasGhostPreviews(false)
+      
+      // Only show toast if there were actual pending edits cleared
+      if (editIds.length > 0) {
+        toast.info('Pending edits cleared', {
+          description: 'Document was modified. Request edits again if needed.',
+          duration: 3000,
+        })
+      }
+    }
+    
+    editor.view.dom.addEventListener('ghostedits:invalidated', handleGhostEditsInvalidated)
+    
+    return () => {
+      editor.view.dom.removeEventListener('ghostedits:invalidated', handleGhostEditsInvalidated)
+    }
+  }, [editor])
 
   const getEditorContext = useCallback(() => {
     const ed = editorRef.current
     if (!ed) return { documentContent: '', selectedText: undefined, documentStructure: '' }
 
-    const documentContent = ed.getText()
+    let documentContent = ed.getText()
     const { from, to } = ed.state.selection
     const selectedText = from !== to 
       ? ed.state.doc.textBetween(from, to) 
@@ -208,6 +233,19 @@ export function useEditorChat({
     
     // Get document structure with block IDs for AI targeting
     const documentStructure = getDocumentStructure(ed)
+
+    // Speed: cap very large documents sent to the chat endpoint.
+    // Keep intro + latest context to preserve quality while reducing payload.
+    const MAX_DOC_CHARS = 20_000
+    if (documentContent.length > MAX_DOC_CHARS) {
+      const head = documentContent.slice(0, 6_000)
+      const tail = documentContent.slice(-14_000)
+      documentContent =
+        `[Document truncated for speed: showing first 6000 chars + last 14000 chars of ${documentContent.length}]\n\n` +
+        head +
+        `\n\n---\n\n` +
+        tail
+    }
 
     return { documentContent, selectedText, documentStructure }
   }, [])
@@ -225,14 +263,88 @@ export function useEditorChat({
     id: projectId, // Use projectId as chat ID for persistence
     transport,
     onFinish: ({ message }) => {
-      // Process tool calls when they arrive
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const toolParts = (message.parts || []).filter((p: any) => p.type === 'tool-invocation')
-      if (toolParts.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const invocations = toolParts.map((p: any) => p as ToolInvocation)
-        processToolInvocations(message.id, invocations)
+      // DEBUG: Log ALL part types to understand the structure
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[useEditorChat] onFinish - ALL PARTS:', 
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          message.parts?.map((p: any, i: number) => ({
+            index: i,
+            type: p.type,
+            keys: Object.keys(p),
+            hasToolInvocation: !!p.toolInvocation,
+            toolName: p.toolInvocation?.toolName || p.toolName,
+            // For tool-invocation type
+            toolInvocationKeys: p.toolInvocation ? Object.keys(p.toolInvocation) : null,
+          }))
+        )
       }
+      
+      // Process tool calls when they arrive
+      // AI SDK v6 uses different part types - check multiple patterns:
+      // - 'tool-invocation' with nested toolInvocation object
+      // - Parts with toolInvocation property directly
+      // - 'tool-call' type (some versions)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const toolParts = (message.parts || []).filter((p: any) => 
+        p.type === 'tool-invocation' || 
+        p.type === 'tool-call' ||
+        p.toolInvocation !== undefined ||
+        (p.type && p.type.startsWith && p.type.startsWith('tool-'))
+      )
+      
+      if (toolParts.length > 0) {
+        console.log('[useEditorChat] Found tool parts:', toolParts.length)
+        // Vercel AI SDK v6 tool part shapes:
+        // 1. { type: 'tool-insertContent', args: {...} } - tool name in type string
+        // 2. { type: 'tool-invocation', toolInvocation: { toolName, args } } - nested
+        // 3. { type: 'tool-call', toolName, args } - flat
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const invocations: ToolInvocation[] = toolParts
+          .map((p: any) => {
+            // AI SDK v6 often uses type like 'tool-insertContent' where tool name is in the type
+            // Extract toolName from type string, or fall back to nested properties
+            const toolName = (p.type?.startsWith('tool-') && p.type !== 'tool-invocation' && p.type !== 'tool-call')
+              ? p.type.replace('tool-', '')  // 'tool-insertContent' → 'insertContent'
+              : (p?.toolInvocation?.toolName ?? p?.toolName)
+            
+            // Args are directly on the part object in v6, or nested in toolInvocation
+            const args = p?.args ?? p?.input ?? p?.toolInvocation?.args ?? p?.toolInvocation?.input ?? {}
+            
+            if (!toolName) {
+              console.log('[useEditorChat] Skipping part - no toolName:', p)
+              return null
+            }
+            
+            console.log('[useEditorChat] Processing tool:', toolName, 'args keys:', Object.keys(args))
+            
+            return {
+              toolName,
+              args: (args && typeof args === 'object') ? args : {},
+              state: p?.state ?? p?.toolInvocation?.state,
+              result: p?.result ?? p?.toolInvocation?.result,
+            } as ToolInvocation
+          })
+          .filter(Boolean) as ToolInvocation[]
+        
+        if (invocations.length > 0) {
+          processToolInvocations(message.id, invocations)
+        }
+      }
+      
+      // Debug log for message content
+      if (process.env.NODE_ENV === 'development') {
+        const textParts = (message.parts || []).filter((p: { type: string }) => p.type === 'text')
+        console.log('[useEditorChat] onFinish:', {
+          messageId: message.id,
+          role: message.role,
+          partsCount: message.parts?.length || 0,
+          textPartsCount: textParts.length,
+          toolPartsCount: toolParts.length,
+        })
+      }
+    },
+    onError: (error) => {
+      console.error('[useEditorChat] Chat error:', error)
     },
   })
 
@@ -334,11 +446,16 @@ export function useEditorChat({
   /**
    * Process tool invocations from a message.
    * Queue those requiring confirmation with ghost previews, execute others immediately.
+   * 
+   * Includes deduplication to prevent duplicate tool calls from creating multiple previews.
    */
   const processToolInvocations = useCallback((messageId: string, invocations: ToolInvocation[]) => {
     const ed = editorRef.current
     const newPending: PendingToolCall[] = []
     const calculatedEdits: CalculatedEdit[] = []
+    
+    // Track tool signatures we've seen in THIS batch to deduplicate
+    const seenInBatch = new Set<string>()
 
     for (const invocation of invocations) {
       const toolName = invocation.toolName
@@ -349,6 +466,41 @@ export function useEditorChat({
       
       // Skip if already executed
       if (executedTools.current.has(toolId)) continue
+      
+      // DEDUPLICATION: Create a signature based on tool name and key args
+      // This catches cases where AI calls the same tool twice with identical intent
+      const argsSignature = JSON.stringify({
+        toolName,
+        // Use key identifying args (content/section/location)
+        content: args.content ? String(args.content).slice(0, 100) : undefined,
+        section: args.section,
+        location: args.location,
+        blockId: args.blockId || args.afterBlockId,
+        searchPhrase: args.searchPhrase ? String(args.searchPhrase).slice(0, 50) : undefined,
+      })
+      
+      if (seenInBatch.has(argsSignature)) {
+        console.log('[useEditorChat] Skipping duplicate tool call:', toolName)
+        continue
+      }
+      seenInBatch.add(argsSignature)
+      
+      // Also check if a very similar tool is already pending
+      const isDuplicateOfPending = pendingToolsRef.current.some(existing => {
+        if (existing.toolName !== toolName) return false
+        // Check for same target location
+        const existingArgs = existing.args
+        return (
+          existingArgs.section === args.section &&
+          existingArgs.location === args.location &&
+          (existingArgs.blockId || existingArgs.afterBlockId) === (args.blockId || args.afterBlockId)
+        )
+      })
+      
+      if (isDuplicateOfPending) {
+        console.log('[useEditorChat] Skipping tool call - similar edit already pending:', toolName)
+        continue
+      }
 
       const confirmLevel = getConfirmationLevel(toolName)
 
@@ -409,6 +561,17 @@ export function useEditorChat({
     }
 
     switch (toolName) {
+      case 'insertContent': {
+        const location = args.afterBlockId 
+          ? `after block ${args.afterBlockId}`
+          : args.afterPhrase 
+            ? `after "${(args.afterPhrase as string).slice(0, 40)}..."`
+            : args.location 
+              ? `at ${args.location}`
+              : 'at cursor'
+        const contentPreview = (args.content as string)?.slice(0, 200) || ''
+        return `Insert ${location}:\n"${contentPreview}${contentPreview.length >= 200 ? '...' : ''}"`
+      }
       case 'rewriteSection':
         return `Rewrite "${args.section}" section:\n${(args.newContent as string)?.slice(0, 200)}...`
       case 'deleteContent':
@@ -424,6 +587,10 @@ export function useEditorChat({
 
   /**
    * Confirm a pending tool call.
+   * 
+   * IMPORTANT: When an edit is accepted, ALL other pending edits become invalid
+   * because the document positions have changed. We clear everything to avoid
+   * stale state and ghost preview mismatches.
    */
   const confirmTool = useCallback((toolId: string) => {
     const ed = editorRef.current
@@ -439,24 +606,34 @@ export function useEditorChat({
 
     // Delay execution to let animation play
     setTimeout(() => {
-      // Pass toolId to preserve other ghost previews during execution
+      // Execute the accepted edit
       executeToolCall(tool.toolName, tool.args, toolId)
-      executedTools.current.add(toolId)
-      setPendingTools(prev => prev.filter(t => t.id !== toolId))
       
-      // Clear ghost edit for this tool
+      // Mark ALL pending tools as handled (document changed, positions invalid)
+      pendingTools.forEach(t => executedTools.current.add(t.id))
+      
+      // Clear ALL pending tools - document has changed, other edits are now stale
+      setPendingTools([])
+      
+      // Clear ALL ghost edits from editor
       if (ed) {
-        ed.commands.clearGhostEdit(toolId)
-        // Update ghost preview state
-        const remaining = pendingTools.filter(t => t.id !== toolId && t.calculatedEdit)
-        setHasGhostPreviews(remaining.length > 0)
+        ed.commands.clearGhostEdits()
+        setHasGhostPreviews(false)
       }
 
       // Show toast notification
-      toast.success('Edit accepted', {
-        description: 'Press Cmd+Z to undo',
-        duration: 3000,
-      })
+      const otherCount = pendingTools.length - 1
+      if (otherCount > 0) {
+        toast.success('Edit accepted', {
+          description: `${otherCount} other pending edit${otherCount > 1 ? 's' : ''} cleared (document changed). Press Cmd+Z to undo.`,
+          duration: 4000,
+        })
+      } else {
+        toast.success('Edit accepted', {
+          description: 'Press Cmd+Z to undo',
+          duration: 3000,
+        })
+      }
     }, 300)
   }, [pendingTools, executeToolCall])
 
@@ -648,13 +825,15 @@ export function useEditorChat({
     })
   }, [chatSendMessage, projectId, getEditorContext])
 
+  // Track if we should start prefetching (after initial render settles)
   // Fetch chat history with React Query - cached per project
-  // Only fetch when enabled (e.g., when chat tab is opened)
-  const { data: historyData, refetch: refetchHistory } = useQuery({
+  // Prefetches immediately in background for instant tab switching
+  const { data: historyData, refetch: refetchHistory, isLoading: isLoadingHistory } = useQuery({
     queryKey: ['project', projectId, 'chat', 'history'],
     queryFn: () => fetchChatHistory(projectId),
-    enabled: enabled && !!projectId, // Lazy load - only fetch when enabled
+    enabled: enabled && !!projectId, // Fetch immediately when enabled
     staleTime: Infinity, // Chat history doesn't go stale
+    gcTime: 1000 * 60 * 30, // Keep in cache for 30 minutes
   })
 
   // Load history into chat state when fetched
@@ -704,6 +883,7 @@ export function useEditorChat({
     handleSubmit,
     sendMessage,
     isLoading,
+    isLoadingHistory,
     error,
     pendingTools,
     confirmTool,

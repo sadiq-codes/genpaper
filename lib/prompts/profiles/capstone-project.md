@@ -96,11 +96,17 @@ A capstone project must demonstrate your ability to SYNTHESIZE, not just summari
 
 ✅ **USE (Integrated Synthesis - Expected Quality) - STRUCTURE ONLY:**
 > "Research on [topic from YOUR evidence] converges around a central finding: [finding from YOUR evidence] 
-> [CITE: your-actual-id1] [CITE: your-actual-id2] [CITE: your-actual-id3]. However, the 
+> [1] [2] [3]. However, the 
 > mechanisms underlying this relationship remain contested. Some [studies from YOUR evidence] 
-> attribute it to [factor from YOUR evidence] [CITE: your-actual-id4], while others emphasize 
-> [other factors from YOUR evidence] [CITE: your-actual-id5]. Notably, [specific studies from YOUR evidence] 
-> [CITE: your-actual-id6] suggest [nuance from YOUR evidence], challenging [earlier assumptions from YOUR evidence]."
+> attribute it to [factor from YOUR evidence] [4], while others emphasize 
+> [other factors from YOUR evidence] [5]. Notably, [specific studies from YOUR evidence] 
+> [6] suggest [nuance from YOUR evidence], challenging [earlier assumptions from YOUR evidence]."
+>
+> <!-- CITATIONS
+> [1] paper_id: actual-id-from-evidence | quote: "exact quote"
+> [2] paper_id: actual-id-from-evidence | quote: "exact quote"
+> ... (continue for all citations)
+> -->
 
 ⚠️ Replace ALL bracketed content with ACTUAL information from your evidence snippets.
 
@@ -118,11 +124,17 @@ For EACH major finding or claim you discuss, consider:
 ⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
 
 ### Example (Good Critical Evaluation) - STRUCTURE ONLY:
-> "While multiple studies support [finding from YOUR evidence] [CITE: your-actual-id1] 
-> [CITE: your-actual-id2], methodological limitations warrant caution. [Limitation you identify from YOUR evidence], 
+> "While multiple studies support [finding from YOUR evidence] [1] 
+> [2], methodological limitations warrant caution. [Limitation you identify from YOUR evidence], 
 > limiting generalizability. Furthermore, [another limitation from YOUR evidence], as [study from YOUR evidence] 
-> [CITE: your-actual-id3] demonstrated [related finding from YOUR evidence]. These limitations highlight 
+> [3] demonstrated [related finding from YOUR evidence]. These limitations highlight 
 > the need for [your study's approach]."
+>
+> <!-- CITATIONS
+> [1] paper_id: actual-id | quote: "exact quote"
+> [2] paper_id: actual-id | quote: "exact quote"
+> [3] paper_id: actual-id | quote: "exact quote"
+> -->
 
 ⚠️ CRITICAL: Do NOT invent sample sizes ("N=280") or time periods ("4-week," "8+ weeks").
 Only include such details if they ACTUALLY APPEAR in your evidence snippets.
@@ -139,12 +151,18 @@ Populate tables ONLY with data from YOUR evidence snippets.
 **Table 1: Summary of Key Studies** (in Literature Review)
 | Author (Year) | Sample | Design | Key Finding | Relevance to Present Study |
 |---------------|--------|--------|-------------|---------------------------|
-| [Author from evidence] [CITE: actual-id] | [Sample IF in evidence] | [Design from evidence] | [Finding from evidence] | [Your relevance assessment] |
+| [Author from evidence] [1] | [Sample IF in evidence] | [Design from evidence] | [Finding from evidence] | [Your relevance assessment] |
 
 **Table 2: Comparison of Approaches** (when applicable)
 | Approach | Advantages | Limitations | Studies Using |
 |----------|------------|-------------|---------------|
-| [Method from evidence] | [Advantages from evidence] | [Limitations from evidence] | [CITE: actual-ids] |
+| [Method from evidence] | [Advantages from evidence] | [Limitations from evidence] | [2] [3] |
+
+<!-- CITATIONS
+[1] paper_id: actual-id | quote: "exact quote"
+[2] paper_id: actual-id | quote: "exact quote"
+[3] paper_id: actual-id | quote: "exact quote"
+-->
 
 ⚠️ CRITICAL: If your evidence doesn't include sample sizes or specific advantages/limitations,
 write "not reported" - NEVER invent data to fill table cells.

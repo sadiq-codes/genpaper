@@ -262,12 +262,12 @@ export function RichChatInput({
   const isEmpty = !editor?.getText().trim() && !editor?.getHTML().includes('<img')
 
   return (
-    <div className="border-t border-border p-3 bg-muted/30">
+    <div className="border-t border-border px-3 py-2 bg-muted/30">
       <div 
         ref={editorContainerRef}
         className={cn(
           "rich-chat-input-container",
-          "flex flex-col rounded-lg border border-border bg-background",
+          "flex flex-col rounded-lg border border-input bg-background shadow-sm",
           disabled && "opacity-60 cursor-not-allowed"
         )}
       >
@@ -325,8 +325,11 @@ export function RichChatInput({
           </BubbleMenu>
         )}
 
-        {/* Editor Content */}
-        <div className="flex-1 min-h-[40px] max-h-[200px] overflow-y-auto px-3 py-2">
+        {/* Editor Content - Click anywhere to focus */}
+        <div 
+          className="flex-1 min-h-[48px] max-h-[200px] overflow-y-auto px-3 py-3 cursor-text"
+          onClick={() => editor?.commands.focus()}
+        >
           <EditorContent 
             editor={editor} 
             disabled={disabled}
@@ -335,8 +338,8 @@ export function RichChatInput({
         </div>
 
         {/* Bottom Toolbar */}
-        <div className="flex items-center justify-between px-2 py-1.5 border-t border-border">
-          <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between px-3 py-2 border-t border-border/50 bg-muted/20">
+          <div className="flex items-center gap-2">
             {/* Image upload button */}
             {onImageUpload && (
               <Button
@@ -356,7 +359,7 @@ export function RichChatInput({
             )}
             
             {/* Hint text */}
-            <span className="text-[10px] text-muted-foreground ml-1">
+            <span className="text-xs text-muted-foreground">
               @ to mention papers
             </span>
           </div>
@@ -366,9 +369,9 @@ export function RichChatInput({
             onClick={handleSend}
             disabled={disabled || isEmpty}
             size="icon"
-            className="h-7 w-7 shrink-0 rounded-lg"
+            className="h-8 w-8 shrink-0 rounded-lg"
           >
-            <Send className="h-3.5 w-3.5" />
+            <Send className="h-4 w-4" />
           </Button>
         </div>
       </div>

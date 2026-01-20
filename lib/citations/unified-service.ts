@@ -9,6 +9,7 @@
  * Supports citation styles: APA, MLA, Chicago, IEEE, Harvard
  */
 
+import { v4 as uuidv4 } from 'uuid'
 import type { CSLItem } from '@/lib/utils/csl'
 
 // ============================================================================
@@ -28,8 +29,9 @@ export interface PaperMetadata {
 }
 
 export interface CitationMarker {
-  marker: string        // "[@abc123]" (Pandoc format)
+  marker: string        // "[@abc123#inst456]" or "[@abc123]" (Pandoc format)
   paperId: string       // "abc123"
+  instanceId?: string   // "inst456" (optional, for new format)
   format: 'pandoc' | 'legacy'  // Which format was matched
   position: {
     start: number
@@ -119,11 +121,243 @@ function formatHarvard(lastNames: string[], year: number): string {
 }
 
 // ============================================================================
+// Numbered Citation Processing (for AI output)
+// ============================================================================
+
+/**
+ * Numbered citation from AI response
+ * AI outputs text with [1], [2], etc. markers and provides this mapping
+ */
+export interface NumberedCitation {
+  index: number        // The number used in text: [1], [2], etc.
+  paperId: string      // UUID of the paper
+  citedContent: string // Exact quote from the paper (stored in DB, not in marker)
+}
+
+/**
+ * Citation instance to be saved to the database
+ * Contains instanceId, paperId, and quote for each citation occurrence
+ */
+export interface CitationInstanceToCreate {
+  instanceId: string   // UUID for this specific citation instance
+  paperId: string      // UUID of the paper being cited
+  quote: string        // The exact quote/context for this citation
+}
+
+/**
+ * Result of processing numbered citations
+ */
+export interface ProcessNumberedCitationsResult {
+  // Text with [@paperId#instanceId] markers (new format for storage/editor)
+  contentWithMarkers: string
+  // Text with formatted citations like (Smith et al., 2023)
+  contentFormatted: string
+  // Citation instances to save to the database
+  instancesToCreate: CitationInstanceToCreate[]
+  // Successfully processed citations with full metadata
+  processedCitations: Array<{
+    index: number
+    paperId: string
+    instanceId: string  // UUID for this instance
+    citedContent: string
+    marker: string      // [@paperId#instanceId]
+    formatted: string   // (Author, Year)
+    paper: PaperMetadata
+  }>
+  // Citations that failed (invalid paperId)
+  failedCitations: Array<{
+    citation: NumberedCitation
+    reason: 'invalid_paper_id' | 'marker_not_found'
+  }>
+}
+
+/**
+ * Pattern to match numbered citation markers [1], [2], etc.
+ */
+const NUMBERED_CITATION_PATTERN = /\[(\d+)\]/g
+
+/**
+ * Process numbered citations in text
+ * 
+ * Takes text with [1], [2] markers and a citations array mapping index → paperId.
+ * Replaces [1] with [@paperId#instanceId] for storage and (Author, Year) for display.
+ * 
+ * Each citation occurrence gets a unique instanceId. The caller should save the
+ * returned `instancesToCreate` to the citation_instances table.
+ */
+export function processNumberedCitations(
+  text: string,
+  citations: NumberedCitation[],
+  papers: PaperMetadata[],
+  style: CitationStyle
+): ProcessNumberedCitationsResult {
+  // Build paper lookup map
+  const paperMap = new Map<string, PaperMetadata>()
+  for (const paper of papers) {
+    paperMap.set(paper.id, paper)
+  }
+  
+  // Build citation index lookup with duplicate detection
+  const citationMap = new Map<number, NumberedCitation>()
+  const duplicateIndices: number[] = []
+  for (const citation of citations) {
+    if (citationMap.has(citation.index)) {
+      duplicateIndices.push(citation.index)
+      console.warn(`[processNumberedCitations] Duplicate citation index: ${citation.index}`)
+    }
+    citationMap.set(citation.index, citation)
+  }
+  
+  if (duplicateIndices.length > 0) {
+    console.warn(`[processNumberedCitations] Found ${duplicateIndices.length} duplicate indices: ${duplicateIndices.join(', ')}`)
+  }
+  
+  const processedCitations: ProcessNumberedCitationsResult['processedCitations'] = []
+  const failedCitations: ProcessNumberedCitationsResult['failedCitations'] = []
+  const instancesToCreate: CitationInstanceToCreate[] = []
+  
+  // Track which citation indices we've seen in the text
+  const seenIndices = new Set<number>()
+  // Track orphaned markers (in text but not in citations array)
+  const orphanedMarkers: Array<{ index: number; position: number }> = []
+  
+  // Find all [N] markers in text and collect replacements
+  const replacements: Array<{
+    start: number
+    end: number
+    index: number
+    instanceId: string
+    marker: string
+    formatted: string
+    citation: NumberedCitation
+    paper: PaperMetadata
+  }> = []
+  
+  let match: RegExpExecArray | null
+  const pattern = new RegExp(NUMBERED_CITATION_PATTERN.source, 'g')
+  
+  while ((match = pattern.exec(text)) !== null) {
+    const index = parseInt(match[1], 10)
+    seenIndices.add(index)
+    
+    const citation = citationMap.get(index)
+    if (!citation) {
+      // Marker in text but no citation in array - track as orphaned
+      orphanedMarkers.push({ index, position: match.index })
+      continue
+    }
+    
+    const paper = paperMap.get(citation.paperId)
+    if (!paper) {
+      failedCitations.push({
+        citation,
+        reason: 'invalid_paper_id'
+      })
+      continue
+    }
+    
+    // Generate a unique instance ID for this citation occurrence
+    const instanceId = uuidv4()
+    
+    // New marker format with instance tracking: [@paperId#instanceId]
+    const marker = `[@${citation.paperId}#${instanceId}]`
+    const formatted = formatInlineCitation(paper, style)
+    
+    replacements.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      index,
+      instanceId,
+      marker,
+      formatted,
+      citation,
+      paper
+    })
+    
+    // Track instance for DB insertion
+    instancesToCreate.push({
+      instanceId,
+      paperId: citation.paperId,
+      quote: citation.citedContent,
+    })
+  }
+  
+  // Check for citations in array but not in text
+  for (const citation of citations) {
+    if (!seenIndices.has(citation.index)) {
+      failedCitations.push({
+        citation,
+        reason: 'marker_not_found'
+      })
+    }
+  }
+  
+  // Log orphaned markers (in text but not in citations array)
+  if (orphanedMarkers.length > 0) {
+    console.warn(`[processNumberedCitations] Found ${orphanedMarkers.length} orphaned markers in text: ${orphanedMarkers.map(m => `[${m.index}]`).join(', ')}`)
+    // Add orphaned markers as failures with a synthetic citation object
+    for (const orphan of orphanedMarkers) {
+      failedCitations.push({
+        citation: { index: orphan.index, paperId: '', citedContent: '' },
+        reason: 'marker_not_found' // Reusing this reason - marker exists but citation doesn't
+      })
+    }
+  }
+  
+  // Sort replacements by position (descending) to replace from end to start
+  replacements.sort((a, b) => b.start - a.start)
+  
+  // Apply replacements
+  let contentWithMarkers = text
+  let contentFormatted = text
+  
+  for (const r of replacements) {
+    contentWithMarkers = 
+      contentWithMarkers.slice(0, r.start) + 
+      r.marker + 
+      contentWithMarkers.slice(r.end)
+    
+    contentFormatted = 
+      contentFormatted.slice(0, r.start) + 
+      r.formatted + 
+      contentFormatted.slice(r.end)
+    
+    processedCitations.unshift({
+      index: r.index,
+      paperId: r.citation.paperId,
+      instanceId: r.instanceId,
+      citedContent: r.citation.citedContent,
+      marker: r.marker,
+      formatted: r.formatted,
+      paper: r.paper
+    })
+  }
+  
+  // Strip any orphaned [N] markers that weren't matched to citations
+  contentWithMarkers = contentWithMarkers.replace(/\[(\d+)\]/g, '')
+  contentFormatted = contentFormatted.replace(/\[(\d+)\]/g, '')
+  
+  // Clean up extra whitespace
+  // IMPORTANT: do not collapse newlines, or markdown headings/paragraphs break.
+  contentWithMarkers = contentWithMarkers.replace(/[ \t]{2,}/g, ' ')
+  contentFormatted = contentFormatted.replace(/[ \t]{2,}/g, ' ')
+  
+  return {
+    contentWithMarkers,
+    contentFormatted,
+    instancesToCreate,
+    processedCitations,
+    failedCitations
+  }
+}
+
+// ============================================================================
 // Citation Marker Processing
 // ============================================================================
 
-// Pandoc-style citation format (preferred, new format): [@paper_id]
-const PANDOC_CITE_PATTERN = /\[@([a-f0-9-]+)\]/gi
+// New format with instance tracking: [@paperId#instanceId] (group 1 = paperId, group 2 = instanceId)
+// Also matches legacy [@paperId] without instanceId for backward compatibility
+const PANDOC_CITE_PATTERN = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
 
 // Legacy citation format (for backward compatibility): [CITE: paper_id]
 const LEGACY_CITE_PATTERN = /\[CITE:\s*([a-f0-9-]+)\]/gi
@@ -134,18 +368,22 @@ const PLAIN_BRACKET_PATTERN = /\[([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4
 
 /**
  * Extract all citation markers from content
- * Supports both [@paper_id] (Pandoc) and [CITE: paper_id] (legacy) formats
+ * Supports:
+ * - [@paperId#instanceId] (new format with instance tracking)
+ * - [@paperId] (Pandoc, backward compatible)
+ * - [CITE: paperId] (legacy)
  */
 export function extractCitationMarkers(content: string): CitationMarker[] {
   const markers: CitationMarker[] = []
   let match: RegExpExecArray | null
   
-  // Extract Pandoc-style [@paper_id] markers (preferred format)
+  // Extract Pandoc-style markers: [@paperId] or [@paperId#instanceId]
   const pandocPattern = new RegExp(PANDOC_CITE_PATTERN.source, 'gi')
   while ((match = pandocPattern.exec(content)) !== null) {
     markers.push({
       marker: match[0],
       paperId: match[1],
+      instanceId: match[2] || undefined,  // Group 2 is optional instanceId
       format: 'pandoc',
       position: {
         start: match.index,
@@ -349,7 +587,8 @@ export function cleanCitationArtifacts(content: string): string {
   cleaned = cleaned.replace(/\[(citation needed|cite|citation|ref|source needed)\]/gi, '')
   
   // Clean up whitespace
-  cleaned = cleaned.replace(/\s{2,}/g, ' ')
+  // IMPORTANT: do not collapse newlines, or markdown headings/paragraphs break.
+  cleaned = cleaned.replace(/[ \t]{2,}/g, ' ')
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
   
   return cleaned.trim()

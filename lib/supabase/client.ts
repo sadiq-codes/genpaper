@@ -18,15 +18,24 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-// Cached singleton client for browser-side operations
-let _browserClient: SupabaseClient | null = null
+// Global key for storing client on window (survives HMR)
+const SUPABASE_CLIENT_KEY = '__supabaseClient'
 
 // Create cached browser client
+// Uses window storage to persist across Hot Module Replacement (HMR) during development
+// This prevents logout on hot reload by keeping the same client instance with its auth state
 function getCachedBrowserClient(): SupabaseClient {
-  if (!_browserClient) {
-    _browserClient = createBrowserClient(supabaseUrl, supabaseAnonKey)
+  // In browser, store on window to survive HMR module re-execution
+  if (typeof window !== 'undefined') {
+    if (!(window as unknown as Record<string, SupabaseClient>)[SUPABASE_CLIENT_KEY]) {
+      (window as unknown as Record<string, SupabaseClient>)[SUPABASE_CLIENT_KEY] = 
+        createBrowserClient(supabaseUrl, supabaseAnonKey)
+    }
+    return (window as unknown as Record<string, SupabaseClient>)[SUPABASE_CLIENT_KEY]
   }
-  return _browserClient
+  
+  // SSR fallback (should rarely be used - server components should use server.ts)
+  return createBrowserClient(supabaseUrl, supabaseAnonKey)
 }
 
 // Primary export - optimized cached client
@@ -40,5 +49,7 @@ export const getSB = (): SupabaseClient => getCachedBrowserClient()
 
 // Force refresh client (useful for testing or auth state changes)
 export function clearClientCache(): void {
-  _browserClient = null
+  if (typeof window !== 'undefined') {
+    delete (window as unknown as Record<string, SupabaseClient | undefined>)[SUPABASE_CLIENT_KEY]
+  }
 } 

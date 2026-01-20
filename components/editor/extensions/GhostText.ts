@@ -22,6 +22,7 @@ export interface GhostTextCitation {
   paperId: string
   marker: string       // Original [@id] marker (Pandoc format)
   formatted: string    // Formatted display text (Smith et al., 2024)
+  citedContent?: string // The exact quote from the paper (for saving to DB)
   // Positions in display text (for rendering)
   displayStartOffset: number
   displayEndOffset: number
@@ -38,6 +39,9 @@ export interface GhostTextCitation {
 
 // Plugin key for accessing ghost text state
 export const ghostTextPluginKey = new PluginKey<GhostTextState>('ghostText')
+
+// Callback type for when citations are accepted
+export type OnCitationsAccepted = (citations: GhostTextCitation[]) => void
 
 // Declare custom commands
 declare module '@tiptap/core' {
@@ -279,24 +283,18 @@ export const GhostText = Extension.create({
 
       acceptGhostText:
         () =>
-        ({ editor, tr, dispatch }) => {
+        ({ editor }) => {
           const pluginState = ghostTextPluginKey.getState(editor.state)
           if (!pluginState?.rawText || pluginState.position === null) {
             return false
           }
 
           // Capture all needed data before any state changes
-          const { rawText, citations: _citations, papers, position } = pluginState
+          const { rawText, citations, papers, position } = pluginState
 
-          if (dispatch) {
-            // Clear ghost text state FIRST
-            tr.setMeta('clearGhostText', true)
-            dispatch(tr)
-          }
-
-          // Citation formatting is now 100% local via CitationNodeView
-          // The papers array passed to processContent provides all metadata needed
-          // No need for CitationManager cache population
+          // NOTE: We don't manually clear ghost text here.
+          // The insert operation changes the doc, which triggers docChanged in the plugin,
+          // which automatically clears the ghost text state.
 
           // Process rawText (with [@id] markers) through unified pipeline
           try {
@@ -317,6 +315,21 @@ export const GhostText = Extension.create({
             console.error('Ghost text content processing error:', error)
             editor.chain().focus().insertContentAt(position, rawText).run()
           }
+
+          // Emit event for citations that were accepted (so citedContent can be saved)
+          if (citations.length > 0) {
+            const event = new CustomEvent('ghosttext:citations-accepted', {
+              detail: { citations },
+              bubbles: true
+            })
+            editor.view.dom.dispatchEvent(event)
+          }
+
+          // Emit event that ghost text was accepted (for sentence queue progression)
+          const acceptedEvent = new CustomEvent('ghosttext:accepted', {
+            bubbles: true
+          })
+          editor.view.dom.dispatchEvent(acceptedEvent)
 
           return true
         },

@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils"
 import { processContent } from "./utils/content-processor"
 import { editorToMarkdown } from "./utils/tiptap-to-markdown"
 import { GenerationProgress } from "./GenerationProgress"
-import { setToolExecutorPapers } from "./services/tool-executor"
+import { setToolExecutorPapers, setToolExecutorProjectId } from "./services/tool-executor"
 
 // Hooks
 import {
@@ -124,17 +124,18 @@ export function ResearchEditor({
   })
 
   // Streaming chat with tools support
-  // Lazy load chat - only fetch history when chat tab is active
-  // This speeds up initial editor load significantly
+  // Always enabled - prefetches chat history in background after editor loads
+  // React Query caches the result, so switching to chat tab is instant
   const chat = useEditorChat({
     projectId: projectId || '',
     editor,
-    enabled: activeTab === 'chat', // Only load chat history when chat tab is opened
+    enabled: true, // Always prefetch chat history in background
   })
 
   // Extract chat properties
   const chatMessages = chat.messages
   const isChatLoading = chat.isLoading
+  const isChatLoadingHistory = chat.isLoadingHistory
   const handleSendMessage = chat.sendMessage
   const pendingTools = chat.pendingTools
   const confirmTool = chat.confirmTool
@@ -180,10 +181,16 @@ export function ResearchEditor({
     })
   }, [isWriteMode, projectId, projectTopic])
 
-  // Sync papers with tool executor for markdown processing (tables, citations, etc.)
+  // Sync papers and projectId with tool executor for markdown processing and citation saving
   useEffect(() => {
     setToolExecutorPapers(papers)
   }, [papers])
+  
+  useEffect(() => {
+    if (projectId) {
+      setToolExecutorProjectId(projectId)
+    }
+  }, [projectId])
 
   // ============================================================================
   // Handlers
@@ -343,6 +350,7 @@ export function ResearchEditor({
       chatMessages={chatMessages}
       onSendMessage={handleSendMessage}
       isChatLoading={isChatLoading}
+      isChatLoadingHistory={isChatLoadingHistory}
       pendingTools={pendingTools}
       onConfirmTool={confirmTool}
       onRejectTool={rejectTool}

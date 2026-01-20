@@ -263,10 +263,12 @@ export async function parallelSearch(
   }
   
   // Generate embedding-based query rewrites (async) with discipline context
+  // Now uses ALL rewrites for multi-query parallel search
   const expandedQueries = await generateQueryRewrites(query, 3, discipline)
   const primaryQuery = expandedQueries[0]
   
-  console.log(`Starting smart sequential search for: "${primaryQuery}"`)
+  console.log(`Starting multi-query parallel search`)
+  console.log(`Query rewrites (${expandedQueries.length}): ${expandedQueries.map((q, i) => `\n  ${i + 1}. "${q}"`).join('')}`)
   console.log(`Source priority order: ${sourcesByPriority.join(' → ')}`)
   console.log(`Fast mode: ${fastMode ? 'ON' : 'OFF'}`)
   if (discipline) {
@@ -274,48 +276,45 @@ export async function parallelSearch(
   }
   
   const allPapers: AcademicPaper[] = []
-  // Increase the threshold so we do not prematurely stop after a single large response
-  const TARGET_PAPERS = Math.min(maxResults * 4, 100) // Search for up to 4× target (capped at 100) before ranking
+  // Increased from 250 to 400 to support multi-query search with more raw results
+  const TARGET_PAPERS = Math.min(maxResults * 4, 400)
   
   console.log(`Parallel search target paper threshold set to ${TARGET_PAPERS}`)
   
-  // **PARALLEL SEARCH**: query each requested source concurrently and merge results
-  // Integrates circuit breaker (fail fast on unhealthy sources) and caching (avoid redundant calls)
-  async function querySource(source: SupportedSource): Promise<AcademicPaper[]> {
-    const searchOptions = { ...options, limit: Math.min(limit, 25), fastMode, discipline }
+  // **MULTI-QUERY PARALLEL SEARCH**: query each source with all query rewrites concurrently
+  // This maximizes paper diversity by searching multiple phrasings of the same topic
+  async function querySourceWithQuery(source: SupportedSource, searchQuery: string): Promise<AcademicPaper[]> {
+    // Per-source limit increased from 25 to 50 to support higher search volumes for literature reviews
+    const perSourceLimit = Math.min(limit, 50)
+    const searchOptions = { ...options, limit: perSourceLimit, fastMode, discipline }
     const sourceTimeout = fastMode ? 6000 : 15000 // 6s vs 15s timeout
 
     // Circuit breaker check - skip unhealthy sources
     if (!isSourceAvailable(source)) {
-      console.log(`⚡ Skipping ${source} (circuit open)`)
       return []
     }
 
     // Check cache first
     const cacheKey = { ...searchOptions, includePreprints }
-    const cached = getCached<AcademicPaper[]>(source, primaryQuery, cacheKey)
+    const cached = getCached<AcademicPaper[]>(source, searchQuery, cacheKey)
     if (cached) {
-      console.log(`💾 Cache hit for ${source} (${cached.length} papers)`)
       return cached
     }
 
     try {
-      console.log(`🔍 Searching ${source} in parallel…`)
-      
       const results = await withAbortableTimeout(async (_signal) => {
         void _signal // reference to avoid unused variable lint error
-        // Note: signal parameter ready for future enhancement when academic APIs support AbortSignal
         switch (source) {
           case 'openalex':
-            return await searchOpenAlex(primaryQuery, searchOptions)
+            return await searchOpenAlex(searchQuery, searchOptions)
           case 'crossref':
-            return await searchCrossref(primaryQuery, searchOptions)
+            return await searchCrossref(searchQuery, searchOptions)
           case 'semantic_scholar':
-            return await searchSemanticScholar(primaryQuery, searchOptions)
+            return await searchSemanticScholar(searchQuery, searchOptions)
           case 'arxiv':
-            return includePreprints ? await searchArxiv(primaryQuery, searchOptions) : []
+            return includePreprints ? await searchArxiv(searchQuery, searchOptions) : []
           case 'core':
-            return await searchCore(primaryQuery, searchOptions)
+            return await searchCore(searchQuery, searchOptions)
           default:
             return []
         }
@@ -323,27 +322,54 @@ export async function parallelSearch(
       
       // Record success and cache results
       recordSuccess(source)
-      setCached(source, primaryQuery, results, cacheKey)
+      setCached(source, searchQuery, results, cacheKey)
       
       return results
       
     } catch (error) {
       // Record failure for circuit breaker
       recordFailure(source, error instanceof Error ? error : new Error(String(error)))
-      console.log(`❌ ${source} failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
       return [] // Swallow individual failure but continue overall search
     }
   }
 
-  const settledResults = await Promise.allSettled(sourcesByPriority.map(querySource))
+  // Build all source+query combinations for fully parallel execution
+  const searchTasks: Array<{ source: SupportedSource; query: string }> = []
+  for (const source of sourcesByPriority) {
+    // Skip sources with open circuit breaker
+    if (!isSourceAvailable(source)) {
+      console.log(`⚡ Skipping ${source} (circuit open)`)
+      continue
+    }
+    for (const searchQuery of expandedQueries) {
+      searchTasks.push({ source, query: searchQuery })
+    }
+  }
+  
+  console.log(`🔍 Executing ${searchTasks.length} parallel searches (${sourcesByPriority.length} sources × ${expandedQueries.length} queries)...`)
 
-  for (const res of settledResults) {
+  // Execute all searches in parallel
+  const settledResults = await Promise.allSettled(
+    searchTasks.map(task => querySourceWithQuery(task.source, task.query))
+  )
+
+  // Collect results and track per-source stats
+  const sourceStats: Record<string, number> = {}
+  for (let i = 0; i < settledResults.length; i++) {
+    const res = settledResults[i]
+    const task = searchTasks[i]
     if (res.status === 'fulfilled' && res.value.length > 0) {
       allPapers.push(...res.value)
+      sourceStats[task.source] = (sourceStats[task.source] || 0) + res.value.length
     }
   }
 
-  console.log(`✅ Parallel search completed: ${allPapers.length} raw papers collected`)
+  // Log per-source results
+  for (const [source, count] of Object.entries(sourceStats)) {
+    console.log(`📚 ${source}: ${count} papers (across ${expandedQueries.length} queries)`)
+  }
+
+  console.log(`✅ Multi-query parallel search completed: ${allPapers.length} raw papers collected`)
   
   console.log(`📊 Raw results: ${allPapers.length} papers from ${sourcesByPriority.length} sources`)
   
@@ -495,15 +521,21 @@ export async function searchAndIngestPapers(
   
   // Process PDFs in parallel batches to utilize GROBID's 10-engine pool
   const PARALLEL_PDF_BATCH_SIZE = 8 // Use 8 out of 10 GROBID engines, keep 2 as buffer
+  const pdfProcessingStartTime = Date.now()
   
   for (let i = 0; i < uniquePapers.length; i += PARALLEL_PDF_BATCH_SIZE) {
     const batch = uniquePapers.slice(i, i + PARALLEL_PDF_BATCH_SIZE)
-    console.log(`📄 Processing PDF batch ${Math.floor(i/PARALLEL_PDF_BATCH_SIZE) + 1}: ${batch.length} papers`)
+    const batchNum = Math.floor(i/PARALLEL_PDF_BATCH_SIZE) + 1
+    const batchStartTime = Date.now()
+    console.log(`📄 Processing PDF batch ${batchNum}: ${batch.length} papers`)
     
     // Process this batch in parallel
     const batchResults = await Promise.allSettled(
       batch.map(paper => processPaperWithPdf(paper, query))
     )
+    
+    const batchDuration = Date.now() - batchStartTime
+    console.log(`📄 Batch ${batchNum} completed in ${batchDuration}ms`)
     
     // Collect successful results
     for (const result of batchResults) {
@@ -515,6 +547,9 @@ export async function searchAndIngestPapers(
       }
     }
   }
+  
+  const totalPdfProcessingTime = Date.now() - pdfProcessingStartTime
+  console.log(`📊 [METRICS] PDF processing complete: ${uniquePapers.length} papers in ${totalPdfProcessingTime}ms (avg: ${Math.round(totalPdfProcessingTime / uniquePapers.length)}ms/paper)`)
   
   return { papers: ingestedPapers, ingestedIds }
 }
@@ -623,18 +658,24 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
     }
     
     // Step 4: Check for PDF content and extract if needed
+    let pdfProcessingMs = 0
+    
     if (paperDTO.pdf_url) {
+      const pdfStartTime = Date.now()
       try {
         // Use unified processor with actual paperId
         const text = await getOrExtractFullText({ pdfUrl: paperDTO.pdf_url, paperId, ocr: true, timeoutMs: 60000 })
+        pdfProcessingMs = Date.now() - pdfStartTime
+        
         if (text && text.length > 100) {
           contentParts.push(text)
-          console.log(`✅ Added full-text content (${text.length} chars)`)
+          console.log(`✅ Added full-text content (${text.length} chars) [PDF processing: ${pdfProcessingMs}ms]`)
         } else {
-          console.warn('PDF extraction returned no usable text content')
+          console.warn(`PDF extraction returned no usable text content [${pdfProcessingMs}ms]`)
         }
       } catch (pdfErr) {
-        console.warn('PDF extraction failed, continuing with abstract only', pdfErr)
+        pdfProcessingMs = Date.now() - pdfStartTime
+        console.warn(`PDF extraction failed after ${pdfProcessingMs}ms, continuing with abstract only`, pdfErr)
       }
     }
     

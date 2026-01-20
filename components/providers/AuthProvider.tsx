@@ -52,8 +52,12 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     const initSession = async () => {
       try {
         const { data: { session: currentSession } } = await supabase.auth.getSession()
-        setSession(currentSession)
-        setUser(currentSession?.user ?? null)
+        setSession(currentSession ?? null)
+        // If the server already provided an authenticated user (cookie-based SSR),
+        // don't overwrite it with a null client session during initial hydration.
+        if (currentSession?.user) {
+          setUser(currentSession.user)
+        }
       } catch (error) {
         console.error('AuthProvider: Failed to get session:', error)
       } finally {
@@ -67,8 +71,15 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event: AuthChangeEvent, newSession: Session | null) => {
         console.log('Auth state changed:', event, newSession?.user?.email)
-        
-        setSession(newSession)
+
+        // `INITIAL_SESSION` can legitimately have a null session on the client even when
+        // SSR knows the user via cookies. Don't clobber the hydrated user in that case.
+        if (event === 'INITIAL_SESSION' && !newSession?.user && initialUser) {
+          setIsLoading(false)
+          return
+        }
+
+        setSession(newSession ?? null)
         setUser(newSession?.user ?? null)
         setIsLoading(false)
 
@@ -88,7 +99,7 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     return () => {
       subscription.unsubscribe()
     }
-  }, [])
+  }, [initialUser])
 
   const value: AuthContextType = {
     user,

@@ -3,7 +3,7 @@ import { streamText } from 'ai'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
 import type { SectionContext } from '@/lib/prompts/types'
-import { extractCitationMarkers, cleanNonCitationArtifacts } from '@/lib/citations/post-processor'
+import { cleanNonCitationArtifacts } from '@/lib/citations/post-processor'
 // DEDUPLICATION NOTES:
 // - Evidence tracking moved to pipeline.ts (single point of control)
 // - Comprehensive quality assessment consolidated in pipeline.ts 
@@ -167,16 +167,16 @@ export async function generateWithUnifiedTemplate(
     token_count: tokensUsed
   })
 
-  // Extract citation markers from content (they will be processed in pipeline)
-  const citationMarkers = extractCitationMarkers(fullContent)
-  console.log(`📊 Citation markers found: ${citationMarkers.length}`)
+  // Extract citations from CITATIONS block (numbered format: [1], [2] with block at end)
+  const { parseNumberedCitationsBlock } = await import('@/lib/citations/post-processor')
+  const citationsFromBlock = parseNumberedCitationsBlock(fullContent)
+  console.log(`📊 Citations found in CITATIONS block: ${citationsFromBlock.size}`)
   
-  // Convert markers to citation records for return value
-  // Actual formatting happens in the pipeline's post-processing step
-  for (const marker of citationMarkers) {
+  // Convert to citation records for return value
+  for (const [, entry] of citationsFromBlock) {
     collectedCitations.push({
-      paperId: marker.paperId,
-      citationText: marker.marker // Will be replaced with formatted citation in pipeline
+      paperId: entry.paperId,
+      citationText: `[@${entry.paperId}]`
     })
   }
   

@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useEffect, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,8 @@ interface ChatTabProps {
    */
   onSendMessage: (content: string | ChatSendOptions) => void
   isLoading?: boolean
+  /** Is chat history being loaded */
+  isLoadingHistory?: boolean
   // Papers for @ mentions
   papers?: ProjectPaper[]
   projectId?: string
@@ -107,9 +110,21 @@ function PendingEditsIndicator({
 
 // Helper to extract text content from UIMessage parts
 function getMessageText(message: UIMessage): string {
-  if (!message.parts) return ''
-  const textParts = message.parts.filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-  return textParts.map(p => p.text).join('')
+  // Try parts array first (new v6 format)
+  if (message.parts && message.parts.length > 0) {
+    const textParts = message.parts.filter((p): p is { type: 'text'; text: string } => 
+      p.type === 'text' && 'text' in p
+    )
+    const text = textParts.map(p => p.text).join('')
+    if (text) return text
+  }
+  
+  // Fallback to content property (for backward compatibility or history messages)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const content = (message as any).content
+  if (typeof content === 'string') return content
+  
+  return ''
 }
 
 // Helper to extract tool invocations from UIMessage parts
@@ -120,15 +135,34 @@ interface ToolInvocationDisplay {
 
 function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
   if (!message.parts) return []
-  // Tool parts in v6 have type starting with 'tool-' or are 'dynamic-tool'
+  // Tool parts in v6 can have various shapes:
+  // - { type: 'tool-insertContent', args: {...} } - tool name in type string
+  // - { type: 'tool-invocation', toolInvocation: { toolName, toolCallId, args, ... } }
+  // - { type: 'tool-call', toolName, args }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return message.parts.filter((p: any) => {
-    return p.type?.startsWith('tool-') || p.type === 'dynamic-tool'
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  }).map((p: any) => ({
-    toolCallId: p.toolCallId || p.id || Math.random().toString(),
-    toolName: p.type === 'dynamic-tool' ? p.toolName : p.type?.replace('tool-', '') || 'unknown',
-  }))
+  return message.parts
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .filter((p: any) => {
+      return p.type === 'tool-invocation' || 
+             p.type === 'tool-call' ||
+             p.toolInvocation !== undefined ||
+             (p.type?.startsWith && p.type.startsWith('tool-')) || 
+             p.type === 'dynamic-tool'
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((p: any) => {
+      // AI SDK v6 uses type like 'tool-insertContent' where tool name is in the type
+      const toolName = (p.type?.startsWith('tool-') && p.type !== 'tool-invocation' && p.type !== 'tool-call')
+        ? p.type.replace('tool-', '')  // 'tool-insertContent' → 'insertContent'
+        : (p.toolInvocation?.toolName || p.toolName || 'unknown')
+      
+      const toolCallId = p.toolCallId || p.toolInvocation?.toolCallId || p.id || Math.random().toString()
+      
+      return {
+        toolCallId,
+        toolName,
+      }
+    })
 }
 
 function MessageBubble({ 
@@ -140,13 +174,21 @@ function MessageBubble({
   
   // Get content string from parts (new v6 API)
   const content = getMessageText(message)
+  const toolInvocations = getToolInvocations(message)
+
+  // Debug: log if message has no displayable content
+  if (process.env.NODE_ENV === 'development' && !content && isAssistant && toolInvocations.length === 0) {
+    console.log('[ChatTab] Assistant message with no text content:', {
+      id: message.id,
+      role: message.role,
+      partsCount: message.parts?.length || 0,
+      parts: message.parts?.map(p => ({ type: p.type })),
+    })
+  }
 
   // Get timestamp from metadata if available
   const timestamp = new Date()
 
-  // Get tool invocations from parts
-  const toolInvocations = getToolInvocations(message)
-  
   return (
     <div className={cn(
       "flex gap-3 p-3",
@@ -171,9 +213,11 @@ function MessageBubble({
           </span>
         </div>
         
-        <div className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-          {content}
-        </div>
+        {(content || toolInvocations.length > 0) && (
+          <div className="text-sm leading-relaxed text-foreground/90 prose prose-sm prose-neutral dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_p]:my-2 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium">
+            {content ? <ReactMarkdown>{content}</ReactMarkdown> : <span className="text-muted-foreground">Applying suggested edits…</span>}
+          </div>
+        )}
 
         {/* Tool invocations - just show badges, no action buttons */}
         {toolInvocations && toolInvocations.length > 0 && (
@@ -200,6 +244,38 @@ function LoadingBubble() {
         <span className="h-2 w-2 rounded-full bg-foreground/30 animate-bounce [animation-delay:-0.3s]" />
         <span className="h-2 w-2 rounded-full bg-foreground/30 animate-bounce [animation-delay:-0.15s]" />
         <span className="h-2 w-2 rounded-full bg-foreground/30 animate-bounce" />
+      </div>
+    </div>
+  )
+}
+
+function HistoryLoadingSkeleton() {
+  return (
+    <div className="space-y-0 divide-y divide-border/50 animate-pulse">
+      {/* User message skeleton */}
+      <div className="flex gap-3 p-3">
+        <div className="h-7 w-7 rounded-full bg-muted shrink-0" />
+        <div className="flex-1 space-y-2">
+          <div className="h-3 w-16 bg-muted rounded" />
+          <div className="h-4 w-3/4 bg-muted rounded" />
+        </div>
+      </div>
+      {/* Assistant message skeleton */}
+      <div className="flex gap-3 p-3 bg-muted/20">
+        <div className="h-7 w-7 rounded-full bg-muted shrink-0" />
+        <div className="flex-1 space-y-2">
+          <div className="h-3 w-24 bg-muted rounded" />
+          <div className="h-4 w-full bg-muted rounded" />
+          <div className="h-4 w-2/3 bg-muted rounded" />
+        </div>
+      </div>
+      {/* Another pair */}
+      <div className="flex gap-3 p-3">
+        <div className="h-7 w-7 rounded-full bg-muted shrink-0" />
+        <div className="flex-1 space-y-2">
+          <div className="h-3 w-16 bg-muted rounded" />
+          <div className="h-4 w-1/2 bg-muted rounded" />
+        </div>
       </div>
     </div>
   )
@@ -235,6 +311,7 @@ export function ChatTab({
   messages, 
   onSendMessage, 
   isLoading = false,
+  isLoadingHistory = false,
   papers = [],
   projectId,
   pendingTools = [],
@@ -299,7 +376,9 @@ export function ChatTab({
       {/* Messages area - takes remaining space and scrolls */}
       <div className="flex-1 min-h-0 overflow-hidden">
         <ScrollArea ref={scrollAreaRef} className="h-full">
-          {messages.length === 0 && !isLoading ? (
+          {isLoadingHistory ? (
+            <HistoryLoadingSkeleton />
+          ) : messages.length === 0 && !isLoading ? (
             <EmptyState />
           ) : (
             <div className="divide-y divide-border/50">

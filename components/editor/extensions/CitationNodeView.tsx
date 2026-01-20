@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { NodeViewWrapper } from '@tiptap/react'
 import type { NodeViewProps } from '@tiptap/react'
 import type { CitationAttributes } from './Citation'
+import type { ProjectPaper } from '../types'
 import { formatInline } from '@/lib/citations/local-formatter'
 
 // Citation style type
@@ -37,31 +38,63 @@ export function formatCitationByStyle(
  * 
  * Uses 100% local formatting via citation-js.
  * No API calls, no loading states - instant rendering.
+ * Click to see details and quote in the popover.
+ * 
+ * IMPORTANT: Looks up paper data from storage.papers (passed from DocumentEditor)
+ * rather than relying solely on node.attrs. This ensures citations always
+ * display correctly even when attrs are incomplete (e.g., after generation).
  */
 export function CitationNodeView({ node, selected, extension }: NodeViewProps) {
   const attrs = node.attrs as CitationAttributes
   
-  // Get citation style from extension storage
+  // Get citation style and papers from extension storage
   const storage = extension.storage as { 
     citationStyle: CitationStyleType
     citationNumbers: Map<string, number>
+    papers: ProjectPaper[]
   }
   
   const style = storage?.citationStyle || 'apa'
   const citationNumber = storage?.citationNumbers?.get(attrs.id)
+  const papers = storage?.papers || []
+  
+  // Look up paper from storage.papers (same as popover does)
+  // This ensures we use the most up-to-date paper metadata
+  const paper = useMemo(() => {
+    return papers.find(p => p.id === attrs.id)
+  }, [papers, attrs.id])
+  
+  // Use paper data if found, fallback to attrs for backward compatibility
+  const displayAttrs: CitationAttributes = useMemo(() => {
+    if (paper) {
+      return {
+        id: paper.id,
+        instanceId: attrs.instanceId,
+        citedContent: attrs.citedContent,
+        title: paper.title || 'Untitled',
+        authors: paper.authors || [],
+        year: paper.year,
+        journal: paper.journal,
+        doi: paper.doi,
+      }
+    }
+    // Fallback to node attrs (for backward compatibility with old documents)
+    return attrs
+  }, [paper, attrs])
   
   // Format the citation - synchronous and instant
   const text = useMemo(() => {
-    return formatCitationByStyle(attrs, style, citationNumber)
-  }, [attrs, style, citationNumber])
+    return formatCitationByStyle(displayAttrs, style, citationNumber)
+  }, [displayAttrs, style, citationNumber])
 
   return (
     <NodeViewWrapper
       as="span"
-      className={`citation-inline ${selected ? 'ProseMirror-selectednode' : ''}`}
+      className={`citation-inline cursor-pointer ${selected ? 'ProseMirror-selectednode' : ''}`}
       data-citation={attrs.id}
       data-type="citation"
-      title={attrs.title || ''}
+      data-instance-id={attrs.instanceId || undefined}
+      data-cited-content={attrs.citedContent || ''}
     >
       {text}
     </NodeViewWrapper>

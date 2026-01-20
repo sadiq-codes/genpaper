@@ -161,9 +161,9 @@ Even though the Literature Review is a smaller section in research articles, it 
 > "[Author A] found X. [Author B] found Y. [Author C] found Z."
 
 ✅ **USE (Integrated synthesis) - STRUCTURE ONLY:**
-> "Prior research converges on the importance of [topic from YOUR evidence] [CITE: your-actual-id1] [CITE: your-actual-id2], though 
+> "Prior research converges on the importance of [topic from YOUR evidence] [1] [2], though 
 > findings regarding [aspect from YOUR evidence] remain mixed. While [some studies from YOUR evidence] suggest positive effects 
-> [CITE: your-actual-id3] [CITE: your-actual-id4], [other studies from YOUR evidence] has yielded conflicting results [CITE: your-actual-id5], 
+> [3] [4], [other studies from YOUR evidence] has yielded conflicting results [5], 
 > potentially due to [explanation you identify]."
 
 ⚠️ Replace ALL bracketed content with ACTUAL information from your evidence snippets.
@@ -215,7 +215,7 @@ Use YOUR actual data or data from YOUR evidence sources.
 
 | Study | Sample | Method | Key Finding | Our Finding |
 |-------|--------|--------|-------------|-------------|
-| [Author from evidence] [CITE: actual-id] | [Sample IF in evidence] | [Method from evidence] | [Finding from evidence] | [Your comparison] |
+| [Author from evidence] [1] | [Sample IF in evidence] | [Method from evidence] | [Finding from evidence] | [Your comparison] |
 
 ### Table Guidelines:
 - Every results section should have at least ONE data table
@@ -234,16 +234,16 @@ Use YOUR actual findings and citations from YOUR evidence.
 
 ### Pattern 1: Consistent Findings
 > "Our finding that [your variable] significantly predicted [your variable] (β = [your value], p [your value]) aligns with 
-> prior research [CITE: your-actual-id1] [CITE: your-actual-id2]. This consistency across different samples 
+> prior research [1] [2]. This consistency across different samples 
 > and methodologies strengthens confidence in this relationship."
 
 ### Pattern 2: Divergent Findings
-> "Contrary to [Author from YOUR evidence] [CITE: your-actual-id], we did not find a significant 
+> "Contrary to [Author from YOUR evidence] [1], we did not find a significant 
 > relationship between [variables] (β = [your value], p = [your value]). This discrepancy may reflect 
 > differences in [your explanation]."
 
 ### Pattern 3: Extending Prior Work
-> "Our results extend [Author from YOUR evidence] [CITE: your-actual-id] by demonstrating that [your finding], 
+> "Our results extend [Author from YOUR evidence] [1] by demonstrating that [your finding], 
 > a [aspect] not examined in prior research."
 
 ⚠️ CRITICAL: Use YOUR actual statistics and cite authors that ARE in your evidence.

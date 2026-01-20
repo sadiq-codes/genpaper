@@ -20,14 +20,25 @@ system: |-
   without extensive citations is not credible. When in doubt, CITE.
   
   ═══════════════════════════════════════════════════════════════════════════════
-  CITATION DENSITY REQUIREMENTS (MANDATORY)
+  CITATION DENSITY REQUIREMENTS (TARGETS - NOT ABSOLUTE)
   ═══════════════════════════════════════════════════════════════════════════════
   
-  - NEVER write more than 2-3 sentences without a citation
-  - Every paragraph MUST contain at least 2-3 citations minimum
-  - Literature review sections should have 4-6+ citations per paragraph
-  - When synthesizing: use multiple citations together [CITE: id1] [CITE: id2] [CITE: id3]
+  TARGETS (when evidence permits):
+  - TARGET: 2-3 citations per paragraph
+  - TARGET: Never more than 2-3 sentences without a citation
+  - TARGET: Literature reviews should have 4-6+ citations per paragraph
+  - When synthesizing: use multiple citations together [1] [2] [3]
   - Aim for citation density of approximately 1 citation per 50-75 words
+  
+  ⚠️ CRITICAL SAFEGUARD - INTEGRITY OVER DENSITY:
+  These are TARGETS, not requirements to fabricate. If evidence is insufficient:
+  - Use ONLY citations you can genuinely support from the provided evidence
+  - DO NOT invent paper_ids or cite sources not in your evidence snippets
+  - Write "Evidence on this aspect is limited" rather than fabricate citations
+  - Reduce scope or coverage to match available evidence
+  - NEVER cite a paper_id that doesn't exist in the evidence context
+  
+  GOLDEN RULE: It's better to have 1 real citation than 5 fabricated ones.
   
   WHAT MUST ALWAYS BE CITED:
   - ANY statistic, number, or quantitative claim
@@ -45,27 +56,57 @@ system: |-
   - Transition sentences that don't make claims
   
   ═══════════════════════════════════════════════════════════════════════════════
-  CITATION FORMAT
+  CITATION FORMAT (NUMBERED MARKERS)
   ═══════════════════════════════════════════════════════════════════════════════
   
-  Insert citation markers in this exact format: [CITE: paper_id]
+  Use NUMBERED citation markers: [1], [2], [3], etc.
   
-  Where paper_id is the UUID from the evidence snippets (e.g., [CITE: abc123-def456]).
+  At the END of your section, provide a CITATIONS BLOCK mapping numbers to paper IDs:
+  
+  <!-- CITATIONS
+  [1] paper_id: abc123-def456 | quote: "Exact sentence from the source"
+  [2] paper_id: xyz789-uvw012 | quote: "Another exact sentence from the source"
+  -->
   
   PLACEMENT RULES:
-  - Place [CITE: paper_id] immediately after the sentence or clause using that source
-  - Multiple sources for one claim: Use SEPARATE markers for each source
-    Example: "This is supported by several studies [CITE: id1] [CITE: id2]."
-  - NEVER group citations with semicolons like [CITE: id1; id2] - this breaks formatting
-  - Use the EXACT paper_id from the evidence - never fabricate IDs
-  - The system will automatically format citations (APA, MLA, etc.)
+  - Place [1], [2], etc. immediately after the sentence or clause using that source
+  - Multiple sources: "This is supported by several studies [1] [2] [3]."
+  - Each number must have a matching entry in the CITATIONS block
+  - Use the EXACT paper_id from the evidence snippets
+  - Quote the EXACT sentence from the source that supports your claim
+  - AVOID CONSECUTIVE DUPLICATES: If citing the same source for multiple points,
+    combine them: "Finding A and Finding B were reported [1]" NOT "Finding A [1]. Finding B [1]."
+  
+  EXAMPLE:
+  Research demonstrates significant improvements in outcomes [1] with minimal 
+  adverse effects reported across populations [2]. These findings align with 
+  earlier theoretical predictions [3] [4].
+  
+  <!-- CITATIONS
+  [1] paper_id: abc-123 | quote: "Patient outcomes improved by 40% in the treatment group."
+  [2] paper_id: def-456 | quote: "Adverse effects were observed in less than 2% of participants."
+  [3] paper_id: ghi-789 | quote: "The theoretical model predicted positive outcomes."
+  [4] paper_id: jkl-012 | quote: "Earlier frameworks suggested this approach would succeed."
+  -->
   
   DO NOT:
   - Write "(Author, Year)" style - the system handles formatting
-  - Write addCitation(), CITATION_0, or any other format
+  - Write [CITE: id] or [@id] format - use [1], [2] only
   - Make up paper_ids not in the evidence context
   - Write paragraphs without citations - this is a MAJOR ERROR
-  - Group multiple citations in one bracket with semicolons
+  - Fabricate quotes - only use EXACT text from evidence snippets
+  - Place the same citation marker consecutively (e.g., [1] [1] is WRONG)
+  - Cite the same paper multiple times in adjacent sentences
+  
+  CITATION ANTI-PATTERNS (AVOID THESE):
+  ❌ WRONG: "Studies show X [1]. The same studies also show Y [1]."
+  ❌ WRONG: "This is important [1] [1] for understanding..."
+  ❌ WRONG: "Research indicates A [1]. Furthermore, B [1]. Additionally, C [1]."
+  
+  ✅ RIGHT: "Studies show X and Y [1]."
+  ✅ RIGHT: "This is important [1] for understanding..."
+  ✅ RIGHT: "Research indicates A, B, and C [1]."
+  ✅ RIGHT: "Research indicates A [1], while other work shows B [2]." (different sources)
   
   ═══════════════════════════════════════════════════════════════════════════════
   MARKDOWN STRUCTURE (REQUIRED)
@@ -74,6 +115,8 @@ system: |-
   - Start each section with its heading: ## Section Title
   - Use ### for subsections
   - Use proper paragraph breaks (blank lines between paragraphs)
+  - Headings MUST be on their own lines (never inline). Always surround headings with blank lines:
+    - End paragraph → \\n\\n → ##/### Heading → \\n\\n → next paragraph
   - Use **bold** and *italic* for emphasis where appropriate
   
   ═══════════════════════════════════════════════════════════════════════════════
@@ -107,9 +150,9 @@ system: |-
   
   ✅ SYNTHETIC (Good - integrating and comparing):
   "Multiple studies have examined [topic], revealing a consistent pattern of [finding] 
-  [CITE: id1] [CITE: id2] [CITE: id3]. However, findings diverge regarding [aspect], 
-  with some researchers reporting positive effects [CITE: id4] [CITE: id5] 
-  while others found negative outcomes [CITE: id6]. This discrepancy may be 
+  [1] [2] [3]. However, findings diverge regarding [aspect], 
+  with some researchers reporting positive effects [4] [5] 
+  while others found negative outcomes [6]. This discrepancy may be 
   attributed to methodological differences, particularly in [specific difference]."
   
   ⚠️ Replace all bracketed placeholders with ACTUAL content from your evidence.
@@ -154,9 +197,9 @@ system: |-
   
   EXAMPLE (Critical Evaluation) - STRUCTURE ONLY:
   "While [Author from your evidence] demonstrated [metric from evidence] for [topic], 
-  this study used only [context/limitation from evidence] [CITE: actual-id-from-evidence]. 
+  this study used only [context/limitation from evidence] [1]. 
   Real-world validation remains limited, with [other studies from evidence] reporting 
-  [different findings from evidence] [CITE: another-actual-id]. Furthermore, 
+  [different findings from evidence] [2]. Furthermore, 
   [limitation you identify from evidence] may limit applicability in [context]."
   
   ⚠️ CRITICAL: Only include statistics, percentages, and sample sizes that 
@@ -176,11 +219,11 @@ system: |-
   ✅ STRONG (when your evidence HAS numbers): 
   "Across studies examining [topic], [method A] demonstrated higher [metric] 
   (range: [actual range from evidence]) compared to [method B] 
-  (range: [actual range from evidence]) [CITE: id1] [CITE: id2] [CITE: id3]."
+  (range: [actual range from evidence]) [1] [2] [3]."
   
   ✅ STRONG (when your evidence LACKS specific numbers):
   "Across studies examining [topic], [method A] consistently demonstrated 
-  higher [metric] compared to [method B] [CITE: id1] [CITE: id2] [CITE: id3], 
+  higher [metric] compared to [method B] [1] [2] [3], 
   though specific effect sizes varied across contexts."
   
   When to quantify:
@@ -212,8 +255,8 @@ system: |-
   
   | Author (Year) | Method | Sample | Key Finding |
   |---------------|--------|--------|-------------|
-  | [Author from evidence] [CITE: actual-id] | [Method from evidence] | [Sample from evidence] | [Finding from evidence] |
-  | [Author from evidence] [CITE: actual-id] | [Method from evidence] | [Sample from evidence] | [Finding from evidence] |
+  | [Author from evidence] [1] | [Method from evidence] | [Sample from evidence] | [Finding from evidence] |
+  | [Author from evidence] [2] | [Method from evidence] | [Sample from evidence] | [Finding from evidence] |
   
   ⚠️ If your evidence doesn't include sample sizes, omit that column or write "not reported".
   NEVER invent data to fill table cells.
@@ -325,12 +368,12 @@ user: |-
   {{/sectionPurpose}}
   
   **Citation Guidance for This Section (CRITICAL):**
-  ⚠️ CITE EXTENSIVELY - Academic credibility depends on proper citation.
+  ⚠️ CITE FROM PROVIDED EVIDENCE - Academic credibility depends on proper citation.
   
-  MINIMUM REQUIREMENTS:
+  TARGETS (when evidence permits):
   - At least 2-3 citations per paragraph (more for literature reviews)
   - Never more than 2-3 sentences without a citation
-  - Use multiple citations when synthesizing: [CITE: id1] [CITE: id2]
+  - Use multiple numbered citations when synthesizing: [1] [2] [3]
   
   SOURCE DIVERSITY TARGET:
   - You have evidence from multiple papers - USE AS MANY AS POSSIBLE
@@ -339,7 +382,10 @@ user: |-
   
   MUST CITE: statistics, findings, theories, methods, definitions, claims about research.
   If you mention what a study found, cite it. If you reference a concept, cite it.
-  When in doubt, CITE. Over-citation is not possible; under-citation is a fatal flaw.
+  
+  ⚠️ INTEGRITY SAFEGUARD: ONLY cite paper_ids from the evidence snippets above.
+  If evidence is insufficient, acknowledge the limitation rather than fabricate citations.
+  NEVER invent a paper_id. It's better to write less than to cite fake sources.
   
   {{#exclusions}}
   **Must Not Include:** {{exclusions}}
@@ -366,7 +412,7 @@ user: |-
   {{/currentText}}
   
   ### Evidence Context (prioritize unique usage; reuse sparingly if needed for coverage)
-  Each snippet is tagged with [CONTEXT FROM: paper_id]. Use the paper_id in your [CITE: paper_id] markers.
+  Each snippet is tagged with [CONTEXT FROM: paper_id]. Use the paper_id in your CITATIONS block at the end.
   
   **EVIDENCE STRENGTH GUIDE:**
   Each snippet includes an "evidence_strength" field - use this to calibrate your claims:
@@ -390,14 +436,14 @@ user: |-
   
   **OUTPUT FORMAT (CRITICAL):**
   1. Start with the section heading: ## {{sectionPath}}
-  2. Write the section content in proper markdown
-  3. Insert [CITE: paper_id] markers where you use evidence from a source
+  2. Write the section content in proper markdown with [1], [2], etc. citation markers
+  3. End with a <!-- CITATIONS --> block mapping each number to paper_id and exact quote
   4. Use proper paragraph breaks and markdown formatting
   
   **CITATION REMINDER (FINAL CHECK):**
   ⚠️ Before submitting, verify EVERY paragraph has 2-3+ citations.
   
-  Use [CITE: paper_id] format. You MUST cite:
+  Use numbered [1], [2], [3] format with CITATIONS block at end. You MUST cite:
   - Statistics or numerical data → CITE
   - Research findings or results → CITE  
   - Theories, models, frameworks → CITE
@@ -407,16 +453,24 @@ user: |-
   - Comparisons between studies → CITE BOTH
   
   ⚠️ FORMAT EXAMPLE - DO NOT COPY CONTENT, ONLY STRUCTURE:
-  "Research has shown that [topic from YOUR evidence] [CITE: your-actual-id1]. 
-  Scholars have identified [themes/findings from YOUR evidence] [CITE: your-actual-id2] [CITE: your-actual-id3]. 
-  These [aspects] are particularly prominent in [context from YOUR evidence] [CITE: your-actual-id4], 
-  where [relationship from YOUR evidence] [CITE: your-actual-id5]."
+  "Research has shown that [topic from YOUR evidence] [1]. 
+  Scholars have identified [themes/findings from YOUR evidence] [2] [3]. 
+  These [aspects] are particularly prominent in [context from YOUR evidence] [4], 
+  where [relationship from YOUR evidence] [5]."
+  
+  <!-- CITATIONS
+  [1] paper_id: xxx | quote: "exact quote"
+  [2] paper_id: yyy | quote: "exact quote"
+  ...
+  -->
   
   ⚠️ This example shows CITATION DENSITY, not content to copy.
   ALL content must come from YOUR evidence snippets above.
   
-  ❌ BAD: Paragraphs with 0-1 citations
-  ✅ GOOD: Paragraphs with 3-5+ citations
+  ❌ BAD: Fabricated citations or paper_ids NOT in evidence snippets
+  ❌ BAD: Paragraphs with claims but no supporting citations
+  ✅ GOOD: Paragraphs with 3-5+ citations FROM PROVIDED EVIDENCE
+  ✅ ACCEPTABLE: Fewer citations when evidence is limited (acknowledge the limitation)
   
   **SYNTHESIS REMINDER (FINAL CHECK):**
   ⚠️ Before submitting, verify you are SYNTHESIZING, not just describing:

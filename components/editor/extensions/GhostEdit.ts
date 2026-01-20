@@ -416,6 +416,15 @@ export const GhostEdit = Extension.create({
             // (positions may now be invalid)
             if (tr.docChanged && value.edits.length > 0) {
               if (!tr.getMeta('ghostEditAccepted')) {
+                // Emit event so useEditorChat can sync pendingTools state
+                const clearedEditIds = value.edits.map(e => e.id)
+                setTimeout(() => {
+                  editor.view.dom.dispatchEvent(new CustomEvent('ghostedits:invalidated', {
+                    detail: { editIds: clearedEditIds, reason: 'document-changed' },
+                    bubbles: true,
+                  }))
+                }, 0)
+                
                 return {
                   edits: [],
                   activeEditId: null,

@@ -66,6 +66,7 @@ export interface GenerationRetrievalParams {
 export interface GenerationRetrievalResult extends BaseRetrievalResult {
   scores: number[]
   totalResults: number
+  mode?: SearchMode
   /** Formatted context string (when compression enabled) */
   formattedContext?: string
   metrics?: {
@@ -212,7 +213,7 @@ export class GenerationContextService {
     
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
       console.log(`🎯 Cache HIT: "${query.slice(0, 50)}..."`)
-      return this.applyFiltering(cached.result, limit, minScore)
+      return this.applyFiltering(cached.result, limit, minScore, params.mode || 'hybrid')
     }
     
     console.log(`🔍 Cache MISS: "${query.slice(0, 50)}..."`)
@@ -256,6 +257,7 @@ export class GenerationContextService {
       chunks: retrievalResult.chunks,
       papers,
       hasContent: retrievalResult.chunks.length > 0,
+      mode: params.mode || 'hybrid',
       scores: retrievalResult.chunks.map(c => normalizeScore(c.score)),
       totalResults: retrievalResult.totalRetrieved,
       formattedContext,
@@ -279,7 +281,7 @@ export class GenerationContextService {
     evictIfNeeded()
     cleanupCache()
     
-    return this.applyFiltering(result, limit, minScore)
+    return this.applyFiltering(result, limit, minScore, params.mode || 'hybrid')
   }
   
   /**
@@ -310,6 +312,32 @@ export class GenerationContextService {
       const status = statusMap.get(id)
       return status?.hasContent && (status.chunkCount > 0 || status.contentType === 'abstract')
     })
+
+    // If some papers have content but no chunks, trigger chunking/embedding ingestion for those.
+    // Without chunks, RAG retrieval will reliably return 0 results (RPCs query `paper_chunks`).
+    const papersNeedingChunks = paperIds.filter(id => {
+      const status = statusMap.get(id)
+      return !!status?.hasContent && status.contentType !== 'none' && status.chunkCount === 0
+    })
+    if (papersNeedingChunks.length > 0) {
+      console.warn(`⚠️ ${papersNeedingChunks.length} papers have content but 0 chunks. Triggering ingestion...`)
+      const fromProvided = allPapers.filter(p => papersNeedingChunks.includes(p.id))
+      const papersToIngest = fromProvided.length > 0 ? fromProvided : (await getPapersByIds(papersNeedingChunks)).map(lp => ({
+        ...lp.paper,
+        authors: lp.paper.authors || [],
+        author_names: lp.paper.authors?.map(a => a.name) || []
+      } as PaperWithAuthors))
+
+      if (papersToIngest.length > 0) {
+        await ensureBulkContentIngestion(papersToIngest)
+      }
+
+      const retryStatus = await getContentStatus(paperIds)
+      papersWithContent = paperIds.filter(id => {
+        const status = retryStatus.get(id)
+        return status?.hasContent && (status.chunkCount > 0 || status.contentType === 'abstract')
+      })
+    }
     
     if (papersWithContent.length === 0) {
       console.warn(`⚠️ No papers have content. Triggering ingestion...`)
@@ -449,10 +477,22 @@ export class GenerationContextService {
   private static applyFiltering(
     result: GenerationRetrievalResult,
     limit: number,
-    minScore: number
+    minScore: number,
+    mode: SearchMode
   ): GenerationRetrievalResult {
+    // IMPORTANT:
+    // - In vector mode, `score` is cosine similarity-like (0-1) so `minScore` applies directly.
+    // - In hybrid mode, `score` is an RRF score (~0.01-0.02), so filtering on it will wrongly drop everything.
+    //   Instead, keep chunks if they passed vector threshold OR have any keyword match.
     const filteredChunks = result.chunks
-      .filter(c => c.score >= minScore)
+      .filter(c => {
+        if (mode === 'vector') return c.score >= minScore
+        if (mode === 'keyword') return (c.score ?? 0) > 0
+        // hybrid
+        const vectorOk = (c.vector_score ?? 0) >= minScore
+        const keywordOk = (c.keyword_score ?? 0) > 0
+        return vectorOk || keywordOk
+      })
       .slice(0, limit)
     
     return {

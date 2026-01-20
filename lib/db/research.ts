@@ -83,13 +83,17 @@ export async function createResearchProject(
 
 /**
  * Extract citation paper IDs from content
- * Supports both [@uuid] (Pandoc) and [CITE: uuid] (legacy) formats
+ * Supports:
+ * - [@paperId#instanceId] (new format with instance tracking)
+ * - [@uuid] (Pandoc, backward compatible)
+ * - [CITE: uuid] (legacy)
  */
 function extractCitationPaperIds(content: string): string[] {
   const paperIds = new Set<string>()
   
-  // Pandoc format: [@uuid]
-  const pandocPattern = /\[@([a-f0-9-]{36})\]/gi
+  // New format: [@paperId#instanceId] - captures paperId only (group 1)
+  // Also matches [@paperId] without instanceId
+  const pandocPattern = /\[@([a-f0-9-]{36})(?:#[a-f0-9-]{36})?\]/gi
   for (const match of content.matchAll(pandocPattern)) {
     paperIds.add(match[1])
   }

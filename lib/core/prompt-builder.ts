@@ -8,6 +8,7 @@
 import Mustache from 'mustache'
 import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
 import type { ChatCOStarContext, CompleteCOStarContext } from '@/lib/prompts/costar-context'
+import type { ChatAUTOMATContext } from '@/lib/prompts/automat-context'
 
 export interface PromptData {
   // Paper-level context
@@ -294,6 +295,25 @@ Provide specific, actionable feedback on:
     context: CompleteCOStarContext
   ): string {
     return Mustache.render(template.system, context)
+  }
+
+  /**
+   * Build chat system prompt from template and AUTOMAT context
+   * AUTOMAT: Action, Usage, Target, Output, Method, Appearance, Tone
+   */
+  static buildChatAUTOMATPrompt(
+    template: PromptTemplate,
+    context: ChatAUTOMATContext
+  ): string {
+    // Add computed/helper fields for Mustache conditionals
+    const templateData = {
+      ...context,
+      // Targeting strategy helpers for Mustache sections
+      isBlockIdStrategy: context.method.targetingStrategy === 'blockId',
+      isSelectionStrategy: context.method.targetingStrategy === 'selection',
+      isTextSearchStrategy: context.method.targetingStrategy === 'textSearch',
+    }
+    return Mustache.render(template.system, templateData)
   }
 
   /**

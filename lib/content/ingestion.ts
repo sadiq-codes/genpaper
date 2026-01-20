@@ -74,7 +74,14 @@ export async function getContentStatus(paperIds: string[]): Promise<Map<string, 
     for (const paper of papers || []) {
       const hasPdf = !!(paper.pdf_content && paper.pdf_content.length > 0)
       const hasAbstract = !!(paper.abstract && paper.abstract.length > 100)
-      const chunkCount = Array.isArray(paper.paper_chunks) ? paper.paper_chunks.length : 0
+      // NOTE: `paper_chunks(count)` returns an array with a single `{ count: number }` row.
+      // Using `.length` here incorrectly reports `1` even when the true count is `0`.
+      const chunkCount = (() => {
+        const rel = (paper as unknown as { paper_chunks?: Array<{ count?: number }> }).paper_chunks
+        if (!Array.isArray(rel) || rel.length === 0) return 0
+        const c = rel[0]?.count
+        return typeof c === 'number' ? c : 0
+      })()
 
       let contentType: 'pdf' | 'abstract' | 'none' = 'none'
       let contentLength = 0

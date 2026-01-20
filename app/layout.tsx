@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { Geist, Geist_Mono, Caveat } from "next/font/google"
 import "./globals.css"
 import { AuthProvider } from "@/components/providers/AuthProvider"
+import { getUser } from "@/lib/auth/cached"
 
 // Global error handler removed - using unified API error handling
 
@@ -26,15 +27,16 @@ export const metadata: Metadata = {
   description: "Generate research papers with AI assistance",
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const user = await getUser()
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} ${caveat.variable} antialiased`} suppressHydrationWarning={true}>
-        <AuthProvider>
+        <AuthProvider initialUser={user}>
           {children}
         </AuthProvider>
       </body>

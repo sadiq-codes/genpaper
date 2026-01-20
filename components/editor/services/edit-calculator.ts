@@ -141,7 +141,7 @@ function calculateInsert(
           from: insertPos,
           to: insertPos,
           oldContent: '',
-          newContent: '\n\n' + content,
+          newContent: content,  // No prefix - TipTap handles paragraph spacing
           description: `Insert after block`,
         }
       }
@@ -161,7 +161,7 @@ function calculateInsert(
         from: insertPos,
         to: insertPos,
         oldContent: '',
-        newContent: '\n\n' + content,
+        newContent: content,  // No prefix - TipTap handles paragraph spacing
         description: 'Insert at end of document',
       }
     }
@@ -187,7 +187,7 @@ function calculateInsert(
           from: insertPos,
           to: insertPos,
           oldContent: '',
-          newContent: '\n\n' + content,
+          newContent: content,  // No prefix - TipTap handles paragraph spacing
           description: `Insert at end of ${sectionName}`,
         }
       }
@@ -211,7 +211,7 @@ function calculateInsert(
           from: insertPos,
           to: insertPos,
           oldContent: '',
-          newContent: content + '\n\n',
+          newContent: content,  // No suffix - TipTap handles paragraph spacing
           description: `Insert at start of ${sectionName}`,
         }
       }

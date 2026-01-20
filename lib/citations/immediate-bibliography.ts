@@ -422,13 +422,22 @@ export class CitationService {
         
         const { data: existing, error: fetchError } = await supabase
           .from('project_citations')
-          .select('id, csl_json, cite_key')
+          .select('id, csl_json, cite_key, quote')
           .eq('project_id', params.projectId)
           .eq('paper_id', paperId)
           .single()
 
         if (fetchError || !existing) {
           throw new Error(`Citation constraint violation but unable to fetch existing: ${fetchError?.message}`)
+        }
+
+        // Update quote if provided and different from existing
+        if (params.quote && params.quote !== existing.quote) {
+          await supabase
+            .from('project_citations')
+            .update({ quote: params.quote })
+            .eq('id', existing.id)
+          if (isDev) console.log(`[Citation ${requestId}] Updated quote for existing citation`)
         }
 
         const citeKey = existing.cite_key || `${params.projectId}-${paperId}`

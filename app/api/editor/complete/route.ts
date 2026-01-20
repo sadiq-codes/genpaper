@@ -8,9 +8,10 @@ import {
   type EditorContext 
 } from '@/lib/rag'
 import {
-  processCitationMarkersSync,
+  processNumberedCitations,
   type PaperMetadata,
-  type CitationStyle
+  type CitationStyle,
+  type NumberedCitation
 } from '@/lib/citations/unified-service'
 import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 import { PromptService } from '@/lib/prompts/prompt-service'
@@ -19,12 +20,12 @@ import { getUserLibraryPapers } from '@/lib/db/library'
 
 // Suggestion types for smart context-aware completion
 type SuggestionType =
-  | 'opening_sentence'   // Start of section paragraph
-  | 'complete_sentence'  // Finish incomplete sentence
-  | 'next_sentence'      // Continue after complete sentence
-  | 'provide_examples'   // After "such as", "for example"
-  | 'contrast_point'     // After "however", "although"
-  | 'contextual'         // Manual trigger - AI decides
+  | 'opening_sentence'
+  | 'complete_sentence'
+  | 'next_sentence'
+  | 'provide_examples'
+  | 'contrast_point'
+  | 'contextual'
 
 interface CompletionRequest {
   projectId: string
@@ -39,34 +40,69 @@ interface CompletionRequest {
   suggestionType?: SuggestionType
 }
 
+// Citation info returned to client
 interface CitationInSuggestion {
   paperId: string
-  marker: string           // Original marker [@id] (Pandoc format)
-  formatted: string        // Formatted (Smith et al., 2023)
-  // Positions in the DISPLAY text (formattedSuggestion)
+  instanceId: string       // UUID for this specific instance
+  marker: string           // [@id#instanceId] marker format
+  formatted: string        // (Smith et al., 2023)
+  citedContent: string     // The exact content from the paper that was cited
+  index: number            // The original [N] index
+  // Position offsets for ghost text highlighting
   displayStartOffset: number
   displayEndOffset: number
-  // Positions in the RAW text (rawSuggestion) 
-  rawStartOffset: number
-  rawEndOffset: number
   paper?: PaperMetadata
 }
 
-interface CompletionResponse {
-  suggestion: string       // Text with [@id] markers (for accept/processing)
-  displaySuggestion: string // Text with formatted citations (for display)
-  citations: CitationInSuggestion[]
-  contextHint: string
-  ragInfo?: {
-    chunksUsed: number
-    claimsUsed: number
-    papersReferenced: number
+/**
+ * Save citation instances to database
+ */
+async function saveCitationInstances(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+  instances: Array<{ instanceId: string; paperId: string; quote: string }>
+): Promise<void> {
+  if (instances.length === 0) return
+  
+  try {
+    // Keep quote sizes bounded (same intent as /api/citation-instances)
+    const MAX_QUOTE_WORDS = 100
+    const truncateQuote = (quote: string) => {
+      const words = quote.split(/\s+/)
+      if (words.length <= MAX_QUOTE_WORDS) return quote
+      return words.slice(0, MAX_QUOTE_WORDS).join(' ') + '...'
+    }
+
+    const inserts = instances
+      .filter(i => i.instanceId && i.paperId && i.quote)
+      .map(i => ({
+        id: i.instanceId,
+        project_id: projectId,
+        paper_id: i.paperId,
+        quote: truncateQuote(i.quote),
+      }))
+
+    if (inserts.length === 0) return
+
+    const { error } = await supabase
+      .from('citation_instances')
+      .upsert(inserts, { onConflict: 'id', ignoreDuplicates: true })
+
+    if (error) {
+      // If migration not applied yet, treat as optional
+      if ((error as { code?: string }).code === 'PGRST205') {
+        console.warn('[Autocomplete] citation_instances not available (migration not applied); skipping')
+        return
+      }
+      console.error('[Autocomplete] Failed to save citation instances:', error)
+      return
+    }
+
+    console.log(`[Autocomplete] Saved ${inserts.length} citation instances`)
+  } catch (error) {
+    console.error('[Autocomplete] Error saving citation instances:', error)
   }
 }
-
-// Section guidance is now provided by costar-context.ts
-
-// Paper formatting is now handled by formatPapersForContext from costar-context.ts
 
 /**
  * Build system prompt using CO-STAR framework template
@@ -80,10 +116,8 @@ async function buildSystemPromptFromTemplate(
   papersContext: string,
   outlineContext: string
 ): Promise<string> {
-  // Get objective for this suggestion type
   const suggestionObjective = await PromptService.getSuggestionObjective(suggestionType)
   
-  // Build CO-STAR context
   const costarContext = buildCompleteContext({
     topic,
     paperType: paperType || 'research-article',
@@ -97,30 +131,19 @@ async function buildSystemPromptFromTemplate(
     papersContext,
   })
 
-  // Build prompt from template
   return PromptService.buildCompletePrompt(costarContext)
 }
 
 /**
  * Build user prompt - minimal trigger approach
- * 
- * The system prompt (CO-STAR template) already contains:
- * - suggestionType and suggestionObjective
- * - precedingText and section context
- * - All source material and instructions
- * 
- * The user prompt just shows cursor position for the model to continue from.
  */
 function buildUserPrompt(context: CompletionRequest['context']): string {
   const preceding = context.precedingText.trim()
   
   if (!preceding) {
-    // Starting fresh - indicate section start
     return `[START OF ${context.currentSection.toUpperCase()}]`
   }
   
-  // Show where cursor is - model continues from here
-  // Use last 150 chars to give enough context without redundancy
   const snippet = preceding.slice(-150)
   const ellipsis = preceding.length > 150 ? '...' : ''
   
@@ -145,16 +168,138 @@ function ragContextToPaperMetadata(ragContext: EditorContext): PaperMetadata[] {
   return papers
 }
 
-export async function POST(request: NextRequest) {
+/**
+ * Single sentence with its own citations
+ */
+interface AISentence {
+  text: string
+  citations: NumberedCitation[]
+}
+
+/**
+ * Parse structured AI response with multiple sentences
+ * Each sentence has its own text and citations array
+ */
+interface AIStructuredResponse {
+  sentences: AISentence[]
+  contextHint: string
+  // Legacy single-text format (for backwards compatibility)
+  text?: string
+  citations?: NumberedCitation[]
+}
+
+function parseAIResponse(rawText: string): AIStructuredResponse | null {
   try {
+    // Strip markdown code blocks if present
+    let cleanedText = rawText.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
+    
+    // Find the JSON object
+    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) {
+      console.log('[Autocomplete] No JSON found in response')
+      return null
+    }
+    
+    const parsed = JSON.parse(jsonMatch[0])
+    
+    // NEW FORMAT: sentences array
+    if (Array.isArray(parsed.sentences) && parsed.sentences.length > 0) {
+      const sentences: AISentence[] = []
+      
+      for (const s of parsed.sentences) {
+        if (typeof s.text !== 'string' || !s.text.trim()) {
+          continue // Skip invalid sentences
+        }
+        
+        const citations: NumberedCitation[] = []
+        if (Array.isArray(s.citations)) {
+          for (const c of s.citations) {
+            if (typeof c.index === 'number' && typeof c.paperId === 'string') {
+              citations.push({
+                index: c.index,
+                paperId: c.paperId,
+                citedContent: c.citedContent || ''
+              })
+            }
+          }
+        }
+        
+        sentences.push({
+          text: s.text.trim(),
+          citations
+        })
+      }
+      
+      // Limit to 3 sentences max
+      const finalSentences = sentences.slice(0, 3)
+      
+      if (finalSentences.length === 0) {
+        console.log('[Autocomplete] No valid sentences in response')
+        return null
+      }
+      
+      console.log(`[Autocomplete] Parsed ${finalSentences.length} sentences`)
+      
+      return {
+        sentences: finalSentences,
+        contextHint: parsed.contextHint || 'Continuing...'
+      }
+    }
+    
+    // LEGACY FORMAT: single text + citations (backwards compatibility)
+    if (typeof parsed.text === 'string' && parsed.text.trim()) {
+      console.log('[Autocomplete] Using legacy single-text format')
+      
+      const citations: NumberedCitation[] = []
+      if (Array.isArray(parsed.citations)) {
+        for (const c of parsed.citations) {
+          if (typeof c.index === 'number' && typeof c.paperId === 'string') {
+            citations.push({
+              index: c.index,
+              paperId: c.paperId,
+              citedContent: c.citedContent || ''
+            })
+          }
+        }
+      }
+      
+      // Convert to sentences format for consistency
+      return {
+        sentences: [{
+          text: parsed.text.trim(),
+          citations
+        }],
+        contextHint: parsed.contextHint || 'Continuing...',
+        // Keep legacy fields for debugging
+        text: parsed.text.trim(),
+        citations
+      }
+    }
+    
+    console.log('[Autocomplete] Missing both sentences array and text field')
+    return null
+  } catch (err) {
+    console.error('[Autocomplete] Failed to parse AI response:', err)
+    return null
+  }
+}
+
+export async function POST(request: NextRequest) {
+  const requestStartTime = Date.now()
+  const timings: Record<string, number> = {}
+  
+  try {
+    // Auth check
+    const authStartTime = Date.now()
     const supabase = await createClient()
     
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    timings.auth = Date.now() - authStartTime
 
-    // Parse request body with error handling
+    // Parse request body
     let body: CompletionRequest
     try {
       const text = await request.text()
@@ -178,26 +323,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
     }
 
-    // Verify project ownership and get metadata
-    const { data: project, error: projectError } = await supabase
+    // Build query text early for parallel operations
+    const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
+    
+    // OPTIMIZATION: Fetch project and determine paper IDs in parallel when possible
+    const projectFetchStart = Date.now()
+    
+    // Start project fetch
+    const projectPromise = supabase
       .from('research_projects')
       .select('id, topic, paper_type')
       .eq('id', projectId)
       .eq('user_id', user.id)
       .single()
-
-    if (projectError || !project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    }
-
-    // Determine effective paper IDs - fall back to library if no project papers
-    let effectivePaperIds = paperIds || []
     
+    let effectivePaperIds = paperIds || []
+    let libraryFallbackUsed = false
+    
+    // If no paper IDs provided, we need library fallback (can't parallelize RAG yet)
     if (effectivePaperIds.length === 0) {
       console.log('[Autocomplete] No project papers, falling back to user library')
+      libraryFallbackUsed = true
       
-      // Get user's library papers
+      const libraryStartTime = Date.now()
       const libraryPapers = await getUserLibraryPapers(user.id, {}, 50, 0)
+      timings.libraryFetch = Date.now() - libraryStartTime
       
       if (libraryPapers.length === 0) {
         return NextResponse.json({ 
@@ -206,57 +356,68 @@ export async function POST(request: NextRequest) {
         }, { status: 422 })
       }
       
-      // Use RAG to find top N most relevant papers to current context
-      const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
       const allLibraryIds = libraryPapers.map(lp => lp.paper.id)
       
-      // Retrieve with broader pool to find most relevant papers
+      // Quick relevance check with minimal chunks, no claims
+      const relevanceStartTime = Date.now()
       const relevanceCheck = await retrieveEditorContext(queryText, allLibraryIds, {
-        maxChunks: 20,
+        maxChunks: 10,  // Reduced from 20
         maxClaims: 0,
         minChunkScore: 0.2,
         minClaimScore: 0.5
       })
+      timings.relevanceCheck = Date.now() - relevanceStartTime
       
-      // Get unique paper IDs from top chunks (preserves relevance order)
       const relevantPaperIds = [...new Set(
         relevanceCheck.chunks.map(c => c.paper_id)
-      )].slice(0, 10)  // Top 10 most relevant
+      )].slice(0, 8)  // Reduced from 10
       
       if (relevantPaperIds.length > 0) {
         effectivePaperIds = relevantPaperIds
         console.log(`[Autocomplete] Using ${effectivePaperIds.length} relevant library papers`)
       } else {
-        // Fallback: use most recent library papers if RAG finds nothing
-        effectivePaperIds = allLibraryIds.slice(0, 10)
+        effectivePaperIds = allLibraryIds.slice(0, 8)
         console.log(`[Autocomplete] RAG found no relevant content, using ${effectivePaperIds.length} recent library papers`)
       }
     }
 
-    // RAG RETRIEVAL + Citation style in parallel for better performance
-    const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
+    // Wait for project fetch (may already be done)
+    const { data: project, error: projectError } = await projectPromise
+    timings.projectFetch = Date.now() - projectFetchStart
+
+    if (projectError || !project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    }
     
+    // OPTIMIZATION: Parallel RAG + citation style fetch
+    // OPTIMIZATION: Reduced chunks (4) and skip claims for autocomplete
+    const ragStartTime = Date.now()
     const [ragContext, citationStyle] = await Promise.all([
-      // RAG retrieval (uses LRU cache for repeated queries)
       retrieveEditorContext(queryText, effectivePaperIds, {
-        maxChunks: 8,
-        maxClaims: 6,
+        maxChunks: 4,   // Reduced from 8 - 4 chunks is enough for 1-2 sentences
+        maxClaims: 0,   // Skip claims for autocomplete - chunks have the evidence
         minChunkScore: 0.25,
         minClaimScore: 0.25
       }),
-      // Citation style lookup
       getProjectCitationStyle(projectId, user.id) as Promise<CitationStyle>
     ])
+    timings.rag = Date.now() - ragStartTime
 
-    // Check if we have any content to work with
     if (!ragContext.hasContent) {
       return NextResponse.json({ 
         error: 'No relevant content found',
         message: 'The papers in your project don\'t have processed content yet. Try processing the papers first, or add papers with more relevant content.'
       }, { status: 422 })
     }
+    
+    // Log timing breakdown
+    console.log('[Autocomplete] Timing breakdown (ms):', {
+      ...timings,
+      libraryFallback: libraryFallbackUsed,
+      chunksRetrieved: ragContext.chunks.length,
+      papersUsed: ragContext.papers.size
+    })
 
-    // Format RAG context for the prompt
     const ragFormatted = formatEditorContextForPrompt(ragContext)
     const papersContext = formatPapersForContext(
       Array.from(ragContext.papers.entries()).map(([id, paper]) => ({
@@ -271,10 +432,8 @@ export async function POST(request: NextRequest) {
       ? context.documentOutline.map(h => `- ${h}`).join('\n')
       : 'No outline.'
 
-    // Get paper type from project
     const paperType = project.paper_type || 'literatureReview'
 
-    // Build system prompt using CO-STAR framework
     const system = await buildSystemPromptFromTemplate(
       suggestionType,
       context,
@@ -285,142 +444,203 @@ export async function POST(request: NextRequest) {
       outlineContext
     )
     
-    // Build minimal user prompt - just cursor position
     const userPrompt = buildUserPrompt(context)
 
-    // Generate completion with streaming for faster perceived performance
     const abortController = new AbortController()
-    const timeout = setTimeout(() => abortController.abort(), 30000)
+    const timeout = setTimeout(() => {
+      abortController.abort(new DOMException('Autocomplete timed out', 'AbortError'))
+    }, 30000)
+
+    // Abort upstream generation immediately if the client disconnects
+    const onRequestAbort = () => {
+      abortController.abort(new DOMException('Client disconnected', 'AbortError'))
+    }
+    request.signal.addEventListener('abort', onRequestAbort, { once: true })
+    
+    // Track LLM timing
+    const llmStartTime = Date.now()
     
     try {
       const result = streamText({
         model: getAutocompleteLanguageModel(),
         system,
         prompt: userPrompt,
-        maxOutputTokens: 300,
+        maxOutputTokens: 600,  // Increased for 2-3 sentences with citations
         temperature: 0.5,
         abortSignal: abortController.signal,
       })
 
-      // Get papers for citation processing
       const papers = ragContextToPaperMetadata(ragContext)
-
-      // Create a custom stream that:
-      // 1. Streams the text as it comes
-      // 2. Sends citation metadata at the end
       const encoder = new TextEncoder()
+      
+      // Flag to prevent enqueue after close
+      let streamClosed = false
       
       const stream = new ReadableStream({
         async start(controller) {
           try {
             let fullText = ''
+            let firstTokenTime: number | null = null
             
-            // Stream text chunks
             for await (const chunk of result.textStream) {
+              if (abortController.signal.aborted) {
+                streamClosed = true
+                try { controller.close() } catch {}
+                return
+              }
+              // Track time to first token
+              if (firstTokenTime === null) {
+                firstTokenTime = Date.now()
+                timings.llmFirstToken = firstTokenTime - llmStartTime
+              }
+              
               fullText += chunk
-              // Send text chunk as SSE
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: chunk })}\n\n`))
+              
+              // Guard against closed controller
+              if (!streamClosed) {
+                try {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: chunk })}\n\n`))
+                } catch {
+                  // Controller may be closed if client disconnected
+                  streamClosed = true
+                  return
+                }
+              }
             }
             
-            // Parse the full response for JSON structure (if any)
-            let suggestion: string
-            let contextHint: string = 'Continuing...'
+            timings.llmTotal = Date.now() - llmStartTime
             
-            // Log raw response for debugging
             console.log('[Autocomplete] Raw AI response:', fullText.slice(0, 500))
             
-            try {
-              // Strip markdown code blocks if present (AI sometimes wraps JSON in ```json...```)
-              let cleanedText = fullText.replace(/```json\s*/gi, '').replace(/```\s*/g, '')
-              
-              const jsonMatch = cleanedText.match(/\{[\s\S]*\}/)
-              if (jsonMatch) {
-                console.log('[Autocomplete] JSON match found:', jsonMatch[0].slice(0, 200))
-                const parsed = JSON.parse(jsonMatch[0])
-                suggestion = parsed.text || ''
-                contextHint = parsed.contextHint || 'Continuing...'
-                
-                // If text field was empty, try using content outside JSON
-                if (!suggestion.trim()) {
-                  console.log('[Autocomplete] Empty text field in JSON, checking for content outside JSON')
-                  const outsideJson = cleanedText.replace(/\{[\s\S]*\}/, '').trim()
-                  if (outsideJson) {
-                    suggestion = outsideJson
-                  }
-                }
-              } else {
-                console.log('[Autocomplete] No JSON found, using raw text')
-                suggestion = cleanedText.trim()
+            const parsed = parseAIResponse(fullText)
+            
+            if (!parsed || parsed.sentences.length === 0) {
+              console.log('[Autocomplete] Failed to parse response or no sentences')
+              if (!streamClosed) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+                  type: 'error', 
+                  error: 'Could not generate completion - invalid response format' 
+                })}\n\n`))
+                streamClosed = true
+                controller.close()
               }
-            } catch (parseErr) {
-              console.log('[Autocomplete] JSON parse error:', parseErr)
-              suggestion = fullText.trim()
-            }
-            
-            // Clean up
-            suggestion = suggestion.replace(/^["'\s]+|["'\s]+$/g, '').trim()
-            
-            console.log('[Autocomplete] Final suggestion:', suggestion ? suggestion.slice(0, 100) : '(empty)')
-            
-            if (!suggestion) {
-              console.log('[Autocomplete] Empty suggestion, sending error')
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Could not generate completion' })}\n\n`))
-              controller.close()
               return
             }
-
-            // Process citation markers
-            const processResult = processCitationMarkersSync(suggestion, papers, citationStyle)
-            const formattedSuggestion = processResult.content
             
-            // Build citations array
-            const citations: CitationInSuggestion[] = []
-            let rawOffset = 0
-            let displayOffset = 0
+            console.log(`[Autocomplete] Parsed ${parsed.sentences.length} sentences`)
             
-            for (const citation of processResult.citations) {
-              const rawPos = suggestion.indexOf(citation.marker, rawOffset)
-              const displayPos = formattedSuggestion.indexOf(citation.formatted, displayOffset)
+            // Process each sentence independently with its own citations
+            interface ProcessedSentence {
+              text: string           // Raw text with [@id#instanceId] markers
+              displayText: string    // Formatted with (Author, Year)
+              citations: CitationInSuggestion[]
+            }
+            
+            const processedSentences: ProcessedSentence[] = []
+            const allInstancesToCreate: Array<{ instanceId: string; paperId: string; quote: string }> = []
+            
+            for (let i = 0; i < parsed.sentences.length; i++) {
+              const sentence = parsed.sentences[i]
+              console.log(`[Autocomplete] Processing sentence ${i + 1}:`, sentence.text.slice(0, 80))
               
-              citations.push({
-                paperId: citation.paperId,
-                marker: citation.marker,
-                formatted: citation.formatted,
-                rawStartOffset: rawPos >= 0 ? rawPos : 0,
-                rawEndOffset: rawPos >= 0 ? rawPos + citation.marker.length : 0,
-                displayStartOffset: displayPos >= 0 ? displayPos : 0,
-                displayEndOffset: displayPos >= 0 ? displayPos + citation.formatted.length : 0,
-                paper: citation.paper
+              // Process numbered citations [1], [2], etc. for this sentence
+              const processResult = processNumberedCitations(
+                sentence.text,
+                sentence.citations,
+                papers,
+                citationStyle
+              )
+              
+              if (processResult.failedCitations.length > 0) {
+                console.log(`[Autocomplete] Sentence ${i + 1} failed citations:`, processResult.failedCitations)
+              }
+              
+              // Collect instances to create
+              allInstancesToCreate.push(...processResult.instancesToCreate)
+              
+              // Build citations array for this sentence with position offsets
+              const displayText = processResult.contentFormatted
+              const sentenceCitations: CitationInSuggestion[] = []
+              
+              for (const c of processResult.processedCitations) {
+                // Find the position of this formatted citation in the display text
+                const searchStart = sentenceCitations.length > 0 
+                  ? sentenceCitations[sentenceCitations.length - 1].displayEndOffset 
+                  : 0
+                const displayStartOffset = displayText.indexOf(c.formatted, searchStart)
+                const displayEndOffset = displayStartOffset >= 0 
+                  ? displayStartOffset + c.formatted.length 
+                  : 0
+                
+                sentenceCitations.push({
+                  paperId: c.paperId,
+                  instanceId: c.instanceId,
+                  marker: c.marker,
+                  formatted: c.formatted,
+                  citedContent: c.citedContent,
+                  index: c.index,
+                  displayStartOffset: displayStartOffset >= 0 ? displayStartOffset : 0,
+                  displayEndOffset,
+                  paper: c.paper
+                })
+              }
+              
+              processedSentences.push({
+                text: processResult.contentWithMarkers,
+                displayText: processResult.contentFormatted,
+                citations: sentenceCitations
               })
-              
-              if (rawPos >= 0) rawOffset = rawPos + citation.marker.length
-              if (displayPos >= 0) displayOffset = displayPos + citation.formatted.length
+            }
+            
+            // Save all citation instances to database (async, don't block)
+            if (allInstancesToCreate.length > 0) {
+              void saveCitationInstances(supabase, projectId, allInstancesToCreate)
             }
 
-            // Send final metadata
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-              type: 'done',
-              suggestion,
-              displaySuggestion: formattedSuggestion,
-              citations,
-              contextHint,
-              ragInfo: {
-                chunksUsed: ragContext.chunks.length,
-                claimsUsed: ragContext.claims.length,
-                papersReferenced: ragContext.papers.size
-              }
-            })}\n\n`))
-            
-            controller.close()
+            // Log final timing
+            timings.total = Date.now() - requestStartTime
+            console.log('[Autocomplete] Total timing (ms):', timings)
+
+            if (!streamClosed) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'done',
+                // Array of sentences for progressive display
+                sentences: processedSentences,
+                contextHint: parsed.contextHint,
+                ragInfo: {
+                  chunksUsed: ragContext.chunks.length,
+                  claimsUsed: ragContext.claims.length,
+                  papersReferenced: ragContext.papers.size
+                },
+                timing: timings  // Include timing in response for debugging
+              })}\n\n`))
+              
+              streamClosed = true
+              controller.close()
+            }
           } catch (err) {
             console.error('Streaming error:', err)
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Streaming failed' })}\n\n`))
-            controller.close()
+            if (!streamClosed) {
+              try {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Streaming failed' })}\n\n`))
+                controller.close()
+              } catch {
+                // Ignore - controller already closed
+              }
+              streamClosed = true
+            }
+          } finally {
+            clearTimeout(timeout)
+            request.signal.removeEventListener('abort', onRequestAbort)
           }
-        }
+        },
+        cancel() {
+          streamClosed = true
+          clearTimeout(timeout)
+          request.signal.removeEventListener('abort', onRequestAbort)
+          abortController.abort(new DOMException('Stream cancelled', 'AbortError'))
+        },
       })
-
-      clearTimeout(timeout)
 
       return new Response(stream, {
         headers: {
@@ -431,6 +651,7 @@ export async function POST(request: NextRequest) {
       })
     } catch (err) {
       clearTimeout(timeout)
+      request.signal.removeEventListener('abort', onRequestAbort)
       throw err
     }
 

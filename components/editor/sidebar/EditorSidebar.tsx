@@ -53,6 +53,8 @@ interface EditorSidebarProps {
   chatMessages: UIMessage[]
   onSendMessage: (content: string | ChatSendOptions) => void
   isChatLoading?: boolean
+  /** Is chat history being loaded */
+  isChatLoadingHistory?: boolean
   // Tool-related props (actions are in editor now, these are for status display)
   pendingTools?: PendingToolCall[]
   onConfirmTool?: (toolId: string) => void
@@ -76,6 +78,7 @@ export function EditorSidebar({
   chatMessages,
   onSendMessage,
   isChatLoading = false,
+  isChatLoadingHistory = false,
   pendingTools,
   onConfirmTool,
   onRejectTool,
@@ -144,6 +147,7 @@ export function EditorSidebar({
             messages={chatMessages}
             onSendMessage={onSendMessage}
             isLoading={isChatLoading}
+            isLoadingHistory={isChatLoadingHistory}
             papers={papers}
             projectId={projectId}
             pendingTools={pendingTools}

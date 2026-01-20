@@ -203,7 +203,7 @@ export const documentTools = {
 // =============================================================================
 
 export const toolConfirmationLevels: Record<keyof typeof documentTools, ToolConfirmationLevel> = {
-  insertContent: 'none',
+  insertContent: 'preview',  // Show ghost preview before inserting
   replaceBlock: 'preview',
   replaceInSection: 'preview',
   rewriteSection: 'confirm',
