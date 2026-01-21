@@ -137,11 +137,11 @@ export function FloatingToolbar({
       <Button
         variant="ghost"
         size="sm"
-        className="h-8 gap-1.5 text-xs px-3 rounded-full"
-        onClick={onInsertCitation}
+        className="h-8 gap-1.5 text-xs px-3 rounded-full text-primary hover:bg-primary/10"
+        onClick={handleAiEdit}
       >
-        <AtSign className="h-3.5 w-3.5" />
-        Cite
+        <Sparkles className="h-3.5 w-3.5" />
+        AI Edit
       </Button>
       
       <Button
@@ -157,11 +157,11 @@ export function FloatingToolbar({
       <Button
         variant="ghost"
         size="sm"
-        className="h-8 gap-1.5 text-xs px-3 rounded-full text-primary hover:bg-primary/10"
-        onClick={handleAiEdit}
+        className="h-8 gap-1.5 text-xs px-3 rounded-full"
+        onClick={onInsertCitation}
       >
-        <Sparkles className="h-3.5 w-3.5" />
-        AI Edit
+        <AtSign className="h-3.5 w-3.5" />
+        Cite
       </Button>
 
       <Separator orientation="vertical" className="h-6 mx-0.5" />
@@ -195,13 +195,20 @@ export function FloatingToolbar({
       </Button>
 
       {/* More options dropdown */}
-      <DropdownMenu>
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
             <ChevronDown className="h-3.5 w-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent 
+          align="end" 
+          side="bottom" 
+          sideOffset={4} 
+          alignOffset={0}
+          collisionPadding={8}
+          avoidCollisions={true}
+        >
           {/* Heading options */}
           <DropdownMenuItem 
             onSelect={(e) => {

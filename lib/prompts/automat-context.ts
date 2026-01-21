@@ -348,7 +348,9 @@ export function formatPapersForContext(
   papers: Array<{ id: string; title: string; authors?: string[]; year?: number }>
 ): string {
   if (!papers || papers.length === 0) {
-    return 'No papers available.'
+    // Return empty string so Mustache {{^papersContext}} block triggers
+    // The template will show the "No papers available" warning with explicit instructions
+    return ''
   }
   
   return papers.slice(0, 10).map(p => {

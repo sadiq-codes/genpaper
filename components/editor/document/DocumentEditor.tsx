@@ -30,7 +30,9 @@ import { GhostText } from '../extensions/GhostText'
 import { GhostEdit } from '../extensions/GhostEdit'
 import { SlashCommands } from '../extensions/SlashCommands'
 import { BlockId } from '../extensions/BlockId'
+import { ReferencesBlock } from '../extensions/ReferencesBlock'
 import { useSmartCompletion } from '../hooks/useSmartCompletion'
+import { useReferencesManager } from '../hooks/useReferencesManager'
 import { processContent, hasMarkdownFormatting } from '../utils/content-processor'
 import { editorToMarkdown } from '../utils/tiptap-to-markdown'
 import type { InstanceQuotesMap } from '../utils/markdown-to-tiptap'
@@ -284,6 +286,7 @@ export function DocumentEditor({
       }),
       SlashCommands,
       BlockId,
+      ReferencesBlock,
     ],
     content: DEFAULT_CONTENT, // Initial empty state - real content set via effect
     editorProps: {
@@ -417,6 +420,9 @@ export function DocumentEditor({
     projectId,
     projectTopic
   })
+  
+  // References manager - auto-inserts/removes References section based on citations
+  useReferencesManager(editor)
 
   // Pre-warm RAG cache on editor load for faster autocomplete
   // This runs once when the editor is ready with papers

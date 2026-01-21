@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-import { ChevronLeft, ChevronRight, Menu, X, AlertTriangle } from "lucide-react"
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Menu, X, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 import type {
   ProjectPaper,
@@ -399,7 +399,7 @@ export function ResearchEditor({
             className="absolute top-2 left-2 z-20 md:hidden bg-transparent"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           >
-            {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            {mobileMenuOpen ? <ChevronsLeft className="h-4 w-4" /> : <ChevronsRight className="h-4 w-4" />}
           </Button>
         )}
 
@@ -434,7 +434,7 @@ export function ResearchEditor({
                 className="absolute left-2 top-2 z-10 h-7 w-7"
                 onClick={() => setSidebarOpen(!sidebarOpen)}
               >
-                {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {sidebarOpen ? <ChevronsLeft className="h-4 w-4" /> : <ChevronsRight className="h-4 w-4" />}
               </Button>
             </div>
           )}

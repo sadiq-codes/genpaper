@@ -382,13 +382,6 @@ export const GhostEdit = Extension.create({
               return DecorationSet.empty
             }
 
-            // Hide ghost edits when user has an active selection (reduces visual clutter)
-            const { from, to } = state.selection
-            if (from !== to) {
-              // User is selecting text - temporarily hide ghost edits
-              return DecorationSet.empty
-            }
-
             const allDecorations: Decoration[] = []
             const onAccept = pluginState.onAccept || (() => {})
             const onReject = pluginState.onReject || (() => {})

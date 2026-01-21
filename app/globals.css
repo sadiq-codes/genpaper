@@ -408,11 +408,16 @@ pre code .hljs-emphasis {
 
 /* Citation Styling */
 .inline-citation {
-  @apply inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-gray-100 border border-gray-300 rounded text-gray-700 cursor-pointer transition-colors;
+  color: oklch(0.45 0.15 250);
+  @apply inline-flex items-center gap-1 px-1.5 py-0.5 text-xs rounded cursor-pointer transition-colors;
+}
+
+.dark .inline-citation {
+  color: oklch(0.6 0.15 250);
 }
 
 .inline-citation:hover {
-  @apply bg-gray-200 border-gray-400;
+  @apply opacity-80;
 }
 
 .inline-citation-wrapper {
@@ -615,9 +620,14 @@ kbd {
   @apply max-w-full h-auto rounded-lg my-4;
 }
 
-/* Citation styling in editor */
+/* Citation styling in editor - blue like ghost text but darker/more visible */
 .citation-inline {
-  @apply text-primary hover:text-primary/80 cursor-pointer transition-colors select-text outline-none ring-0;
+  color: oklch(0.45 0.15 250);
+  @apply hover:opacity-80 cursor-pointer transition-colors select-text outline-none ring-0;
+}
+
+.dark .citation-inline {
+  color: oklch(0.6 0.15 250);
 }
 
 .citation-inline:hover,
@@ -629,6 +639,29 @@ kbd {
 /* Selected citation in editor - no ring/outline on click or hover */
 .ProseMirror .citation-inline.ProseMirror-selectednode {
   @apply bg-primary/10 rounded;
+}
+
+/* Citations in chat messages and markdown content */
+.prose [data-citation],
+.prose [data-type="citation"],
+.prose .citation-inline,
+.prose span[data-citation],
+.chat-message-content [data-citation],
+.chat-message-content [data-type="citation"],
+.chat-message-content .citation-inline,
+.chat-message-content span[data-citation] {
+  color: oklch(0.45 0.15 250);
+}
+
+.dark .prose [data-citation],
+.dark .prose [data-type="citation"],
+.dark .prose .citation-inline,
+.dark .prose span[data-citation],
+.dark .chat-message-content [data-citation],
+.dark .chat-message-content [data-type="citation"],
+.dark .chat-message-content .citation-inline,
+.dark .chat-message-content span[data-citation] {
+  color: oklch(0.6 0.15 250);
 }
 
 /* Editor accent color for Chat tab */
@@ -1152,4 +1185,42 @@ kbd {
 /* Ensure tippy tooltip for mentions appears above everything */
 .tippy-box[data-placement^='bottom'] {
   @apply z-[9999];
+}
+
+/* =============================================================================
+   References Block Styles - Auto-generated bibliography at end of document
+   ============================================================================= */
+
+.references-block {
+  @apply select-none;
+}
+
+.references-block .references-content {
+  @apply border-t border-border/50;
+}
+
+.references-block h2 {
+  @apply text-xl font-semibold mb-6 text-foreground;
+}
+
+/* Individual reference entry with hanging indent */
+.reference-entry {
+  @apply text-sm text-foreground/90 leading-relaxed;
+  padding-left: 2rem;
+  text-indent: -2rem;
+}
+
+/* Empty state - hidden */
+.references-block-empty {
+  @apply hidden;
+}
+
+/* Prevent selection/editing visual feedback */
+.ProseMirror .references-block {
+  @apply cursor-default;
+}
+
+/* When selected in editor (for navigation) */
+.ProseMirror .references-block.ProseMirror-selectednode {
+  @apply outline outline-2 outline-primary/20 outline-offset-2 rounded-lg;
 }

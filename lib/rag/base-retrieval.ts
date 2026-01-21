@@ -234,7 +234,8 @@ export function formatChunksForPrompt(
  */
 export function formatPapersForPrompt(papers: Map<string, PaperMetadata>): string {
   if (papers.size === 0) {
-    return 'No papers available.'
+    // Return empty string for consistency with Mustache template patterns
+    return ''
   }
   
   return Array.from(papers.values()).map(p => {

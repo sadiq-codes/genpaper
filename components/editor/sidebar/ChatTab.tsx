@@ -174,7 +174,7 @@ function MessageBubble({
         </div>
         
         {(content || toolInvocations.length > 0) && (
-          <div className="text-[13px] leading-relaxed text-foreground/80 prose prose-sm prose-neutral dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_p]:my-3 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium [&_h1]:mt-4 [&_h2]:mt-4 [&_h3]:mt-3 [&_code]:text-xs [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-muted">
+          <div className="text-[13px] leading-relaxed text-foreground/80 prose prose-sm prose-neutral dark:prose-invert max-w-none chat-message-content [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_p]:my-3 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium [&_h1]:mt-4 [&_h2]:mt-4 [&_h3]:mt-3 [&_code]:text-xs [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-muted">
             {content ? <ReactMarkdown>{content}</ReactMarkdown> : <span className="text-muted-foreground italic">Applying suggested edits…</span>}
           </div>
         )}
@@ -390,11 +390,6 @@ const QUICK_ACTIONS = [
     label: 'Summarize',
     icon: '📝',
     prompt: 'Provide a comprehensive summary of my papers, highlighting the main themes and how they relate to each other.',
-  },
-  {
-    label: 'What Next?',
-    icon: '💡',
-    prompt: 'Based on my document and papers, suggest what I should write next. What sections or arguments would strengthen my paper?',
   },
 ]
 

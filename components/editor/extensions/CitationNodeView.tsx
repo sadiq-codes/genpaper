@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { NodeViewWrapper } from '@tiptap/react'
 import type { NodeViewProps } from '@tiptap/react'
 import type { CitationAttributes } from './Citation'
@@ -44,19 +44,45 @@ export function formatCitationByStyle(
  * rather than relying solely on node.attrs. This ensures citations always
  * display correctly even when attrs are incomplete (e.g., after generation).
  */
-export function CitationNodeView({ node, selected, extension }: NodeViewProps) {
+export function CitationNodeView({ node, selected, extension, editor }: NodeViewProps) {
   const attrs = node.attrs as CitationAttributes
   
-  // Get citation style and papers from extension storage
-  const storage = extension.storage as { 
-    citationStyle: CitationStyleType
-    citationNumbers: Map<string, number>
-    papers: ProjectPaper[]
-  }
+  // Track storage version to force re-renders when style/papers change
+  const [storageVersion, setStorageVersion] = useState(0)
   
-  const style = storage?.citationStyle || 'apa'
-  const citationNumber = storage?.citationNumbers?.get(attrs.id)
-  const papers = storage?.papers || []
+  // Listen for transactions that indicate style or papers changed
+  useEffect(() => {
+    if (!editor) return
+    
+    const handleTransaction = ({ transaction }: { transaction: { getMeta: (key: string) => unknown } }) => {
+      // Re-render when citation style changes or papers are updated
+      if (transaction.getMeta('citationStyleChange') || transaction.getMeta('papersUpdated')) {
+        setStorageVersion(v => v + 1)
+      }
+    }
+    
+    editor.on('transaction', handleTransaction)
+    return () => {
+      editor.off('transaction', handleTransaction)
+    }
+  }, [editor])
+  
+  // Get citation style and papers from extension storage
+  // Wrap in useMemo with storageVersion dependency to ensure re-read after changes
+  const { style, citationNumber, papers } = useMemo(() => {
+    const storage = extension.storage as { 
+      citationStyle: CitationStyleType
+      citationNumbers: Map<string, number>
+      papers: ProjectPaper[]
+    }
+    
+    return {
+      style: storage?.citationStyle || 'apa',
+      citationNumber: storage?.citationNumbers?.get(attrs.id),
+      papers: storage?.papers || []
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extension.storage, attrs.id, storageVersion])
   
   // Look up paper from storage.papers (same as popover does)
   // This ensures we use the most up-to-date paper metadata
