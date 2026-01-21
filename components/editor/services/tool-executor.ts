@@ -331,8 +331,11 @@ function convertNumberedCitations(content: string): { content: string; instances
   
   if (!blockMatch) {
     // No CITATIONS block, return as-is
+    console.log('[ToolExecutor] No CITATIONS block found in content')
     return { content, instances: [] }
   }
+  
+  console.log('[ToolExecutor] Found CITATIONS block, parsing...')
   
   // Parse citation entries: [N] paper_id: xxx | quote: "yyy"
   const entryPattern = /\[(\d+)\]\s*paper_id:\s*([a-f0-9-]+)(?:\s*\|\s*quote:\s*"([^"]*)")?/gi
@@ -346,8 +349,13 @@ function convertNumberedCitations(content: string): { content: string; instances
   }
   
   if (citationsMap.size === 0) {
+    console.log('[ToolExecutor] CITATIONS block found but no valid entries parsed')
     return { content: content.replace(citationsBlockPattern, '').trim(), instances: [] }
   }
+  
+  console.log(`[ToolExecutor] Parsed ${citationsMap.size} citations from block:`, 
+    Array.from(citationsMap.entries()).map(([i, c]) => `[${i}] -> ${c.paperId}`)
+  )
   
   let result = content
   const instances: ExtractedCitationInstance[] = []
@@ -412,31 +420,66 @@ function prepareContent(content: string, papers: ProjectPaper[] = []): PreparedC
 }
 
 /**
- * Save citation instances to database
- * Called after content with citations is inserted
+ * Save citation instances to database with retry logic
+ * Uses exponential backoff for network failures
  */
 async function saveCitationInstancesToDatabase(
   projectId: string,
-  instances: ExtractedCitationInstance[]
+  instances: ExtractedCitationInstance[],
+  maxRetries: number = 3
 ): Promise<void> {
   if (!projectId || instances.length === 0) return
 
-  try {
-    await fetch('/api/citation-instances', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        instances: instances.map(inst => ({
-          id: inst.instanceId,
-          paperId: inst.paperId,
-          quote: inst.quote,
-        }))
+  const payload = {
+    projectId,
+    instances: instances.map(inst => ({
+      id: inst.instanceId,
+      paperId: inst.paperId,
+      quote: inst.quote,
+    }))
+  }
+
+  let lastError: Error | null = null
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch('/api/citation-instances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       })
-    })
-    console.log(`[ToolExecutor] Saved ${instances.length} citation instances to database`)
-  } catch (error) {
-    console.error('[ToolExecutor] Failed to save citation instances:', error)
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+      
+      console.log(`[ToolExecutor] Saved ${instances.length} citation instances to database`)
+      return // Success
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      console.warn(`[ToolExecutor] Citation save attempt ${attempt + 1}/${maxRetries} failed:`, lastError.message)
+      
+      if (attempt < maxRetries - 1) {
+        // Exponential backoff: 500ms, 1000ms, 2000ms
+        const delay = 500 * Math.pow(2, attempt)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+  
+  // All retries failed - queue for later or log
+  console.error(`[ToolExecutor] Failed to save citation instances after ${maxRetries} attempts:`, lastError)
+  
+  // Store failed instances in localStorage for potential recovery
+  try {
+    const failedQueue = JSON.parse(localStorage.getItem('failedCitationInstances') || '[]')
+    failedQueue.push({ projectId, instances, timestamp: Date.now() })
+    // Keep only last 50 failed saves to prevent localStorage bloat
+    if (failedQueue.length > 50) failedQueue.shift()
+    localStorage.setItem('failedCitationInstances', JSON.stringify(failedQueue))
+    console.log('[ToolExecutor] Queued failed citation instances for later retry')
+  } catch {
+    // localStorage not available, silently fail
   }
 }
 
@@ -474,8 +517,9 @@ function executeInsertContent(
   }
   
   // Save citation instances to database (async, don't block)
-  if (projectId && instances.length > 0) {
-    saveCitationInstancesToDatabase(projectId, instances)
+  // Use _globalProjectId like other tool functions do (projectId param is legacy)
+  if (_globalProjectId && instances.length > 0) {
+    saveCitationInstancesToDatabase(_globalProjectId, instances)
   }
 
   // Priority 1: Insert after specific phrase (most precise)

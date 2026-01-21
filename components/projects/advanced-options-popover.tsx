@@ -54,7 +54,7 @@ export function AdvancedOptionsPopover({
           <span className="sr-only">Advanced options</span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-80" align="start" side="top">
+      <PopoverContent className="w-80" align="start" side="bottom">
         <div className="space-y-4">
           {/* Header */}
           <div className="space-y-1">

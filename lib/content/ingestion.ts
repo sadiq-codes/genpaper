@@ -357,7 +357,76 @@ export async function createChunksForPaper(
 }
 
 /**
+ * Process a single paper for content ingestion
+ * Extracted to enable parallel processing
+ */
+async function processSinglePaper(
+  paper: PaperWithAuthors,
+  options: {
+    skipChunks: boolean
+    maxTokens: number
+    overlapTokens: number
+    tokenChunkOptions: TokenChunkOptions
+  }
+): Promise<IngestionResult> {
+  const { skipChunks, maxTokens, overlapTokens, tokenChunkOptions } = options
+  
+  try {
+    let content = ''
+    let contentLength = 0
+    let chunksCreated = 0
+
+    // Try to get PDF content first
+    const hasPdf = await hasPDFContent(paper.id)
+    if (hasPdf) {
+      const pdfContent = await getPDFContent(paper.id)
+      if (pdfContent && pdfContent.length > 500) {
+        content = pdfContent
+        contentLength = content.length
+        console.log(`📄 Using PDF content for "${paper.title.slice(0, 50)}..." (${contentLength} chars)`)
+      }
+    }
+
+    // Fallback to abstract if no PDF content
+    if (!content && paper.abstract && paper.abstract.length > 100) {
+      content = paper.abstract
+      contentLength = content.length
+      console.log(`📝 Using abstract for "${paper.title.slice(0, 50)}..." (${contentLength} chars)`)
+    }
+
+    // Create chunks if we have content and not skipping
+    if (content && !skipChunks) {
+      chunksCreated = await createChunksForPaper(paper.id, content, {
+        maxTokens,
+        overlapTokens,
+        tokenChunkOptions
+      })
+    }
+
+    return {
+      paperId: paper.id,
+      success: true,
+      chunksCreated,
+      contentLength
+    }
+
+  } catch (error) {
+    console.error(`❌ Failed to process paper "${paper.title.slice(0, 50)}...":`, error)
+    return {
+      paperId: paper.id,
+      success: false,
+      chunksCreated: 0,
+      contentLength: 0,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+/**
  * Bulk content ingestion with PDF processing
+ * 
+ * Processes papers in parallel batches for better performance.
+ * Default concurrency: 5 papers at a time (safe for OpenAI rate limits)
  */
 export async function ensureBulkContentIngestion(
   papers: PaperWithAuthors[],
@@ -370,76 +439,69 @@ export async function ensureBulkContentIngestion(
     tokenChunkOptions = {}
   } = options
 
-  console.log(`📥 Starting bulk content ingestion for ${papers.length} papers...`)
+  // Concurrency limit - process N papers at a time
+  const CONCURRENCY = 5
+
+  console.log(`📥 Starting bulk content ingestion for ${papers.length} papers (concurrency: ${CONCURRENCY})...`)
+  const startTime = Date.now()
   
   const results: IngestionResult[] = []
-  let totalChunks = 0
 
   try {
-    // Ensure all papers exist in database
+    // Ensure all papers exist in database (do this first, once)
     await ensurePapersExist(papers)
 
-    // Get current content status
-    const contentStatus = await getContentStatus(papers.map(p => p.id))
+    // Process options for single paper processing
+    const processOptions = {
+      skipChunks,
+      maxTokens,
+      overlapTokens,
+      tokenChunkOptions
+    }
 
-    for (const paper of papers) {
-      try {
-        const _status = contentStatus.get(paper.id)
-        let content = ''
-        let contentLength = 0
-        let chunksCreated = 0
-
-        // Try to get PDF content first
-        const hasPdf = await hasPDFContent(paper.id)
-        if (hasPdf) {
-          const pdfContent = await getPDFContent(paper.id)
-          if (pdfContent && pdfContent.length > 500) {
-            content = pdfContent
-            contentLength = content.length
-            console.log(`📄 Using PDF content for "${paper.title}" (${contentLength} chars)`)
-          }
-        }
-
-        // Fallback to abstract if no PDF content
-        if (!content && paper.abstract && paper.abstract.length > 100) {
-          content = paper.abstract
-          contentLength = content.length
-          console.log(`📝 Using abstract for "${paper.title}" (${contentLength} chars)`)
-        }
-
-        // Create chunks if we have content and not skipping
-        if (content && !skipChunks) {
-          chunksCreated = await createChunksForPaper(paper.id, content, {
-            maxTokens,
-            overlapTokens,
-            tokenChunkOptions
+    // Process papers in parallel batches
+    const totalBatches = Math.ceil(papers.length / CONCURRENCY)
+    
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      const batchStart = batchIndex * CONCURRENCY
+      const batchEnd = Math.min(batchStart + CONCURRENCY, papers.length)
+      const batch = papers.slice(batchStart, batchEnd)
+      
+      console.log(`[Ingestion] Processing batch ${batchIndex + 1}/${totalBatches} (papers ${batchStart + 1}-${batchEnd})`)
+      const batchStartTime = Date.now()
+      
+      // Process batch in parallel
+      const batchResults = await Promise.allSettled(
+        batch.map(paper => processSinglePaper(paper, processOptions))
+      )
+      
+      // Collect results
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          results.push(result.value)
+        } else {
+          // Promise rejection - shouldn't happen since processSinglePaper catches errors
+          results.push({
+            paperId: 'unknown',
+            success: false,
+            chunksCreated: 0,
+            contentLength: 0,
+            error: result.reason?.message || 'Unknown error'
           })
-          totalChunks += chunksCreated
         }
-
-        results.push({
-          paperId: paper.id,
-          success: true,
-          chunksCreated,
-          contentLength
-        })
-
-      } catch (error) {
-        console.error(`❌ Failed to process paper ${paper.title}:`, error)
-        results.push({
-          paperId: paper.id,
-          success: false,
-          chunksCreated: 0,
-          contentLength: 0,
-          error: error instanceof Error ? error.message : String(error)
-        })
       }
+      
+      const batchDuration = Date.now() - batchStartTime
+      const batchSuccessful = batchResults.filter(r => r.status === 'fulfilled' && r.value.success).length
+      console.log(`[Ingestion] Batch ${batchIndex + 1} complete: ${batchSuccessful}/${batch.length} successful in ${batchDuration}ms`)
     }
 
     const successful = results.filter(r => r.success).length
     const failed = results.filter(r => !r.success).length
+    const totalChunks = results.reduce((sum, r) => sum + r.chunksCreated, 0)
+    const totalDuration = Date.now() - startTime
 
-    console.log(`✅ Bulk ingestion complete: ${successful}/${papers.length} successful, ${totalChunks} total chunks`)
+    console.log(`✅ Bulk ingestion complete: ${successful}/${papers.length} successful, ${totalChunks} total chunks in ${totalDuration}ms`)
 
     return {
       successful,

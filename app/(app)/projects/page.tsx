@@ -2,8 +2,7 @@ import { Suspense } from "react"
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { getUserResearchProjects } from "@/lib/db/research"
-import { ProjectInput } from "@/components/projects/project-input"
-import { QuickActions } from "@/components/projects/quick-actions"
+import { ProjectInputSection } from "@/components/projects/project-input-section"
 import { ProjectCard } from "@/components/projects/project-card"
 import { EmptyState } from "@/components/projects/empty-state"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -138,11 +137,8 @@ export default function ProjectsPage() {
               </p>
             </div>
 
-            {/* Input & Actions */}
-            <div className="space-y-6 pt-2">
-              <ProjectInput />
-              <QuickActions />
-            </div>
+            {/* Input & Actions - combined component with shared PDF upload state */}
+            <ProjectInputSection />
           </div>
         </section>
 

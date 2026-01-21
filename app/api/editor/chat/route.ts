@@ -83,13 +83,26 @@ async function buildSystemPrompt(
 /**
  * Get relevant chunks from RAG for the conversation.
  */
+interface RAGResult {
+  context: string
+  metadata: {
+    chunksRetrieved: number
+    chunksAvailable: number
+    truncated: boolean
+    papersCovered: number
+  }
+}
+
 async function getRAGContext(
   query: string,
   projectId: string,
   paperIds: string[]
-): Promise<string> {
+): Promise<RAGResult> {
   if (paperIds.length === 0) {
-    return ''
+    return { 
+      context: '', 
+      metadata: { chunksRetrieved: 0, chunksAvailable: 0, truncated: false, papersCovered: 0 } 
+    }
   }
 
   try {
@@ -104,15 +117,39 @@ async function getRAGContext(
     })
 
     if (result.chunks.length === 0) {
-      return ''
+      return { 
+        context: '', 
+        metadata: { chunksRetrieved: 0, chunksAvailable: 0, truncated: false, papersCovered: 0 } 
+      }
     }
 
-    return result.chunks.map((chunk, i) => 
-      `[Source ${i + 1} - ${chunk.paper_id}]\n${chunk.content.slice(0, 500)}${chunk.content.length > 500 ? '...' : ''}`
+    // Count unique papers
+    const uniquePapers = new Set(result.chunks.map(c => c.paper_id)).size
+    
+    // Check if any chunks were truncated
+    const truncatedCount = result.chunks.filter(c => c.content.length > 500).length
+
+    // Format RAG chunks with clear paper_id for AI to cite
+    // The AI should use paper_id in its CITATIONS block
+    const context = result.chunks.map((chunk, i) => 
+      `[${i + 1}] paper_id: ${chunk.paper_id}\n${chunk.content.slice(0, 500)}${chunk.content.length > 500 ? '...' : ''}`
     ).join('\n\n---\n\n')
+    
+    return {
+      context,
+      metadata: {
+        chunksRetrieved: result.chunks.length,
+        chunksAvailable: result.chunks.length, // Could be more if we had totalAvailable
+        truncated: truncatedCount > 0,
+        papersCovered: uniquePapers,
+      }
+    }
   } catch (error) {
     console.error('RAG retrieval error:', error)
-    return ''
+    return { 
+      context: '', 
+      metadata: { chunksRetrieved: 0, chunksAvailable: 0, truncated: false, papersCovered: 0 } 
+    }
   }
 }
 
@@ -223,9 +260,9 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Get project papers with abstract for mentioned papers
-    const { data: projectPapers } = await supabase
-      .from('project_papers')
+    // Get project papers from project_citations table
+    const { data: projectPapers, error: papersError } = await supabase
+      .from('project_citations')
       .select(`
         paper_id,
         papers (
@@ -237,6 +274,12 @@ export async function POST(request: NextRequest) {
         )
       `)
       .eq('project_id', projectId)
+    
+    if (papersError) {
+      console.error('[Chat API] Error fetching project papers:', papersError)
+    }
+    
+    console.log('[Chat API] Found papers in project:', projectPapers?.length || 0)
 
     type PaperData = { id: string; title: string; authors?: string[]; year?: number; abstract?: string }
     const papers: PaperData[] = (projectPapers || [])
@@ -259,7 +302,12 @@ export async function POST(request: NextRequest) {
     const ragPaperIds = mentionedPaperIds.length > 0 
       ? [...new Set([...mentionedPaperIds, ...paperIds])] // Mentioned first, then others
       : paperIds
-    const ragContext = await getRAGContext(ragQuery, projectId, ragPaperIds)
+    const ragResult = await getRAGContext(ragQuery, projectId, ragPaperIds)
+
+    // Log RAG metadata for debugging
+    if (ragResult.metadata.truncated) {
+      console.log('[Chat API] RAG context truncated:', ragResult.metadata)
+    }
 
     // Get paper type from project
     const paperType = project.paper_type || 'literatureReview'
@@ -268,6 +316,12 @@ export async function POST(request: NextRequest) {
     const mentionedPapers = mentionedPaperIds.length > 0
       ? papers.filter(p => mentionedPaperIds.includes(p.id))
       : undefined
+
+    // Add context limitation note if RAG was truncated
+    let ragContext = ragResult.context
+    if (ragResult.metadata.truncated && ragResult.context) {
+      ragContext = `Note: Retrieved evidence has been summarized. ${ragResult.metadata.chunksRetrieved} excerpts from ${ragResult.metadata.papersCovered} paper(s) available.\n\n${ragResult.context}`
+    }
 
     // Build system prompt using AUTOMAT framework
     const systemPrompt = await buildSystemPrompt(

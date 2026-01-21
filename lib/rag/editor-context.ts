@@ -1,7 +1,7 @@
 import 'server-only'
 import { LRUCache } from 'lru-cache'
 import { getSB } from '@/lib/supabase/server'
-import { generateEmbeddings } from '@/lib/utils/embedding'
+import { getCachedQueryEmbedding, getEmbeddingsWithCache } from './embedding-cache'
 import { 
   fetchPaperMetadata, 
   cosineSimilarity,
@@ -52,105 +52,11 @@ function getRagCacheKey(query: string, paperIds: string[], options: EditorRetrie
 }
 
 // =============================================================================
-// EMBEDDING CACHE (Enhanced for query embeddings too)
+// EMBEDDING CACHE - Now using shared cache from embedding-cache.ts
 // =============================================================================
-
-interface EmbeddingCacheEntry {
-  embedding: number[]
-  timestamp: number
-}
-
-// Cache embeddings for both verification AND query generation
-// Key: hash of content text
-const embeddingCache = new Map<string, EmbeddingCacheEntry>()
-const EMBEDDING_CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutes
-const EMBEDDING_CACHE_MAX_SIZE = 500
-
-function getEmbeddingCacheKey(text: string): string {
-  // Simple hash for cache key
-  const normalized = text.trim().toLowerCase().slice(0, 500)
-  return normalized.length + ':' + normalized.slice(0, 50) + normalized.slice(-50)
-}
-
-function getCachedEmbedding(text: string): number[] | null {
-  const key = getEmbeddingCacheKey(text)
-  const entry = embeddingCache.get(key)
-  
-  if (!entry) return null
-  
-  // Check TTL
-  if (Date.now() - entry.timestamp > EMBEDDING_CACHE_TTL_MS) {
-    embeddingCache.delete(key)
-    return null
-  }
-  
-  return entry.embedding
-}
-
-function setCachedEmbedding(text: string, embedding: number[]): void {
-  // Evict old entries if cache is full
-  if (embeddingCache.size >= EMBEDDING_CACHE_MAX_SIZE) {
-    const now = Date.now()
-    const toDelete: string[] = []
-    
-    for (const [key, entry] of embeddingCache) {
-      if (now - entry.timestamp > EMBEDDING_CACHE_TTL_MS) {
-        toDelete.push(key)
-      }
-    }
-    
-    // Delete expired entries
-    for (const key of toDelete) {
-      embeddingCache.delete(key)
-    }
-    
-    // If still full, delete oldest entries
-    if (embeddingCache.size >= EMBEDDING_CACHE_MAX_SIZE) {
-      const entries = Array.from(embeddingCache.entries())
-        .sort((a, b) => a[1].timestamp - b[1].timestamp)
-      
-      const deleteCount = Math.ceil(EMBEDDING_CACHE_MAX_SIZE * 0.2) // Delete 20%
-      for (let i = 0; i < deleteCount && i < entries.length; i++) {
-        embeddingCache.delete(entries[i][0])
-      }
-    }
-  }
-  
-  embeddingCache.set(getEmbeddingCacheKey(text), {
-    embedding,
-    timestamp: Date.now()
-  })
-}
-
-/**
- * Get embeddings with caching support
- * Returns embeddings for texts, using cache when available
- */
-async function getEmbeddingsWithCache(texts: string[]): Promise<number[][]> {
-  const results: (number[] | null)[] = texts.map(t => getCachedEmbedding(t))
-  const uncachedIndices: number[] = []
-  const uncachedTexts: string[] = []
-  
-  for (let i = 0; i < results.length; i++) {
-    if (results[i] === null) {
-      uncachedIndices.push(i)
-      uncachedTexts.push(texts[i])
-    }
-  }
-  
-  // Generate missing embeddings
-  if (uncachedTexts.length > 0) {
-    const newEmbeddings = await generateEmbeddings(uncachedTexts)
-    
-    for (let i = 0; i < uncachedIndices.length; i++) {
-      const idx = uncachedIndices[i]
-      results[idx] = newEmbeddings[i]
-      setCachedEmbedding(texts[idx], newEmbeddings[i])
-    }
-  }
-  
-  return results as number[][]
-}
+// The embedding cache has been moved to a shared utility (embedding-cache.ts)
+// to be used by both editor-context and chunk-retriever.
+// This provides consistent caching and query normalization across all RAG paths.
 
 // =============================================================================
 // TYPES

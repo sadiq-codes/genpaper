@@ -221,3 +221,88 @@ export function requiresConfirmation(toolName: string): boolean {
 export function getConfirmationLevel(toolName: string): ToolConfirmationLevel {
   return toolConfirmationLevels[toolName as keyof typeof documentTools] || 'none'
 }
+
+// =============================================================================
+// TOOL VALIDATION
+// =============================================================================
+
+/**
+ * Validate that a tool call has the required arguments.
+ * Returns { valid: true } or { valid: false, error: string }
+ */
+export function validateToolCall(
+  toolName: string, 
+  args: Record<string, unknown>
+): { valid: true } | { valid: false; error: string } {
+  // Check if tool exists
+  if (!(toolName in documentTools)) {
+    return { valid: false, error: `Unknown tool: ${toolName}` }
+  }
+
+  // Validate required args based on tool type
+  switch (toolName) {
+    case 'insertContent':
+      if (!args.content || typeof args.content !== 'string' || args.content.trim() === '') {
+        return { valid: false, error: 'insertContent requires non-empty content' }
+      }
+      break
+      
+    case 'replaceBlock':
+      if (!args.newContent || typeof args.newContent !== 'string') {
+        return { valid: false, error: 'replaceBlock requires newContent' }
+      }
+      // Need at least one targeting method
+      if (!args.blockId && !args.searchPhrase && !args.section) {
+        return { valid: false, error: 'replaceBlock requires blockId, searchPhrase, or section' }
+      }
+      break
+      
+    case 'replaceInSection':
+      if (!args.section || typeof args.section !== 'string') {
+        return { valid: false, error: 'replaceInSection requires section name' }
+      }
+      if (!args.searchPhrase || typeof args.searchPhrase !== 'string') {
+        return { valid: false, error: 'replaceInSection requires searchPhrase' }
+      }
+      if (!args.newContent || typeof args.newContent !== 'string') {
+        return { valid: false, error: 'replaceInSection requires newContent' }
+      }
+      break
+      
+    case 'rewriteSection':
+      if (!args.section || typeof args.section !== 'string') {
+        return { valid: false, error: 'rewriteSection requires section name' }
+      }
+      if (!args.newContent || typeof args.newContent !== 'string') {
+        return { valid: false, error: 'rewriteSection requires newContent' }
+      }
+      break
+      
+    case 'deleteContent':
+      // Need at least one targeting method
+      if (!args.blockId && !args.searchPhrase && !args.section) {
+        return { valid: false, error: 'deleteContent requires blockId, searchPhrase, or section' }
+      }
+      break
+      
+    case 'addCitation':
+      if (!args.paperId || typeof args.paperId !== 'string') {
+        return { valid: false, error: 'addCitation requires paperId' }
+      }
+      break
+      
+    case 'highlightText':
+      if (!args.searchPhrase || typeof args.searchPhrase !== 'string') {
+        return { valid: false, error: 'highlightText requires searchPhrase' }
+      }
+      break
+      
+    case 'addComment':
+      if (!args.comment || typeof args.comment !== 'string') {
+        return { valid: false, error: 'addComment requires comment text' }
+      }
+      break
+  }
+  
+  return { valid: true }
+}

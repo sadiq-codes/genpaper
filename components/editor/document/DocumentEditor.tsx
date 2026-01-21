@@ -557,8 +557,8 @@ export function DocumentEditor({
       </div>
       
       <div className="flex-1 overflow-auto relative">
-        {/* Review Toolbar - shows when edits are pending */}
-        {pendingEditCount > 0 && onNavigateEdit && onAcceptAllEdits && onRejectAllEdits && (
+        {/* Review Toolbar - only shows when multiple edits are pending */}
+        {pendingEditCount > 1 && onNavigateEdit && onAcceptAllEdits && onRejectAllEdits && (
           <ReviewToolbar
             pendingCount={pendingEditCount}
             currentIndex={activeEditIndex}

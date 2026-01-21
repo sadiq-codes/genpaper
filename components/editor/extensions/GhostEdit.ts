@@ -129,146 +129,83 @@ function createDiffBlockDecoration(
 }
 
 /**
- * Create the DOM element for a diff block
+ * Create the DOM element for a diff block - minimal inline card style
  */
 function createDiffBlockElement(
   edit: CalculatedEdit,
   isActive: boolean,
-  editNumber: number,
-  totalEdits: number,
+  _editNumber: number,
+  _totalEdits: number,
   onAccept: (editId: string) => void,
   onReject: (editId: string) => void,
-  onNavigateNext: () => void,
-  onNavigatePrev: () => void
+  _onNavigateNext: () => void,
+  _onNavigatePrev: () => void
 ): HTMLElement {
   const container = document.createElement('div')
   container.className = `diff-block diff-block--${edit.type}${isActive ? ' diff-block--active' : ''}`
   container.setAttribute('data-edit-id', edit.id)
   container.setAttribute('data-diff-block', 'true')
   container.setAttribute('role', 'region')
-  container.setAttribute('aria-label', `Edit ${editNumber} of ${totalEdits}: ${getEditTypeLabel(edit.type)}`)
+  container.setAttribute('aria-label', `${getEditTypeLabel(edit.type)} edit`)
 
-  // Header
-  const header = document.createElement('div')
-  header.className = 'diff-block__header'
-  
-  const headerLeft = document.createElement('div')
-  headerLeft.className = 'diff-block__header-left'
-  
-  const icon = document.createElement('span')
-  icon.className = `diff-block__icon diff-block__icon--${edit.type}`
-  icon.innerHTML = getEditTypeIcon(edit.type)
-  headerLeft.appendChild(icon)
-  
-  const label = document.createElement('span')
-  label.className = 'diff-block__label'
-  label.textContent = getEditTypeLabel(edit.type)
-  headerLeft.appendChild(label)
-  
-  header.appendChild(headerLeft)
+  // Content wrapper
+  const contentWrapper = document.createElement('div')
+  contentWrapper.className = 'diff-block__content-wrapper'
 
-  // Navigation (if multiple edits)
-  if (totalEdits > 1) {
-    const nav = document.createElement('div')
-    nav.className = 'diff-block__nav'
-    
-    const prevBtn = document.createElement('button')
-    prevBtn.className = 'diff-block__nav-btn'
-    prevBtn.innerHTML = '&larr;'
-    prevBtn.title = 'Previous edit (Shift+Tab)'
-    prevBtn.onclick = (e) => { e.stopPropagation(); onNavigatePrev() }
-    nav.appendChild(prevBtn)
-    
-    const position = document.createElement('span')
-    position.className = 'diff-block__position'
-    position.textContent = `${editNumber}/${totalEdits}`
-    nav.appendChild(position)
-    
-    const nextBtn = document.createElement('button')
-    nextBtn.className = 'diff-block__nav-btn'
-    nextBtn.innerHTML = '&rarr;'
-    nextBtn.title = 'Next edit (Tab)'
-    nextBtn.onclick = (e) => { e.stopPropagation(); onNavigateNext() }
-    nav.appendChild(nextBtn)
-    
-    header.appendChild(nav)
-  }
-
-  container.appendChild(header)
-
-  // Content sections
+  // Show content based on edit type
   const showOld = edit.type === 'delete' || edit.type === 'replace'
   const showNew = edit.type === 'insert' || edit.type === 'replace'
 
   if (showOld && edit.oldContent) {
-    const oldSection = createContentSection(edit.oldContent, 'old')
-    container.appendChild(oldSection)
+    const oldText = document.createElement('span')
+    oldText.className = 'diff-block__text diff-block__text--old'
+    oldText.textContent = edit.oldContent
+    contentWrapper.appendChild(oldText)
   }
 
   if (showNew && edit.newContent) {
-    const newSection = createContentSection(edit.newContent, 'new')
-    container.appendChild(newSection)
+    const newText = document.createElement('span')
+    newText.className = 'diff-block__text diff-block__text--new'
+    newText.textContent = edit.newContent
+    contentWrapper.appendChild(newText)
   }
 
-  // Actions
+  // Active indicator dot
+  const indicator = document.createElement('span')
+  indicator.className = 'diff-block__indicator'
+  contentWrapper.appendChild(indicator)
+
+  container.appendChild(contentWrapper)
+
+  // Floating action bar - minimal style
   const actions = document.createElement('div')
   actions.className = 'diff-block__actions'
 
-  const hints = document.createElement('div')
-  hints.className = 'diff-block__hints'
-  hints.innerHTML = '<kbd>Enter</kbd> accept <kbd>Esc</kbd> reject'
-  actions.appendChild(hints)
-
-  const buttons = document.createElement('div')
-  buttons.className = 'diff-block__buttons'
-
-  const rejectBtn = document.createElement('button')
-  rejectBtn.className = 'diff-block__btn diff-block__btn--reject'
-  rejectBtn.innerHTML = '<span class="diff-block__btn-icon">✕</span> Reject'
-  rejectBtn.onclick = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    onReject(edit.id)
-  }
-  buttons.appendChild(rejectBtn)
-
   const acceptBtn = document.createElement('button')
   acceptBtn.className = 'diff-block__btn diff-block__btn--accept'
-  acceptBtn.innerHTML = '<span class="diff-block__btn-icon">✓</span> Accept'
+  acceptBtn.innerHTML = 'Accept <span class="diff-block__btn-arrow">→</span>'
   acceptBtn.onclick = (e) => {
     e.preventDefault()
     e.stopPropagation()
     onAccept(edit.id)
   }
-  buttons.appendChild(acceptBtn)
+  actions.appendChild(acceptBtn)
 
-  actions.appendChild(buttons)
+  const rejectBtn = document.createElement('button')
+  rejectBtn.className = 'diff-block__btn diff-block__btn--reject'
+  rejectBtn.innerHTML = 'Reject'
+  rejectBtn.onclick = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onReject(edit.id)
+  }
+  actions.appendChild(rejectBtn)
+
   container.appendChild(actions)
 
   return container
 }
 
-/**
- * Create a content section (old or new)
- */
-function createContentSection(content: string, variant: 'old' | 'new'): HTMLElement {
-  const section = document.createElement('div')
-  section.className = `diff-block__content diff-block__content--${variant}`
-
-  const labelDiv = document.createElement('div')
-  labelDiv.className = `diff-block__content-label diff-block__content-label--${variant}`
-  labelDiv.innerHTML = variant === 'old' 
-    ? '<span class="diff-block__content-icon">−</span> Current content (will be removed)'
-    : '<span class="diff-block__content-icon">+</span> New content (will be added)'
-  section.appendChild(labelDiv)
-
-  const textDiv = document.createElement('div')
-  textDiv.className = `diff-block__content-text diff-block__content-text--${variant}`
-  textDiv.textContent = content
-  section.appendChild(textDiv)
-
-  return section
-}
 
 /**
  * Get icon SVG for edit type
@@ -442,6 +379,13 @@ export const GhostEdit = Extension.create({
           decorations(state) {
             const pluginState = ghostEditPluginKey.getState(state)
             if (!pluginState || pluginState.edits.length === 0) {
+              return DecorationSet.empty
+            }
+
+            // Hide ghost edits when user has an active selection (reduces visual clutter)
+            const { from, to } = state.selection
+            if (from !== to) {
+              // User is selecting text - temporarily hide ghost edits
               return DecorationSet.empty
             }
 

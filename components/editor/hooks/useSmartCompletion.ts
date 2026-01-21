@@ -209,6 +209,54 @@ interface QueuedSentence {
   citations: GhostTextCitation[]
 }
 
+/**
+ * Smart spacing helper: prepends a space to suggestion if needed
+ * 
+ * Rules:
+ * - After sentence-ending punctuation (.!?) → add space (unless at paragraph start)
+ * - After other punctuation (,:;) → add space (unless at paragraph start)
+ * - If cursor already has space before it → no extra space
+ * - If suggestion already starts with space → no extra space
+ * - At paragraph start → no space needed
+ */
+function prependSpaceIfNeeded(
+  editor: Editor,
+  sentence: QueuedSentence
+): QueuedSentence {
+  const cursorPos = editor.state.selection.from
+  const { doc } = editor.state
+  
+  // Get character before cursor
+  const charBefore = cursorPos > 0 ? doc.textBetween(cursorPos - 1, cursorPos) : ''
+  
+  // Check if at paragraph start
+  const $pos = doc.resolve(cursorPos)
+  const isAtParagraphStart = $pos.parentOffset === 0
+  
+  // Check if space is already present
+  const alreadyHasSpace = charBefore === ' '
+  const textStartsWithSpace = sentence.text.startsWith(' ')
+  
+  // Need space if: after punctuation, not at paragraph start, no existing space
+  const isAfterPunctuation = /[.!?:;,]/.test(charBefore)
+  const needsSpace = isAfterPunctuation && !isAtParagraphStart && !alreadyHasSpace && !textStartsWithSpace
+  
+  if (!needsSpace) {
+    return sentence
+  }
+  
+  // Prepend space and adjust citation offsets
+  return {
+    text: ' ' + sentence.text,
+    displayText: ' ' + sentence.displayText,
+    citations: sentence.citations.map(c => ({
+      ...c,
+      displayStartOffset: c.displayStartOffset + 1,
+      displayEndOffset: c.displayEndOffset + 1
+    }))
+  }
+}
+
 export function useSmartCompletion({
   editor,
   enabled,
@@ -513,8 +561,8 @@ export function useSmartCompletion({
           }))
         }))
         
-        // Show FIRST sentence as ghost text
-        const firstSentence = queuedSentences[0]
+        // Show FIRST sentence as ghost text (with smart spacing)
+        const firstSentence = prependSpaceIfNeeded(editor, queuedSentences[0])
         editor.commands.setGhostText(
           firstSentence.text,        // rawText with [@paperId#instanceId] markers
           firstSentence.displayText, // displayText with formatted citations
@@ -696,10 +744,13 @@ export function useSmartCompletion({
     }
     
     // Pop the next sentence from queue
-    const nextSentence = queue.shift()!
+    const rawNextSentence = queue.shift()!
     sentenceQueueRef.current = queue
     
     console.log('[Autocomplete] Showing queued sentence, remaining:', queue.length)
+    
+    // Apply smart spacing (cursor position may have changed since fetch)
+    const nextSentence = prependSpaceIfNeeded(editor, rawNextSentence)
     
     // Show it as ghost text immediately (no API call!)
     editor.commands.setGhostText(

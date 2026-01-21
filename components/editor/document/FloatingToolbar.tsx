@@ -131,51 +131,78 @@ export function FloatingToolbar({
         return true
       }}
       options={{ placement: 'top' }}
-      className="flex items-center gap-0.5 p-1.5 bg-background border border-border rounded-lg shadow-lg"
+      className="flex items-center gap-1 p-1 bg-background border border-border/60 rounded-full shadow-lg"
     >
-      {/* AI Actions */}
+      {/* AI Actions - Primary group */}
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1 text-xs px-2"
+        className="h-8 gap-1.5 text-xs px-3 rounded-full"
         onClick={onInsertCitation}
       >
-        <AtSign className="h-3 w-3" />
+        <AtSign className="h-3.5 w-3.5" />
         Cite
       </Button>
       
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1 text-xs px-2"
+        className="h-8 gap-1.5 text-xs px-3 rounded-full"
         onClick={handleChat}
       >
-        <MessageSquare className="h-3 w-3" />
+        <MessageSquare className="h-3.5 w-3.5" />
         Chat
       </Button>
       
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1 text-xs px-2 text-primary"
+        className="h-8 gap-1.5 text-xs px-3 rounded-full text-primary hover:bg-primary/10"
         onClick={handleAiEdit}
       >
-        <Sparkles className="h-3 w-3" />
+        <Sparkles className="h-3.5 w-3.5" />
         AI Edit
       </Button>
 
-      <Separator orientation="vertical" className="h-5 mx-1" />
+      <Separator orientation="vertical" className="h-6 mx-0.5" />
 
-      {/* Heading dropdown */}
+      {/* Text formatting - Secondary group */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn("h-8 w-8 rounded-full", editor.isActive('bold') && "bg-muted")}
+        onClick={() => editor.chain().focus().toggleBold().run()}
+      >
+        <Bold className="h-3.5 w-3.5" />
+      </Button>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn("h-8 w-8 rounded-full", editor.isActive('italic') && "bg-muted")}
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+      >
+        <Italic className="h-3.5 w-3.5" />
+      </Button>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className={cn("h-8 w-8 rounded-full", editor.isActive('underline') && "bg-muted")}
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+      >
+        <Underline className="h-3.5 w-3.5" />
+      </Button>
+
+      {/* More options dropdown */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs px-2">
-            <Heading2 className="h-3 w-3" />
-            {getCurrentHeadingLevel()}
-            <ChevronDown className="h-3 w-3" />
+          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+            <ChevronDown className="h-3.5 w-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent>
+        <DropdownMenuContent align="end">
+          {/* Heading options */}
           <DropdownMenuItem 
             onSelect={(e) => {
               e.preventDefault()
@@ -208,21 +235,30 @@ export function FloatingToolbar({
           >
             Heading 3
           </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {/* Color picker */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-7 w-7">
-            <Palette className="h-3 w-3" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent>
+          
+          <Separator className="my-1" />
+          
+          {/* Additional formatting */}
+          <DropdownMenuItem 
+            onSelect={() => editor.chain().focus().toggleStrike().run()}
+          >
+            <Strikethrough className="h-3.5 w-3.5 mr-2" />
+            Strikethrough
+          </DropdownMenuItem>
+          <DropdownMenuItem 
+            onSelect={() => editor.chain().focus().toggleCode().run()}
+          >
+            <Code className="h-3.5 w-3.5 mr-2" />
+            Code
+          </DropdownMenuItem>
+          
+          <Separator className="my-1" />
+          
+          {/* Color submenu */}
           {COLORS.map((color) => (
             <DropdownMenuItem 
               key={color.name}
-              onClick={() => {
+              onSelect={() => {
                 if (color.value) {
                   editor.chain().focus().setColor(color.value).run()
                 } else {
@@ -231,7 +267,7 @@ export function FloatingToolbar({
               }}
             >
               <span 
-                className="w-4 h-4 rounded-full mr-2 border" 
+                className="w-3.5 h-3.5 rounded-full mr-2 border border-border" 
                 style={{ backgroundColor: color.value || 'transparent' }}
               />
               {color.name}
@@ -239,106 +275,6 @@ export function FloatingToolbar({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <Separator orientation="vertical" className="h-5 mx-1" />
-
-      {/* Formatting buttons */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn("h-7 w-7", editor.isActive('bold') && "bg-accent")}
-        onClick={() => editor.chain().focus().toggleBold().run()}
-      >
-        <Bold className="h-3 w-3" />
-      </Button>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn("h-7 w-7", editor.isActive('italic') && "bg-accent")}
-        onClick={() => editor.chain().focus().toggleItalic().run()}
-      >
-        <Italic className="h-3 w-3" />
-      </Button>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn("h-7 w-7", editor.isActive('underline') && "bg-accent")}
-        onClick={() => editor.chain().focus().toggleUnderline().run()}
-      >
-        <Underline className="h-3 w-3" />
-      </Button>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn("h-7 w-7", editor.isActive('strike') && "bg-accent")}
-        onClick={() => editor.chain().focus().toggleStrike().run()}
-      >
-        <Strikethrough className="h-3 w-3" />
-      </Button>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className={cn("h-7 w-7", editor.isActive('code') && "bg-accent")}
-        onClick={() => editor.chain().focus().toggleCode().run()}
-      >
-        <Code className="h-3 w-3" />
-      </Button>
-
-      {/* Link button with popover */}
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("h-7 w-7", editor.isActive('link') && "bg-accent")}
-          >
-            <Link className="h-3 w-3" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-64 p-2">
-          <div className="flex gap-2">
-            <Input
-              placeholder="Enter URL"
-              value={linkUrl}
-              onChange={(e) => setLinkUrl(e.target.value)}
-              className="h-8 text-sm"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') setLink()
-              }}
-            />
-            <Button size="sm" className="h-8" onClick={setLink}>
-              Set
-            </Button>
-          </div>
-        </PopoverContent>
-      </Popover>
-
-      <Separator orientation="vertical" className="h-5 mx-1" />
-
-      {/* Undo/Redo */}
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={() => editor.chain().focus().undo().run()}
-        disabled={!editor.can().undo()}
-      >
-        <Undo className="h-3 w-3" />
-      </Button>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7"
-        onClick={() => editor.chain().focus().redo().run()}
-        disabled={!editor.can().redo()}
-      >
-        <Redo className="h-3 w-3" />
-      </Button>
     </BubbleMenu>
   )
 }

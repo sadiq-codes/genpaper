@@ -26,7 +26,7 @@ interface ToolInvocation {
   state?: string
   result?: unknown
 }
-import { getConfirmationLevel, type ToolConfirmationLevel } from '@/lib/ai/tools/document-tools'
+import { getConfirmationLevel, validateToolCall, type ToolConfirmationLevel } from '@/lib/ai/tools/document-tools'
 import { getDocumentStructure } from '../extensions/BlockId'
 import { calculateEdit, type CalculatedEdit } from '../services/edit-calculator'
 import { hasGhostEdits, getActiveEditIndex } from '../extensions/GhostEdit'
@@ -168,6 +168,14 @@ export function useEditorChat({
   // Track which tools have been executed to prevent double-execution
   const executedTools = useRef<Set<string>>(new Set())
   
+  // Refs for confirm/reject functions to avoid stale closures in inline callbacks
+  const confirmToolRef = useRef<((toolId: string) => void) | null>(null)
+  const rejectToolRef = useRef<((toolId: string) => void) | null>(null)
+  
+  // Track if an accept/reject is currently in progress to prevent race conditions
+  const isProcessingRef = useRef(false)
+  const pendingActionsRef = useRef<Array<{ type: 'confirm' | 'reject'; toolId: string }>>([])
+  
   // Track if ghost previews are active
   const [hasGhostPreviews, setHasGhostPreviews] = useState(false)
   
@@ -188,7 +196,7 @@ export function useEditorChat({
   }, [editor, pendingTools])
   
   // Listen for ghost edits invalidation (when document changes externally)
-  // This keeps pendingTools state in sync with editor ghost preview state
+  // Try to recalculate positions, or clear if not possible
   useEffect(() => {
     if (!editor) return
     
@@ -198,19 +206,73 @@ export function useEditorChat({
       
       console.log('[useEditorChat] Ghost edits invalidated:', { editIds, reason })
       
-      // Mark all invalidated edits as executed (so they won't be reprocessed)
-      editIds.forEach(id => executedTools.current.add(id))
+      // Get current pending tools that match the invalidated IDs
+      const currentPending = pendingToolsRef.current.filter(t => editIds.includes(t.id))
       
-      // Clear all pending tools since document changed
-      setPendingTools([])
-      setHasGhostPreviews(false)
+      if (currentPending.length === 0) {
+        // Nothing to recalculate
+        setPendingTools([])
+        setHasGhostPreviews(false)
+        return
+      }
       
-      // Only show toast if there were actual pending edits cleared
-      if (editIds.length > 0) {
-        toast.info('Pending edits cleared', {
-          description: 'Document was modified. Request edits again if needed.',
-          duration: 3000,
-        })
+      // Try to recalculate positions for each pending tool
+      const recalculated: PendingToolCall[] = []
+      let invalidCount = 0
+      
+      for (const tool of currentPending) {
+        const result = calculateEdit(editor, tool.toolName, tool.args, tool.id)
+        if (result.success && result.edit) {
+          recalculated.push({
+            ...tool,
+            calculatedEdit: result.edit,
+          })
+        } else {
+          console.log(`[useEditorChat] Could not recalculate edit "${tool.toolName}" after document change`)
+          executedTools.current.add(tool.id) // Mark as handled
+          invalidCount++
+        }
+      }
+      
+      if (recalculated.length > 0) {
+        // Update pending tools with recalculated positions
+        setPendingTools(recalculated)
+        
+        // Re-show ghost previews with new positions
+        const recalculatedEdits = recalculated
+          .map(t => t.calculatedEdit)
+          .filter((e): e is CalculatedEdit => e !== undefined)
+        
+        if (recalculatedEdits.length > 0) {
+          // Use setTimeout to ensure state is updated before showing previews
+          setTimeout(() => {
+            editor.commands.setGhostEdits(
+              recalculatedEdits,
+              (editId) => confirmToolRef.current?.(editId),
+              (editId) => rejectToolRef.current?.(editId)
+            )
+          }, 0)
+        }
+        
+        // Show toast indicating edits were recalculated
+        if (invalidCount > 0) {
+          toast.info('Edits recalculated', {
+            description: `${recalculated.length} edit${recalculated.length > 1 ? 's' : ''} updated, ${invalidCount} removed.`,
+            duration: 3000,
+          })
+        }
+        // Don't show toast if all edits were successfully recalculated - less noisy
+      } else {
+        // All edits became invalid
+        setPendingTools([])
+        setHasGhostPreviews(false)
+        
+        if (invalidCount > 0) {
+          toast.info('Pending edits cleared', {
+            description: 'Document was modified and edits could not be recalculated.',
+            duration: 3000,
+          })
+        }
       }
     }
     
@@ -266,7 +328,7 @@ export function useEditorChat({
       // DEBUG: Log ALL part types to understand the structure
       if (process.env.NODE_ENV === 'development') {
         console.log('[useEditorChat] onFinish - ALL PARTS:', 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           
           message.parts?.map((p: any, i: number) => ({
             index: i,
             type: p.type,
@@ -284,7 +346,7 @@ export function useEditorChat({
       // - 'tool-invocation' with nested toolInvocation object
       // - Parts with toolInvocation property directly
       // - 'tool-call' type (some versions)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const toolParts = (message.parts || []).filter((p: any) => 
         p.type === 'tool-invocation' || 
         p.type === 'tool-call' ||
@@ -298,7 +360,7 @@ export function useEditorChat({
         // 1. { type: 'tool-insertContent', args: {...} } - tool name in type string
         // 2. { type: 'tool-invocation', toolInvocation: { toolName, args } } - nested
         // 3. { type: 'tool-call', toolName, args } - flat
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         
         const invocations: ToolInvocation[] = toolParts
           .map((p: any) => {
             // AI SDK v6 often uses type like 'tool-insertContent' where tool name is in the type
@@ -315,11 +377,20 @@ export function useEditorChat({
               return null
             }
             
-            console.log('[useEditorChat] Processing tool:', toolName, 'args keys:', Object.keys(args))
+            const parsedArgs = (args && typeof args === 'object') ? args : {}
+            
+            // Validate tool call completeness
+            const validation = validateToolCall(toolName, parsedArgs as Record<string, unknown>)
+            if (!validation.valid) {
+              console.warn(`[useEditorChat] Invalid tool call "${toolName}":`, validation.error)
+              return null
+            }
+            
+            console.log('[useEditorChat] Processing valid tool:', toolName, 'args keys:', Object.keys(parsedArgs))
             
             return {
               toolName,
-              args: (args && typeof args === 'object') ? args : {},
+              args: parsedArgs,
               state: p?.state ?? p?.toolInvocation?.state,
               result: p?.result ?? p?.toolInvocation?.result,
             } as ToolInvocation
@@ -397,51 +468,27 @@ export function useEditorChat({
     }
 
     // Set up callbacks for when user accepts/rejects via inline buttons
-    // Use pendingToolsRef.current to get fresh state, avoiding stale closure
+    // Use refs to access the latest confirm/reject functions, avoiding stale closures
     const onAccept = (editId: string) => {
-      const tool = pendingToolsRef.current.find(t => t.id === editId)
-      if (tool) {
-        // Show acceptance animation
-        const delay = showEditAnimation(editId, 'accepted')
-        
-        // Execute the tool and clear after animation
-        setTimeout(() => {
-          // Pass editId to preserve other ghost previews during execution
-          executeToolCall(tool.toolName, tool.args, editId)
-          executedTools.current.add(editId)
-          
-          // Remove from pending
-          setPendingTools(prev => prev.filter(t => t.id !== editId))
-          
-          // Clear this ghost edit
-          ed.commands.clearGhostEdit(editId)
-        }, delay)
+      if (confirmToolRef.current) {
+        confirmToolRef.current(editId)
       } else {
-        console.warn(`[useEditorChat] Tool not found for editId: ${editId}`)
+        console.warn(`[useEditorChat] confirmToolRef not set for editId: ${editId}`)
       }
     }
     
     const onReject = (editId: string) => {
-      // Show rejection animation
-      const delay = showEditAnimation(editId, 'rejected')
-      
-      // Clear after animation
-      setTimeout(() => {
-        // Mark as handled (rejected)
-        executedTools.current.add(editId)
-        
-        // Remove from pending
-        setPendingTools(prev => prev.filter(t => t.id !== editId))
-        
-        // Clear this ghost edit
-        ed.commands.clearGhostEdit(editId)
-      }, delay)
+      if (rejectToolRef.current) {
+        rejectToolRef.current(editId)
+      } else {
+        console.warn(`[useEditorChat] rejectToolRef not set for editId: ${editId}`)
+      }
     }
 
     // Set the ghost edits with callbacks
     ed.commands.setGhostEdits(edits, onAccept, onReject)
     setHasGhostPreviews(true)
-  }, [executeToolCall]) // Removed pendingTools from deps since we use ref
+  }, []) // Callbacks use refs to access latest functions, no deps needed
 
   /**
    * Process tool invocations from a message.
@@ -586,20 +633,67 @@ export function useEditorChat({
   }
 
   /**
-   * Confirm a pending tool call.
-   * 
-   * IMPORTANT: When an edit is accepted, ALL other pending edits become invalid
-   * because the document positions have changed. We clear everything to avoid
-   * stale state and ghost preview mismatches.
+   * Recalculate positions for remaining pending edits after document changes.
+   * Returns { valid: edits that could be recalculated, invalidCount: number removed }
    */
-  const confirmTool = useCallback((toolId: string) => {
+  const recalculateRemainingEdits = useCallback((
+    ed: Editor,
+    remainingTools: PendingToolCall[]
+  ): { valid: PendingToolCall[]; invalidCount: number } => {
+    const valid: PendingToolCall[] = []
+    let invalidCount = 0
+
+    for (const tool of remainingTools) {
+      const result = calculateEdit(ed, tool.toolName, tool.args, tool.id)
+      if (result.success && result.edit) {
+        // Update the calculated edit with new positions
+        valid.push({
+          ...tool,
+          calculatedEdit: result.edit,
+        })
+      } else {
+        // Target no longer exists in document
+        console.log(`[useEditorChat] Edit "${tool.toolName}" could not be recalculated - target not found`)
+        executedTools.current.add(tool.id) // Mark as handled
+        invalidCount++
+      }
+    }
+
+    return { valid, invalidCount }
+  }, [])
+
+  /**
+   * Process the next action in the queue (if any)
+   */
+  const processNextAction = useCallback(() => {
+    if (pendingActionsRef.current.length === 0) {
+      isProcessingRef.current = false
+      return
+    }
+    
+    const action = pendingActionsRef.current.shift()!
+    if (action.type === 'confirm') {
+      confirmToolInternal(action.toolId)
+    } else {
+      rejectToolInternal(action.toolId)
+    }
+  }, [])
+
+  /**
+   * Internal confirm implementation (called by queue processor)
+   */
+  const confirmToolInternal = useCallback((toolId: string) => {
     const ed = editorRef.current
-    const tool = pendingTools.find(t => t.id === toolId)
-    if (!tool) return
+    const tool = pendingToolsRef.current.find(t => t.id === toolId)
+    if (!tool || !ed) {
+      // Tool already processed, move to next
+      processNextAction()
+      return
+    }
 
     // Show acceptance animation on the diff block (escape ID for CSS selector)
     const escapedId = CSS.escape(toolId)
-    const editElement = ed?.view.dom.querySelector(`[data-edit-id="${escapedId}"]`)
+    const editElement = ed.view.dom.querySelector(`[data-edit-id="${escapedId}"]`)
     if (editElement) {
       editElement.classList.add('diff-block--accepted')
     }
@@ -608,40 +702,80 @@ export function useEditorChat({
     setTimeout(() => {
       // Execute the accepted edit
       executeToolCall(tool.toolName, tool.args, toolId)
+      executedTools.current.add(toolId)
       
-      // Mark ALL pending tools as handled (document changed, positions invalid)
-      pendingTools.forEach(t => executedTools.current.add(t.id))
+      // Clear ghost edit for accepted tool
+      ed.commands.clearGhostEdit(toolId)
       
-      // Clear ALL pending tools - document has changed, other edits are now stale
-      setPendingTools([])
+      // Get remaining tools (excluding the one we just accepted)
+      const remainingTools = pendingToolsRef.current.filter(t => t.id !== toolId)
       
-      // Clear ALL ghost edits from editor
-      if (ed) {
-        ed.commands.clearGhostEdits()
+      if (remainingTools.length === 0) {
+        // No other edits, just clean up
+        setPendingTools([])
         setHasGhostPreviews(false)
-      }
-
-      // Show toast notification
-      const otherCount = pendingTools.length - 1
-      if (otherCount > 0) {
-        toast.success('Edit accepted', {
-          description: `${otherCount} other pending edit${otherCount > 1 ? 's' : ''} cleared (document changed). Press Cmd+Z to undo.`,
-          duration: 4000,
-        })
-      } else {
         toast.success('Edit accepted', {
           description: 'Press Cmd+Z to undo',
           duration: 3000,
         })
+        processNextAction()
+        return
       }
+      
+      // Recalculate positions for remaining edits
+      const { valid, invalidCount } = recalculateRemainingEdits(ed, remainingTools)
+      
+      // Update pending tools with recalculated positions
+      setPendingTools(valid)
+      
+      if (valid.length > 0) {
+        // Update ghost previews with new positions
+        const recalculatedEdits = valid
+          .map(t => t.calculatedEdit)
+          .filter((e): e is CalculatedEdit => e !== undefined)
+        
+        if (recalculatedEdits.length > 0) {
+          showGhostPreviews(ed, recalculatedEdits)
+        }
+        
+        // Show toast with status
+        if (invalidCount > 0) {
+          toast.success('Edit accepted', {
+            description: `${valid.length} edit${valid.length > 1 ? 's' : ''} remaining. ${invalidCount} removed (target not found).`,
+            duration: 4000,
+          })
+        } else {
+          toast.success('Edit accepted', {
+            description: `${valid.length} edit${valid.length > 1 ? 's' : ''} remaining.`,
+            duration: 3000,
+          })
+        }
+      } else {
+        // All remaining edits were invalid
+        setHasGhostPreviews(false)
+        toast.success('Edit accepted', {
+          description: invalidCount > 0 
+            ? `${invalidCount} other edit${invalidCount > 1 ? 's' : ''} removed (target not found).`
+            : 'Press Cmd+Z to undo',
+          duration: 3000,
+        })
+      }
+      
+      processNextAction()
     }, 300)
-  }, [pendingTools, executeToolCall])
+  }, [executeToolCall, recalculateRemainingEdits, showGhostPreviews, processNextAction])
 
   /**
-   * Reject a pending tool call.
+   * Internal reject implementation (called by queue processor)
    */
-  const rejectTool = useCallback((toolId: string) => {
+  const rejectToolInternal = useCallback((toolId: string) => {
     const ed = editorRef.current
+    
+    // Check if tool still exists in pending
+    if (!pendingToolsRef.current.find(t => t.id === toolId)) {
+      processNextAction()
+      return
+    }
     
     // Show rejection animation on the diff block (escape ID for CSS selector)
     const escapedId = CSS.escape(toolId)
@@ -659,7 +793,7 @@ export function useEditorChat({
       if (ed) {
         ed.commands.clearGhostEdit(toolId)
         // Update ghost preview state
-        const remaining = pendingTools.filter(t => t.id !== toolId && t.calculatedEdit)
+        const remaining = pendingToolsRef.current.filter(t => t.id !== toolId && t.calculatedEdit)
         setHasGhostPreviews(remaining.length > 0)
       }
 
@@ -667,8 +801,47 @@ export function useEditorChat({
       toast.info('Edit rejected', {
         duration: 2000,
       })
+      
+      processNextAction()
     }, 250)
-  }, [pendingTools])
+  }, [processNextAction])
+
+  /**
+   * Confirm a pending tool call (public API - queues the action)
+   * 
+   * After accepting, recalculates positions of remaining edits so user can
+   * continue accepting/rejecting them one by one.
+   */
+  const confirmTool = useCallback((toolId: string) => {
+    // Skip if already processed
+    if (executedTools.current.has(toolId)) return
+    
+    // Add to queue
+    pendingActionsRef.current.push({ type: 'confirm', toolId })
+    
+    // Start processing if not already
+    if (!isProcessingRef.current) {
+      isProcessingRef.current = true
+      processNextAction()
+    }
+  }, [processNextAction])
+
+  /**
+   * Reject a pending tool call (public API - queues the action)
+   */
+  const rejectTool = useCallback((toolId: string) => {
+    // Skip if already processed
+    if (executedTools.current.has(toolId)) return
+    
+    // Add to queue
+    pendingActionsRef.current.push({ type: 'reject', toolId })
+    
+    // Start processing if not already
+    if (!isProcessingRef.current) {
+      isProcessingRef.current = true
+      processNextAction()
+    }
+  }, [processNextAction])
 
   /**
    * Confirm all pending tool calls with staggered animation.
@@ -751,6 +924,12 @@ export function useEditorChat({
       })
     }, 250 + (toolCount * 30))
   }, [pendingTools])
+
+  // Keep refs updated so inline callbacks can access latest functions
+  useEffect(() => {
+    confirmToolRef.current = confirmTool
+    rejectToolRef.current = rejectTool
+  }, [confirmTool, rejectTool])
 
   /**
    * Navigate to next/prev edit in the editor.

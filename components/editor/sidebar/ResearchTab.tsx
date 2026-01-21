@@ -69,16 +69,15 @@ function PaperCard({
   return (
     <div className="group px-2 py-1.5 first:pt-2 last:pb-2">
       <div className={cn(
-        "relative rounded-lg border bg-card transition-all duration-200 overflow-hidden",
-        "hover:shadow-md hover:border-primary/20",
-        "group-hover:bg-accent/30"
+        "relative rounded-lg border border-border/40 bg-card transition-all duration-200 overflow-hidden",
+        "hover:border-border/60 hover:bg-muted/20"
       )}>
         {/* Color accent bar on left */}
-        <div className="absolute left-0 top-3 bottom-3 w-1 rounded-full bg-primary/60 opacity-0 group-hover:opacity-100 transition-opacity" />
+        <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-primary/40 opacity-0 group-hover:opacity-100 transition-opacity" />
         
         <div className="p-3 pl-4 min-w-0 overflow-hidden">
           {/* Title - Primary focus */}
-          <h4 className="text-sm font-semibold leading-snug mb-2 text-foreground line-clamp-2 group-hover:text-primary transition-colors break-words">
+          <h4 className="text-sm font-medium leading-snug mb-2 text-foreground line-clamp-2 break-words">
             {paper.title}
           </h4>
           
@@ -224,15 +223,15 @@ export function ResearchTab({
   onRemovePaper,
 }: ResearchTabProps) {
   return (
-    <div className="flex flex-col h-full bg-muted/20 overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex-shrink-0 px-4 py-3 border-b bg-background">
+      <div className="flex-shrink-0 px-4 py-3 border-b border-border/50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-primary/10">
               <FileText className="h-4 w-4 text-primary" />
             </div>
-            <span className="font-semibold text-sm">Papers</span>
+            <span className="font-medium text-sm">Papers</span>
             <Badge variant="secondary" className="text-xs px-2 py-0.5 rounded-full font-medium">
               {papers.length}
             </Badge>
@@ -278,7 +277,7 @@ export function ResearchTab({
 
       {/* Footer Tip */}
       {papers.length > 0 && (
-        <div className="flex-shrink-0 px-4 py-3 border-t bg-background">
+        <div className="flex-shrink-0 px-4 py-3 border-t border-border/50">
           <p className="text-xs text-muted-foreground text-center leading-relaxed">
             <span className="font-medium text-foreground">Tip:</span> Use chat to &quot;Extract claims&quot; or &quot;Find gaps&quot;
           </p>

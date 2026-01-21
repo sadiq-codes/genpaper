@@ -11,6 +11,9 @@ import { PaperTypeSelect, type PaperTypeValue } from './paper-type-select'
 import { GenerationModeSelect, type GenerationMode } from './generation-mode-select'
 import { AddSourceMenu } from './add-source-menu'
 import { AdvancedOptionsPopover } from './advanced-options-popover'
+import { PdfChipList } from './pdf-chip'
+import { usePdfUpload } from './hooks/usePdfUpload'
+import type { UploadedPdf } from './types'
 
 // Paper type categories for determining behavior
 const EMPIRICAL_PAPER_TYPES: PaperTypeValue[] = ['researchArticle', 'mastersThesis', 'phdDissertation']
@@ -46,6 +49,54 @@ export function ProjectInput() {
   const [topic, setTopic] = useState('')
   const [hasOriginalResearch, setHasOriginalResearch] = useState(false)
   const [keyFindings, setKeyFindings] = useState('')
+  
+  // PDF upload state
+  const [uploadedPdfs, setUploadedPdfs] = useState<UploadedPdf[]>([])
+  const [hasAutoFilledTopic, setHasAutoFilledTopic] = useState(false)
+  
+  // PDF upload hook
+  const { uploadFiles } = usePdfUpload({
+    onUploadStart: (pdf) => {
+      setUploadedPdfs((prev) => [...prev, pdf])
+    },
+    onUploadProgress: (id, updates) => {
+      setUploadedPdfs((prev) =>
+        prev.map((pdf) => (pdf.id === id ? { ...pdf, ...updates } : pdf))
+      )
+    },
+    onUploadComplete: (id, result) => {
+      // Auto-fill topic from first successfully uploaded PDF's title
+      if (result.paper?.title && !hasAutoFilledTopic && topic.trim().length === 0) {
+        setTopic(result.paper.title)
+        setHasAutoFilledTopic(true)
+      }
+    },
+    onUploadError: (id, error) => {
+      // Error is already handled via onUploadProgress
+      console.error(`PDF upload error for ${id}:`, error)
+    },
+  })
+  
+  // Handle PDF file selection from QuickActions or AddSourceMenu
+  const handlePdfUpload = useCallback((files: FileList) => {
+    uploadFiles(files)
+  }, [uploadFiles])
+  
+  // Handle removing an uploaded PDF
+  const handleRemovePdf = useCallback((id: string) => {
+    setUploadedPdfs((prev) => prev.filter((pdf) => pdf.id !== id))
+  }, [])
+  
+  // Get paper IDs for successfully uploaded PDFs
+  const uploadedPaperIds = useMemo(
+    () => uploadedPdfs.filter((pdf) => pdf.status === 'ready' && pdf.paperId).map((pdf) => pdf.paperId!),
+    [uploadedPdfs]
+  )
+  
+  // Check if any uploads are in progress
+  const hasUploadsInProgress = uploadedPdfs.some(
+    (pdf) => pdf.status === 'uploading' || pdf.status === 'processing'
+  )
 
   // Derived state
   const isEmpiricalType = EMPIRICAL_PAPER_TYPES.includes(paperType)
@@ -71,7 +122,8 @@ export function ProjectInput() {
   // Validation
   const isTopicValid = topic.trim().length >= 10
   const isKeyFindingsValid = !showKeyFindings || keyFindings.trim().length >= 10
-  const isFormValid = isTopicValid && isKeyFindingsValid
+  // Form is valid if topic is valid, key findings are valid, and no uploads are in progress
+  const isFormValid = isTopicValid && isKeyFindingsValid && !hasUploadsInProgress
 
   // Handle keyboard submit (Cmd/Ctrl + Enter)
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -96,6 +148,13 @@ export function ProjectInput() {
             'shadow-sm hover:shadow-md focus-within:shadow-md',
           )}
         >
+          {/* PDF Chips - shown at top of input area */}
+          <PdfChipList
+            pdfs={uploadedPdfs}
+            onRemove={handleRemovePdf}
+            disabled={isLoading}
+          />
+          
           {/* Textarea */}
           <Textarea
             name="topic"
@@ -120,7 +179,7 @@ export function ProjectInput() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3 pb-3 pt-1">
             {/* Left Controls */}
             <div className="flex items-center gap-0.5 flex-wrap">
-              <AddSourceMenu disabled={isLoading} />
+              <AddSourceMenu disabled={isLoading} onPdfUpload={handlePdfUpload} />
               <AdvancedOptionsPopover
                 hasOriginalResearch={hasOriginalResearch}
                 onHasOriginalResearchChange={setHasOriginalResearch}
@@ -171,6 +230,10 @@ export function ProjectInput() {
         <input type="hidden" name="generationMode" value={generationMode} />
         <input type="hidden" name="hasOriginalResearch" value={hasOriginalResearch ? 'true' : 'false'} />
         {showKeyFindings && <input type="hidden" name="keyFindings" value={keyFindings} />}
+        {/* Hidden fields for uploaded PDF paper IDs */}
+        {uploadedPaperIds.map((paperId) => (
+          <input key={paperId} type="hidden" name="uploadedPaperIds" value={paperId} />
+        ))}
 
         {/* Helper Text & Status */}
         <div className="text-center space-y-2">

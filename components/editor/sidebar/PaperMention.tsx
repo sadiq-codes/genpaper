@@ -40,12 +40,12 @@ function PaperMentionNodeView({ node }: NodeViewProps) {
   return (
     <NodeViewWrapper as="span" className="paper-mention-wrapper">
       <span
-        className="paper-mention"
+        className="paper-mention-chip"
         title={title}
         contentEditable={false}
       >
-        <FileText className="h-3 w-3 inline-block mr-0.5 -mt-0.5" />
-        <span className="paper-mention-text">{displayText}</span>
+        <FileText className="h-3 w-3 shrink-0" />
+        <span className="paper-mention-chip-text">{displayText}</span>
       </span>
     </NodeViewWrapper>
   )
@@ -151,14 +151,14 @@ export const PaperMention = Node.create<PaperMentionOptions>({
 
   renderHTML({ node, HTMLAttributes }) {
     const { authors, year, title } = node.attrs
-    const displayText = authors 
-      ? `@${authors}${year ? ` (${year})` : ''}`
-      : `@${title?.slice(0, 30) || 'Paper'}...`
+    const authorDisplay = authors || 'Unknown'
+    const yearPart = year ? ` (${year})` : ''
+    const displayText = `${authorDisplay}${yearPart}`
     
     return [
       'span',
       mergeAttributes(
-        { 'data-type': 'paper-mention', class: 'paper-mention' },
+        { 'data-type': 'paper-mention', class: 'paper-mention-chip' },
         this.options.HTMLAttributes,
         HTMLAttributes
       ),

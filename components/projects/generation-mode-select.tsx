@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronDown, Sparkles, PenLine } from 'lucide-react'
+import { Sparkles, PenLine } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -67,7 +67,6 @@ export function GenerationModeSelect({
         <SelectValue>
           {selectedOption?.shortLabel || 'Select mode'}
         </SelectValue>
-        <ChevronDown className="h-3 w-3 opacity-50" />
       </SelectTrigger>
       <SelectContent align="start">
         {generationModeOptions.map((option) => {

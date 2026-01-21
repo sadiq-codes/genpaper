@@ -1,6 +1,6 @@
 import 'server-only'
 import { getSB } from '@/lib/supabase/server'
-import { generateEmbeddings } from '@/lib/utils/embedding'
+import { getCachedQueryEmbedding } from './embedding-cache'
 import { 
   normalizeScore, 
   deduplicateChunks, 
@@ -252,7 +252,7 @@ export class ChunkRetriever {
     config: RetrievalConfig,
     supabase: Awaited<ReturnType<typeof getSB>>
   ): Promise<RetrievedChunk[]> {
-    const [queryEmbedding] = await generateEmbeddings([query])
+    const queryEmbedding = await getCachedQueryEmbedding(query)
     
     const rpcName = config.useCitationBoost 
       ? 'hybrid_search_chunks_with_boost' 
@@ -302,7 +302,7 @@ export class ChunkRetriever {
     supabase: Awaited<ReturnType<typeof getSB>>,
     embedding?: number[]
   ): Promise<RetrievedChunk[]> {
-    const queryEmbedding = embedding || (await generateEmbeddings([query]))[0]
+    const queryEmbedding = embedding || await getCachedQueryEmbedding(query)
     
     const { data, error } = await supabase.rpc('match_paper_chunks', {
       query_embedding: queryEmbedding,

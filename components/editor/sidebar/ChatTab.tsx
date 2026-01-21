@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Bot, User, Wrench, Trash2, FileEdit } from 'lucide-react'
+import { Bot, User, Wrench, Trash2 } from 'lucide-react'
 import { RichChatInput } from './RichChatInput'
 import type { UIMessage } from 'ai'
 import type { PendingToolCall } from '../hooks/useEditorChat'
@@ -45,8 +45,6 @@ interface ChatTabProps {
   onConfirmAllTools?: () => void
   onRejectAllTools?: () => void
   onClearHistory?: () => void
-  /** Whether ghost edit previews are visible in editor */
-  hasGhostPreviews?: boolean
 }
 
 // =============================================================================
@@ -65,48 +63,13 @@ function ToolCallBadge({ toolName }: { toolName: string }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-      <Wrench className="h-3 w-3" />
+    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
+      <Wrench className="h-2.5 w-2.5" />
       {toolLabels[toolName] || toolName}
     </span>
   )
 }
 
-/**
- * Pending edits indicator - shows in chat when edits are waiting in the editor
- * This replaces the old ToolConfirmationCard - actions are now in the editor
- */
-function PendingEditsIndicator({ 
-  count,
-  hasGhostPreviews 
-}: { 
-  count: number
-  hasGhostPreviews: boolean 
-}) {
-  if (count === 0) return null
-
-  return (
-    <div className="mx-3 my-3 p-3 rounded-lg bg-muted/50 border border-border animate-in fade-in slide-in-from-bottom-2 duration-300">
-      <div className="flex items-center gap-2">
-        <div className="flex items-center justify-center w-6 h-6 rounded-full bg-secondary">
-          <FileEdit className="h-3.5 w-3.5 text-foreground" />
-        </div>
-        <span className="text-sm font-medium text-foreground">
-          {count} edit{count !== 1 ? 's' : ''} pending
-        </span>
-        {hasGhostPreviews && (
-          <span className="text-xs text-muted-foreground">
-            - review in editor
-          </span>
-        )}
-      </div>
-      <p className="text-xs text-muted-foreground mt-2 pl-8">
-        Use <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] mx-0.5">Tab</kbd> to navigate, 
-        <kbd className="px-1 py-0.5 bg-muted rounded text-[10px] mx-0.5">Enter</kbd> to accept
-      </p>
-    </div>
-  )
-}
 
 // Helper to extract text content from UIMessage parts
 function getMessageText(message: UIMessage): string {
@@ -120,7 +83,7 @@ function getMessageText(message: UIMessage): string {
   }
   
   // Fallback to content property (for backward compatibility or history messages)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const content = (message as any).content
   if (typeof content === 'string') return content
   
@@ -139,9 +102,9 @@ function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
   // - { type: 'tool-insertContent', args: {...} } - tool name in type string
   // - { type: 'tool-invocation', toolInvocation: { toolName, toolCallId, args, ... } }
   // - { type: 'tool-call', toolName, args }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   return message.parts
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     .filter((p: any) => {
       return p.type === 'tool-invocation' || 
              p.type === 'tool-call' ||
@@ -149,7 +112,7 @@ function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
              (p.type?.startsWith && p.type.startsWith('tool-')) || 
              p.type === 'dynamic-tool'
     })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     .map((p: any) => {
       // AI SDK v6 uses type like 'tool-insertContent' where tool name is in the type
       const toolName = (p.type?.startsWith('tool-') && p.type !== 'tool-invocation' && p.type !== 'tool-call')
@@ -190,38 +153,35 @@ function MessageBubble({
   const timestamp = new Date()
 
   return (
-    <div className={cn(
-      "flex gap-3 p-3",
-      isAssistant ? "bg-muted/40" : ""
-    )}>
-      <Avatar className="h-7 w-7 shrink-0">
+    <div className="flex gap-3 px-4 py-4">
+      <Avatar className="h-6 w-6 shrink-0">
         <AvatarFallback className={cn(
           "text-xs",
-          isAssistant ? "bg-primary text-primary-foreground" : "bg-secondary"
+          isAssistant ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
         )}>
-          {isAssistant ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
+          {isAssistant ? <Bot className="h-3.5 w-3.5" /> : <User className="h-3.5 w-3.5" />}
         </AvatarFallback>
       </Avatar>
       
-      <div className="flex-1 min-w-0 space-y-1">
+      <div className="flex-1 min-w-0 space-y-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-medium">
-            {isAssistant ? 'Research Assistant' : 'You'}
+          <span className="text-xs font-medium text-foreground">
+            {isAssistant ? 'Assistant' : 'You'}
           </span>
-          <span className="text-xs text-muted-foreground">
+          <span className="text-[10px] text-muted-foreground/60">
             {timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
         
         {(content || toolInvocations.length > 0) && (
-          <div className="text-sm leading-relaxed text-foreground/90 prose prose-sm prose-neutral dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_p]:my-2 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium">
-            {content ? <ReactMarkdown>{content}</ReactMarkdown> : <span className="text-muted-foreground">Applying suggested edits…</span>}
+          <div className="text-[13px] leading-relaxed text-foreground/80 prose prose-sm prose-neutral dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_p]:my-3 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium [&_h1]:mt-4 [&_h2]:mt-4 [&_h3]:mt-3 [&_code]:text-xs [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-muted">
+            {content ? <ReactMarkdown>{content}</ReactMarkdown> : <span className="text-muted-foreground italic">Applying suggested edits…</span>}
           </div>
         )}
 
         {/* Tool invocations - just show badges, no action buttons */}
         {toolInvocations && toolInvocations.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
+          <div className="mt-2 flex flex-wrap gap-1.5">
             {toolInvocations.map((invocation) => (
               <ToolCallBadge key={invocation.toolCallId} toolName={invocation.toolName} />
             ))}
@@ -234,16 +194,16 @@ function MessageBubble({
 
 function LoadingBubble() {
   return (
-    <div className="flex gap-3 p-3 bg-muted/40">
-      <Avatar className="h-7 w-7 shrink-0">
-        <AvatarFallback className="bg-secondary text-foreground text-xs">
-          <Bot className="h-4 w-4" />
+    <div className="flex gap-3 px-4 py-4">
+      <Avatar className="h-6 w-6 shrink-0">
+        <AvatarFallback className="bg-primary/10 text-primary text-xs">
+          <Bot className="h-3.5 w-3.5" />
         </AvatarFallback>
       </Avatar>
-      <div className="flex items-center gap-1 py-2">
-        <span className="h-2 w-2 rounded-full bg-foreground/30 animate-bounce [animation-delay:-0.3s]" />
-        <span className="h-2 w-2 rounded-full bg-foreground/30 animate-bounce [animation-delay:-0.15s]" />
-        <span className="h-2 w-2 rounded-full bg-foreground/30 animate-bounce" />
+      <div className="flex items-center gap-1.5 py-1">
+        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.3s]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.15s]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" />
       </div>
     </div>
   )
@@ -251,30 +211,30 @@ function LoadingBubble() {
 
 function HistoryLoadingSkeleton() {
   return (
-    <div className="space-y-0 divide-y divide-border/50 animate-pulse">
+    <div className="space-y-1 animate-pulse">
       {/* User message skeleton */}
-      <div className="flex gap-3 p-3">
-        <div className="h-7 w-7 rounded-full bg-muted shrink-0" />
+      <div className="flex gap-3 px-4 py-4">
+        <div className="h-6 w-6 rounded-full bg-muted shrink-0" />
         <div className="flex-1 space-y-2">
-          <div className="h-3 w-16 bg-muted rounded" />
-          <div className="h-4 w-3/4 bg-muted rounded" />
+          <div className="h-2.5 w-12 bg-muted rounded" />
+          <div className="h-3 w-3/4 bg-muted rounded" />
         </div>
       </div>
       {/* Assistant message skeleton */}
-      <div className="flex gap-3 p-3 bg-muted/20">
-        <div className="h-7 w-7 rounded-full bg-muted shrink-0" />
+      <div className="flex gap-3 px-4 py-4">
+        <div className="h-6 w-6 rounded-full bg-muted shrink-0" />
         <div className="flex-1 space-y-2">
-          <div className="h-3 w-24 bg-muted rounded" />
-          <div className="h-4 w-full bg-muted rounded" />
-          <div className="h-4 w-2/3 bg-muted rounded" />
+          <div className="h-2.5 w-16 bg-muted rounded" />
+          <div className="h-3 w-full bg-muted rounded" />
+          <div className="h-3 w-2/3 bg-muted rounded" />
         </div>
       </div>
       {/* Another pair */}
-      <div className="flex gap-3 p-3">
-        <div className="h-7 w-7 rounded-full bg-muted shrink-0" />
+      <div className="flex gap-3 px-4 py-4">
+        <div className="h-6 w-6 rounded-full bg-muted shrink-0" />
         <div className="flex-1 space-y-2">
-          <div className="h-3 w-16 bg-muted rounded" />
-          <div className="h-4 w-1/2 bg-muted rounded" />
+          <div className="h-2.5 w-12 bg-muted rounded" />
+          <div className="h-3 w-1/2 bg-muted rounded" />
         </div>
       </div>
     </div>
@@ -320,7 +280,6 @@ export function ChatTab({
   onConfirmAllTools: _onConfirmAllTools,
   onRejectAllTools: _onRejectAllTools,
   onClearHistory,
-  hasGhostPreviews = false,
 }: ChatTabProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   
@@ -381,7 +340,7 @@ export function ChatTab({
           ) : messages.length === 0 && !isLoading ? (
             <EmptyState />
           ) : (
-            <div className="divide-y divide-border/50">
+            <div className="space-y-1">
               {messages.map((message) => (
                 <MessageBubble 
                   key={message.id} 
@@ -389,12 +348,6 @@ export function ChatTab({
                 />
               ))}
               {isLoading && <LoadingBubble />}
-              
-              {/* Pending edits indicator - shows at bottom of messages */}
-              <PendingEditsIndicator 
-                count={pendingTools.length} 
-                hasGhostPreviews={hasGhostPreviews}
-              />
             </div>
           )}
         </ScrollArea>
@@ -453,14 +406,14 @@ function QuickActions({
   disabled: boolean 
 }) {
   return (
-    <div className="flex-shrink-0 border-t border-border bg-muted/20 p-2">
-      <div className="flex flex-wrap gap-1.5">
+    <div className="flex-shrink-0 px-4 py-2">
+      <div className="flex items-center justify-left gap-1.5 flex-wrap">
         {QUICK_ACTIONS.map((action) => (
           <Button
             key={action.label}
             variant="outline"
             size="sm"
-            className="h-7 text-xs gap-1 bg-background hover:bg-muted"
+            className="h-7 text-xs gap-1 px-2.5 rounded-full bg-background shadow-sm hover:bg-muted border-border/60"
             onClick={() => onSend(action.prompt)}
             disabled={disabled}
           >

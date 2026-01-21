@@ -145,7 +145,6 @@ export function ResearchEditor({
   const rejectAllTools = chat.rejectAllTools
   const activeEditIndex = chat.activeEditIndex
   const navigateEdit = chat.navigateEdit
-  const hasGhostPreviews = chat.hasGhostPreviews
 
   // ============================================================================
   // Effects
@@ -355,7 +354,6 @@ export function ResearchEditor({
       onConfirmTool={confirmTool}
       onRejectTool={rejectTool}
       onClearHistory={clearChatHistory}
-      hasGhostPreviews={hasGhostPreviews}
       papers={papers}
       onInsertCitation={handleInsertCitation}
       onOpenLibrary={() => setLibraryDrawerOpen(true)}

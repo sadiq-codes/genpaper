@@ -750,38 +750,15 @@ kbd {
    - CSS variables for automatic dark mode support
    ============================================================================= */
 
-/* Main diff block container */
+/* Main diff block container - minimal inline style */
 .diff-block {
-  @apply my-4 rounded-xl overflow-hidden bg-card;
-  position: relative;
+  @apply my-2 relative;
   animation: diffBlockSlideIn 0.3s ease-out;
 }
 
-/* Left accent bar - indicates edit type */
-.diff-block::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-}
-
-.diff-block--delete::before {
-  background-color: var(--destructive);
-}
-
-.diff-block--insert::before {
-  background-color: var(--diff-insert);
-}
-
-.diff-block--replace::before {
-  background-color: var(--primary);
-}
-
-/* Active state - focused edit */
+/* Active state - subtle highlight */
 .diff-block--active {
-  @apply ring-2 ring-primary ring-offset-2 ring-offset-background;
+  @apply bg-muted/20 rounded-lg -mx-2 px-2 py-1;
 }
 
 /* Highlight animation when scrolling to an edit */
@@ -789,118 +766,58 @@ kbd {
   animation: diffBlockHighlight 0.6s ease-out;
 }
 
-/* Header - unified styling */
-.diff-block__header {
-  @apply flex items-center justify-between px-4 py-3 bg-muted/30 border-b border-border;
+/* Content wrapper - inline display */
+.diff-block__content-wrapper {
+  @apply relative inline;
 }
 
-.diff-block__header-left {
-  @apply flex items-center gap-3;
+/* Text styles for old/new content */
+.diff-block__text {
+  @apply text-base leading-relaxed;
 }
 
-.diff-block__icon {
-  @apply flex items-center justify-center w-8 h-8 rounded-lg bg-background border border-border;
-}
-
-.diff-block__icon--delete {
-  @apply text-destructive;
-}
-
-.diff-block__icon--insert {
-  color: var(--diff-insert);
-}
-
-.diff-block__icon--replace {
-  @apply text-primary;
-}
-
-.diff-block__label {
-  @apply font-semibold text-sm text-foreground;
-}
-
-/* Navigation */
-.diff-block__nav {
-  @apply flex items-center gap-1;
-}
-
-.diff-block__nav-btn {
-  @apply flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground transition-colors bg-transparent border-none cursor-pointer;
-}
-
-.diff-block__nav-btn:hover {
-  @apply bg-muted text-foreground;
-}
-
-.diff-block__position {
-  @apply text-xs font-medium text-muted-foreground min-w-[40px] text-center;
-}
-
-/* Content sections */
-.diff-block__content {
-  @apply relative;
-}
-
-.diff-block__content--old {
-  @apply bg-muted/30 border-b border-dashed border-border;
-}
-
-.diff-block__content--new {
-  @apply bg-background;
-}
-
-.diff-block__content-label {
-  @apply flex items-center gap-2 px-4 py-2 text-xs font-medium border-b border-border/50;
-}
-
-.diff-block__content-label--old {
-  @apply text-destructive bg-destructive/5;
-}
-
-.diff-block__content-label--new {
-  color: var(--diff-insert);
-  background-color: color-mix(in oklch, var(--diff-insert) 5%, transparent);
-}
-
-.diff-block__content-icon {
-  @apply font-bold;
-}
-
-.diff-block__content-text {
-  @apply p-4 text-sm leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-y-auto text-foreground;
-}
-
-.diff-block__content-text--old {
+.diff-block__text--old {
   @apply text-muted-foreground;
   text-decoration: line-through;
   text-decoration-color: var(--destructive);
   text-decoration-thickness: 1.5px;
 }
 
-.diff-block__content-text--new {
-  @apply text-foreground;
+.diff-block__text--new {
+  color: var(--diff-insert);
 }
 
-/* Actions footer */
+/* Replace: show both with spacing */
+.diff-block--replace .diff-block__text--old {
+  @apply mr-2;
+}
+
+/* Active indicator dot */
+.diff-block__indicator {
+  @apply inline-block w-2 h-2 rounded-full bg-primary ml-2;
+  vertical-align: middle;
+}
+
+/* Floating action bar - minimal card style */
 .diff-block__actions {
-  @apply flex items-center justify-between p-3 bg-muted/20 border-t border-border;
+  @apply flex items-center gap-2 mt-2 p-1.5 rounded-full bg-background border border-border shadow-sm w-fit;
+  animation: diffBlockActionsSlideIn 0.2s ease-out 0.1s both;
 }
 
-.diff-block__hints {
-  @apply text-xs text-muted-foreground;
+@keyframes diffBlockActionsSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.diff-block__hints kbd {
-  @apply px-1.5 py-0.5 bg-muted rounded font-mono text-[10px] mx-0.5 border border-border/50;
-}
-
-.diff-block__buttons {
-  @apply flex items-center gap-2;
-}
-
+/* Button base */
 .diff-block__btn {
-  @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm transition-all cursor-pointer;
-  min-height: 40px;
-  min-width: 90px;
+  @apply inline-flex items-center justify-center px-3 py-1.5 rounded-full text-sm font-medium transition-all cursor-pointer border-none;
 }
 
 .diff-block__btn:hover {
@@ -911,26 +828,26 @@ kbd {
   transform: translateY(0);
 }
 
-.diff-block__btn-icon {
-  @apply mr-2;
-}
-
-/* Reject button - outlined style */
-.diff-block__btn--reject {
-  @apply bg-background border border-border text-muted-foreground;
-}
-
-.diff-block__btn--reject:hover {
-  @apply bg-destructive/10 border-destructive/50 text-destructive;
-}
-
 /* Accept button - primary filled style */
 .diff-block__btn--accept {
-  @apply bg-primary text-primary-foreground border-none;
+  @apply bg-primary text-primary-foreground;
 }
 
 .diff-block__btn--accept:hover {
   @apply bg-primary/90;
+}
+
+.diff-block__btn-arrow {
+  @apply ml-1.5;
+}
+
+/* Reject button - ghost style */
+.diff-block__btn--reject {
+  @apply bg-transparent text-muted-foreground;
+}
+
+.diff-block__btn--reject:hover {
+  @apply text-foreground bg-muted;
 }
 
 /* Animations */
@@ -1088,18 +1005,18 @@ kbd {
    Paper Mention Styles - @ mentions for papers
    ============================================================================= */
 
-.paper-mention {
-  @apply inline-flex items-center gap-1 px-1.5 py-0.5 text-xs font-medium rounded-md;
-  @apply bg-primary/10 text-primary border border-primary/20;
+.paper-mention-chip {
+  @apply inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md;
+  @apply bg-muted text-foreground border-0;
   @apply cursor-default select-none whitespace-nowrap;
   vertical-align: baseline;
 }
 
-.paper-mention:hover {
-  @apply bg-primary/15 border-primary/30;
+.paper-mention-chip:hover {
+  @apply bg-muted/80;
 }
 
-.paper-mention-text {
+.paper-mention-chip-text {
   @apply max-w-[200px] truncate;
 }
 
@@ -1109,12 +1026,12 @@ kbd {
 }
 
 /* Dark mode adjustments */
-.dark .paper-mention {
-  @apply bg-primary/20 border-primary/30;
+.dark .paper-mention-chip {
+  @apply bg-muted;
 }
 
-.dark .paper-mention:hover {
-  @apply bg-primary/25 border-primary/40;
+.dark .paper-mention-chip:hover {
+  @apply bg-muted/80;
 }
 
 /* =============================================================================
@@ -1122,32 +1039,32 @@ kbd {
    ============================================================================= */
 
 .mention-suggestion-menu {
-  @apply bg-background border border-border rounded-lg shadow-lg;
+  @apply bg-background border border-border rounded-lg;
   @apply overflow-hidden min-w-[300px] max-w-[400px] max-h-[350px] overflow-y-auto;
 }
 
 .mention-suggestion-header {
-  @apply px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide;
-  @apply border-b border-border bg-muted/50;
+  @apply px-3 py-2 text-xs font-medium text-muted-foreground;
+  @apply border-b border-border;
 }
 
 .mention-suggestion-item {
   @apply flex items-start gap-3 w-full px-3 py-2.5 text-left;
-  @apply transition-colors hover:bg-muted cursor-pointer border-0 bg-transparent;
+  @apply transition-colors hover:bg-muted/50 cursor-pointer border-0 bg-transparent;
 }
 
 .mention-suggestion-item.is-selected {
-  @apply bg-muted;
+  @apply bg-muted/50;
 }
 
 .mention-suggestion-icon {
-  @apply flex items-center justify-center w-8 h-8 rounded-md;
-  @apply bg-muted text-muted-foreground shrink-0 mt-0.5;
+  @apply flex items-center justify-center w-8 h-8 rounded;
+  @apply bg-muted/50 text-muted-foreground shrink-0 mt-0.5;
 }
 
 .mention-suggestion-item.is-selected .mention-suggestion-icon,
 .mention-suggestion-item:hover .mention-suggestion-icon {
-  @apply bg-primary/10 text-primary;
+  @apply bg-muted text-foreground;
 }
 
 .mention-suggestion-content {

@@ -1,6 +1,5 @@
 'use client'
 
-import { ChevronDown } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -88,7 +87,6 @@ export function PaperTypeSelect({
           <SelectValue>
             {selectedOption?.shortLabel || 'Select type'}
           </SelectValue>
-          <ChevronDown className="h-3 w-3 opacity-50" />
         </SelectTrigger>
         <SelectContent align="start">
           {paperTypeOptions.map((option) => (

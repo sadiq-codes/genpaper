@@ -60,8 +60,6 @@ interface EditorSidebarProps {
   onConfirmTool?: (toolId: string) => void
   onRejectTool?: (toolId: string) => void
   onClearHistory?: () => void
-  /** Whether ghost edit previews are visible in editor */
-  hasGhostPreviews?: boolean
   // Research props
   papers: ProjectPaper[]
   onInsertCitation: (citation: Citation) => void
@@ -83,7 +81,6 @@ export function EditorSidebar({
   onConfirmTool,
   onRejectTool,
   onClearHistory,
-  hasGhostPreviews = false,
   papers,
   onInsertCitation,
   onOpenLibrary,
@@ -154,7 +151,6 @@ export function EditorSidebar({
             onConfirmTool={onConfirmTool}
             onRejectTool={onRejectTool}
             onClearHistory={onClearHistory}
-            hasGhostPreviews={hasGhostPreviews}
           />
         ) : (
           <ResearchTab 

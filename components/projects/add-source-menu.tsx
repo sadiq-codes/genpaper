@@ -14,9 +14,11 @@ import { toast } from 'sonner'
 
 interface AddSourceMenuProps {
   disabled?: boolean
+  /** Callback when PDF files are selected for upload */
+  onPdfUpload?: (files: FileList) => void
 }
 
-export function AddSourceMenu({ disabled }: AddSourceMenuProps) {
+export function AddSourceMenu({ disabled, onPdfUpload }: AddSourceMenuProps) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -35,19 +37,20 @@ export function AddSourceMenu({ disabled }: AddSourceMenuProps) {
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const files = e.target.files
+    if (!files || files.length === 0) return
 
-    if (file.type !== 'application/pdf') {
-      toast.error('Please select a PDF file')
-      return
+    if (onPdfUpload) {
+      // Use the provided callback for actual upload
+      onPdfUpload(files)
+    } else {
+      // Fallback: show coming soon message
+      toast.info('PDF upload coming soon', {
+        description: 'This will extract paper details and add them to your project.',
+      })
     }
 
-    toast.info('PDF upload coming soon', {
-      description: 'This will extract paper details and add them to your project.',
-    })
-
-    // Reset input
+    // Reset input so same file can be selected again
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -59,6 +62,7 @@ export function AddSourceMenu({ disabled }: AddSourceMenuProps) {
         ref={fileInputRef}
         type="file"
         accept=".pdf,application/pdf"
+        multiple
         onChange={handleFileChange}
         className="hidden"
         aria-hidden="true"

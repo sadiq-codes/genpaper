@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getUserResearchProjects, createResearchProject, deleteResearchProject } from '@/lib/db/research'
 import { headers } from 'next/headers'
 import { getAbsoluteUrlFromHeaders } from '@/lib/config'
+import { CitationService } from '@/lib/citations/immediate-bibliography'
 
 // Projects Actions
 export async function getProjectsAction(limit = 20, offset = 0) {
@@ -43,6 +44,9 @@ export async function createProjectAction(
   const generationMode = formData.get('generationMode') as string || 'generate'
   const selectedPapers = formData.getAll('selectedPapers') as string[]
   
+  // Uploaded PDF paper IDs
+  const uploadedPaperIds = formData.getAll('uploadedPaperIds') as string[]
+  
   // Original research support
   const hasOriginalResearch = formData.get('hasOriginalResearch') === 'true'
   const keyFindings = formData.get('keyFindings') as string | null
@@ -53,7 +57,8 @@ export async function createProjectAction(
     paperType,
     generationMode,
     hasOriginalResearch,
-    selectedPapersCount: selectedPapers.length
+    selectedPapersCount: selectedPapers.length,
+    uploadedPaperIdsCount: uploadedPaperIds.length
   })
 
   if (!topic || topic.trim().length === 0) {
@@ -95,10 +100,31 @@ export async function createProjectAction(
           key_findings: keyFindings?.trim(),
         }
       }),
-      ...(selectedPapers.length > 0 && { library_papers_used: selectedPapers })
+      ...(selectedPapers.length > 0 && { library_papers_used: selectedPapers }),
+      // Track uploaded PDFs in config
+      ...(uploadedPaperIds.length > 0 && { uploaded_paper_ids: uploadedPaperIds })
     }
 
     const project = await createResearchProject(user.id, topic.trim(), generationConfig)
+    
+    // Link uploaded papers to the project via CitationService
+    if (uploadedPaperIds.length > 0) {
+      console.log(`📎 Linking ${uploadedPaperIds.length} uploaded papers to project ${project.id}`)
+      
+      for (const paperId of uploadedPaperIds) {
+        try {
+          await CitationService.add({
+            projectId: project.id,
+            sourceRef: { paperId },
+            reason: 'Uploaded PDF'
+          })
+          console.log(`  ✓ Linked paper ${paperId}`)
+        } catch (linkError) {
+          // Log but don't fail - the paper is already in the library
+          console.error(`  ✗ Failed to link paper ${paperId}:`, linkError)
+        }
+      }
+    }
     
     revalidatePath('/projects')
     
