@@ -177,7 +177,10 @@ export function quickRelevanceCheck(query: string, title: string, abstract?: str
   const matchCount = [...queryStemsSet].filter(stem => textStemsSet.has(stem)).length
   const matchRatio = queryStemsSet.size > 0 ? matchCount / queryStemsSet.size : 0
   
-  // At least 30% of query word stems must be present
-  // For a 5-word query, this means 2+ stemmed words must match
-  return matchRatio >= 0.3
+  // LENIENT threshold: Only 15% of query word stems need to match, OR at least 1 stem matches
+  // For a 10-word query, this means 2+ stemmed words must match
+  // For a 5-word query, this means 1+ stemmed word must match
+  // This is intentionally low - semantic reranking will filter out truly irrelevant papers
+  // The goal here is just to eliminate papers with ZERO topical overlap
+  return matchRatio >= 0.15 || matchCount >= 1
 }

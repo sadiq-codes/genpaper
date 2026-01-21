@@ -56,7 +56,9 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
     
     const handleTransaction = ({ transaction }: { transaction: { getMeta: (key: string) => unknown } }) => {
       // Re-render when citation style changes or papers are updated
-      if (transaction.getMeta('citationStyleChange') || transaction.getMeta('papersUpdated')) {
+      const styleChange = transaction.getMeta('citationStyleChange')
+      const papersUpdate = transaction.getMeta('papersUpdated')
+      if (styleChange || papersUpdate) {
         setStorageVersion(v => v + 1)
       }
     }
@@ -68,21 +70,17 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
   }, [editor])
   
   // Get citation style and papers from extension storage
-  // Wrap in useMemo with storageVersion dependency to ensure re-read after changes
-  const { style, citationNumber, papers } = useMemo(() => {
-    const storage = extension.storage as { 
-      citationStyle: CitationStyleType
-      citationNumbers: Map<string, number>
-      papers: ProjectPaper[]
-    }
-    
-    return {
-      style: storage?.citationStyle || 'apa',
-      citationNumber: storage?.citationNumbers?.get(attrs.id),
-      papers: storage?.papers || []
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [extension.storage, attrs.id, storageVersion])
+  // Read directly (not in useMemo) since storageVersion triggers re-render
+  const storage = extension.storage as { 
+    citationStyle: CitationStyleType
+    citationNumbers: Map<string, number>
+    papers: ProjectPaper[]
+  }
+  
+  // These will be re-read on every render (storageVersion change triggers re-render)
+  const style = storage?.citationStyle || 'apa'
+  const citationNumber = storage?.citationNumbers?.get(attrs.id)
+  const papers = storage?.papers || []
   
   // Look up paper from storage.papers (same as popover does)
   // This ensures we use the most up-to-date paper metadata

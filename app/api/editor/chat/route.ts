@@ -85,6 +85,7 @@ async function buildSystemPrompt(
  */
 interface RAGResult {
   context: string
+  chunks: Array<{ paper_id: string; content: string }>  // Raw chunks for mentioned papers context
   metadata: {
     chunksRetrieved: number
     chunksAvailable: number
@@ -99,8 +100,10 @@ async function getRAGContext(
   paperIds: string[]
 ): Promise<RAGResult> {
   if (paperIds.length === 0) {
+    console.log('[Chat API] RAG skipped - no paper IDs provided')
     return { 
       context: '', 
+      chunks: [],
       metadata: { chunksRetrieved: 0, chunksAvailable: 0, truncated: false, papersCovered: 0 } 
     }
   }
@@ -111,20 +114,28 @@ async function getRAGContext(
       maxPerPaper: 3,
     })
 
+    console.log('[Chat API] RAG query:', query?.slice(0, 100))
+    console.log('[Chat API] RAG paper IDs:', paperIds)
+
     const result = await retriever.retrieve({
       query,
       paperIds,
     })
 
+    console.log('[Chat API] RAG chunks retrieved:', result.chunks.length)
+
     if (result.chunks.length === 0) {
+      console.log('[Chat API] RAG returned 0 chunks - papers may not be ingested')
       return { 
         context: '', 
+        chunks: [],
         metadata: { chunksRetrieved: 0, chunksAvailable: 0, truncated: false, papersCovered: 0 } 
       }
     }
 
     // Count unique papers
     const uniquePapers = new Set(result.chunks.map(c => c.paper_id)).size
+    console.log('[Chat API] RAG covers', uniquePapers, 'unique papers')
     
     // Check if any chunks were truncated
     const truncatedCount = result.chunks.filter(c => c.content.length > 500).length
@@ -135,8 +146,15 @@ async function getRAGContext(
       `[${i + 1}] paper_id: ${chunk.paper_id}\n${chunk.content.slice(0, 500)}${chunk.content.length > 500 ? '...' : ''}`
     ).join('\n\n---\n\n')
     
+    // Return raw chunks for mentioned papers context
+    const chunks = result.chunks.map(c => ({
+      paper_id: c.paper_id,
+      content: c.content
+    }))
+    
     return {
       context,
+      chunks,
       metadata: {
         chunksRetrieved: result.chunks.length,
         chunksAvailable: result.chunks.length, // Could be more if we had totalAvailable
@@ -145,9 +163,10 @@ async function getRAGContext(
       }
     }
   } catch (error) {
-    console.error('RAG retrieval error:', error)
+    console.error('[Chat API] RAG retrieval error:', error)
     return { 
       context: '', 
+      chunks: [],
       metadata: { chunksRetrieved: 0, chunksAvailable: 0, truncated: false, papersCovered: 0 } 
     }
   }
@@ -261,6 +280,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get project papers from project_citations table
+    // Only include papers that have been processed (have chunks)
     const { data: projectPapers, error: papersError } = await supabase
       .from('project_citations')
       .select(`
@@ -270,7 +290,8 @@ export async function POST(request: NextRequest) {
           title,
           authors,
           year,
-          abstract
+          abstract,
+          processing_status
         )
       `)
       .eq('project_id', projectId)
@@ -279,14 +300,24 @@ export async function POST(request: NextRequest) {
       console.error('[Chat API] Error fetching project papers:', papersError)
     }
     
-    console.log('[Chat API] Found papers in project:', projectPapers?.length || 0)
+    console.log('[Chat API] Found papers in project_citations:', projectPapers?.length || 0)
 
-    type PaperData = { id: string; title: string; authors?: string[]; year?: number; abstract?: string }
-    const papers: PaperData[] = (projectPapers || [])
+    type PaperData = { id: string; title: string; authors?: string[]; year?: number; abstract?: string; processing_status?: string }
+    const allPapers: PaperData[] = (projectPapers || [])
       .map(pp => pp.papers as unknown as PaperData | null)
       .filter((p): p is PaperData => p !== null)
 
+    // Filter to only processed papers for RAG (papers with chunks)
+    // Pending/failed papers can still be shown in the UI but won't be used for RAG
+    const papers = allPapers.filter(p => p.processing_status === 'processed' || !p.processing_status)
+    const pendingPapers = allPapers.filter(p => p.processing_status === 'pending' || p.processing_status === 'processing')
+    
+    if (pendingPapers.length > 0) {
+      console.log('[Chat API] Papers still processing:', pendingPapers.map(p => p.title?.slice(0, 30)))
+    }
+
     const paperIds = papers.map(p => p.id)
+    console.log('[Chat API] Processed paper IDs available for RAG:', paperIds.length)
 
     // Get the last user message for RAG query
     const lastUserMessage = messages
@@ -305,17 +336,39 @@ export async function POST(request: NextRequest) {
     const ragResult = await getRAGContext(ragQuery, projectId, ragPaperIds)
 
     // Log RAG metadata for debugging
-    if (ragResult.metadata.truncated) {
-      console.log('[Chat API] RAG context truncated:', ragResult.metadata)
-    }
+    console.log('[Chat API] RAG result metadata:', ragResult.metadata)
 
     // Get paper type from project
     const paperType = project.paper_type || 'literatureReview'
 
-    // Filter mentioned papers for enhanced context
-    const mentionedPapers = mentionedPaperIds.length > 0
-      ? papers.filter(p => mentionedPaperIds.includes(p.id))
-      : undefined
+    // Fetch mentioned papers - try project papers first, then fetch directly if not found
+    let mentionedPapers: PaperData[] | undefined
+    if (mentionedPaperIds.length > 0) {
+      // First try to find in project papers
+      mentionedPapers = papers.filter(p => mentionedPaperIds.includes(p.id))
+      console.log('[Chat API] Mentioned papers found in project:', mentionedPapers.length, 'of', mentionedPaperIds.length)
+      
+      // If some mentioned papers are not in project, fetch them directly
+      const missingIds = mentionedPaperIds.filter(id => !mentionedPapers!.some(p => p.id === id))
+      if (missingIds.length > 0) {
+        console.log('[Chat API] Fetching missing mentioned papers directly:', missingIds)
+        const { data: fetchedPapers, error: fetchError } = await supabase
+          .from('papers')
+          .select('id, title, authors, year, abstract')
+          .in('id', missingIds)
+        
+        if (fetchError) {
+          console.error('[Chat API] Error fetching mentioned papers:', fetchError)
+        } else if (fetchedPapers && fetchedPapers.length > 0) {
+          console.log('[Chat API] Fetched', fetchedPapers.length, 'additional mentioned papers')
+          mentionedPapers = [...mentionedPapers, ...fetchedPapers]
+        }
+      }
+      
+      if (mentionedPapers.length === 0) {
+        mentionedPapers = undefined
+      }
+    }
 
     // Add context limitation note if RAG was truncated
     let ragContext = ragResult.context
@@ -324,6 +377,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Build system prompt using AUTOMAT framework
+    // Pass ragChunks so mentioned papers can include relevant excerpts
     const systemPrompt = await buildSystemPrompt(
       ragQuery || '',  // User message for action inference
       project.topic || 'Research',
@@ -333,7 +387,8 @@ export async function POST(request: NextRequest) {
       selectedText,
       ragContext,
       papers,
-      mentionedPapers
+      mentionedPapers,
+      ragResult.chunks  // Pass raw chunks for mentioned papers context
     )
 
     // Filter out tool-related parts from message history before converting

@@ -482,7 +482,8 @@ function formatBibFallback(paper: CitationPaper): string {
  */
 export function clearCaches(): void {
   inlineCache.clear()
-  // Don't clear cslJsonCache - paper data doesn't change with style
+  // Also clear CSL cache since paper metadata can change when user edits citations
+  cslJsonCache.clear()
 }
 
 /**

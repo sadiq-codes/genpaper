@@ -51,12 +51,16 @@ export async function createProjectAction(
   const hasOriginalResearch = formData.get('hasOriginalResearch') === 'true'
   const keyFindings = formData.get('keyFindings') as string | null
   
+  // Paper source selection
+  const useLibraryOnly = formData.get('useLibraryOnly') === 'true'
+  
   // Debug logging
   console.log('📝 createProjectAction received:', {
     topic: topic?.substring(0, 50),
     paperType,
     generationMode,
     hasOriginalResearch,
+    useLibraryOnly,
     selectedPapersCount: selectedPapers.length,
     uploadedPaperIdsCount: uploadedPaperIds.length
   })
@@ -91,6 +95,8 @@ export async function createProjectAction(
       },
       // Track generation mode for the editor to handle appropriately
       generation_mode: generationMode,
+      // Paper source selection - if true, only use library papers (no online search)
+      useLibraryOnly,
       // Include original research data in config (for empirical papers)
       // The main topic input serves as the research question for empirical papers
       ...(hasOriginalResearch && {

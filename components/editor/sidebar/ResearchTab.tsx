@@ -25,19 +25,41 @@ import {
   Users,
   Calendar,
   BookOpen,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react'
 import type { ProjectPaper } from '../types'
 import { cn } from '@/lib/utils'
+import type { ProcessingStatus } from '../hooks/usePaperProcessingStatus'
 
 // =============================================================================
 // TYPES
 // =============================================================================
+
+interface ProcessingSummary {
+  total: number
+  pending: number
+  processing: number
+  processed: number
+  failed: number
+  allProcessed: boolean
+}
 
 interface ResearchTabProps {
   papers: ProjectPaper[]
   onInsertCitation: (paper: ProjectPaper) => void
   onOpenLibrary: () => void
   onRemovePaper: (paperId: string, claimCount: number) => void
+  /** Processing status getter - returns status for a paper ID */
+  getProcessingStatus?: (paperId: string) => ProcessingStatus
+  /** Summary of processing status across all papers */
+  processingSummary?: ProcessingSummary
+  /** Callback to retry a failed paper */
+  onRetryPaper?: (paperId: string) => void
+  /** Whether status polling is active */
+  isPolling?: boolean
 }
 
 // =============================================================================
@@ -55,16 +77,99 @@ function formatAuthors(authors: string[] | undefined): string {
 // PAPER CARD COMPONENT
 // =============================================================================
 
+function ProcessingStatusBadge({ 
+  status, 
+  onRetry 
+}: { 
+  status: ProcessingStatus
+  onRetry?: () => void 
+}) {
+  if (status === 'processed') {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="h-3 w-3" />
+              Ready
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Paper processed and ready for citations</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
+  
+  if (status === 'processing') {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="flex items-center gap-1 text-[10px] text-blue-600 dark:text-blue-400">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Processing
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Extracting content and creating embeddings...</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
+  
+  if (status === 'failed') {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation()
+                onRetry?.()
+              }}
+              className="flex items-center gap-1 text-[10px] text-destructive hover:underline"
+            >
+              <AlertCircle className="h-3 w-3" />
+              Failed
+              {onRetry && <RefreshCw className="h-2.5 w-2.5 ml-0.5" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{onRetry ? 'Click to retry processing' : 'Processing failed'}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
+  
+  // pending
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin opacity-50" />
+            Pending
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>Waiting to be processed</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 function PaperCard({ 
   paper,
   onInsertCitation,
   onRemove,
+  processingStatus,
+  onRetry,
 }: { 
   paper: ProjectPaper
   onInsertCitation: () => void
   onRemove: () => void
+  processingStatus?: ProcessingStatus
+  onRetry?: () => void
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
+  const isReady = !processingStatus || processingStatus === 'processed'
 
   return (
     <div className="group px-2 py-1.5 first:pt-2 last:pb-2">
@@ -76,10 +181,15 @@ function PaperCard({
         <div className="absolute left-0 top-3 bottom-3 w-0.5 rounded-full bg-primary/40 opacity-0 group-hover:opacity-100 transition-opacity" />
         
         <div className="p-3 pl-4 min-w-0 overflow-hidden">
-          {/* Title - Primary focus */}
-          <h4 className="text-sm font-medium leading-snug mb-2 text-foreground line-clamp-2 break-words">
-            {paper.title}
-          </h4>
+          {/* Title row with processing status */}
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <h4 className="text-sm font-medium leading-snug text-foreground line-clamp-2 break-words flex-1">
+              {paper.title}
+            </h4>
+            {processingStatus && processingStatus !== 'processed' && (
+              <ProcessingStatusBadge status={processingStatus} onRetry={onRetry} />
+            )}
+          </div>
           
           {/* Meta row: Authors, Year */}
           <div className="flex items-center gap-x-3 text-xs text-muted-foreground mb-2 min-w-0">
@@ -138,12 +248,15 @@ function PaperCard({
                     size="sm" 
                     className="h-7 px-2.5 text-xs font-medium"
                     onClick={onInsertCitation}
+                    disabled={!isReady}
                   >
                     <Quote className="h-3 w-3 mr-1.5" />
                     Cite
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Insert citation at cursor</TooltipContent>
+                <TooltipContent>
+                  {isReady ? 'Insert citation at cursor' : 'Paper still processing...'}
+                </TooltipContent>
               </Tooltip>
             </TooltipProvider>
 
@@ -221,7 +334,16 @@ export function ResearchTab({
   onInsertCitation,
   onOpenLibrary,
   onRemovePaper,
+  getProcessingStatus,
+  processingSummary,
+  onRetryPaper,
+  isPolling,
 }: ResearchTabProps) {
+  // Calculate processing stats
+  const hasProcessingPapers = processingSummary && 
+    (processingSummary.pending > 0 || processingSummary.processing > 0)
+  const hasFailedPapers = processingSummary && processingSummary.failed > 0
+  
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
@@ -253,6 +375,30 @@ export function ResearchTab({
             </Tooltip>
           </TooltipProvider>
         </div>
+        
+        {/* Processing status indicator */}
+        {processingSummary && papers.length > 0 && (hasProcessingPapers || hasFailedPapers) && (
+          <div className="mt-2 flex items-center gap-2 text-xs">
+            {hasProcessingPapers && (
+              <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Processing {processingSummary.processing + processingSummary.pending}/{processingSummary.total}
+              </span>
+            )}
+            {hasFailedPapers && (
+              <span className="flex items-center gap-1 text-destructive">
+                <AlertCircle className="h-3 w-3" />
+                {processingSummary.failed} failed
+              </span>
+            )}
+            {!hasProcessingPapers && !hasFailedPapers && processingSummary.allProcessed && (
+              <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="h-3 w-3" />
+                All papers ready
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Papers List */}
@@ -268,6 +414,8 @@ export function ResearchTab({
                   paper={paper}
                   onInsertCitation={() => onInsertCitation(paper)}
                   onRemove={() => onRemovePaper(paper.id, 0)}
+                  processingStatus={getProcessingStatus?.(paper.id)}
+                  onRetry={onRetryPaper ? () => onRetryPaper(paper.id) : undefined}
                 />
               ))}
             </div>

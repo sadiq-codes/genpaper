@@ -36,6 +36,8 @@ import {
   useEditorChat,
   useBackgroundPaperSearch,
 } from "./hooks"
+import { useResizablePanel } from "./hooks/useResizablePanel"
+import { usePaperProcessingStatus } from "./hooks/usePaperProcessingStatus"
 
 // CitationStyleType now accepts any CSL style ID string
 export type CitationStyleType = string
@@ -79,6 +81,14 @@ export function ResearchEditor({
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
+  
+  // Resizable sidebar
+  const { width: sidebarWidth, isDragging, handleProps } = useResizablePanel({
+    minWidth: 300,
+    maxWidth: 600,
+    defaultWidth: 400,
+    storageKey: 'genpaper-sidebar-width',
+  })
 
   // ============================================================================
   // Custom Hooks
@@ -111,6 +121,13 @@ export function ResearchEditor({
     initialPapers,
   })
 
+  // Update a paper's metadata locally (used when user edits a citation)
+  const handlePaperUpdated = useCallback((paperId: string, updates: Partial<ProjectPaper>) => {
+    setPapers(prev =>
+      prev.map(p => (p.id === paperId ? { ...p, ...updates } : p))
+    )
+  }, [setPapers])
+
   // Background paper search for write mode
   // Note: isSearching could be used for sidebar loading indicator in future
   const { isSearching: _isSearchingPapers } = useBackgroundPaperSearch({
@@ -120,6 +137,27 @@ export function ResearchEditor({
     maxPapers: 10,
     onPapersFound: (foundPapers) => {
       setPapers(prev => [...prev, ...foundPapers])
+    },
+  })
+
+  // Paper processing status tracking
+  // Polls for status updates when papers are being processed
+  const processingStatus = usePaperProcessingStatus({
+    projectId,
+    enabled: isWriteMode && papers.length > 0,
+    pollInterval: 3000,
+    stopWhenComplete: true,
+    onAllProcessed: () => {
+      toast.success("All papers processed!", {
+        description: "Your papers are ready for citations and autocomplete.",
+        duration: 4000,
+      })
+    },
+    onPaperFailed: (paperId) => {
+      const paper = papers.find(p => p.id === paperId)
+      toast.error(`Paper processing failed`, {
+        description: paper?.title?.slice(0, 50) || paperId,
+      })
     },
   })
 
@@ -175,10 +213,41 @@ export function ResearchEditor({
     if (!isWriteMode || !projectId || !projectTopic) return
     
     toast.success("Ready to write!", {
-      description: "Start writing your paper. We're finding relevant sources in the background.",
+      description: "Start writing your paper. We're processing your sources in the background.",
       duration: 5000,
     })
   }, [isWriteMode, projectId, projectTopic])
+
+  // Write mode: Trigger background processing of project papers
+  useEffect(() => {
+    if (!isWriteMode || !projectId) return
+    
+    // Start background processing of all papers in this project
+    const triggerProcessing = async () => {
+      try {
+        console.log('[ResearchEditor] Triggering background paper processing for project:', projectId)
+        const response = await fetch('/api/papers/process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId,
+            waitForCompletion: false, // Don't wait - process in background
+          }),
+        })
+        
+        if (!response.ok) {
+          console.error('[ResearchEditor] Background processing trigger failed:', await response.text())
+        } else {
+          const result = await response.json()
+          console.log('[ResearchEditor] Background processing started:', result)
+        }
+      } catch (error) {
+        console.error('[ResearchEditor] Failed to trigger background processing:', error)
+      }
+    }
+    
+    triggerProcessing()
+  }, [isWriteMode, projectId])
 
   // Sync papers and projectId with tool executor for markdown processing and citation saving
   useEffect(() => {
@@ -358,6 +427,10 @@ export function ResearchEditor({
       onInsertCitation={handleInsertCitation}
       onOpenLibrary={() => setLibraryDrawerOpen(true)}
       onRemovePaper={removePaper}
+      getProcessingStatus={processingStatus.getStatus}
+      processingSummary={processingStatus.summary}
+      onRetryPaper={processingStatus.retryPaper}
+      isProcessingPolling={processingStatus.isPolling}
     />
   )
 
@@ -407,11 +480,35 @@ export function ResearchEditor({
         {!isMobile && (
           <div
             className={cn(
-              "transition-all duration-300 ease-in-out overflow-hidden",
-              sidebarOpen ? "w-[380px] min-w-[380px]" : "w-0 min-w-0"
+              "relative flex-shrink-0 overflow-hidden",
+              !isDragging && "transition-all duration-300 ease-in-out",
+              !sidebarOpen && "w-0 min-w-0"
             )}
+            style={{ width: sidebarOpen ? sidebarWidth : 0 }}
           >
             <div className="h-full p-3 pr-0">{sidebarContent}</div>
+            
+            {/* Resize Handle */}
+            {sidebarOpen && (
+              <div
+                {...handleProps}
+                className={cn(
+                  "absolute top-0 right-0 w-1 h-full cursor-col-resize z-10",
+                  "hover:bg-primary/20 active:bg-primary/30",
+                  "transition-colors duration-150",
+                  isDragging && "bg-primary/30"
+                )}
+                title="Drag to resize"
+              >
+                {/* Visual indicator on hover */}
+                <div className={cn(
+                  "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+                  "w-1 h-8 rounded-full bg-border",
+                  "opacity-0 hover:opacity-100 transition-opacity",
+                  isDragging && "opacity-100 bg-primary"
+                )} />
+              </div>
+            )}
           </div>
         )}
 
@@ -450,6 +547,7 @@ export function ResearchEditor({
               onInsertCitation={() => setActiveTab("research")}
               onAiEdit={handleAiEdit}
               onChat={handleChatFromToolbar}
+              onPaperUpdated={handlePaperUpdated}
               projectId={projectId}
               projectTopic={projectTitle}
               papers={papers}

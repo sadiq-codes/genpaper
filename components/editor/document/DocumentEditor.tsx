@@ -38,6 +38,7 @@ import { editorToMarkdown } from '../utils/tiptap-to-markdown'
 import type { InstanceQuotesMap } from '../utils/markdown-to-tiptap'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
+import { isNumericStyle, clearCaches as clearCitationCaches } from '@/lib/citations/local-formatter'
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
@@ -102,6 +103,8 @@ interface DocumentEditorProps {
   onAiEdit: (text: string) => void
   onChat: (text: string) => void
   onInsertMath?: () => void
+  /** Called when a paper's citation metadata is edited (title/authors/year/etc.) */
+  onPaperUpdated?: (paperId: string, updates: Partial<ProjectPaper>) => void
   // Context for smart completion
   projectId?: string
   projectTopic?: string
@@ -127,6 +130,7 @@ export function DocumentEditor({
   onAiEdit,
   onChat,
   onInsertMath: _onInsertMath,
+  onPaperUpdated,
   projectId = '',
   projectTopic = '',
   papers = [],
@@ -291,7 +295,7 @@ export function DocumentEditor({
     content: DEFAULT_CONTENT, // Initial empty state - real content set via effect
     editorProps: {
       attributes: {
-        class: 'prose prose-lg max-w-none focus:outline-none min-h-[calc(100vh-200px)] px-4 pt-3 pb-6 sm:px-8 sm:pt-4 sm:pb-8 md:px-16 md:pt-6 lg:px-24 lg:pt-8 lg:pb-12',
+        class: 'prose prose-lg max-w-5xl mx-auto focus:outline-none min-h-[calc(100vh-200px)] px-4 pt-3 pb-6 sm:px-8 sm:pt-4 sm:pb-8 md:px-12 md:pt-6 lg:px-16 lg:pt-8 lg:pb-12',
       },
     },
     onUpdate: ({ editor }) => {
@@ -360,12 +364,73 @@ export function DocumentEditor({
     prevCitationStyleRef.current = citationStyle
     editor.commands.setCitationStyle(citationStyle)
   }, [editor, citationStyle])
+
+  // Rebuild numeric citation numbers map when citations are added/removed.
+  // Without this, IEEE/Vancouver inline citations can show "[?]" until refresh
+  // because numbers are only built when the style is set.
+  const prevCitationSignatureRef = useRef<string>('')
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    if (!isNumericStyle(citationStyle)) return
+
+    const computeSignature = (): string => {
+      const ids: string[] = []
+      const seen = new Set<string>()
+      editor.state.doc.descendants((node) => {
+        if (node.type.name === 'citation' && node.attrs?.id) {
+          const id = String(node.attrs.id)
+          if (!seen.has(id)) {
+            seen.add(id)
+            ids.push(id)
+          }
+        }
+      })
+      return ids.join('|')
+    }
+
+    // Initialize signature
+    prevCitationSignatureRef.current = computeSignature()
+
+    const handleTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (!transaction.docChanged) return
+      const nextSig = computeSignature()
+      if (nextSig === prevCitationSignatureRef.current) return
+      prevCitationSignatureRef.current = nextSig
+      editor.commands.setCitationStyle(citationStyle)
+    }
+
+    editor.on('transaction', handleTransaction)
+    return () => {
+      editor.off('transaction', handleTransaction)
+    }
+  }, [editor, citationStyle])
   
   // Sync papers to Citation extension storage
   // This allows CitationNodeView to look up paper metadata at render time,
   // ensuring citations always display correctly even when node.attrs are incomplete
+  const prevPapersRef = useRef<ProjectPaper[]>([])
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
+    
+    // Detect if paper metadata has changed (not just array reference)
+    const papersChanged = papers.length !== prevPapersRef.current.length ||
+      papers.some((p, i) => {
+        const prev = prevPapersRef.current[i]
+        return !prev || p.id !== prev.id || 
+          p.title !== prev.title || 
+          p.year !== prev.year ||
+          JSON.stringify(p.authors) !== JSON.stringify(prev?.authors)
+      })
+    
+    if (papersChanged) {
+      // Clear citation formatter caches so inline text regenerates with new metadata
+      clearCitationCaches()
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[DocumentEditor] Papers changed, cleared citation caches`)
+      }
+    }
+    
+    prevPapersRef.current = papers
     
     // Update Citation extension storage with current papers
     editor.commands.setPapers(papers)
@@ -583,7 +648,12 @@ export function DocumentEditor({
           onChat={onChat}
         />
         <EditorContent editor={editor} className="h-full" />
-        <CitationPopover editor={editor} projectId={projectId} papers={papers} />
+        <CitationPopover
+          editor={editor}
+          projectId={projectId}
+          papers={papers}
+          onPaperUpdated={onPaperUpdated}
+        />
         {/* CitationUpdater removed - citations now format locally via CitationNodeView */}
       </div>
 

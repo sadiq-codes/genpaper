@@ -1,6 +1,6 @@
 'use client'
 
-import { Settings2, FlaskConical, Lightbulb } from 'lucide-react'
+import { Settings2, FlaskConical, Lightbulb, Library, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -19,6 +19,8 @@ interface AdvancedOptionsPopoverProps {
   onKeyFindingsChange: (value: string) => void
   showKeyFindings: boolean
   showOriginalResearchToggle: boolean
+  useLibraryOnly: boolean
+  onUseLibraryOnlyChange: (value: boolean) => void
   disabled?: boolean
 }
 
@@ -29,10 +31,12 @@ export function AdvancedOptionsPopover({
   onKeyFindingsChange,
   showKeyFindings,
   showOriginalResearchToggle,
+  useLibraryOnly,
+  onUseLibraryOnlyChange,
   disabled,
 }: AdvancedOptionsPopoverProps) {
-  // Show indicator dot if original research is enabled
-  const hasActiveSettings = hasOriginalResearch
+  // Show indicator dot if any setting is enabled
+  const hasActiveSettings = hasOriginalResearch || useLibraryOnly
 
   return (
     <Popover>
@@ -121,11 +125,42 @@ export function AdvancedOptionsPopover({
             </div>
           )}
 
+          {/* Paper Source Toggle */}
+          <div className="space-y-3 pt-2 border-t border-border/50">
+            <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+              <Checkbox
+                id="useLibraryOnly"
+                checked={useLibraryOnly}
+                onCheckedChange={(checked) => onUseLibraryOnlyChange(checked === true)}
+                disabled={disabled}
+                className="mt-0.5"
+              />
+              <div className="space-y-1">
+                <Label
+                  htmlFor="useLibraryOnly"
+                  className="text-sm font-medium cursor-pointer leading-none flex items-center gap-1.5"
+                >
+                  <Library className="h-3.5 w-3.5" />
+                  Use only my papers
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Only use papers you&apos;ve uploaded or added. Don&apos;t search online databases.
+                </p>
+              </div>
+            </div>
+            
+            {!useLibraryOnly && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
+                <Globe className="h-3.5 w-3.5" />
+                <span>Will also search academic databases for relevant papers</span>
+              </div>
+            )}
+          </div>
+
           {/* Show message if no options available */}
-          {!showOriginalResearchToggle && (
-            <div className="py-4 text-center text-sm text-muted-foreground">
-              <p>No additional options for this paper type.</p>
-              <p className="text-xs mt-1">Literature reviews synthesize existing research.</p>
+          {!showOriginalResearchToggle && !useLibraryOnly && (
+            <div className="py-2 text-center text-xs text-muted-foreground">
+              <p>Literature reviews synthesize existing research.</p>
             </div>
           )}
         </div>

@@ -545,8 +545,16 @@ export async function ingestPaper(
     return { paperId: newPaperId, isNew: true, status: 'processed' }
   }
 
-  // Embedding is now generated during createPaperMetadata, so we're done
-    return { paperId: newPaperId, isNew: true, status: 'processed' }
+  // No content provided - this is a metadata-only paper
+  // Mark as 'processed' since there's nothing more to process
+  // (embedding was already generated from title+abstract in createPaperMetadata)
+  const supabase = getServiceClient()
+  await supabase
+    .from('papers')
+    .update({ processing_status: 'processed' })
+    .eq('id', newPaperId)
+  
+  return { paperId: newPaperId, isNew: true, status: 'processed' }
 }
 
 /**
@@ -581,6 +589,7 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
   if (paperData.publisher) metadata.publisher = paperData.publisher
   
   // Insert paper metadata with embedding, authors, and ownership
+  // processing_status starts as 'pending' - will be updated when content is processed
   const { data, error } = await supabase
     .from('papers')
     .insert({
@@ -596,7 +605,8 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
       embedding: embedding, // Generate embedding immediately to satisfy NOT NULL constraint
       metadata: Object.keys(metadata).length > 0 ? metadata : null, // Store bibliographic fields
       owner_id: ownerId || null, // NULL = global paper, UUID = user-uploaded
-      is_public: false // User papers are private by default
+      is_public: false, // User papers are private by default
+      processing_status: 'pending' // Will be updated to 'processed' after content ingestion
     })
     .select('id')
     .single()
@@ -615,21 +625,79 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
 
 /**
  * Process content immediately (synchronous)
+ * Creates chunks and updates processing_status to 'processed'
  */
 async function processContentImmediately(paperId: string, fullText: string): Promise<void> {
-  // Use the new content ingestion system
-  await createChunksForPaper(paperId, fullText)
+  const supabase = getServiceClient()
+  
+  try {
+    // Update status to processing
+    await supabase
+      .from('papers')
+      .update({ processing_status: 'processing' })
+      .eq('id', paperId)
+    
+    // Create chunks from content
+    await createChunksForPaper(paperId, fullText)
+    
+    // Update status to processed
+    await supabase
+      .from('papers')
+      .update({ processing_status: 'processed' })
+      .eq('id', paperId)
+  } catch (err) {
+    // Update status to failed on error
+    await supabase
+      .from('papers')
+      .update({ processing_status: 'failed' })
+      .eq('id', paperId)
+    throw err
+  }
 }
 
 /**
  * Queue PDF processing
+ * Extracts text from PDF and creates chunks, managing processing_status throughout
  */
 async function queuePdfProcessing(paperId: string, pdfUrl: string, _title: string, _priority: 'low' | 'normal' | 'high'): Promise<void> {
-  // Direct processing via unified helper (no background queue)
-  const { getOrExtractFullText } = await import('@/lib/services/pdf-processor')
-  const text = await getOrExtractFullText({ pdfUrl, paperId, ocr: true, timeoutMs: 60000 })
-  if (text && text.length > 100) {
-    await processContentImmediately(paperId, text)
+  const supabase = getServiceClient()
+  
+  try {
+    // Update status to processing
+    await supabase
+      .from('papers')
+      .update({ processing_status: 'processing' })
+      .eq('id', paperId)
+    
+    // Direct processing via unified helper (no background queue)
+    const { getOrExtractFullText } = await import('@/lib/services/pdf-processor')
+    const text = await getOrExtractFullText({ pdfUrl, paperId, ocr: true, timeoutMs: 60000 })
+    
+    if (text && text.length > 100) {
+      // Create chunks - processContentImmediately will update status to 'processed'
+      await createChunksForPaper(paperId, text)
+      
+      // Update status to processed
+      await supabase
+        .from('papers')
+        .update({ processing_status: 'processed' })
+        .eq('id', paperId)
+    } else {
+      // No usable content extracted - mark as processed (metadata only)
+      // This is not a failure, just means we only have metadata
+      await supabase
+        .from('papers')
+        .update({ processing_status: 'processed' })
+        .eq('id', paperId)
+    }
+  } catch (err) {
+    // Update status to failed on error
+    await supabase
+      .from('papers')
+      .update({ processing_status: 'failed' })
+      .eq('id', paperId)
+    // Don't throw - PDF processing failure shouldn't break paper ingestion
+    console.error(`[queuePdfProcessing] Failed to process PDF for ${paperId}:`, err)
   }
 }
 

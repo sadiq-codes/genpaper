@@ -16,6 +16,7 @@ const serverSchema = z.object({
   AI_MODEL: z.string().optional(), // e.g., 'gpt-4o', 'gpt-4o-mini' - defaults to 'gpt-4o'
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   GROBID_URL: z.string().url().optional(),
+  ENABLE_GROBID: z.enum(['0', '1']).optional(), // '1' to enable, '0' to disable
   ENABLE_SERVER_OCR: z.string().optional(),
   CORE_API_KEY: z.string().optional(),
   CONTACT_EMAIL: z.string().email().optional(),

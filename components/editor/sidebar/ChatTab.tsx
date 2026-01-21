@@ -302,18 +302,33 @@ export function ChatTab({
     mentionedPaperIds: string[], 
     attachedImages: string[]
   ) => {
+    // Build display content with paper mentions visible
+    let displayContent = content
+    
+    // Add paper mention indicators to the message for visibility
+    if (mentionedPaperIds.length > 0 && papers) {
+      const mentionedPaperTitles = mentionedPaperIds
+        .map(id => papers.find(p => p.id === id)?.title)
+        .filter(Boolean)
+      
+      if (mentionedPaperTitles.length > 0) {
+        const paperRefs = mentionedPaperTitles.map(t => `📄 *${t}*`).join('\n')
+        displayContent = `${content}\n\n**Referenced:**\n${paperRefs}`
+      }
+    }
+    
     // If there are mentions or images, send as object
     if (mentionedPaperIds.length > 0 || attachedImages.length > 0) {
       onSendMessage({
-        content,
+        content: displayContent,
         mentionedPaperIds,
         attachedImages,
       })
     } else {
       // Backward compatible: just send content string
-      onSendMessage(content)
+      onSendMessage(displayContent)
     }
-  }, [onSendMessage])
+  }, [onSendMessage, papers])
 
   return (
     <div className="flex flex-col h-full overflow-hidden">

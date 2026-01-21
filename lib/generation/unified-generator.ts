@@ -227,25 +227,38 @@ export async function generateFullSection(
  * 
  * @param onBatchProgress - Called when a section starts (completed = sections done so far)
  * @param onSectionComplete - Called when a section finishes with its content
+ * @param onStreamChunk - Called with each text chunk as it streams (for live preview)
  */
 export async function generateMultipleSectionsUnified(
   contexts: SectionContext[],
   options: BuildPromptOptions = {},
   onBatchProgress?: (completed: number, total: number, currentSection: string) => void,
-  onSectionComplete?: (sectionTitle: string, content: string, sectionIndex: number, total: number) => void
+  onSectionComplete?: (sectionTitle: string, content: string, sectionIndex: number, total: number) => void,
+  onStreamChunk?: (sectionTitle: string, chunk: string, fullContentSoFar: string) => void
 ): Promise<UnifiedGenerationResult[]> {
   const results: UnifiedGenerationResult[] = []
   
   for (let i = 0; i < contexts.length; i++) {
+    const sectionTitle = contexts[i].title || contexts[i].sectionKey
     onBatchProgress?.(i, contexts.length, contexts[i].sectionKey)
+    
+    // Track accumulated content for this section to pass to streaming callback
+    let sectionContent = ''
+    
     const result = await generateWithUnifiedTemplate({
       context: contexts[i],
-      options
+      options,
+      onStreamEvent: onStreamChunk ? (event) => {
+        if (event.type === 'sentence') {
+          sectionContent += event.data.text
+          onStreamChunk(sectionTitle, event.data.text, sectionContent)
+        }
+      } : undefined
     })
     results.push(result)
     
     // Notify that section is complete with content
-    onSectionComplete?.(contexts[i].title || contexts[i].sectionKey, result.content, i + 1, contexts.length)
+    onSectionComplete?.(sectionTitle, result.content, i + 1, contexts.length)
   }
   
   return results

@@ -384,12 +384,23 @@ export async function parallelSearch(
   )
   console.log(`🔍 After quick relevance filter: ${preFiltered.length} papers`)
   
+  // MINIMUM PAPER GUARANTEE: If filtering was too aggressive, fall back to deduplicated list
+  // This ensures we don't lose all papers due to overly strict filtering
+  const MIN_PAPERS_GUARANTEE = Math.min(20, Math.ceil(deduplicated.length * 0.1)) // At least 10% or 20 papers
+  const papersToRank = preFiltered.length >= MIN_PAPERS_GUARANTEE 
+    ? preFiltered 
+    : deduplicated
+  
+  if (preFiltered.length < MIN_PAPERS_GUARANTEE && deduplicated.length > 0) {
+    console.log(`⚠️ Quick filter too aggressive (${preFiltered.length} < ${MIN_PAPERS_GUARANTEE}), using all ${deduplicated.length} deduplicated papers`)
+  }
+  
   // If we have enough papers after pre-filtering, use semantic re-ranking
   // This provides much better relevance than BM25 alone
-  if (preFiltered.length >= 3) {
+  if (papersToRank.length >= 3) {
     try {
       // Prepare papers for semantic re-ranking
-      const papersForRerank = preFiltered.map(p => ({
+      const papersForRerank = papersToRank.map(p => ({
         ...p,
         id: p.canonical_id // semantic-rerank expects 'id' field
       }))
@@ -433,7 +444,7 @@ export async function parallelSearch(
   }
   
   // Fallback: BM25 ranking (for when semantic fails or too few papers)
-  const ranked = rankPapers(preFiltered.length > 0 ? preFiltered : deduplicated, primaryQuery, options)
+  const ranked = rankPapers(papersToRank.length > 0 ? papersToRank : deduplicated, primaryQuery, options)
   
   // Return top results
   const topResults = ranked.slice(0, maxResults)

@@ -239,8 +239,8 @@ pre code .hljs-emphasis {
 }
 
 /* Prose styling for markdown preview - Light mode */
+/* Note: max-width is controlled by Tailwind utilities on the element */
 .prose {
-  max-width: none;
   color: var(--foreground);
 }
 
@@ -1185,6 +1185,20 @@ kbd {
 /* Ensure tippy tooltip for mentions appears above everything */
 .tippy-box[data-placement^='bottom'] {
   @apply z-[9999];
+}
+
+/* =============================================================================
+   Resizable Panel Handle
+   ============================================================================= */
+
+/* Prevent text selection while dragging */
+.resize-dragging {
+  user-select: none;
+  cursor: col-resize !important;
+}
+
+.resize-dragging * {
+  cursor: col-resize !important;
 }
 
 /* =============================================================================

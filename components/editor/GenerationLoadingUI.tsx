@@ -31,7 +31,7 @@ export interface ProgressStage {
   message?: string
 }
 
-interface CompletedSection {
+export interface CompletedSection {
   title: string
   content: string
 }
@@ -44,6 +44,8 @@ interface GenerationLoadingUIProps {
   stages: ProgressStage[]
   papersFound: number
   currentSection: string | null
+  /** Content of the section currently being written (for live preview) */
+  currentSectionContent?: string
   error: string | null
   timeEstimate: string
   generatedContent?: string
@@ -170,12 +172,12 @@ function PaperSkeleton({ currentSection }: { currentSection: string | null }) {
 // =============================================================================
 
 function LiveContentPreview({ 
-  content, 
   currentSection,
+  currentSectionContent = "",
   completedSections = []
 }: { 
-  content: string
   currentSection: string | null
+  currentSectionContent: string
   completedSections: CompletedSection[]
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -186,23 +188,23 @@ function LiveContentPreview({
     if (contentEndRef.current) {
       contentEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
     }
-  }, [content, completedSections.length])
+  }, [currentSectionContent, completedSections.length])
 
   // Simple markdown rendering for headings and paragraphs
-  const renderContent = (text: string) => {
+  const renderContent = (text: string, isStreaming = false) => {
     const lines = text.split('\n')
     return lines.map((line, i) => {
       const trimmed = line.trim()
       
       // Skip empty lines but preserve spacing
       if (!trimmed) {
-        return <div key={i} className="h-3" />
+        return <div key={i} className="h-2" />
       }
       
       // H1
       if (trimmed.startsWith('# ')) {
         return (
-          <h1 key={i} className="text-2xl font-bold mt-6 mb-3 first:mt-0 text-foreground">
+          <h1 key={i} className="text-xl font-bold mt-4 mb-2 first:mt-0 text-foreground">
             {trimmed.slice(2)}
           </h1>
         )
@@ -211,8 +213,7 @@ function LiveContentPreview({
       // H2
       if (trimmed.startsWith('## ')) {
         return (
-          <h2 key={i} className="text-xl font-semibold mt-5 mb-2 text-foreground flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+          <h2 key={i} className="text-lg font-semibold mt-3 mb-2 text-foreground">
             {trimmed.slice(3)}
           </h2>
         )
@@ -221,7 +222,7 @@ function LiveContentPreview({
       // H3
       if (trimmed.startsWith('### ')) {
         return (
-          <h3 key={i} className="text-lg font-medium mt-4 mb-2 text-foreground">
+          <h3 key={i} className="text-base font-medium mt-2 mb-1 text-foreground">
             {trimmed.slice(4)}
           </h3>
         )
@@ -229,7 +230,10 @@ function LiveContentPreview({
       
       // Regular paragraph
       return (
-        <p key={i} className="text-sm text-muted-foreground leading-relaxed mb-2">
+        <p key={i} className={cn(
+          "text-sm leading-relaxed mb-1.5",
+          isStreaming ? "text-foreground" : "text-muted-foreground"
+        )}>
           {trimmed}
         </p>
       )
@@ -237,21 +241,38 @@ function LiveContentPreview({
   }
 
   return (
-    <div ref={scrollRef} className="p-6 space-y-2">
-      {/* Render completed content */}
-      {content && renderContent(content)}
+    <div ref={scrollRef} className="p-6 space-y-4">
+      {/* Render completed sections */}
+      {completedSections.map((section, idx) => (
+        <div key={idx} className="space-y-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+            <h2 className="text-lg font-semibold text-foreground">{section.title}</h2>
+          </div>
+          <div className="pl-6 border-l-2 border-green-500/20">
+            {renderContent(section.content)}
+          </div>
+        </div>
+      ))}
       
       {/* Show current section being written */}
       {currentSection && (
-        <div className="mt-4 p-4 rounded-lg bg-primary/5 border border-primary/20">
+        <div className="space-y-2">
           <div className="flex items-center gap-2 text-primary">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm font-medium">Writing: {currentSection}...</span>
+            <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
+            <h2 className="text-lg font-semibold">Writing: {currentSection}</h2>
           </div>
-          <div className="mt-3 space-y-2">
-            <ShimmerBar className="h-3 w-full" />
-            <ShimmerBar className="h-3 w-5/6" delay={50} />
-            <ShimmerBar className="h-3 w-4/5" delay={100} />
+          <div className="pl-6 border-l-2 border-primary/30">
+            {currentSectionContent ? (
+              renderContent(currentSectionContent, true)
+            ) : (
+              <div className="space-y-2 py-2">
+                <ShimmerBar className="h-3 w-full" />
+                <ShimmerBar className="h-3 w-5/6" delay={50} />
+                <ShimmerBar className="h-3 w-4/5" delay={100} />
+                <ShimmerBar className="h-3 w-11/12" delay={150} />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -277,7 +298,7 @@ function StatusPanel({
   timeEstimate,
   onCancel,
   onRetry,
-}: Omit<GenerationLoadingUIProps, 'currentStage' | 'generatedContent' | 'completedSections'>) {
+}: Omit<GenerationLoadingUIProps, 'currentStage' | 'currentSectionContent' | 'generatedContent' | 'completedSections'>) {
   return (
     <div className="flex flex-col h-full p-6 space-y-6">
       {/* Header */}
@@ -402,14 +423,15 @@ function StatusPanel({
 export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
   const { 
     currentStage, 
-    currentSection, 
-    generatedContent = "", 
+    currentSection,
+    currentSectionContent = "",
     completedSections = [] 
   } = props
 
-  // Show live content when we're in generation stage and have content
-  const showLiveContent = currentStage === 'generation' || currentStage === 'quality' || currentStage === 'saving' || currentStage === 'complete'
-  const hasContent = generatedContent.length > 0 || completedSections.length > 0
+  // Show live content when we're in generation stage and have content or are actively writing
+  const isGenerating = currentStage === 'generation' || currentStage === 'quality' || currentStage === 'saving' || currentStage === 'complete'
+  const hasContent = completedSections.length > 0 || (currentSection && currentSectionContent.length > 0)
+  const showLiveContent = isGenerating && (hasContent || currentSection)
 
   return (
     <div className="absolute inset-0 z-50 bg-background/98 backdrop-blur-sm flex items-center justify-center p-4">
@@ -418,10 +440,10 @@ export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
           {/* Left: Paper Preview or Skeleton */}
           <div className="flex-1 border-b md:border-b-0 md:border-r overflow-hidden bg-muted/30">
             <ScrollArea className="h-full">
-              {showLiveContent && hasContent ? (
+              {showLiveContent ? (
                 <LiveContentPreview 
-                  content={generatedContent} 
                   currentSection={currentSection}
+                  currentSectionContent={currentSectionContent}
                   completedSections={completedSections}
                 />
               ) : (

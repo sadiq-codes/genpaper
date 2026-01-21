@@ -15,6 +15,7 @@ import type {
   Citation, 
 } from '../types'
 import type { PendingToolCall } from '../hooks/useEditorChat'
+import type { ProcessingStatus } from '../hooks/usePaperProcessingStatus'
 import { cn } from '@/lib/utils'
 
 // Re-export type for external use
@@ -44,6 +45,15 @@ function TabLoadingSkeleton() {
 // Import type for ChatSendOptions
 import type { ChatSendOptions } from './ChatTab'
 
+interface ProcessingSummary {
+  total: number
+  pending: number
+  processing: number
+  processed: number
+  failed: number
+  allProcessed: boolean
+}
+
 interface EditorSidebarProps {
   activeTab: 'chat' | 'research'
   onTabChange: (tab: 'chat' | 'research') => void
@@ -65,6 +75,11 @@ interface EditorSidebarProps {
   onInsertCitation: (citation: Citation) => void
   onOpenLibrary: () => void
   onRemovePaper: (paperId: string, claimCount: number) => void
+  // Processing status props
+  getProcessingStatus?: (paperId: string) => ProcessingStatus
+  processingSummary?: ProcessingSummary
+  onRetryPaper?: (paperId: string) => void
+  isProcessingPolling?: boolean
   // History
   onOpenHistory?: () => void
 }
@@ -85,6 +100,10 @@ export function EditorSidebar({
   onInsertCitation,
   onOpenLibrary,
   onRemovePaper,
+  getProcessingStatus,
+  processingSummary,
+  onRetryPaper,
+  isProcessingPolling,
   onOpenHistory,
 }: EditorSidebarProps) {
   return (
@@ -165,6 +184,10 @@ export function EditorSidebar({
             })}
             onOpenLibrary={onOpenLibrary}
             onRemovePaper={onRemovePaper}
+            getProcessingStatus={getProcessingStatus}
+            processingSummary={processingSummary}
+            onRetryPaper={onRetryPaper}
+            isPolling={isProcessingPolling}
           />
         )}
       </div>

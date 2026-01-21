@@ -194,8 +194,11 @@ export async function generatePaper(
   await EvidenceTracker.loadFromDatabase(projectId)
 
   try {
-    // Step 0: Generate Paper Profile (NEW - contextual intelligence)
-    onProgress?.('profiling', 2, 'Analyzing topic and determining paper requirements...')
+    // Step 1: Generate Paper Profile (contextual intelligence)
+    // This MUST happen first to determine search parameters
+    onProgress?.('profiling', 2, 'Analyzing your topic...', {
+      topic: sanitizedTopic.slice(0, 50)
+    })
     
     const paperProfile = await generatePaperProfile({
       topic: sanitizedTopic,
@@ -212,19 +215,63 @@ export async function generatePaper(
       recencyProfile: paperProfile.sourceExpectations.recencyProfile
     }, 'Paper profile generated')
     
-    onProgress?.('profiling', 8, 'Paper profile generated', {
+    onProgress?.('profiling', 8, `Identified as ${paperProfile.discipline.primary} research`, {
       discipline: paperProfile.discipline.primary,
       sectionsPlanned: paperProfile.structure.appropriateSections.length,
       minSources: paperProfile.sourceExpectations.minimumUniqueSources
     })
     
-    // Step 1: Collect Papers (Search + Ingestion) - now uses profile for guidance
+    // Step 2: Prepare Sources (Process uploads + Search online)
+    // This combines uploaded paper processing and online search into one stage
     const discoveryStartTime = Date.now()
-    onProgress?.('search', 10, 'Collecting and ingesting papers...', { 
-      useLibraryOnly: config.useLibraryOnly,
-      libraryPapers: config.libraryPaperIds?.length || 0,
-      recencyProfile: paperProfile.sourceExpectations.recencyProfile
-    })
+    const uploadedCount = config.libraryPaperIds?.length || 0
+    
+    // 2a: Process uploaded papers first (if any)
+    if (uploadedCount > 0) {
+      onProgress?.('search', 10, `Processing ${uploadedCount} uploaded paper${uploadedCount > 1 ? 's' : ''}...`, {
+        uploadedPapers: uploadedCount,
+        phase: 'processing_uploads'
+      })
+      
+      try {
+        const { processMultiplePapers } = await import('@/lib/content/background-processor')
+        const processingResults = await processMultiplePapers(config.libraryPaperIds!)
+        
+        const successful = processingResults.filter(r => r.status === 'processed').length
+        const failed = processingResults.filter(r => r.status === 'failed').length
+        
+        if (failed > 0) {
+          warn({ 
+            successful, 
+            failed, 
+            failedIds: processingResults.filter(r => r.status === 'failed').map(r => r.paperId)
+          }, 'Some papers failed to process')
+        }
+        
+        info({ successful, failed, total: uploadedCount }, 'Uploaded paper processing completed')
+        
+        onProgress?.('search', 15, `Processed ${successful} uploaded paper${successful > 1 ? 's' : ''}`, {
+          uploadedProcessed: successful,
+          uploadedFailed: failed,
+          phase: 'uploads_complete'
+        })
+      } catch (processingError) {
+        warn({ error: processingError }, 'Paper processing failed, continuing with available content')
+      }
+    }
+    
+    // 2b: Search online for additional papers (unless library-only mode)
+    if (!config.useLibraryOnly) {
+      onProgress?.('search', 18, 'Searching online databases...', { 
+        phase: 'searching_online',
+        recencyProfile: paperProfile.sourceExpectations.recencyProfile
+      })
+    } else {
+      onProgress?.('search', 18, 'Using only your uploaded papers...', {
+        phase: 'library_only',
+        uploadedPapers: uploadedCount
+      })
+    }
     
     const discoveryOptions: EnhancedGenerationOptions = {
       projectId,
@@ -315,17 +362,31 @@ export async function generatePaper(
     
     metrics.paperDiscoveryDuration = Date.now() - discoveryStartTime
     
-    onProgress?.('search', 20, 'Papers collected successfully', {
+    // Build a descriptive message about sources found
+    const totalUploaded = config.libraryPaperIds?.length || 0
+    const onlineCount = allPapers.length - totalUploaded
+    let sourcesMessage = `Found ${allPapers.length} papers`
+    if (totalUploaded > 0 && onlineCount > 0) {
+      sourcesMessage = `Ready: ${totalUploaded} uploaded + ${onlineCount} online = ${allPapers.length} papers`
+    } else if (totalUploaded > 0) {
+      sourcesMessage = `Ready: ${totalUploaded} uploaded paper${totalUploaded > 1 ? 's' : ''}`
+    } else {
+      sourcesMessage = `Found ${allPapers.length} relevant papers online`
+    }
+    
+    onProgress?.('search', 22, sourcesMessage, {
       papersFound: allPapers.length,
+      uploadedPapers: totalUploaded,
+      onlinePapers: onlineCount,
       minRequiredByProfile: minRequiredSources,
-      durationMs: metrics.paperDiscoveryDuration
+      durationMs: metrics.paperDiscoveryDuration,
+      phase: 'complete'
     })
 
-    // Step 1.5: Theme Extraction (NEW - Scribbr-aligned approach)
-    // Analyze collected papers to identify emergent themes BEFORE outline generation
-    // This ensures themes come from actual literature, not guesses
+    // Step 3: Planning (Theme Extraction + Outline Generation)
+    // Analyze collected papers to identify emergent themes, then create outline
     const themeStartTime = Date.now()
-    onProgress?.('themes', 22, 'Analyzing literature for themes and patterns...')
+    onProgress?.('planning', 25, 'Analyzing themes in the literature...')
     
     let themeAnalysis: ThemeAnalysis | undefined
     let enhancedProfile = paperProfile
@@ -347,23 +408,25 @@ export async function generatePaper(
       
       metrics.themeExtractionDuration = Date.now() - themeStartTime
       
-      onProgress?.('themes', 24, 'Theme analysis complete', {
+      onProgress?.('planning', 30, `Found ${themeAnalysis.emergentThemes.length} themes, creating outline...`, {
         themesFound: themeAnalysis.emergentThemes.length,
         debatesFound: themeAnalysis.debates.length,
         gapsFound: themeAnalysis.gaps.length,
         suggestedOrganization: themeAnalysis.organizationSuggestion.approach,
-        durationMs: metrics.themeExtractionDuration
+        durationMs: metrics.themeExtractionDuration,
+        phase: 'themes_complete'
       })
     } catch (themeError) {
       metrics.themeExtractionDuration = Date.now() - themeStartTime
       // Theme extraction is an enhancement - don't fail the pipeline if it fails
       warn({ error: themeError }, 'Theme extraction failed, continuing with original profile')
-      onProgress?.('themes', 24, 'Theme analysis skipped (using default structure)')
+      onProgress?.('planning', 30, 'Creating paper outline...', {
+        phase: 'outline_start'
+      })
     }
 
-    // Step 2: Generate Outline (now with theme-informed profile)
+    // Continue planning: Generate Outline (now with theme-informed profile)
     const outlineStartTime = Date.now()
-    onProgress?.('outline', 25, 'Generating paper outline...')
     
     // Limit paper IDs passed to outline generation to prevent token overflow
     // The outline only needs representative papers - full paper list is used during RAG
@@ -413,14 +476,19 @@ export async function generatePaper(
     
     metrics.outlineGenerationDuration = Date.now() - outlineStartTime
     
-    onProgress?.('outline', 30, 'Outline generated with profile-guided structure', {
+    // Build section names for display
+    const sectionNames = typedOutline.sections.map(s => s.title).join(', ')
+    onProgress?.('planning', 38, `Outline ready: ${typedOutline.sections.length} sections`, {
       sectionsPlanned: typedOutline.sections.length,
-      durationMs: metrics.outlineGenerationDuration
+      sectionNames,
+      durationMs: metrics.outlineGenerationDuration,
+      phase: 'outline_complete'
     })
 
-    // Step 3: Build Section Contexts (RAG)
+    // Step 4: Write Paper (RAG + Generation combined)
+    // First gather evidence, then write each section
     const contextStartTime = Date.now()
-    onProgress?.('context', 35, 'Building section contexts...')
+    onProgress?.('writing', 40, 'Gathering evidence for each section...')
     
     const sectionContexts = await GenerationContextService.buildContexts(
       typedOutline,
@@ -435,15 +503,14 @@ export async function generatePaper(
     const totalChunks = allChunkCounts.reduce((a, b) => a + b, 0)
     metrics.pdfStats.avgChunksPerPaper = allPapers.length > 0 ? totalChunks / allPapers.length : 0
     
-    onProgress?.('context', 40, 'Section contexts prepared', {
+    onProgress?.('writing', 45, 'Starting to write sections...', {
       sectionsWithContext: sectionContexts.length,
       durationMs: metrics.contextBuildingDuration,
       avgChunksPerSection: totalChunks / sectionContexts.length
     })
 
-    // Step 4: Generate Content
+    // Generate Content
     const generationStartTime = Date.now()
-    onProgress?.('generation', 45, 'Starting unified content generation...')
     
     let completedSections = 0
     let fullContent = ''
@@ -482,26 +549,36 @@ export async function generatePaper(
       },
       // Progress callback - called when section starts
       (completed, total, currentSection) => {
-        const progress = Math.round((completed / total) * 40) + 45 // 45-85%
-        onProgress?.('generation', progress, `Generating ${currentSection} (${completed}/${total})`)
+        const progress = Math.round((completed / total) * 35) + 50 // 50-85%
+        onProgress?.('writing', progress, `Writing ${currentSection} (${completed + 1}/${total})...`)
       },
       // Section complete callback - sends content for live preview
       (sectionTitle, content, sectionIndex, total) => {
-        const progress = Math.round((sectionIndex / total) * 40) + 45 // 45-85%
-        onProgress?.('generation', progress, `Completed ${sectionTitle} (${sectionIndex}/${total})`, {
+        const progress = Math.round((sectionIndex / total) * 35) + 50 // 50-85%
+        onProgress?.('writing', progress, `Completed ${sectionTitle} (${sectionIndex}/${total})`, {
           sectionComplete: true,
           sectionTitle,
           sectionContent: content,
           sectionIndex,
           totalSections: total
         })
+      },
+      // Streaming callback - called with each chunk as it streams
+      (sectionTitle, chunk, fullContentSoFar) => {
+        // Send streaming content for live preview
+        onProgress?.('writing', -1, `Writing ${sectionTitle}...`, {
+          streaming: true,
+          sectionTitle,
+          streamingChunk: chunk,
+          streamingContent: fullContentSoFar
+        })
       }
     )
 
-    // Step 5: Quality Checks and Assembly
+    // Step 5: Finishing (Quality Checks + Save)
     metrics.sectionGenerationDuration = Date.now() - generationStartTime
     const qualityStartTime = Date.now()
-    onProgress?.('quality', 85, 'Running quality checks...')
+    onProgress?.('finishing', 88, 'Reviewing quality...')
     
     let totalQualityScore = 0
     let qualityIssues: string[] = []
@@ -731,7 +808,7 @@ export async function generatePaper(
       validationScore: profileValidation.score
     }, 'Paper profile validation analysis')
     
-    onProgress?.('saving', 95, 'Saving content...')
+    onProgress?.('finishing', 92, 'Saving your paper...')
     
     // Extract citations from CITATIONS blocks BEFORE converting markers
     // This captures paper IDs and quotes for database storage

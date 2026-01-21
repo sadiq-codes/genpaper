@@ -1,23 +1,36 @@
-// Force Node.js runtime for pdf-parse compatibility
+// Force Node.js runtime for file handling
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { ingestPaper } from '@/lib/db/papers'
+import { createServiceClient } from '@/lib/supabase/service'
 import { addPaperToLibrary } from '@/lib/db/library'
-
 import { sanitizeFilename } from '@/lib/utils/text'
 import { info, warn, logError } from '@/lib/utils/logger'
-import { PaperDTOSchema } from '@/lib/schemas/paper'
+import { generateEmbeddings } from '@/lib/utils/embedding'
 
+/**
+ * Simplified PDF Upload API
+ * 
+ * This API now follows a lazy processing model:
+ * 1. Upload PDF to storage
+ * 2. Create paper record with minimal metadata (title from filename)
+ * 3. Set processing_status = 'pending'
+ * 4. Add to user's library
+ * 5. Return immediately (fast!)
+ * 
+ * Actual text extraction, chunking, and embedding happens later:
+ * - When user clicks "AI Generate" (before generation)
+ * - When user clicks "Write Myself" (background after editor loads)
+ */
 export async function POST(request: NextRequest) {
   try {
-    info('PDF Upload API Started')
+    info('PDF Upload API Started (lazy mode)')
     
     // Early size validation from content-length header
     const contentLength = request.headers.get('content-length')
-    const maxSize = 20 * 1024 * 1024 // 20MB (many academic PDFs are 11-14MB)
+    const maxSize = 20 * 1024 * 1024 // 20MB
     
     if (contentLength && parseInt(contentLength) > maxSize) {
       warn('File too large (header check)', { contentLength })
@@ -36,7 +49,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
     }
     
-    info('Authentication successful', { userId: user.id })
+    info('Authentication successful')
 
     // Parse form data
     const formData = await request.formData()
@@ -75,151 +88,142 @@ export async function POST(request: NextRequest) {
       }, { status: 413 })
     }
 
-    info('Processing PDF upload', { fileName: sanitizedFileName, size: file.size })
-
-    // Check for OCR flag from query params (for power users with scanned PDFs)
-    const url = new URL(request.url)
-    // Default OCR ON; allow opt-out with ?ocr=0
-    const enableOcr = url.searchParams.get('ocr') !== '0'
-    
-    // Extract metadata and content from PDF using tiered extractor for better results
-    info('Starting PDF metadata extraction using tiered extractor', { enableOcr })
-    
     const fileBuffer = Buffer.from(await file.arrayBuffer())
-    const { extractPdfMetadataTiered } = await import('@/lib/pdf/tiered-extractor')
     
-    const tieredResult = await extractPdfMetadataTiered(fileBuffer, {
-      enableOcr, // Default ON; can be disabled via query
-      maxTimeoutMs: enableOcr ? 30000 : 15000 // Longer timeout for OCR
-    })
-    
-    // Convert tiered result to expected format for compatibility
-    const extractedData = {
-      title: tieredResult.title,
-      authors: tieredResult.authors,
-      abstract: tieredResult.abstract,
-      venue: tieredResult.venue,
-      doi: tieredResult.doi,
-      year: tieredResult.year,
-      content: tieredResult.abstract || tieredResult.fullText?.substring(0, 1000),
-      fullText: tieredResult.fullText?.substring(0, 200) // Truncated for logging
-    }
-    
-    info('Metadata extraction completed', {
-      title: extractedData.title,
-      authorsCount: extractedData.authors?.length,
-      abstract: extractedData.abstract ? 'Found' : 'Not found',
-      venue: extractedData.venue ? 'Found' : 'Not found',
-      doi: extractedData.doi ? 'Found' : 'Not found',
-      year: extractedData.year
-    })
-
-    // Create paper object for ingestion with validation
-    const paperData = {
-      title: extractedData.title || sanitizedFileName.replace('.pdf', ''),
-      abstract: extractedData.abstract,
-      publication_date: extractedData.year ? `${extractedData.year}-01-01` : undefined,
-      venue: extractedData.venue,
-      doi: extractedData.doi,
-      url: undefined, // No URL for uploaded files
-      pdf_url: undefined, // Could store file if implementing file storage
-      metadata: {
-        source: 'upload',
-        original_filename: sanitizedFileName,
-        file_size: file.size,
-        upload_date: new Date().toISOString(),
-        extracted_content: extractedData.fullText // This is now safely truncated
-      },
-      source: 'upload',
-      citation_count: 0,
-      authors: extractedData.authors || ['Unknown Author']
-    }
-
-    // Validate paper data with Zod schema
-    const validationResult = PaperDTOSchema.safeParse(paperData)
-    if (!validationResult.success) {
-      logError(new Error('Paper data validation failed'), { 
-        errors: validationResult.error.errors 
-      })
-      return Response.json({ 
-        error: 'Invalid paper data',
-        details: validationResult.error.errors 
-      }, { status: 400 })
-    }
-
-    info('Starting paper ingestion')
-    
-    // Ingest paper using the unified system
-    // Set ownerId to current user for uploaded papers (private by default)
-    const text = tieredResult.fullText?.slice(0, 1_000_000)   // 1 MB safety cap to prevent network choking
-    const result = await ingestPaper(validationResult.data, {
-      fullText: text || undefined,
-      ownerId: user.id  // User-uploaded papers are owned by the uploader
-    })
-    const paperId = result.paperId
-    info('Paper ingested successfully', { paperId, ownerId: user.id })
-
-    // Store the original PDF file in Supabase storage for future reference
+    // Step 1: Upload PDF to storage FIRST
     info('Uploading PDF to storage')
+    let storedPdfUrl: string | undefined
+    
     try {
-      const { uploadPDFToStorage, generatePDFFilename, updatePaperWithPDF } = await import('@/lib/pdf/pdf-utils')
+      const serviceClient = createServiceClient()
+      const storagePath = `${user.id}/${Date.now()}-${sanitizedFileName}`
       
-      // Generate filename using the same convention as downloads  
-      const doiForFilename = (validationResult.data.doi && typeof validationResult.data.doi === 'string') 
-        ? validationResult.data.doi 
-        : `upload-${Date.now()}`
-      const filename = generatePDFFilename(doiForFilename, paperId)
+      const { data: uploadData, error: uploadError } = await serviceClient
+        .storage
+        .from('papers')
+        .upload(storagePath, fileBuffer, {
+          contentType: 'application/pdf',
+          upsert: false
+        })
       
-      // Upload PDF to storage
-      const storedUrl = await uploadPDFToStorage(fileBuffer, filename)
-      
-      if (storedUrl) {
-        // Update paper record with PDF URL
-        await updatePaperWithPDF(paperId, storedUrl, file.size)
-        info('PDF stored successfully', { storedUrl, filename })
-      } else {
-        warn('Failed to store PDF, but paper ingestion succeeded')
+      if (uploadError) {
+        // If bucket doesn't exist, try to create it
+        if (uploadError.message?.includes('Bucket not found')) {
+          warn('Storage bucket not found, attempting to create')
+          
+          // Try to create the bucket
+          const { error: createError } = await serviceClient
+            .storage
+            .createBucket('papers', { 
+              public: false,
+              fileSizeLimit: maxSize
+            })
+          
+          if (createError && !createError.message?.includes('already exists')) {
+            throw new Error(`Failed to create storage bucket: ${createError.message}`)
+          }
+          
+          // Retry upload
+          const { data: retryData, error: retryError } = await serviceClient
+            .storage
+            .from('papers')
+            .upload(storagePath, fileBuffer, {
+              contentType: 'application/pdf',
+              upsert: false
+            })
+          
+          if (retryError) {
+            throw retryError
+          }
+          
+          if (retryData) {
+            const { data: urlData } = serviceClient
+              .storage
+              .from('papers')
+              .getPublicUrl(storagePath)
+            storedPdfUrl = urlData.publicUrl
+          }
+        } else {
+          throw uploadError
+        }
+      } else if (uploadData) {
+        const { data: urlData } = serviceClient
+          .storage
+          .from('papers')
+          .getPublicUrl(storagePath)
+        storedPdfUrl = urlData.publicUrl
       }
+      
+      info('PDF uploaded to storage', { storedPdfUrl })
     } catch (storageError) {
-      logError(new Error('PDF storage failed, but paper ingestion succeeded'), { error: storageError as unknown })
-      // Don't fail the entire operation if storage fails
+      // Log but continue - paper can still be created without storage
+      logError(new Error('PDF storage failed'), { error: storageError as unknown })
+      warn('Continuing without PDF storage')
     }
 
+    // Step 2: Create paper record with minimal metadata
+    info('Creating paper record')
+    
+    // Extract title from filename (remove .pdf extension)
+    const titleFromFilename = sanitizedFileName
+      .replace(/\.pdf$/i, '')
+      .replace(/[-_]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    
+    // Generate a basic embedding from the title (required by database constraint)
+    const [titleEmbedding] = await generateEmbeddings([titleFromFilename])
+    
+    const serviceClient = createServiceClient()
+    const { data: paper, error: insertError } = await serviceClient
+      .from('papers')
+      .insert({
+        title: titleFromFilename,
+        authors: ['Unknown Author'],
+        source: 'upload',
+        pdf_url: storedPdfUrl,
+        owner_id: user.id,
+        processing_status: 'pending',
+        embedding: titleEmbedding,
+        metadata: {
+          source: 'upload',
+          original_filename: sanitizedFileName,
+          file_size: file.size,
+          upload_date: new Date().toISOString()
+        }
+      })
+      .select('id')
+      .single()
+    
+    if (insertError || !paper) {
+      logError(new Error('Failed to create paper record'), { error: insertError })
+      return Response.json({ 
+        error: 'Failed to create paper record',
+        details: insertError?.message 
+      }, { status: 500 })
+    }
+    
+    const paperId = paper.id
+    info('Paper record created', { paperId, processingStatus: 'pending' })
+
+    // Step 3: Add to user's library
     info('Adding to user library')
-    // Add to user's library
-    const libraryPaper = await addPaperToLibrary(user.id, paperId, `Uploaded from file: ${sanitizedFileName}`)
+    const libraryPaper = await addPaperToLibrary(user.id, paperId, `Uploaded: ${sanitizedFileName}`)
     info('Added to library successfully', { libraryPaperId: libraryPaper.id })
 
-    info('Upload completed successfully')
+    info('Upload completed successfully (pending processing)')
 
-    // Get the stored PDF URL for response
-    let storedPdfUrl: string | undefined
-    try {
-      const supabase = await createClient()
-      const { data } = await supabase
-        .from('papers')
-        .select('pdf_url')
-        .eq('id', paperId)
-        .single()
-      storedPdfUrl = data?.pdf_url || undefined
-    } catch {
-      // Ignore errors getting PDF URL
-    }
-
-    // Return success response with extracted data
+    // Return success response matching PdfUploadResult type expected by usePdfUpload hook
     return Response.json({
       success: true,
-      paperId,
-      libraryPaperId: libraryPaper.id,
+      paper: {
+        id: paperId,
+        title: titleFromFilename,
+        authors: ['Unknown Author'],
+        year: new Date().getFullYear(),
+      },
       pdfUrl: storedPdfUrl,
-      extractedData: {
-        title: extractedData.title,
-        authors: extractedData.authors,
-        abstract: extractedData.abstract,
-        venue: extractedData.venue,
-        doi: extractedData.doi,
-        year: extractedData.year
-      }
+      processingStatus: 'pending',
     })
 
   } catch (error) {

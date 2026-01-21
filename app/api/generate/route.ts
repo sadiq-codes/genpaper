@@ -4,6 +4,7 @@ import { getResearchProject, getProjectWithContent } from '@/lib/db/research'
 import { generatePaper, type PipelineConfig } from '@/lib/generation/pipeline'
 import { acquireGenerationLock, releaseGenerationLock } from '@/lib/locks/generation-lock'
 import { warn, error as logError } from '@/lib/utils/logger'
+import { createServiceClient } from '@/lib/supabase/service'
 
 // Use Node.js runtime for better DNS resolution and OpenAI SDK compatibility
 export const runtime = 'nodejs'
@@ -107,21 +108,69 @@ export async function GET(request: NextRequest) {
     // Parse query parameters
     const url = new URL(request.url)
     const topic = url.searchParams.get('topic')
-    const useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
+    let useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
     const length = url.searchParams.get('length') || 'medium'
     const paperTypeParam = url.searchParams.get('paperType')
-    const paperType = paperTypeParam || 'literatureReview'
-    const libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
+    let paperType = paperTypeParam || 'literatureReview'
+    let libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
     const existingProjectId = url.searchParams.get('projectId') || undefined
     const temperature = parseFloat(url.searchParams.get('temperature') || '0.2')
     const maxTokens = parseInt(url.searchParams.get('maxTokens') || '16000')
     
-    if (!paperTypeParam) {
+    // If existing project, read config from database (source of truth)
+    // This ensures uploaded_paper_ids, useLibraryOnly, etc. are properly used
+    if (existingProjectId) {
+      const supabase = createServiceClient()
+      const { data: projectConfig } = await supabase
+        .from('research_projects')
+        .select('generation_config, paper_type')
+        .eq('id', existingProjectId)
+        .eq('user_id', user.id)
+        .single()
+      
+      if (projectConfig?.generation_config) {
+        const config = projectConfig.generation_config as Record<string, unknown>
+        
+        // Extract useLibraryOnly from stored config
+        if (typeof config.useLibraryOnly === 'boolean') {
+          useLibraryOnly = config.useLibraryOnly
+        }
+        
+        // Extract paper IDs - check both uploaded_paper_ids and library_papers_used
+        const uploadedPaperIds = (config.uploaded_paper_ids as string[]) || []
+        const libraryPapersUsed = (config.library_papers_used as string[]) || []
+        libraryPaperIds = [...new Set([...uploadedPaperIds, ...libraryPapersUsed])]
+        
+        // Use paper type from project if available
+        if (projectConfig.paper_type) {
+          paperType = projectConfig.paper_type
+        } else if (config.paper_settings && typeof config.paper_settings === 'object') {
+          const paperSettings = config.paper_settings as Record<string, unknown>
+          if (paperSettings.paperType) {
+            paperType = paperSettings.paperType as string
+          }
+        }
+        
+        console.log('📋 Loaded config from existing project:', {
+          useLibraryOnly,
+          libraryPaperIds: libraryPaperIds.length,
+          paperType,
+          hasUploadedPapers: uploadedPaperIds.length > 0,
+          hasLibraryPapers: libraryPapersUsed.length > 0
+        })
+      }
+    }
+    
+    if (!paperTypeParam && !existingProjectId) {
       console.warn('⚠️ paperType URL param missing! Defaulting to literatureReview')
     }
     
-    console.log('🔍 Generate API received paperType:', paperType, 
-      paperTypeParam ? '(from URL)' : '(DEFAULT - URL param was missing!)')
+    console.log('🔍 Generate API config:', { 
+      paperType, 
+      useLibraryOnly,
+      libraryPaperIds: libraryPaperIds.length,
+      existingProjectId: !!existingProjectId
+    })
 
     if (!topic) {
       return new Response(

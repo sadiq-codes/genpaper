@@ -9,11 +9,14 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { CitationEditModal } from './CitationEditModal'
 import type { ProjectPaper } from './types'
+import { clearPaperCache } from '@/lib/citations/local-formatter'
 
 interface CitationPopoverProps {
   editor: Editor | null
   projectId?: string
   papers?: ProjectPaper[]  // Papers are passed directly, no API calls needed
+  /** Allows parent to update local papers state immediately after editing citation metadata */
+  onPaperUpdated?: (paperId: string, updates: Partial<ProjectPaper>) => void
 }
 
 /**
@@ -29,7 +32,7 @@ interface PaperInfo {
   doi?: string
 }
 
-export function CitationPopover({ editor, projectId, papers = [] }: CitationPopoverProps) {
+export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated }: CitationPopoverProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [position, setPosition] = useState({ top: 0, left: 0 })
   const [citationId, setCitationId] = useState<string | null>(null)
@@ -293,10 +296,48 @@ export function CitationPopover({ editor, projectId, papers = [] }: CitationPopo
       throw new Error(error.message || 'Failed to update citation')
     }
 
-    // Close the modal - changes will reflect on next page load/refresh
+    // Update local paper metadata immediately (no refresh)
+    const nextTitle = cslJson.title
+    const nextAuthors = (cslJson.author || [])
+      .map(a => (a.family && a.given ? `${a.family}, ${a.given}` : (a.family || a.given || a.literal || '')))
+      .filter(Boolean)
+    const nextYear = cslJson.issued?.['date-parts']?.[0]?.[0]
+    const nextJournal = cslJson['container-title']
+    const nextDoi = cslJson.DOI
+
+    // Build updated paper object
+    const updatedPaperData: Partial<ProjectPaper> = {
+      title: nextTitle,
+      authors: nextAuthors,
+      ...(typeof nextYear === 'number' && { year: nextYear }),
+      journal: nextJournal,
+      doi: nextDoi,
+    }
+
+    // Update editor storage FIRST (before clearing cache)
+    // This ensures when CitationNodeView re-renders, it has fresh data
+    if (editor) {
+      const citationExt = editor.extensionManager.extensions.find(e => e.name === 'citation')
+      if (citationExt?.storage?.papers) {
+        const currentPapers = citationExt.storage.papers as typeof papers
+        const updatedPapers = currentPapers.map(p => 
+          p.id === citationId ? { ...p, ...updatedPaperData } : p
+        )
+        
+        // Clear cache AFTER storage is updated with new data
+        clearPaperCache(citationId)
+        
+        // Now dispatch the update - CitationNodeView will re-render with new data
+        editor.commands.setPapers(updatedPapers)
+      }
+    }
+
+    // Also notify parent to keep React state in sync
+    onPaperUpdated?.(citationId, updatedPaperData)
+
     toast.success('Citation updated')
     setIsEditModalOpen(false)
-  }, [citationId, projectId])
+  }, [citationId, projectId, onPaperUpdated, editor, papers])
 
   if (!isOpen) return null
 

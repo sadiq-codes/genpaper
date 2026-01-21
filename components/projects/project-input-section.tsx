@@ -53,10 +53,10 @@ export function ProjectInputSection() {
   const [topic, setTopic] = useState('')
   const [hasOriginalResearch, setHasOriginalResearch] = useState(false)
   const [keyFindings, setKeyFindings] = useState('')
+  const [useLibraryOnly, setUseLibraryOnly] = useState(false)
   
   // PDF upload state - shared between ProjectInput area and QuickActions
   const [uploadedPdfs, setUploadedPdfs] = useState<UploadedPdf[]>([])
-  const [hasAutoFilledTopic, setHasAutoFilledTopic] = useState(false)
   
   // PDF upload hook
   const { uploadFiles } = usePdfUpload({
@@ -68,12 +68,9 @@ export function ProjectInputSection() {
         prev.map((pdf) => (pdf.id === id ? { ...pdf, ...updates } : pdf))
       )
     },
-    onUploadComplete: (id, result) => {
-      // Auto-fill topic from first successfully uploaded PDF's title
-      if (result.paper?.title && !hasAutoFilledTopic && topic.trim().length === 0) {
-        setTopic(result.paper.title)
-        setHasAutoFilledTopic(true)
-      }
+    onUploadComplete: (_id, _result) => {
+      // Paper uploaded successfully - no auto-fill of topic from filename
+      // User should enter their own topic/prompt
     },
     onUploadError: (id, error) => {
       console.error(`PDF upload error for ${id}:`, error)
@@ -192,6 +189,8 @@ export function ProjectInputSection() {
                   onKeyFindingsChange={setKeyFindings}
                   showKeyFindings={showKeyFindings}
                   showOriginalResearchToggle={showOriginalResearchToggle}
+                  useLibraryOnly={useLibraryOnly}
+                  onUseLibraryOnlyChange={setUseLibraryOnly}
                   disabled={isLoading}
                 />
                 <div className="hidden sm:block w-px h-5 bg-border/50 mx-1" />
@@ -234,6 +233,7 @@ export function ProjectInputSection() {
           <input type="hidden" name="paperType" value={paperType} />
           <input type="hidden" name="generationMode" value={generationMode} />
           <input type="hidden" name="hasOriginalResearch" value={hasOriginalResearch ? 'true' : 'false'} />
+          <input type="hidden" name="useLibraryOnly" value={useLibraryOnly ? 'true' : 'false'} />
           {showKeyFindings && <input type="hidden" name="keyFindings" value={keyFindings} />}
           {/* Hidden fields for uploaded PDF paper IDs */}
           {uploadedPaperIds.map((paperId) => (
