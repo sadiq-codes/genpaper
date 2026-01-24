@@ -8,7 +8,7 @@ import { DEFAULT_WEIGHTS } from '@/lib/services/paper-aggregation'
 import pLimit from 'p-limit'
 import { generateDeterministicAuthorId, generateDeterministicPaperId } from '@/lib/utils/deterministic-id'
 import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
-import { deduplicatePapers, simpleDeduplicatePapers } from '@/lib/search/deduplication'
+import { simpleDeduplicatePapers } from '@/lib/search/deduplication'
 
 /**
  * @services/search-orchestrator

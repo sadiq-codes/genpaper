@@ -60,7 +60,9 @@ export async function createClient(): Promise<SupabaseClient> {
         getAll() {
           return cookieStore ? cookieStore.getAll() : []
         },
-        setAll(cookiesToSet) {
+        setAll(
+          cookiesToSet: Array<{ name: string; value: string; options: Record<string, unknown> }>
+        ) {
           if (!cookieStore) return // Nothing to persist in a background context
           try {
             cookiesToSet.forEach(({ name, value, options }) =>

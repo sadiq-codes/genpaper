@@ -72,7 +72,7 @@ export async function acquireGenerationLock(projectId: string): Promise<LockResu
         warn('Lock columns not found during update - skipping lock')
         return { acquired: true, lockId: 'no-lock-columns' }
       }
-      logError('Lock acquisition query failed', { error, projectId })
+      logError({ error, projectId }, 'Lock acquisition query failed')
       throw error
     }
 
@@ -85,7 +85,7 @@ export async function acquireGenerationLock(projectId: string): Promise<LockResu
     return { acquired: false, error: 'GENERATION_IN_PROGRESS' }
   } catch (err) {
     // On any error, allow generation to proceed (fail open for availability)
-    logError('Failed to acquire generation lock - allowing generation', { error: err, projectId })
+    logError({ error: err, projectId }, 'Failed to acquire generation lock - allowing generation')
     return { acquired: true, lockId: 'error-fallback' }
   }
 }
@@ -117,11 +117,11 @@ export async function releaseGenerationLock(projectId: string, lockId: string): 
       if (!error.message?.includes('generation_lock_id') && 
           !error.message?.includes('column') &&
           error.code !== '42703') {
-        warn('Failed to release generation lock', { error, projectId, lockId })
+        warn({ error, projectId, lockId }, 'Failed to release generation lock')
       }
     }
   } catch (err) {
-    warn('Exception releasing generation lock', { error: err, projectId, lockId })
+    warn({ error: err, projectId, lockId }, 'Exception releasing generation lock')
     // Don't throw - lock will expire naturally
   }
 }

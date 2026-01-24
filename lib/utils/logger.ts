@@ -59,11 +59,52 @@ const logger = pino({
   timestamp: pino.stdTimeFunctions.isoTime
 })
 
-// Export for general use
-export const debug = logger.debug.bind(logger)
-export const info = logger.info.bind(logger)
-export const warn = logger.warn.bind(logger)
-export const error = logger.error.bind(logger)
+type LogData = Record<string, unknown>
+
+function isLogData(value: unknown): value is LogData {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Exported logging helpers.
+ *
+ * These wrappers intentionally support both calling conventions commonly used
+ * across the codebase:
+ * - info('message', { ...data })
+ * - info({ ...data }, 'message')
+ * - info('message', ...args)
+ */
+export function debug(objOrMsg: LogData | string, msgOrObj?: unknown, ...args: unknown[]) {
+  if (typeof objOrMsg === 'string') {
+    if (isLogData(msgOrObj)) return logger.debug(msgOrObj, objOrMsg, ...args)
+    return logger.debug(objOrMsg, ...(msgOrObj !== undefined ? [msgOrObj as any] : []), ...args)
+  }
+  return logger.debug(objOrMsg, ...(msgOrObj !== undefined ? [msgOrObj as any] : []), ...args)
+}
+
+export function info(objOrMsg: LogData | string, msgOrObj?: unknown, ...args: unknown[]) {
+  if (typeof objOrMsg === 'string') {
+    if (isLogData(msgOrObj)) return logger.info(msgOrObj, objOrMsg, ...args)
+    return logger.info(objOrMsg, ...(msgOrObj !== undefined ? [msgOrObj as any] : []), ...args)
+  }
+  return logger.info(objOrMsg, ...(msgOrObj !== undefined ? [msgOrObj as any] : []), ...args)
+}
+
+export function warn(objOrMsg: LogData | string, msgOrObj?: unknown, ...args: unknown[]) {
+  if (typeof objOrMsg === 'string') {
+    if (isLogData(msgOrObj)) return logger.warn(msgOrObj, objOrMsg, ...args)
+    return logger.warn(objOrMsg, ...(msgOrObj !== undefined ? [msgOrObj as any] : []), ...args)
+  }
+  return logger.warn(objOrMsg, ...(msgOrObj !== undefined ? [msgOrObj as any] : []), ...args)
+}
+
+export function error(objOrMsg: LogData | string, msgOrObj?: unknown, ...args: unknown[]) {
+  if (typeof objOrMsg === 'string') {
+    if (isLogData(msgOrObj)) return logger.error(msgOrObj, objOrMsg, ...args)
+    return logger.error(objOrMsg, ...(msgOrObj !== undefined ? [msgOrObj as any] : []), ...args)
+  }
+  return logger.error(objOrMsg, ...(msgOrObj !== undefined ? [msgOrObj as any] : []), ...args)
+}
 
 // 🆕 Structured logging functions for observability
 export const logGenerationMetrics = (metrics: GenerationMetrics) => {

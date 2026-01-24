@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     const maxSize = 20 * 1024 * 1024 // 20MB
     
     if (contentLength && parseInt(contentLength) > maxSize) {
-      warn('File too large (header check)', { contentLength })
+      warn({ contentLength }, 'File too large (header check)')
       return Response.json({ 
         error: 'File too large. Maximum size is 20MB',
         received: contentLength 
@@ -66,11 +66,14 @@ export async function POST(request: NextRequest) {
       ? sanitizeFilename(fileName)
       : sanitizeFilename(file.name)
 
-    info('File received', { 
-      fileName: sanitizedFileName, 
-      size: file.size, 
-      type: file.type 
-    })
+    info(
+      {
+        fileName: sanitizedFileName,
+        size: file.size,
+        type: file.type
+      },
+      'File received'
+    )
 
     // Validate file type
     if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
@@ -154,7 +157,7 @@ export async function POST(request: NextRequest) {
         storedPdfUrl = urlData.publicUrl
       }
       
-      info('PDF uploaded to storage', { storedPdfUrl })
+      info({ storedPdfUrl }, 'PDF uploaded to storage')
     } catch (storageError) {
       // Log but continue - paper can still be created without storage
       logError(new Error('PDF storage failed'), { error: storageError as unknown })
@@ -204,12 +207,12 @@ export async function POST(request: NextRequest) {
     }
     
     const paperId = paper.id
-    info('Paper record created', { paperId, processingStatus: 'pending' })
+    info({ paperId, processingStatus: 'pending' }, 'Paper record created')
 
     // Step 3: Add to user's library
     info('Adding to user library')
     const libraryPaper = await addPaperToLibrary(user.id, paperId, `Uploaded: ${sanitizedFileName}`)
-    info('Added to library successfully', { libraryPaperId: libraryPaper.id })
+    info({ libraryPaperId: libraryPaper.id }, 'Added to library successfully')
 
     info('Upload completed successfully (pending processing)')
 

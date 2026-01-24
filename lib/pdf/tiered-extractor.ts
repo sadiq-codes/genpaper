@@ -238,8 +238,8 @@ async function grobidParse(
       throw new Error(`Invalid PDF header: ${header}`)
     }
 
-    // Convert Buffer to Blob for native FormData
-    const pdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' })
+    // Convert Buffer to Blob for native FormData (ensure Web-compatible BlobPart type)
+    const pdfBlob = new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' })
     
     const form = new FormData()
     form.append('input', pdfBlob, 'paper.pdf')

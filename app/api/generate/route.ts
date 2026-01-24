@@ -240,7 +240,7 @@ export async function GET(request: NextRequest) {
     // Acquire distributed lock to prevent duplicate concurrent runs
     const lockResult = await acquireGenerationLock(project.id)
     if (!lockResult.acquired) {
-      warn('Generation already in progress', { projectId: project.id })
+      warn({ projectId: project.id }, 'Generation already in progress')
       const encoder = new TextEncoder()
       const stream = new ReadableStream({
         start(controller) {
@@ -304,7 +304,7 @@ export async function GET(request: NextRequest) {
           })
           controller.enqueue(encoder.encode(`data: ${startData}\n\n`))
         } catch (err) {
-          warn('Failed to send start event', { error: err })
+          warn({ error: err }, 'Failed to send start event')
         }
         
         // Progress callback for pipeline
@@ -322,7 +322,7 @@ export async function GET(request: NextRequest) {
             })
             controller.enqueue(encoder.encode(`data: ${progressData}\n\n`))
           } catch (err) {
-            warn('Failed to send progress', { error: err })
+            warn({ error: err }, 'Failed to send progress')
             isControllerClosed = true
           }
         }
@@ -350,7 +350,7 @@ export async function GET(request: NextRequest) {
             controller.enqueue(encoder.encode(`data: ${completionData}\n\n`))
           }
         } catch (err) {
-          logError('Pipeline error', { error: err, projectId: capturedProjectId })
+          logError({ error: err, projectId: capturedProjectId }, 'Pipeline error')
           if (!isControllerClosed) {
             const errorData = JSON.stringify({
               type: 'error',
@@ -380,7 +380,7 @@ export async function GET(request: NextRequest) {
     })
 
   } catch (err) {
-    logError('Route error', { error: err })
+    logError({ error: err }, 'Route error')
     // Clean up lock if we acquired it but failed before streaming started
     if (lockId && projectId) {
       await releaseGenerationLock(projectId, lockId)

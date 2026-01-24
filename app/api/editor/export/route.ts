@@ -164,9 +164,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Invalid format' }, { status: 400 })
     }
 
-    const buffer = typeof result === 'string' ? Buffer.from(result, 'utf-8') : result
+    // NextResponse expects a Web BodyInit; ensure we pass a compatible type.
+    const responseBody = typeof result === 'string' ? result : new Uint8Array(result)
 
-    return new NextResponse(buffer, {
+    return new NextResponse(responseBody, {
       headers: {
         'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${filename}"`,

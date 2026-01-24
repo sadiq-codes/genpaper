@@ -23,8 +23,7 @@ import { deduplicatePapers, normalizeTitle } from '@/lib/search/deduplication'
 import { 
   isSourceAvailable, 
   recordSuccess, 
-  recordFailure,
-  CircuitOpenError 
+  recordFailure
 } from '@/lib/search/circuit-breaker'
 import { getCached, setCached } from '@/lib/search/source-cache'
 import { getServiceClient } from '@/lib/supabase/service'
