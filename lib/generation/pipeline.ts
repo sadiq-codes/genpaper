@@ -1,5 +1,5 @@
 import 'server-only'
-import { updateProjectContent, updateResearchProjectStatus } from '@/lib/db/research'
+import { updateProjectContent, updateResearchProjectStatus, updateProjectVoiceProfile } from '@/lib/db/research'
 import { collectPapers } from '@/lib/generation/discovery'
 import { generateOutline, type OriginalResearchInput } from '@/lib/prompts/generators'
 import { generateMultipleSectionsUnified } from '@/lib/generation/unified-generator'
@@ -221,6 +221,17 @@ export async function generatePaper(
       minSources: paperProfile.sourceExpectations.minimumUniqueSources
     })
     
+    // Persist voice profile to project for chat/autocomplete to use
+    if (paperProfile.voice?.profileId) {
+      try {
+        await updateProjectVoiceProfile(projectId, paperProfile.voice.profileId)
+        info({ voiceProfileId: paperProfile.voice.profileId }, 'Voice profile persisted to project')
+      } catch (voiceError) {
+        // Non-fatal - voice profile is nice to have but not critical
+        warn({ error: voiceError }, 'Failed to persist voice profile to project')
+      }
+    }
+    
     // Step 2: Prepare Sources (Process uploads + Search online)
     // This combines uploaded paper processing and online search into one stage
     const discoveryStartTime = Date.now()
@@ -323,25 +334,25 @@ export async function generatePaper(
     const minRequiredSources = paperProfile.sourceExpectations.minimumUniqueSources
     const availablePapers = allPapers.length
     
-    // Critical threshold: if we have fewer papers than 50% of minimum required, fail early
-    // This prevents generating papers with insufficient source diversity
+    // Critical threshold: if we have fewer papers than 50% of minimum required, warn but continue
+    // This avoids a hardwall while still signaling reduced source diversity
     const criticalThreshold = Math.ceil(minRequiredSources * 0.5)
     
     if (availablePapers < criticalThreshold) {
-      const errorMsg = `Insufficient sources for ${paperProfile.paperType} on this topic. ` +
-        `Found ${availablePapers} papers but this paper type requires at least ${minRequiredSources} sources ` +
-        `(critical minimum: ${criticalThreshold}). ` +
-        `Consider broadening the topic or adding papers to your library.`
-      
-      logError({ 
-        availablePapers, 
-        minRequiredSources, 
+      warn({
+        availablePapers,
+        minRequiredSources,
         criticalThreshold,
         paperType: paperProfile.paperType,
         discipline: paperProfile.discipline.primary
-      }, 'Source availability below critical threshold')
+      }, `Source availability far below recommended minimum (${availablePapers}/${minRequiredSources}). Paper quality may be significantly affected.`)
       
-      throw new Error(errorMsg)
+      onProgress?.('search', 16, `⚠️ Very limited sources: ${availablePapers} papers found, ${minRequiredSources} recommended`, {
+        papersFound: availablePapers,
+        minRequired: minRequiredSources,
+        criticalThreshold,
+        warning: 'Paper may have very limited citation diversity'
+      })
     }
     
     // Warning threshold: if below minimum but above critical, warn but continue
@@ -544,7 +555,9 @@ export async function generatePaper(
           keyFindings: config.originalResearch.key_findings
         } : undefined,
         // Pass paper profile guidance for contextual intelligence
-        profileGuidance
+        profileGuidance,
+        // Pass voice configuration for authorial persona variation
+        voiceConfig: paperProfile.voice
         // Note: minSourcesRequired removed - using semantic citation guidance instead
       },
       // Progress callback - called when section starts
@@ -620,7 +633,9 @@ export async function generatePaper(
               // Preserve profile guidance during rewrite to maintain paper type rules
               profileGuidance,
               paperType: config.paperType,
-              topic: sanitizedTopic
+              topic: sanitizedTopic,
+              // Preserve voice configuration during rewrite for consistent authorial persona
+              voiceConfig: paperProfile.voice
             }
           })
         } catch (rewriteError) {
@@ -712,7 +727,9 @@ export async function generatePaper(
                 // Preserve profile guidance during rewrite to maintain paper type rules
                 profileGuidance,
                 paperType: config.paperType,
-                topic: sanitizedTopic
+                topic: sanitizedTopic,
+                // Preserve voice configuration during rewrite for consistent authorial persona
+                voiceConfig: paperProfile.voice
               }
             })
             

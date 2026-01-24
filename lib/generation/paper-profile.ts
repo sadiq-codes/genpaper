@@ -15,6 +15,11 @@ import type {
   ProfileValidationResult
 } from './paper-profile-types'
 import { getPaperProfilePrompt, PAPER_PROFILE_JSON_SCHEMA } from './paper-profile-prompts'
+import { 
+  suggestVoiceProfile, 
+  getVoiceProfile,
+  type VoiceProfileId 
+} from './voice-profiles'
 
 /** Maximum retry attempts for profile generation */
 const MAX_PROFILE_RETRIES = 2
@@ -219,7 +224,57 @@ function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
     ]
   }
   
+  // Ensure voice configuration exists
+  // If LLM didn't provide voice, use heuristic suggestion based on paper type and discipline
+  if (!profile.voice || !profile.voice.profileId) {
+    const suggestion = suggestVoiceProfile({
+      paperType: profile.paperType,
+      discipline: profile.discipline.primary,
+      academicLevel: inferAcademicLevel(profile.paperType)
+    })
+    
+    profile.voice = {
+      profileId: suggestion.suggestedProfile,
+      rationale: suggestion.rationale
+    }
+    
+    info({
+      profileId: profile.voice.profileId,
+      paperType: profile.paperType,
+      discipline: profile.discipline.primary
+    }, 'Voice profile auto-assigned based on paper type and discipline')
+  } else {
+    // Validate that the profileId is valid
+    const validIds: VoiceProfileId[] = ['conservative-reviewer', 'confident-researcher', 'senior-scholar', 'balanced-academic']
+    if (!validIds.includes(profile.voice.profileId as VoiceProfileId)) {
+      warn({
+        invalidProfileId: profile.voice.profileId,
+        defaultingTo: 'balanced-academic'
+      }, 'Invalid voice profile ID from LLM, defaulting to balanced-academic')
+      profile.voice.profileId = 'balanced-academic'
+    }
+  }
+  
   return profile
+}
+
+/**
+ * Infer academic level from paper type for voice selection
+ */
+function inferAcademicLevel(paperType: string): 'undergraduate' | 'masters' | 'doctoral' | 'faculty' {
+  const paperTypeLower = paperType.toLowerCase()
+  
+  if (paperTypeLower.includes('phd') || paperTypeLower.includes('dissertation') || paperTypeLower.includes('doctoral')) {
+    return 'doctoral'
+  }
+  if (paperTypeLower.includes('master') || paperTypeLower.includes('thesis')) {
+    return 'masters'
+  }
+  if (paperTypeLower.includes('capstone') || paperTypeLower.includes('undergraduate')) {
+    return 'undergraduate'
+  }
+  // Default: treat research articles and literature reviews as masters-level
+  return 'masters'
 }
 
 
@@ -564,13 +619,18 @@ CREATE YOUR OUTLINE USING ONLY THE MANDATORY SECTIONS ABOVE
 ═══════════════════════════════════════════════════════════════════════════════`
   }
 
+  // Build voice guidance if voice profile is configured
+  // Note: Voice profile details are injected separately via the skeleton.yaml template
+  // This section provides a brief summary for the profile guidance
+  const voiceGuidance = profile.voice ? buildVoiceGuidanceSummary(profile.voice.profileId as VoiceProfileId, profile.voice.rationale) : ''
+
   // Section mode - full guidance for content generation
   return `## PAPER PROFILE GUIDANCE - BINDING CONSTRAINTS
 ${typeWarning}
 **Discipline:** ${profile.discipline.primary}
 **Paper Type:** ${profile.paperType}
 **Field Characteristics:** ${profile.discipline.fieldCharacteristics.paceOfChange} pace of change, ${profile.discipline.fieldCharacteristics.theoryVsEmpirical}, ${profile.discipline.fieldCharacteristics.practitionerRelevance} practitioner relevance
-
+${voiceGuidance}
 ### Recommended Structure
 ${sections}
 
@@ -607,6 +667,23 @@ Do NOT cite:
 
 ### Common Pitfalls to Avoid
 ${pitfalls}`
+}
+
+/**
+ * Build a brief voice guidance summary for profile guidance
+ * Full voice details are injected via skeleton.yaml template separately
+ */
+function buildVoiceGuidanceSummary(profileId: VoiceProfileId, rationale?: string): string {
+  const profile = getVoiceProfile(profileId)
+  
+  return `
+### Authorial Voice: ${profile.name}
+**Persona:** ${profile.description}
+**Literature stance:** ${profile.literatureStance} | **Hedging:** ${profile.hedging.density} | **Risk:** ${profile.intellectualRisk}
+${rationale ? `**Rationale:** ${rationale}` : ''}
+
+Note: Detailed voice rules are provided in a separate AUTHORIAL VOICE section below.
+`
 }
 
 /**

@@ -55,14 +55,22 @@ async function buildSystemPrompt(
   ragContext: string,
   papers: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
   mentionedPapers?: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
-  ragChunks?: Array<{ paper_id: string; content: string }>
+  ragChunks?: Array<{ paper_id: string; content: string }>,
+  voiceProfileId?: string | null
 ): Promise<string> {
   // Build mentioned papers context if any
   const mentionedPapersContext = mentionedPapers && mentionedPapers.length > 0
     ? formatMentionedPapersForContext(mentionedPapers, ragChunks)
     : undefined
 
-  // Build AUTOMAT context
+  // Import voice profile types for type safety
+  type VoiceProfileId = 'conservative-reviewer' | 'confident-researcher' | 'senior-scholar' | 'balanced-academic'
+  const validVoiceIds: VoiceProfileId[] = ['conservative-reviewer', 'confident-researcher', 'senior-scholar', 'balanced-academic']
+  const validatedVoiceId = voiceProfileId && validVoiceIds.includes(voiceProfileId as VoiceProfileId)
+    ? voiceProfileId as VoiceProfileId
+    : undefined
+
+  // Build AUTOMAT context with optional voice
   const context = buildChatAUTOMATContext({
     userMessage,
     projectTopic: topic,
@@ -74,6 +82,7 @@ async function buildSystemPrompt(
     ragContext: ragContext || 'No additional context retrieved.',
     mentionedPapersContext,
     tools: DEFAULT_CHAT_TOOLS,
+    voiceProfileId: validatedVoiceId,
   })
 
   // Build prompt from AUTOMAT template
@@ -261,12 +270,12 @@ export async function POST(request: NextRequest) {
       console.log('[Chat API] Attached images:', attachedImages.length)
     }
 
-    // Verify user owns the project and get project details
+    // Verify user owns the project and get project details including voice config
     console.log('[Chat API] Looking up project:', projectId, 'for user:', user.id)
     
     const { data: project, error: projectError } = await supabase
       .from('research_projects')
-      .select('id, topic, paper_type')
+      .select('id, topic, paper_type, generation_config')
       .eq('id', projectId)
       .eq('user_id', user.id)
       .single()
@@ -376,8 +385,17 @@ export async function POST(request: NextRequest) {
       ragContext = `Note: Retrieved evidence has been summarized. ${ragResult.metadata.chunksRetrieved} excerpts from ${ragResult.metadata.papersCovered} paper(s) available.\n\n${ragResult.context}`
     }
 
+    // Extract voice profile from generation config
+    const generationConfig = project.generation_config as { voiceProfileId?: string } | null
+    const voiceProfileId = generationConfig?.voiceProfileId || null
+    
+    if (voiceProfileId) {
+      console.log('[Chat API] Using project voice profile:', voiceProfileId)
+    }
+
     // Build system prompt using AUTOMAT framework
     // Pass ragChunks so mentioned papers can include relevant excerpts
+    // Pass voiceProfileId for consistent authorial voice in content-generating actions
     const systemPrompt = await buildSystemPrompt(
       ragQuery || '',  // User message for action inference
       project.topic || 'Research',
@@ -388,7 +406,8 @@ export async function POST(request: NextRequest) {
       ragContext,
       papers,
       mentionedPapers,
-      ragResult.chunks  // Pass raw chunks for mentioned papers context
+      ragResult.chunks,  // Pass raw chunks for mentioned papers context
+      voiceProfileId     // Pass voice profile for content-generating actions
     )
 
     // Filter out tool-related parts from message history before converting

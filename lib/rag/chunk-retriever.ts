@@ -54,18 +54,20 @@ export interface RetrievalConfig {
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   mode: 'hybrid',
   vectorWeight: 0.7,
-  // REDUCED from 0.15 to 0.1: Let more chunks through, trust LLM to filter
-  // Over-aggressive filtering leaves sections with too few sources for synthesis
-  minScore: 0.1,
-  retrieveLimit: 100,
-  // INCREASED from 20 to 25: More material for synthesis
-  finalLimit: 25,
+  // REDUCED from 0.1 to 0.05: Let more chunks through for niche/specialized topics
+  // Many relevant papers have lower similarity scores due to terminology differences
+  minScore: 0.05,
+  // INCREASED from 100 to 150: Larger candidate pool before reranking
+  retrieveLimit: 150,
+  // INCREASED from 25 to 38: ~50% more material for synthesis
+  finalLimit: 38,
   useCitationBoost: true,
   citationBoostFactor: 0.1,
   useReranking: true,
-  rerankTopK: 30,
-  // INCREASED from 5 to 6: More context per source for deeper understanding
-  maxPerPaper: 6
+  // INCREASED from 30 to 45: Rerank more candidates for better final selection
+  rerankTopK: 45,
+  // INCREASED from 6 to 8: More context per source for deeper understanding
+  maxPerPaper: 8
 }
 
 export interface RetrievalRequest {

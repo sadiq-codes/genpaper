@@ -26,6 +26,13 @@ export interface ReviewSettingsConfig {
   review_focus?: string
 }
 
+// Voice profile identifiers for authorial persona variation
+export type VoiceProfileId = 
+  | 'conservative-reviewer'
+  | 'confident-researcher' 
+  | 'senior-scholar'
+  | 'balanced-academic'
+
 // Simplified generation config - no feature flags or complex nested objects
 export interface GenerationConfig {
   temperature?: number
@@ -45,6 +52,9 @@ export interface GenerationConfig {
   original_research?: OriginalResearchConfig
   // Review settings (for literature reviews)
   review_settings?: ReviewSettingsConfig
+  // Voice/Authorial persona - controls hedging, confidence, citation posture
+  // Selected during paper profile generation or manually by user
+  voiceProfileId?: VoiceProfileId
 }
 
 export interface Paper {

@@ -73,6 +73,23 @@ system: |-
   - **Academically precise** - use exact terminology
   - **Never sensationalized** - no hyperbole or exaggeration
   
+  {{#voice}}
+  ---
+  
+  # VOICE
+  ## Project Authorial Voice: {{voice.name}}
+  
+  **Persona:** {{voice.persona}}
+  
+  **Hedging:** {{voice.hedgingGuidance}}
+  
+  **Citations:** {{voice.citationGuidance}}
+  
+  **Use these phrases:**
+  - Hedging: "{{#voice.samplePhrases.hedge}}{{.}}"{{^last}}, "{{/last}}{{/voice.samplePhrases.hedge}}
+  - Assertive: "{{#voice.samplePhrases.assertive}}{{.}}"{{^last}}, "{{/last}}{{/voice.samplePhrases.assertive}}
+  {{/voice}}
+  
   ---
   
   # AUDIENCE

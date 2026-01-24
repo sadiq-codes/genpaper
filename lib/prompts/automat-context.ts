@@ -11,7 +11,18 @@
  * - Method is critical: Explicit HOW instructions for tool use
  * - Usage provides context: How output will be used (inserted, replaced)
  * - Less Style/Audience variation: Consistent assistant voice
+ * 
+ * Voice Integration:
+ * - Content-generating actions (write, edit, cite) include project voice
+ * - Mechanical actions (explain, suggest, analyze) skip voice
  */
+
+import { 
+  type CondensedVoiceContext,
+  buildCondensedVoiceContext,
+  shouldIncludeVoiceForAction,
+  type VoiceProfileId
+} from '@/lib/generation/voice-profiles'
 
 /**
  * Tool definition for the prompt
@@ -84,6 +95,11 @@ export interface ChatAUTOMATContext {
     confidence: 'assertive' | 'hedged' | 'exploratory'
     verbosity: 'concise' | 'explanatory' | 'detailed'
   }
+  
+  // === VOICE (optional) ===
+  // Project's authorial voice for content-generating actions
+  // Only included for write/edit/cite actions that produce academic prose
+  voice?: CondensedVoiceContext
 }
 
 /**
@@ -258,6 +274,10 @@ export function buildChatAUTOMATContext(params: {
   // Options
   maxContentLength?: number
   tools?: ToolDefinition[]
+  
+  // Voice configuration (optional)
+  // Pass the project's voiceProfileId to include voice guidance for content-generating actions
+  voiceProfileId?: VoiceProfileId | null
 }): ChatAUTOMATContext {
   const {
     userMessage,
@@ -272,6 +292,7 @@ export function buildChatAUTOMATContext(params: {
     mentionedPapersContext,
     maxContentLength = 3000,
     tools = DEFAULT_CHAT_TOOLS,
+    voiceProfileId,
   } = params
   
   // Infer action from message
@@ -285,6 +306,11 @@ export function buildChatAUTOMATContext(params: {
     ? documentContent.slice(0, maxContentLength) 
     : documentContent
   
+  // Build voice context only for content-generating actions
+  const voice = shouldIncludeVoiceForAction(actionType) && voiceProfileId
+    ? buildCondensedVoiceContext(voiceProfileId)
+    : undefined
+
   return {
     // ACTION
     actionType,
@@ -338,6 +364,9 @@ export function buildChatAUTOMATContext(params: {
       confidence: actionType === 'explain' ? 'assertive' : 'hedged',
       verbosity: actionType === 'explain' ? 'explanatory' : 'concise',
     },
+    
+    // VOICE (optional - only for content-generating actions)
+    voice,
   }
 }
 

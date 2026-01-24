@@ -339,10 +339,14 @@ export function ResearchTab({
   onRetryPaper,
   isPolling,
 }: ResearchTabProps) {
-  // Calculate processing stats
-  const hasProcessingPapers = processingSummary && 
+  // Only count uploaded papers for processing status display
+  const uploadedPapers = papers.filter(p => p.source === 'upload')
+  const hasUploadedPapers = uploadedPapers.length > 0
+  
+  // Calculate processing stats - only for uploaded papers
+  const hasProcessingPapers = hasUploadedPapers && processingSummary && 
     (processingSummary.pending > 0 || processingSummary.processing > 0)
-  const hasFailedPapers = processingSummary && processingSummary.failed > 0
+  const hasFailedPapers = hasUploadedPapers && processingSummary && processingSummary.failed > 0
   
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -376,13 +380,13 @@ export function ResearchTab({
           </TooltipProvider>
         </div>
         
-        {/* Processing status indicator */}
-        {processingSummary && papers.length > 0 && (hasProcessingPapers || hasFailedPapers) && (
+        {/* Processing status indicator - only for uploaded papers */}
+        {hasUploadedPapers && processingSummary && (hasProcessingPapers || hasFailedPapers) && (
           <div className="mt-2 flex items-center gap-2 text-xs">
             {hasProcessingPapers && (
               <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Processing {processingSummary.processing + processingSummary.pending}/{processingSummary.total}
+                Processing {processingSummary.processing + processingSummary.pending} uploaded
               </span>
             )}
             {hasFailedPapers && (
@@ -394,7 +398,7 @@ export function ResearchTab({
             {!hasProcessingPapers && !hasFailedPapers && processingSummary.allProcessed && (
               <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
                 <CheckCircle2 className="h-3 w-3" />
-                All papers ready
+                Uploads ready
               </span>
             )}
           </div>
@@ -408,16 +412,21 @@ export function ResearchTab({
             <EmptyState onOpenLibrary={onOpenLibrary} />
           ) : (
             <div className="w-full overflow-hidden">
-              {papers.map(paper => (
-                <PaperCard 
-                  key={paper.id} 
-                  paper={paper}
-                  onInsertCitation={() => onInsertCitation(paper)}
-                  onRemove={() => onRemovePaper(paper.id, 0)}
-                  processingStatus={getProcessingStatus?.(paper.id)}
-                  onRetry={onRetryPaper ? () => onRetryPaper(paper.id) : undefined}
-                />
-              ))}
+              {papers.map(paper => {
+                // Only show processing status for uploaded papers
+                // Search/generation papers don't need status tracking
+                const isUploadedPaper = paper.source === 'upload'
+                return (
+                  <PaperCard 
+                    key={paper.id} 
+                    paper={paper}
+                    onInsertCitation={() => onInsertCitation(paper)}
+                    onRemove={() => onRemovePaper(paper.id, 0)}
+                    processingStatus={isUploadedPaper ? getProcessingStatus?.(paper.id) : undefined}
+                    onRetry={isUploadedPaper && onRetryPaper ? () => onRetryPaper(paper.id) : undefined}
+                  />
+                )
+              })}
             </div>
           )}
         </ScrollArea>

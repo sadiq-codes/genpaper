@@ -292,6 +292,51 @@ export async function updateResearchProjectStatus(
   if (error) throw error
 }
 
+/**
+ * Update the voice profile ID in a project's generation config.
+ * This persists the AI-selected voice profile so chat/autocomplete can use it.
+ * 
+ * @param projectId - The project to update
+ * @param voiceProfileId - The voice profile ID to save
+ */
+export async function updateProjectVoiceProfile(
+  projectId: string,
+  voiceProfileId: string
+): Promise<void> {
+  const supabase = await getSB()
+  
+  // First get existing generation_config to merge
+  const { data: project, error: fetchError } = await supabase
+    .from('research_projects')
+    .select('generation_config')
+    .eq('id', projectId)
+    .single()
+  
+  if (fetchError) {
+    console.error('Failed to fetch project for voice profile update:', fetchError)
+    throw fetchError
+  }
+  
+  // Merge voiceProfileId into existing config
+  const existingConfig = (project?.generation_config as Record<string, unknown>) || {}
+  const updatedConfig = {
+    ...existingConfig,
+    voiceProfileId
+  }
+  
+  const { error: updateError } = await supabase
+    .from('research_projects')
+    .update({ generation_config: updatedConfig })
+    .eq('id', projectId)
+  
+  if (updateError) {
+    console.error('Failed to update project voice profile:', updateError)
+    throw updateError
+  }
+  
+  console.log(`✅ Updated voice profile for project ${projectId}: ${voiceProfileId}`)
+}
+
 export async function getResearchProject(
   projectId: string,
   userId?: string

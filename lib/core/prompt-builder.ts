@@ -10,6 +10,50 @@ import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
 import type { ChatCOStarContext, CompleteCOStarContext } from '@/lib/prompts/costar-context'
 import type { ChatAUTOMATContext } from '@/lib/prompts/automat-context'
 
+/**
+ * Voice data structure for template injection
+ * Matches the TemplateVoiceData interface from voice-profiles.ts
+ * with additional computed boolean flags for Mustache conditionals
+ */
+export interface PromptVoiceData {
+  id: string
+  name: string
+  description: string
+  literatureStance: 'descriptive' | 'evaluative' | 'adversarial'
+  literatureStanceGuidance: string
+  hedging: {
+    density: 'high' | 'medium' | 'low'
+    maxHedgePhrasesPerParagraph: number
+    requiredAssertiveSentencesPerSection: number
+    // Boolean flags for Mustache conditionals
+    density_high?: boolean
+    density_medium?: boolean
+    density_low?: boolean
+  }
+  sentenceRhythm: {
+    shortSentencePercentage: number
+    maxConsecutiveLongSentences: number
+    emphasisSentencesPerSection: number
+  }
+  citationPosture: {
+    style: 'supportive' | 'contrastive' | 'mixed'
+    minContrastiveCitationsPerSection: number
+    allowExplicitDisagreement: boolean
+    // Boolean flags for Mustache conditionals
+    style_supportive?: boolean
+    style_contrastive?: boolean
+    style_mixed?: boolean
+  }
+  intellectualRisk: 'conservative' | 'moderate' | 'bold'
+  intellectualRiskGuidance: string
+  patterns: {
+    hedgePhrases: string[]
+    assertivePhrases: string[]
+    contrastivePhrases: string[]
+    evaluativePhrases: string[]
+  }
+}
+
 export interface PromptData {
   // Paper-level context
   paperTitle: string
@@ -43,6 +87,11 @@ export interface PromptData {
   // Paper profile guidance (contextual intelligence from profile generation)
   // This is the SINGLE SOURCE OF TRUTH for paper-type specific guidance
   profileGuidance?: string
+  
+  // Voice/Authorial persona configuration
+  // Controls hedging, confidence, citation posture, and intellectual risk
+  // to produce authentic-feeling variation across papers
+  voice?: PromptVoiceData
 }
 
 export interface PromptTemplate {

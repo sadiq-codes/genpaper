@@ -3,11 +3,14 @@
  * 
  * These prompts guide the LLM to generate contextual, discipline-aware
  * paper profiles that replace hardcoded rules.
+ * 
+ * Includes voice/authorial persona suggestion for authentic variation.
  */
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import type { ProfileGenerationInput } from './paper-profile-types'
+import { getVoiceProfileSummaries, type VoiceProfileId } from './voice-profiles'
 
 // Cache for loaded markdown content
 const profileGuidanceCache: Map<string, string> = new Map()
@@ -62,13 +65,19 @@ interface PromptOutput {
 export async function getPaperProfilePrompt(input: ProfileGenerationInput): Promise<PromptOutput> {
   const { topic, paperType, hasOriginalResearch, userContext } = input
   
+  // Get voice profile summaries for the prompt
+  const voiceProfiles = getVoiceProfileSummaries()
+  const voiceProfilesDescription = voiceProfiles.map(p => 
+    `- ${p.id}: "${p.name}" - ${p.description}\n  Characteristics: ${p.characteristics.join('; ')}`
+  ).join('\n')
+
   const system = `You are an expert academic advisor with deep knowledge across all disciplines. Your task is to analyze a research topic and paper type, then create a comprehensive profile that will guide paper generation.
 
 Your profile must be:
 - CONTEXTUAL: Specific to this topic and discipline, not generic advice
 - PRACTICAL: Actionable guidance that can be directly used in generation
 - ACCURATE: Reflect actual academic norms and expectations for this field
-- COMPREHENSIVE: Cover structure, sources, quality criteria, and content coverage
+- COMPREHENSIVE: Cover structure, sources, quality criteria, content coverage, AND authorial voice
 
 You have expertise in identifying:
 - What makes excellent papers in different disciplines and traditions
@@ -76,6 +85,16 @@ You have expertise in identifying:
 - Source expectations (types, recency, quantity) by field
 - Field-specific quality criteria and evaluation standards
 - Common pitfalls and mistakes in different paper types
+- APPROPRIATE AUTHORIAL VOICE for the paper type, discipline, and academic level
+
+AUTHORIAL VOICE SELECTION:
+Different papers require different "author voices" based on:
+- Academic level (undergraduate → doctoral → faculty)
+- Discipline conventions (humanities often more evaluative, STEM often more conservative)
+- Paper type (literature reviews need synthesis, dissertations need strong positions)
+
+Available voice profiles:
+${voiceProfilesDescription}
 
 CRITICAL PRINCIPLE FOR ALL PAPER TYPES:
 The profile you create will guide a writing system that uses REAL source documents.
@@ -154,6 +173,12 @@ Create a comprehensive paper profile by analyzing:
    - What rules define this paper type that must not be violated?
    - For each rule: state the rule and explain why it matters
 
+7. AUTHORIAL VOICE
+   - Which voice profile is most appropriate for this ${formatPaperType(paperType)} in this discipline?
+   - Consider: academic level implied by paper type, discipline conventions, topic sensitivity
+   - Provide a rationale explaining why this voice is appropriate
+   - Available profiles: conservative-reviewer, confident-researcher, senior-scholar, balanced-academic
+
 Return a JSON object with this exact structure:
 {
   "discipline": {
@@ -214,7 +239,11 @@ Return a JSON object with this exact structure:
   },
   "genreRules": [
     { "rule": "string", "rationale": "string" }
-  ]
+  ],
+  "voice": {
+    "profileId": "conservative-reviewer|confident-researcher|senior-scholar|balanced-academic",
+    "rationale": "string explaining why this voice is appropriate for this paper"
+  }
 }`
 
   return { system, user }
@@ -403,8 +432,20 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
         required: ['rule', 'rationale'],
         additionalProperties: false
       }
+    },
+    voice: {
+      type: 'object' as const,
+      properties: {
+        profileId: { 
+          type: 'string' as const, 
+          enum: ['conservative-reviewer', 'confident-researcher', 'senior-scholar', 'balanced-academic'] 
+        },
+        rationale: { type: 'string' as const }
+      },
+      required: ['profileId', 'rationale'],
+      additionalProperties: false
     }
   },
-  required: ['discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules'],
+  required: ['discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules', 'voice'],
   additionalProperties: false
 }

@@ -114,9 +114,17 @@ async function buildSystemPromptFromTemplate(
   paperType: string,
   ragFormatted: { chunksText: string; claimsText: string },
   papersContext: string,
-  outlineContext: string
+  outlineContext: string,
+  voiceProfileId?: string | null
 ): Promise<string> {
   const suggestionObjective = await PromptService.getSuggestionObjective(suggestionType)
+  
+  // Validate voice profile ID
+  type VoiceProfileId = 'conservative-reviewer' | 'confident-researcher' | 'senior-scholar' | 'balanced-academic'
+  const validVoiceIds: VoiceProfileId[] = ['conservative-reviewer', 'confident-researcher', 'senior-scholar', 'balanced-academic']
+  const validatedVoiceId = voiceProfileId && validVoiceIds.includes(voiceProfileId as VoiceProfileId)
+    ? voiceProfileId as VoiceProfileId
+    : undefined
   
   const costarContext = buildCompleteContext({
     topic,
@@ -129,6 +137,7 @@ async function buildSystemPromptFromTemplate(
     chunksText: ragFormatted.chunksText,
     claimsText: ragFormatted.claimsText,
     papersContext,
+    voiceProfileId: validatedVoiceId,
   })
 
   return PromptService.buildCompletePrompt(costarContext)
@@ -329,10 +338,10 @@ export async function POST(request: NextRequest) {
     // OPTIMIZATION: Fetch project and determine paper IDs in parallel when possible
     const projectFetchStart = Date.now()
     
-    // Start project fetch
+    // Start project fetch (include generation_config for voice profile)
     const projectPromise = supabase
       .from('research_projects')
-      .select('id, topic, paper_type')
+      .select('id, topic, paper_type, generation_config')
       .eq('id', projectId)
       .eq('user_id', user.id)
       .single()
@@ -389,6 +398,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
     
+    // Extract voice profile from generation config
+    const generationConfig = (project as { generation_config?: { voiceProfileId?: string } | null }).generation_config
+    const voiceProfileId = generationConfig?.voiceProfileId || null
+    
+    if (voiceProfileId) {
+      console.log('[Autocomplete] Using project voice profile:', voiceProfileId)
+    }
+    
     // OPTIMIZATION: Parallel RAG + citation style fetch
     // OPTIMIZATION: Reduced chunks (4) and skip claims for autocomplete
     const ragStartTime = Date.now()
@@ -441,7 +458,8 @@ export async function POST(request: NextRequest) {
       paperType,
       ragFormatted,
       papersContext,
-      outlineContext
+      outlineContext,
+      voiceProfileId  // Pass voice profile for consistent completions
     )
     
     const userPrompt = buildUserPrompt(context)

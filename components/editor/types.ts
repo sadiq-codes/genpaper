@@ -9,6 +9,8 @@ export interface Citation {
   doi?: string
 }
 
+export type PaperSource = 'upload' | 'search' | 'manual' | 'generation'
+
 export interface ProjectPaper {
   id: string
   title: string
@@ -18,6 +20,7 @@ export interface ProjectPaper {
   journal?: string
   doi?: string
   content?: string
+  source?: PaperSource
 }
 
 // Claim types from analysis

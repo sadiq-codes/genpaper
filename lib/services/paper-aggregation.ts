@@ -625,6 +625,18 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
       // Paper has full-text content already (≥5 chunks), skip processing
       console.log(`📚 Full content already exists for paper (${existingChunkCount} chunks, skipping): ${paperDTO.title}`)
       
+      // Ensure processing_status is 'processed' for papers with full content
+      // This handles papers that may have been processed before this fix was added
+      try {
+        const serviceClient = getServiceClient()
+        await serviceClient
+          .from('papers')
+          .update({ processing_status: 'processed' })
+          .eq('id', paperId)
+      } catch (statusErr) {
+        console.warn(`Failed to update processing_status for existing paper ${paperId}:`, statusErr)
+      }
+      
       // Create ingested paper object with database ID
       const ingestedPaper: RankedPaper = {
         ...paper,
@@ -694,6 +706,32 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
     // This eliminates the separate abstract chunking path for consistency
     const finalChunkCount = await createChunksForPaper(paperId, contentParts.join('\n\n'))
     console.log(`📚 Ingested paper with ${finalChunkCount} chunks: ${paperDTO.title}`)
+
+    // Step 6: Update processing_status to 'processed' since chunks are created
+    // This ensures the UI shows "Ready" instead of "Pending" for papers
+    if (finalChunkCount > 0) {
+      try {
+        const serviceClient = getServiceClient()
+        await serviceClient
+          .from('papers')
+          .update({ processing_status: 'processed' })
+          .eq('id', paperId)
+      } catch (statusErr) {
+        console.warn(`Failed to update processing_status for paper ${paperId}:`, statusErr)
+      }
+    } else {
+      // No chunks created - mark as failed
+      try {
+        const serviceClient = getServiceClient()
+        await serviceClient
+          .from('papers')
+          .update({ processing_status: 'failed' })
+          .eq('id', paperId)
+        console.warn(`⚠️ No chunks created for paper ${paperId}, marked as failed`)
+      } catch (statusErr) {
+        console.warn(`Failed to update processing_status to failed for paper ${paperId}:`, statusErr)
+      }
+    }
 
     // Create ingested paper object with database ID and enhanced PDF URLs
     const ingestedPaper: RankedPaper = {

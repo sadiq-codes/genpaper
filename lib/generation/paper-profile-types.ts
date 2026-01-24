@@ -6,6 +6,8 @@
  * topic-specific guidance rather than hardcoded rules.
  */
 
+import type { VoiceProfileId, VoiceProfileCore } from './voice-profiles'
+
 /**
  * Discipline context describes the academic field and its characteristics
  */
@@ -137,6 +139,19 @@ export interface GenreRule {
 }
 
 /**
+ * Voice configuration for authorial persona
+ * Enables distinct "author voices" to reduce AI detectability
+ */
+export interface PaperVoiceConfig {
+  /** Selected voice profile ID */
+  profileId: VoiceProfileId
+  /** AI-generated rationale for why this voice was selected */
+  rationale?: string
+  /** Custom overrides to the base voice profile */
+  overrides?: Partial<VoiceProfileCore>
+}
+
+/**
  * Complete paper profile - the central configuration for paper generation
  */
 export interface PaperProfile {
@@ -163,6 +178,14 @@ export interface PaperProfile {
   coverage: ContentCoverage
   /** Genre-specific rules */
   genreRules: GenreRule[]
+  
+  // Voice/Authorial persona (optional - defaults to 'balanced-academic')
+  /** 
+   * Voice configuration for authorial persona
+   * Controls hedging, confidence, citation posture, and intellectual risk
+   * to produce authentic-feeling variation across papers
+   */
+  voice?: PaperVoiceConfig
 }
 
 /**

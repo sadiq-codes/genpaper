@@ -113,10 +113,14 @@ export async function retrieveEditorContext(
 ): Promise<EditorContext> {
   const startTime = Date.now()
   const {
-    maxChunks = 10,
-    maxClaims = 7,
-    minChunkScore = 0.3,
-    minClaimScore = 0.3
+    // INCREASED from 10 to 15: More chunks for better autocomplete context
+    maxChunks = 15,
+    // INCREASED from 7 to 10: More claims for richer grounding
+    maxClaims = 10,
+    // REDUCED from 0.3 to 0.2: Allow more papers through, especially for niche topics
+    minChunkScore = 0.2,
+    // REDUCED from 0.3 to 0.2: Consistent with chunk threshold
+    minClaimScore = 0.2
   } = options
 
   // Early return if no papers

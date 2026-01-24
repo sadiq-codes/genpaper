@@ -50,12 +50,13 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     publication_date: string | null
     venue: string | null
     doi: string | null
+    source: string | null
   }> = []
 
   if (paperIds.length > 0) {
     const { data: fetchedPapers, error: papersError } = await supabase
       .from('papers')
-      .select('id, title, authors, publication_date, venue, doi')
+      .select('id, title, authors, publication_date, venue, doi, source')
       .in('id', paperIds)
     
     if (papersError) {
@@ -107,6 +108,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         : new Date().getFullYear(),
       journal: paper.venue || undefined,
       doi: paper.doi || undefined,
+      source: (paper.source as 'upload' | 'search' | 'manual' | 'generation') || undefined,
     })
   }
   

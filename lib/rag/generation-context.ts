@@ -143,16 +143,18 @@ function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
   const config = {
     mode: params.mode || 'hybrid',
     vectorWeight: params.vectorWeight || 0.7,
-    // REDUCED from 0.15 to 0.1: Let more chunks through
-    minScore: params.minScore || 0.1,
-    retrieveLimit: 100,
-    // INCREASED default from 20 to 25
-    finalLimit: params.limit || 25,
+    // REDUCED from 0.1 to 0.05: Let more chunks through for niche topics
+    minScore: params.minScore || 0.05,
+    // INCREASED from 100 to 150: Larger candidate pool before reranking
+    retrieveLimit: 150,
+    // INCREASED default from 25 to 38: ~50% more material for synthesis
+    finalLimit: params.limit || 38,
     useCitationBoost: params.useCitationBoost ?? true,
     useReranking: params.useReranking ?? true,
-    rerankTopK: params.rerankTopK || 30,
-    // INCREASED from 5 to 6: More context per paper
-    maxPerPaper: 6
+    // INCREASED from 30 to 45: Rerank more candidates for better selection
+    rerankTopK: params.rerankTopK || 45,
+    // INCREASED from 6 to 8: More context per paper for deeper understanding
+    maxPerPaper: 8
   }
   
   if (!retrieverInstance) {
@@ -197,8 +199,10 @@ export class GenerationContextService {
     const { 
       query, 
       paperIds, 
-      limit = 20, 
-      minScore = 0.2,
+      // INCREASED from 20 to 30: More chunks for richer synthesis
+      limit = 30, 
+      // REDUCED from 0.2 to 0.15: Allow more papers through
+      minScore = 0.15,
       // DISABLED BY DEFAULT: Compression strips context needed for natural citations
       useCompression = false
     } = params
@@ -372,11 +376,13 @@ export class GenerationContextService {
     console.log(`📊 Content availability: ${papersWithContent.length}/${paperIds.length} papers`)
     
     // Retrieve chunks
+    // INCREASED minimum from 60 to 90: More material for synthesis
     const result = await this.retrieve({
       query: topic,
       paperIds: papersWithContent,
-      limit: Math.max(chunkLimit * 2, 60),
-      minScore: 0.15,
+      limit: Math.max(chunkLimit * 2, 90),
+      // REDUCED from 0.15 to 0.1: Allow more papers through for niche topics
+      minScore: 0.1,
       useCompression: false // Don't compress for getRelevantChunks
     })
     
@@ -525,20 +531,22 @@ export class GenerationContextService {
         const targetIds = ids.length > 0 ? ids : allPaperIds
         
         try {
-          // INCREASED limits: More material for synthesis (was 20 → 25, was 12 → 15)
+          // INCREASED limits: More material for synthesis
+          // INCREASED from 25 to 38, minimum from 15 to 20
           contextChunks = await this.getRelevantChunks(
             `${section.title}: ${(section.keyPoints || []).join('. ')}`,
             targetIds,
-            Math.min(25, Math.max(targetIds.length * 3, 15)),
+            Math.min(38, Math.max(targetIds.length * 3, 20)),
             allPapers
           )
         } catch (firstError) {
           if (ids.length > 0 && allPaperIds.length > ids.length) {
             console.warn(`⚠️ Assigned papers for "${section.title}" have no content, trying all papers...`)
+            // INCREASED from 25 to 38, minimum from 15 to 20
             contextChunks = await this.getRelevantChunks(
               topic,
               allPaperIds,
-              Math.min(25, Math.max(allPaperIds.length * 2, 15)),
+              Math.min(38, Math.max(allPaperIds.length * 2, 20)),
               allPapers
             )
           } else {

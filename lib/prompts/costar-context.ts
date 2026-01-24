@@ -6,7 +6,17 @@
  * well-structured prompts.
  * 
  * CO-STAR: Context, Objective, Style, Tone, Audience, Response
+ * 
+ * Voice Integration:
+ * - Autocomplete always includes project voice (completions are always in-document prose)
+ * - Voice provides hedging, confidence, and citation posture guidance
  */
+
+import { 
+  type CondensedVoiceContext,
+  buildCondensedVoiceContext,
+  type VoiceProfileId
+} from '@/lib/generation/voice-profiles'
 
 // Paper type to style guidance mapping
 // Simplified from full paper profiles for chat/complete use
@@ -124,6 +134,10 @@ export interface CompleteCOStarContext extends COStarBaseContext {
   chunksText: string
   claimsText: string
   papersContext: string
+  
+  // Voice context (optional)
+  // Project's authorial voice for consistent completions
+  voice?: CondensedVoiceContext
 }
 
 /**
@@ -285,6 +299,9 @@ export function buildCompleteContext(params: {
   claimsText: string
   papersContext: string
   documentContent?: string
+  // Voice configuration (optional)
+  // Pass the project's voiceProfileId to include voice guidance for completions
+  voiceProfileId?: VoiceProfileId | null
 }): CompleteCOStarContext {
   const {
     topic,
@@ -299,9 +316,13 @@ export function buildCompleteContext(params: {
     claimsText,
     papersContext,
     documentContent = '',
+    voiceProfileId,
   } = params
   
   const base = buildBaseContext(topic, paperType, currentSection, documentContent)
+  
+  // Build voice context - autocomplete always includes voice (it's always in-document prose)
+  const voice = voiceProfileId ? buildCondensedVoiceContext(voiceProfileId) : undefined
   
   return {
     ...base,
@@ -314,6 +335,7 @@ export function buildCompleteContext(params: {
     chunksText,
     claimsText,
     papersContext,
+    voice,
   }
 }
 

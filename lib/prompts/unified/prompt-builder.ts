@@ -1,6 +1,14 @@
 import 'server-only'
 import type { SectionContext, PaperTypeKey } from '../types'
 import { PromptService, type PromptData, type TemplateOptions, type BuiltPrompt } from '@/lib/prompts/prompt-service'
+import { 
+  type VoiceProfileId, 
+  type VoiceProfileCore,
+  type TemplateVoiceData,
+  formatVoiceForTemplate,
+  DEFAULT_VOICE_PROFILE_ID
+} from '@/lib/generation/voice-profiles'
+import type { PaperVoiceConfig } from '@/lib/generation/paper-profile-types'
 
 /**
  * Unified prompt builder that assembles contextual PromptData and delegates
@@ -34,6 +42,10 @@ export interface BuildPromptOptions extends TemplateOptions {
   // This is now the SINGLE SOURCE OF TRUTH for paper-type specific guidance
   profileGuidance?: string
   // Note: minSourcesRequired removed - we now use semantic citation guidance instead of quantitative enforcement
+  
+  // Voice/Authorial persona configuration
+  // Controls hedging, confidence, citation posture, and intellectual risk
+  voiceConfig?: PaperVoiceConfig
 }
 
 /**
@@ -169,8 +181,10 @@ async function generatePromptData(
   // SIMPLIFIED: Evidence selection with per-paper limits only
   // Upstream deduplication (chunk-retriever.ts) already handles content-level dedup
   // We just apply per-paper limits for source diversity
-  const MAX_SNIPPETS = Math.min(35, Math.max(totalDistinctPapers, freshChunks.length))
-  const MAX_PER_PAPER = 2
+  // INCREASED from 35 to 50: Allow more evidence snippets for richer synthesis
+  const MAX_SNIPPETS = Math.min(50, Math.max(totalDistinctPapers, freshChunks.length))
+  // INCREASED from 2 to 3: More context per paper for deeper analysis
+  const MAX_PER_PAPER = 3
   
   console.log(`📊 Evidence limits: MAX_SNIPPETS=${MAX_SNIPPETS}, MAX_PER_PAPER=${MAX_PER_PAPER}`)
 
@@ -210,6 +224,19 @@ async function generatePromptData(
   // Original research context (if provided)
   const originalResearch = options.originalResearch
 
+  // Voice/Authorial persona configuration
+  // Format voice profile for template injection with section-specific modulations
+  const voiceData = options.voiceConfig 
+    ? formatVoiceForTemplate(
+        options.voiceConfig.profileId,
+        sectionPath,
+        options.voiceConfig.overrides
+      )
+    : undefined
+  
+  // Add computed boolean flags for Mustache conditionals
+  const voiceWithFlags = voiceData ? addVoiceConditionalFlags(voiceData) : undefined
+
   return {
     paperTitle: projectData.title,
     paperObjectives: projectData.objectives,
@@ -232,7 +259,42 @@ async function generatePromptData(
     researchQuestion: originalResearch?.researchQuestion,
     keyFindings: originalResearch?.keyFindings,
     // Paper profile guidance (contextual intelligence) - single source of truth
-    profileGuidance: options.profileGuidance || undefined
+    profileGuidance: options.profileGuidance || undefined,
+    // Voice/Authorial persona - controls hedging, confidence, citation posture
+    voice: voiceWithFlags
+  }
+}
+
+/**
+ * Add boolean flags for Mustache conditionals
+ * Mustache doesn't support equality checks, so we need explicit booleans
+ */
+function addVoiceConditionalFlags(voice: TemplateVoiceData): TemplateVoiceData & {
+  hedging: TemplateVoiceData['hedging'] & {
+    density_high: boolean
+    density_medium: boolean
+    density_low: boolean
+  }
+  citationPosture: TemplateVoiceData['citationPosture'] & {
+    style_supportive: boolean
+    style_contrastive: boolean
+    style_mixed: boolean
+  }
+} {
+  return {
+    ...voice,
+    hedging: {
+      ...voice.hedging,
+      density_high: voice.hedging.density === 'high',
+      density_medium: voice.hedging.density === 'medium',
+      density_low: voice.hedging.density === 'low'
+    },
+    citationPosture: {
+      ...voice.citationPosture,
+      style_supportive: voice.citationPosture.style === 'supportive',
+      style_contrastive: voice.citationPosture.style === 'contrastive',
+      style_mixed: voice.citationPosture.style === 'mixed'
+    }
   }
 }
 
