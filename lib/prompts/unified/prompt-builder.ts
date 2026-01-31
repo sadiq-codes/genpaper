@@ -236,6 +236,14 @@ async function generatePromptData(
   
   // Add computed boolean flags for Mustache conditionals
   const voiceWithFlags = voiceData ? addVoiceConditionalFlags(voiceData) : undefined
+  
+  // Build quantification context for the literature base
+  // This helps the LLM make accurate claims like "X of Y studies found..."
+  const quantificationContext = buildQuantificationContext(
+    distinctChunks,
+    totalDistinctPapers,
+    finalUsablePapers
+  )
 
   return {
     paperTitle: projectData.title,
@@ -261,7 +269,44 @@ async function generatePromptData(
     // Paper profile guidance (contextual intelligence) - single source of truth
     profileGuidance: options.profileGuidance || undefined,
     // Voice/Authorial persona - controls hedging, confidence, citation posture
-    voice: voiceWithFlags
+    voice: voiceWithFlags,
+    // Quantification context for accurate claims about the literature base
+    literatureStats: quantificationContext
+  }
+}
+
+/**
+ * Build quantification context for the literature base
+ * Enables accurate claims like "X of Y studies found..."
+ */
+function buildQuantificationContext(
+  chunks: Array<{ paper_id?: string; metadata?: { year?: number } }>,
+  totalPapers: number,
+  usablePapers: number
+): {
+  totalPapers: number
+  usablePapers: number
+  dateRange: { earliest: number; latest: number } | null
+  hasSubstantialBase: boolean
+} {
+  // Extract years from chunks
+  const years: number[] = []
+  for (const chunk of chunks) {
+    const year = chunk.metadata?.year
+    if (year && typeof year === 'number' && year > 1900 && year < 2100) {
+      years.push(year)
+    }
+  }
+  
+  const dateRange = years.length > 0
+    ? { earliest: Math.min(...years), latest: Math.max(...years) }
+    : null
+  
+  return {
+    totalPapers,
+    usablePapers,
+    dateRange,
+    hasSubstantialBase: usablePapers >= 5
   }
 }
 

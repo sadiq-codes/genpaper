@@ -11,6 +11,13 @@
  * 
  * This system reduces AI detectability by producing authentic-feeling
  * authorial differences while maintaining academic rigor.
+ * 
+ * PHRASE SELECTION STRATEGY:
+ * Each voice profile has 15-20 phrases per category. At generation time,
+ * a topic-seeded subset (5-7 phrases) is selected. This provides:
+ * - Reproducibility: same topic = same phrases
+ * - Variety: different topics get different subsets
+ * - Voice coherence: phrases are curated to match the persona
  */
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -181,16 +188,44 @@ export const CONSERVATIVE_REVIEWER: VoiceProfile = {
       'might be attributed to',
       'it is possible that',
       'evidence appears to support',
-      'findings seem to suggest'
+      'findings seem to suggest',
+      'tentatively indicates',
+      'there is some evidence that',
+      'one interpretation is that',
+      'preliminary findings suggest',
+      'the data hint at',
+      'this could be attributed to',
+      'it remains possible that',
+      'evidence is suggestive of',
+      'appears consistent with',
+      'may be indicative of'
     ],
-    assertivePhrases: [],
+    assertivePhrases: [
+      'the literature indicates',
+      'studies have documented',
+      'research has identified'
+    ],
     contrastivePhrases: [
       'While some studies suggest',
       'Although findings vary',
       'Some researchers note that',
-      'It has also been observed that'
+      'It has also been observed that',
+      'Other perspectives indicate',
+      'Alternative interpretations suggest',
+      'Some scholars maintain',
+      'Different studies have found',
+      'Varying conclusions emerge from',
+      'Not all researchers agree that',
+      'Another view holds that',
+      'Some evidence points to'
     ],
-    evaluativePhrases: []
+    evaluativePhrases: [
+      'More research may be needed',
+      'Further investigation could clarify',
+      'Additional studies might explore',
+      'The evidence base could benefit from',
+      'Future work may address'
+    ]
   },
   
   sectionModulations: {
@@ -258,7 +293,17 @@ export const CONFIDENT_RESEARCHER: VoiceProfile = {
       'indicates',
       'points to',
       'implies',
-      'may reflect'
+      'may reflect',
+      'appears to support',
+      'tends to show',
+      'seems likely that',
+      'the evidence leans toward',
+      'findings are consistent with',
+      'data suggest that',
+      'it appears that',
+      'the pattern indicates',
+      'results point toward',
+      'evidence supports the view that'
     ],
     assertivePhrases: [
       'demonstrates',
@@ -266,7 +311,18 @@ export const CONFIDENT_RESEARCHER: VoiceProfile = {
       'confirms',
       'reveals',
       'shows clearly',
-      'provides evidence that'
+      'provides evidence that',
+      'documents',
+      'illustrates',
+      'substantiates',
+      'validates',
+      'verifies',
+      'underscores',
+      'highlights',
+      'makes clear that',
+      'offers strong support for',
+      'provides compelling evidence',
+      'leaves little doubt that'
     ],
     contrastivePhrases: [
       'However,',
@@ -275,7 +331,15 @@ export const CONFIDENT_RESEARCHER: VoiceProfile = {
       'Contrary to expectations,',
       'Despite these findings,',
       'Notably,',
-      'Importantly,'
+      'Importantly,',
+      'Interestingly,',
+      'Crucially,',
+      'Paradoxically,',
+      'What stands out is',
+      'A key distinction is',
+      'Unlike previous work,',
+      'In marked contrast,',
+      'This differs from'
     ],
     evaluativePhrases: [
       'This approach overlooks',
@@ -283,7 +347,16 @@ export const CONFIDENT_RESEARCHER: VoiceProfile = {
       'This gap warrants attention',
       'These findings raise questions about',
       'This methodological choice limits',
-      'Further investigation is needed'
+      'Further investigation is needed',
+      'This represents a significant advance',
+      'The implications extend to',
+      'This challenges the assumption that',
+      'A strength of this approach is',
+      'One concern with this interpretation is',
+      'The robustness of these findings is',
+      'This opens avenues for',
+      'A critical question remains',
+      'This finding has practical implications'
     ]
   },
   
@@ -363,7 +436,10 @@ export const SENIOR_SCHOLAR: VoiceProfile = {
   
   patterns: {
     hedgePhrases: [
-      'may'
+      'may',
+      'in certain contexts',
+      'under specific conditions',
+      'with some caveats'
     ],
     assertivePhrases: [
       'clearly demonstrates',
@@ -372,7 +448,17 @@ export const SENIOR_SCHOLAR: VoiceProfile = {
       'is evident',
       'establishes definitively',
       'leaves no doubt that',
-      'compellingly illustrates'
+      'compellingly illustrates',
+      'decisively supports',
+      'conclusively establishes',
+      'incontrovertibly demonstrates',
+      'definitively proves',
+      'overwhelmingly indicates',
+      'strongly confirms',
+      'powerfully demonstrates',
+      'unmistakably shows',
+      'firmly establishes',
+      'categorically supports'
     ],
     contrastivePhrases: [
       'This is mistaken.',
@@ -381,7 +467,15 @@ export const SENIOR_SCHOLAR: VoiceProfile = {
       'This assumption fails to account for',
       'The evidence contradicts',
       'This view is untenable.',
-      'A closer examination reveals'
+      'A closer examination reveals',
+      'This interpretation is flawed.',
+      'The conventional wisdom overlooks',
+      'This conflates',
+      'The argument falls short because',
+      'This reasoning is circular.',
+      'What has been ignored is',
+      'The standard account misses',
+      'This represents a fundamental misunderstanding'
     ],
     evaluativePhrases: [
       'This consensus warrants re-examination',
@@ -390,7 +484,15 @@ export const SENIOR_SCHOLAR: VoiceProfile = {
       'This methodological approach is fundamentally flawed',
       'The field has overlooked',
       'This represents a critical oversight',
-      'The implications are significant'
+      'The implications are significant',
+      'This changes how we must understand',
+      'The received view cannot account for',
+      'This reframes the entire debate',
+      'We must reconsider',
+      'This exposes a persistent blind spot',
+      'The dominant paradigm fails here',
+      'This demands a revised understanding',
+      'What emerges is a fundamentally different picture'
     ]
   },
   
@@ -475,14 +577,34 @@ export const BALANCED_ACADEMIC: VoiceProfile = {
       'indicates',
       'may reflect',
       'appears to',
-      'tends to'
+      'tends to',
+      'seems to support',
+      'is consistent with',
+      'points toward',
+      'the evidence suggests',
+      'findings indicate that',
+      'data appear to show',
+      'it seems likely that',
+      'there are indications that',
+      'the pattern suggests',
+      'results are suggestive of'
     ],
     assertivePhrases: [
       'demonstrates',
       'shows',
       'confirms',
       'reveals',
-      'establishes'
+      'establishes',
+      'documents',
+      'provides evidence for',
+      'supports the conclusion that',
+      'makes clear',
+      'illustrates',
+      'highlights',
+      'underscores',
+      'substantiates',
+      'corroborates',
+      'reinforces the view that'
     ],
     contrastivePhrases: [
       'However,',
@@ -490,14 +612,33 @@ export const BALANCED_ACADEMIC: VoiceProfile = {
       'Nevertheless,',
       'On the other hand,',
       'Conversely,',
-      'That said,'
+      'That said,',
+      'At the same time,',
+      'Notwithstanding this,',
+      'In contrast to this,',
+      'A different perspective emerges from',
+      'Yet it is also true that',
+      'Counterbalancing this,',
+      'An alternative view holds that',
+      'Some tension exists between',
+      'While this is true,'
     ],
     evaluativePhrases: [
       'This raises questions about',
       'Further investigation is needed',
       'These findings warrant consideration',
       'A limitation of this approach is',
-      'The evidence suggests room for'
+      'The evidence suggests room for',
+      'This represents an important contribution',
+      'A strength of this work is',
+      'One area for future research is',
+      'The practical implications include',
+      'This advances our understanding of',
+      'There remain open questions about',
+      'A nuanced interpretation is needed',
+      'The broader significance lies in',
+      'This finding is notable because',
+      'The evidence base would benefit from'
     ]
   },
   
@@ -1040,4 +1181,268 @@ export function shouldIncludeVoiceForAction(
   // Actions that produce academic prose should use voice
   const contentGeneratingActions = ['write', 'edit', 'cite']
   return contentGeneratingActions.includes(actionType)
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Universal Transition Phrases (Voice-Independent)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Universal transition phrases shared across all voice profiles.
+ * These are structural/organizational, not tonal, so they don't vary by voice.
+ */
+export const UNIVERSAL_TRANSITIONS = {
+  /** For introducing new topics or shifting focus */
+  topicShift: [
+    'Turning to',
+    'With regard to',
+    'Concerning',
+    'In terms of',
+    'When examining',
+    'Focusing on',
+    'Shifting attention to',
+    'Moving to consider',
+    'Regarding',
+    'In the context of',
+    'As for',
+    'When it comes to'
+  ],
+  
+  /** For adding similar or supporting points */
+  addition: [
+    'Furthermore,',
+    'Moreover,',
+    'Additionally,',
+    'In addition,',
+    'Similarly,',
+    'Likewise,',
+    'Along these lines,',
+    'Correspondingly,',
+    'Equally important,',
+    'In the same vein,',
+    'Building on this,',
+    'Extending this point,'
+  ],
+  
+  /** For introducing examples */
+  exemplification: [
+    'For instance,',
+    'For example,',
+    'To illustrate,',
+    'As demonstrated by',
+    'A case in point is',
+    'This is exemplified by',
+    'Consider, for example,',
+    'As evidenced by',
+    'One notable example is',
+    'This can be seen in',
+    'Specifically,',
+    'In particular,'
+  ],
+  
+  /** For temporal or sequential relationships */
+  sequence: [
+    'Initially,',
+    'Subsequently,',
+    'Following this,',
+    'More recently,',
+    'Prior to this,',
+    'In recent years,',
+    'Historically,',
+    'Over time,',
+    'Concurrently,',
+    'Meanwhile,',
+    'Eventually,',
+    'In the interim,'
+  ],
+  
+  /** For concluding or summarizing within sections */
+  synthesis: [
+    'Collectively,',
+    'Taken together,',
+    'Overall,',
+    'In summary,',
+    'Broadly speaking,',
+    'On balance,',
+    'All things considered,',
+    'In essence,',
+    'To summarize,',
+    'The key point is',
+    'What emerges from this analysis is',
+    'The overarching pattern suggests'
+  ],
+  
+  /** For causal relationships */
+  causation: [
+    'As a result,',
+    'Consequently,',
+    'Therefore,',
+    'Thus,',
+    'Hence,',
+    'This leads to',
+    'It follows that',
+    'This results in',
+    'Given this,',
+    'Accordingly,',
+    'For this reason,',
+    'This explains why'
+  ]
+}
+
+export type TransitionCategory = keyof typeof UNIVERSAL_TRANSITIONS
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Seeded Phrase Selection Utilities
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Simple string hash function for seeding
+ * Produces consistent numeric hash from any string
+ */
+function simpleHash(str: string): number {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash // Convert to 32-bit integer
+  }
+  return Math.abs(hash)
+}
+
+/**
+ * Seeded random number generator (Mulberry32)
+ * Deterministic PRNG for reproducible phrase selection
+ */
+function seededRandom(seed: number): () => number {
+  return function() {
+    let t = seed += 0x6D2B79F5
+    t = Math.imul(t ^ t >>> 15, t | 1)
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61)
+    return ((t ^ t >>> 14) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * Fisher-Yates shuffle with seeded RNG
+ */
+function seededShuffle<T>(array: T[], seed: number): T[] {
+  const result = [...array]
+  const random = seededRandom(seed)
+  
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1))
+    ;[result[i], result[j]] = [result[j], result[i]]
+  }
+  
+  return result
+}
+
+/**
+ * Select a subset of phrases using topic-based seeding
+ * Same topic always produces same selection for reproducibility
+ * 
+ * @param phrases - Full phrase array (15-20 phrases)
+ * @param count - Number of phrases to select (typically 5-7)
+ * @param topic - Paper topic for seeding
+ * @param category - Phrase category name (for seed variation)
+ * @returns Selected subset of phrases
+ */
+export function selectPhrasesForPaper(
+  phrases: string[],
+  count: number,
+  topic: string,
+  category: string
+): string[] {
+  if (phrases.length <= count) {
+    return [...phrases]
+  }
+  
+  const seed = simpleHash(topic + category)
+  const shuffled = seededShuffle(phrases, seed)
+  return shuffled.slice(0, count)
+}
+
+/**
+ * Select transition phrases for a paper
+ * Uses topic-based seeding for reproducibility
+ */
+export function selectTransitionsForPaper(
+  topic: string,
+  countPerCategory: number = 5
+): Record<TransitionCategory, string[]> {
+  const result: Record<string, string[]> = {}
+  
+  for (const [category, phrases] of Object.entries(UNIVERSAL_TRANSITIONS)) {
+    result[category] = selectPhrasesForPaper(
+      phrases,
+      countPerCategory,
+      topic,
+      `transition_${category}`
+    )
+  }
+  
+  return result as Record<TransitionCategory, string[]>
+}
+
+/**
+ * Get a complete phrase selection for a paper
+ * Combines voice-specific phrases with universal transitions
+ */
+export interface PaperPhraseSelection {
+  /** Voice-specific phrases (subset selected by topic seed) */
+  voice: {
+    hedge: string[]
+    assertive: string[]
+    contrastive: string[]
+    evaluative: string[]
+  }
+  /** Universal transitions (subset selected by topic seed) */
+  transitions: Record<TransitionCategory, string[]>
+}
+
+/**
+ * Select all phrases for a paper generation
+ * 
+ * @param profileId - Voice profile to use
+ * @param topic - Paper topic for seeding
+ * @param voicePhraseCount - Phrases per voice category (default 5)
+ * @param transitionPhraseCount - Phrases per transition category (default 5)
+ */
+export function selectAllPhrasesForPaper(
+  profileId: VoiceProfileId,
+  topic: string,
+  voicePhraseCount: number = 5,
+  transitionPhraseCount: number = 5
+): PaperPhraseSelection {
+  const profile = getVoiceProfile(profileId)
+  
+  return {
+    voice: {
+      hedge: selectPhrasesForPaper(
+        profile.patterns.hedgePhrases,
+        voicePhraseCount,
+        topic,
+        'hedge'
+      ),
+      assertive: selectPhrasesForPaper(
+        profile.patterns.assertivePhrases,
+        voicePhraseCount,
+        topic,
+        'assertive'
+      ),
+      contrastive: selectPhrasesForPaper(
+        profile.patterns.contrastivePhrases,
+        voicePhraseCount,
+        topic,
+        'contrastive'
+      ),
+      evaluative: selectPhrasesForPaper(
+        profile.patterns.evaluativePhrases,
+        voicePhraseCount,
+        topic,
+        'evaluative'
+      )
+    },
+    transitions: selectTransitionsForPaper(topic, transitionPhraseCount)
+  }
 }

@@ -139,6 +139,24 @@ export interface GenreRule {
 }
 
 /**
+ * Title Contract Analysis
+ * 
+ * Captures what the title/topic promises to deliver to the reader.
+ * This ensures the paper answers its own research question rather than
+ * just covering related background material.
+ */
+export interface TitleContract {
+  /** What the title promises the reader will learn or understand */
+  promise: string
+  /** Specific content/analysis that MUST appear to fulfill the promise */
+  requiredDeliverables: string[]
+  /** How to verify the paper delivered on its promise */
+  successCriteria: string[]
+  /** What would make this paper fail despite covering related topics */
+  failureMode: string
+}
+
+/**
  * Voice configuration for authorial persona
  * Enables distinct "author voices" to reduce AI detectability
  */
@@ -186,6 +204,14 @@ export interface PaperProfile {
    * to produce authentic-feeling variation across papers
    */
   voice?: PaperVoiceConfig
+  
+  // Title Contract (captures what the title promises to deliver)
+  /**
+   * Analysis of what the title/topic promises to deliver.
+   * Ensures the paper answers its own research question rather than
+   * just covering related background material.
+   */
+  titleContract?: TitleContract
 }
 
 /**
@@ -226,6 +252,12 @@ export interface ProfileValidationResult {
   themeCoverage: {
     covered: string[]
     missing: string[]
+  }
+  /** Title contract deliverables analysis */
+  titleContractCoverage?: {
+    covered: string[]
+    missing: string[]
+    promise: string
   }
 }
 

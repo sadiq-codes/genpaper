@@ -92,6 +92,15 @@ export interface PromptData {
   // Controls hedging, confidence, citation posture, and intellectual risk
   // to produce authentic-feeling variation across papers
   voice?: PromptVoiceData
+  
+  // Quantification context for accurate claims about the literature base
+  // Helps the LLM make specific claims like "X of Y studies found..."
+  literatureStats?: {
+    totalPapers: number
+    usablePapers: number
+    dateRange: { earliest: number; latest: number } | null
+    hasSubstantialBase: boolean
+  }
 }
 
 export interface PromptTemplate {

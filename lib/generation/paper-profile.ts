@@ -579,7 +579,25 @@ Generate meaningful subsection titles that reflect the actual content themes ide
 Do NOT use generic titles like "Theme 1" or "Section A" - use descriptive titles.
 ` : ''
 
+    // Build title contract guidance for outline mode
+    const outlineTitleContractGuidance = profile.titleContract ? `
+═══════════════════════════════════════════════════════════════════════════════
+🎯 TITLE CONTRACT - THE PAPER MUST DELIVER ON THIS PROMISE
+═══════════════════════════════════════════════════════════════════════════════
+
+**The title promises:** ${profile.titleContract.promise}
+
+**Required deliverables (structure your outline to include these):**
+${profile.titleContract.requiredDeliverables.map((d, i) => `${i + 1}. ${d}`).join('\n')}
+
+**Failure mode to avoid:** ${profile.titleContract.failureMode}
+
+Your outline MUST include sections that deliver on these requirements.
+═══════════════════════════════════════════════════════════════════════════════
+` : ''
+
     return `
+${outlineTitleContractGuidance}
 ═══════════════════════════════════════════════════════════════════════════════
 MANDATORY PAPER PROFILE CONSTRAINTS - YOU MUST FOLLOW THESE EXACTLY
 ═══════════════════════════════════════════════════════════════════════════════
@@ -624,9 +642,31 @@ CREATE YOUR OUTLINE USING ONLY THE MANDATORY SECTIONS ABOVE
   // This section provides a brief summary for the profile guidance
   const voiceGuidance = profile.voice ? buildVoiceGuidanceSummary(profile.voice.profileId as VoiceProfileId, profile.voice.rationale) : ''
 
+  // Build title contract guidance if present
+  const titleContractGuidance = profile.titleContract ? `
+═══════════════════════════════════════════════════════════════════════════════
+🎯 TITLE CONTRACT - WHAT THIS PAPER MUST DELIVER
+═══════════════════════════════════════════════════════════════════════════════
+
+**The title promises:** ${profile.titleContract.promise}
+
+**To fulfill this promise, the paper MUST include:**
+${profile.titleContract.requiredDeliverables.map((d, i) => `${i + 1}. ${d}`).join('\n')}
+
+**Success criteria - the paper delivers when:**
+${profile.titleContract.successCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+
+**⚠️ FAILURE MODE (what to avoid):**
+${profile.titleContract.failureMode}
+
+A paper that covers related background but fails to deliver on these requirements
+is INCOMPLETE, regardless of how well-written it is.
+═══════════════════════════════════════════════════════════════════════════════
+` : ''
+
   // Section mode - full guidance for content generation
   return `## PAPER PROFILE GUIDANCE - BINDING CONSTRAINTS
-${typeWarning}
+${titleContractGuidance}${typeWarning}
 **Discipline:** ${profile.discipline.primary}
 **Paper Type:** ${profile.paperType}
 **Field Characteristics:** ${profile.discipline.fieldCharacteristics.paceOfChange} pace of change, ${profile.discipline.fieldCharacteristics.theoryVsEmpirical}, ${profile.discipline.fieldCharacteristics.practitionerRelevance} practitioner relevance
@@ -812,6 +852,32 @@ export function validatePaperWithProfile(
     }
   }
   
+  // Check title contract deliverables
+  const deliverablesCovered: string[] = []
+  const deliverablesMissing: string[] = []
+  
+  if (profile.titleContract && profile.titleContract.requiredDeliverables) {
+    for (const deliverable of profile.titleContract.requiredDeliverables) {
+      // Use a more flexible check - look for key terms from the deliverable
+      if (contentMentionsTheme(content, deliverable)) {
+        deliverablesCovered.push(deliverable)
+      } else {
+        deliverablesMissing.push(deliverable)
+        warnings.push(`Title contract deliverable may be missing: "${deliverable}"`)
+      }
+    }
+    
+    // If most deliverables are missing, it's an issue, not just a warning
+    if (deliverablesMissing.length > deliverablesCovered.length && profile.titleContract.requiredDeliverables.length >= 2) {
+      issues.push(
+        `Paper may not fulfill its title contract. Missing ${deliverablesMissing.length} of ${profile.titleContract.requiredDeliverables.length} required deliverables. The title promises: "${profile.titleContract.promise}"`
+      )
+      recommendations.push(
+        `Ensure the paper delivers on its title by including: ${deliverablesMissing.join('; ')}`
+      )
+    }
+  }
+  
   // Calculate score
   const totalSections = profile.structure.appropriateSections.length
   const foundCount = found.length
@@ -823,11 +889,19 @@ export function validatePaperWithProfile(
     ? (coveredThemes.length / profile.coverage.requiredThemes.length) * 100
     : 100
   
-  // Weighted average: sections 40%, citations 35%, themes 25%
+  // Calculate title contract score
+  const totalDeliverables = profile.titleContract?.requiredDeliverables?.length || 0
+  const titleContractScore = totalDeliverables > 0
+    ? (deliverablesCovered.length / totalDeliverables) * 100
+    : 100
+  
+  // Weighted average: sections 30%, citations 25%, themes 20%, title contract 25%
+  // Title contract is important - if the paper doesn't answer its own question, it fails
   const score = Math.round(
-    (sectionScore * 0.40) + 
-    (citationScore * 0.35) + 
-    (themeScore * 0.25)
+    (sectionScore * 0.30) + 
+    (citationScore * 0.25) + 
+    (themeScore * 0.20) +
+    (titleContractScore * 0.25)
   )
   
   // Major issues reduce validity
@@ -852,7 +926,12 @@ export function validatePaperWithProfile(
     themeCoverage: {
       covered: coveredThemes,
       missing: missingThemes
-    }
+    },
+    titleContractCoverage: totalDeliverables > 0 ? {
+      covered: deliverablesCovered,
+      missing: deliverablesMissing,
+      promise: profile.titleContract?.promise || ''
+    } : undefined
   }
 }
 

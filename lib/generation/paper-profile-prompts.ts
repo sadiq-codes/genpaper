@@ -122,6 +122,50 @@ ${paperTypeGuidance}
 
 Create a comprehensive paper profile by analyzing:
 
+0. TITLE CONTRACT ANALYSIS (DO THIS FIRST - CRITICAL)
+   The title/topic is: "${topic}"
+   
+   Before analyzing anything else, determine what this title PROMISES the reader:
+   
+   A. WHAT IS THE PROMISE?
+      - If someone reads this title, what do they expect to learn or understand?
+      - What specific question(s) does this title implicitly ask?
+      - Restate the core promise in one clear sentence.
+   
+   B. WHAT MUST THE PAPER DELIVER?
+      - List 3-6 specific pieces of content/analysis that would be MISSING if the paper fails to deliver
+      - These are OBLIGATIONS created by the title, not just "nice to have" themes
+      - Be specific: "enumeration of options with feasibility comparison" not just "discuss options"
+   
+   C. SUCCESS CRITERIA
+      - How can we tell if the paper answered its own question?
+      - What would make a reader say "this paper delivered what the title promised"?
+      - List 2-4 concrete criteria.
+   
+   D. FAILURE MODE
+      - What would make this paper FAIL despite covering related topics?
+      - Describe the specific trap of writing background/context without delivering the core promise.
+   
+   EXAMPLES (for illustration - adapt to the actual topic):
+   
+   Title: "What options do the US have to acquire Greenland?"
+   - Promise: Analysis of specific acquisition mechanisms and their feasibility
+   - Must deliver: (1) Enumeration of options (purchase, lease, partnership, etc.), (2) Legal/political feasibility for each, (3) Comparison of costs and barriers, (4) Assessment of likelihood
+   - Success: Reader can list the options and understand which are viable and why
+   - Failure: Paper discusses Greenland's strategic importance but never analyzes actual acquisition mechanisms
+   
+   Title: "The impact of remote work on employee productivity"
+   - Promise: Evidence about how remote work affects productivity
+   - Must deliver: (1) Studies showing productivity effects, (2) Direction and magnitude of impact, (3) Moderating factors, (4) Mechanisms explaining the relationship
+   - Success: Reader understands whether remote work helps or hurts productivity and under what conditions
+   - Failure: Paper discusses remote work trends and practices without presenting productivity evidence
+   
+   Title: "Machine learning approaches for cancer detection"
+   - Promise: Review of ML methods applied to cancer detection
+   - Must deliver: (1) Survey of ML techniques used, (2) Performance comparisons, (3) Dataset and evaluation considerations, (4) Current limitations and future directions
+   - Success: Reader understands the landscape of ML cancer detection methods and their effectiveness
+   - Failure: Paper explains ML basics and cancer biology without reviewing actual ML cancer detection systems
+
 1. DISCIPLINE CONTEXT
    - What is the primary academic discipline for this topic?
    - What related fields inform this area?
@@ -176,11 +220,21 @@ Create a comprehensive paper profile by analyzing:
 7. AUTHORIAL VOICE
    - Which voice profile is most appropriate for this ${formatPaperType(paperType)} in this discipline?
    - Consider: academic level implied by paper type, discipline conventions, topic sensitivity
-   - Provide a rationale explaining why this voice is appropriate
+   - IMPORTANT: Consider what the TITLE CONTRACT requires:
+     * If the title asks "what options" / "which is better" / "should we" / "how to" → the paper needs a voice that TAKES POSITIONS and EVALUATES (use confident-researcher or senior-scholar)
+     * If the title asks "what is" / "what does research say" / "overview of" → a more balanced or descriptive voice may be appropriate
+     * If the paper must compare, rank, or recommend → avoid overly hedged conservative voice
+   - Provide a rationale explaining why this voice is appropriate given the title's requirements
    - Available profiles: conservative-reviewer, confident-researcher, senior-scholar, balanced-academic
 
 Return a JSON object with this exact structure:
 {
+  "titleContract": {
+    "promise": "string - what the title promises the reader will learn",
+    "requiredDeliverables": ["string - specific content that MUST appear"],
+    "successCriteria": ["string - how to verify the paper delivered"],
+    "failureMode": "string - what would make this paper fail despite covering related topics"
+  },
   "discipline": {
     "primary": "string",
     "related": ["string"],
@@ -304,6 +358,17 @@ function formatPaperType(paperType: string): string {
 export const PAPER_PROFILE_JSON_SCHEMA = {
   type: 'object' as const,
   properties: {
+    titleContract: {
+      type: 'object' as const,
+      properties: {
+        promise: { type: 'string' as const },
+        requiredDeliverables: { type: 'array' as const, items: { type: 'string' as const } },
+        successCriteria: { type: 'array' as const, items: { type: 'string' as const } },
+        failureMode: { type: 'string' as const }
+      },
+      required: ['promise', 'requiredDeliverables', 'successCriteria', 'failureMode'],
+      additionalProperties: false
+    },
     discipline: {
       type: 'object' as const,
       properties: {
@@ -446,6 +511,6 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
       additionalProperties: false
     }
   },
-  required: ['discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules', 'voice'],
+  required: ['titleContract', 'discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules', 'voice'],
   additionalProperties: false
 }
