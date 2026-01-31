@@ -466,6 +466,16 @@ export const CSL_STYLES: CSLStyleInfo[] = [
 ]
 
 /**
+ * Check if a CSL style id is numeric based on catalog metadata.
+ */
+export function isNumericStyleId(styleId: string): boolean {
+  const normalized = styleId.toLowerCase().trim()
+  return CSL_STYLES.some(
+    style => style.id.toLowerCase() === normalized && style.category === 'numeric'
+  )
+}
+
+/**
  * Get all popular styles (most commonly used)
  */
 export function getPopularStyles(): CSLStyleInfo[] {

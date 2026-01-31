@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, memo } from 'react'
 import { Button } from '@/components/ui/button'
 import { 
   Check, 
@@ -166,7 +166,10 @@ function ContentSection({
 // MAIN COMPONENT
 // =============================================================================
 
-export function DiffBlock({
+/**
+ * DiffBlock - Memoized to prevent re-renders when other edits change
+ */
+export const DiffBlock = memo(function DiffBlock({
   editId,
   type,
   oldContent,
@@ -328,6 +331,6 @@ export function DiffBlock({
       </div>
     </div>
   )
-}
+})
 
 export default DiffBlock

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -155,7 +155,11 @@ function ProcessingStatusBadge({
   )
 }
 
-function PaperCard({ 
+/**
+ * PaperCard - Memoized to prevent re-renders when parent updates
+ * Only re-renders when paper data or processing status changes
+ */
+const PaperCard = memo(function PaperCard({ 
   paper,
   onInsertCitation,
   onRemove,
@@ -301,7 +305,7 @@ function PaperCard({
       </div>
     </div>
   )
-}
+})
 
 // =============================================================================
 // EMPTY STATE COMPONENT

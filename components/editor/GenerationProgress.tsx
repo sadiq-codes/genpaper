@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
-import { Loader2, Search, FileText, BookOpen, Sparkles, CheckCircle2, FileStack } from "lucide-react"
+import { useEffect, useCallback, useRef, useReducer } from "react"
+import { Loader2, Search, FileText, Sparkles, CheckCircle2, FileStack } from "lucide-react"
 import { GenerationLoadingUI, type ProgressStage, type CompletedSection } from "./GenerationLoadingUI"
 
 interface GenerationProgressProps {
@@ -42,6 +42,131 @@ const STAGE_MAPPING: Record<string, string> = {
   'saving': 'finishing',
 }
 
+// =============================================================================
+// REDUCER FOR BATCHED STATE UPDATES
+// =============================================================================
+
+interface GenerationState {
+  progress: number
+  currentStage: string
+  message: string
+  stages: ProgressStage[]
+  error: string | null
+  papersFound: number
+  currentSection: string | null
+  currentSectionContent: string
+  completedSections: CompletedSection[]
+}
+
+type GenerationAction =
+  | { type: 'PROGRESS_UPDATE'; payload: { progress?: number; stage: string; message: string; papersFound?: number } }
+  | { type: 'STREAMING_UPDATE'; payload: { sectionTitle?: string; streamingContent: string } }
+  | { type: 'SECTION_COMPLETE'; payload: { sectionTitle: string; sectionContent: string } }
+  | { type: 'SECTION_STARTED'; payload: { sectionTitle: string } }
+  | { type: 'COMPLETE' }
+  | { type: 'ERROR'; payload: { error: string } }
+
+function createInitialState(): GenerationState {
+  return {
+    progress: 0,
+    currentStage: "start",
+    message: "Starting paper generation...",
+    stages: ORDERED_STAGES.map((id) => ({
+      id,
+      label: STAGE_CONFIG[id]?.label || id,
+      icon: STAGE_CONFIG[id]?.icon || <Loader2 className="h-4 w-4" />,
+      status: "pending" as const,
+    })),
+    error: null,
+    papersFound: 0,
+    currentSection: null,
+    currentSectionContent: "",
+    completedSections: [],
+  }
+}
+
+function updateStageStatuses(stages: ProgressStage[], pipelineStage: string): ProgressStage[] {
+  const uiStage = STAGE_MAPPING[pipelineStage] || pipelineStage
+  const activeIndex = ORDERED_STAGES.indexOf(uiStage)
+  
+  return stages.map((stage, index) => {
+    if (index < activeIndex) {
+      return stage.status === "complete" ? stage : { ...stage, status: "complete" as const }
+    } else if (index === activeIndex) {
+      return stage.status === "active" ? stage : { ...stage, status: "active" as const }
+    }
+    return stage.status === "pending" ? stage : { ...stage, status: "pending" as const }
+  })
+}
+
+function generationReducer(state: GenerationState, action: GenerationAction): GenerationState {
+  switch (action.type) {
+    case 'PROGRESS_UPDATE': {
+      const { progress, stage, message, papersFound } = action.payload
+      const uiStage = STAGE_MAPPING[stage] || stage
+      const newStages = updateStageStatuses(state.stages, stage)
+      
+      return {
+        ...state,
+        progress: progress !== undefined && progress >= 0 ? progress : state.progress,
+        currentStage: uiStage,
+        message,
+        stages: newStages,
+        papersFound: papersFound ?? state.papersFound,
+      }
+    }
+    
+    case 'STREAMING_UPDATE': {
+      const { sectionTitle, streamingContent } = action.payload
+      return {
+        ...state,
+        currentSection: sectionTitle ?? state.currentSection,
+        currentSectionContent: streamingContent,
+      }
+    }
+    
+    case 'SECTION_COMPLETE': {
+      const { sectionTitle, sectionContent } = action.payload
+      return {
+        ...state,
+        completedSections: [...state.completedSections, { title: sectionTitle, content: sectionContent }],
+        currentSection: null,
+        currentSectionContent: "",
+      }
+    }
+    
+    case 'SECTION_STARTED': {
+      return {
+        ...state,
+        currentSection: action.payload.sectionTitle,
+      }
+    }
+    
+    case 'COMPLETE': {
+      return {
+        ...state,
+        progress: 100,
+        currentStage: "complete",
+        message: "Paper generated successfully!",
+        stages: state.stages.map((s) => ({ ...s, status: "complete" as const })),
+      }
+    }
+    
+    case 'ERROR': {
+      return {
+        ...state,
+        error: action.payload.error,
+        stages: state.stages.map((s) => 
+          s.status === "active" ? { ...s, status: "error" as const } : s
+        ),
+      }
+    }
+    
+    default:
+      return state
+  }
+}
+
 export function GenerationProgress({
   projectId,
   topic,
@@ -50,43 +175,13 @@ export function GenerationProgress({
   onError,
   onCancel,
 }: GenerationProgressProps) {
-  const [progress, setProgress] = useState(0)
-  const [currentStage, setCurrentStage] = useState<string>("start")
-  const [message, setMessage] = useState("Starting paper generation...")
-  const [stages, setStages] = useState<ProgressStage[]>(
-    ORDERED_STAGES.map((id) => ({
-      id,
-      label: STAGE_CONFIG[id]?.label || id,
-      icon: STAGE_CONFIG[id]?.icon || <Loader2 className="h-4 w-4" />,
-      status: "pending",
-    })),
-  )
-  const [error, setError] = useState<string | null>(null)
-  const [papersFound, setPapersFound] = useState<number>(0)
-  const [currentSection, setCurrentSection] = useState<string | null>(null)
-  const [currentSectionContent, setCurrentSectionContent] = useState<string>("")
-  const [completedSections, setCompletedSections] = useState<CompletedSection[]>([])
+  // Use reducer for batched state updates - prevents multiple re-renders per SSE event
+  const [state, dispatch] = useReducer(generationReducer, null, createInitialState)
+  const { progress, currentStage, message, stages, error, papersFound, currentSection, currentSectionContent, completedSections } = state
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasCompletedRef = useRef(false)
   const connectionIdRef = useRef<string | null>(null)
-
-  const updateStageStatuses = useCallback((pipelineStage: string) => {
-    // Map pipeline stage to UI stage
-    const uiStage = STAGE_MAPPING[pipelineStage] || pipelineStage
-    
-    setStages((prevStages) => {
-      const activeIndex = ORDERED_STAGES.indexOf(uiStage)
-      return prevStages.map((stage, index) => {
-        if (index < activeIndex) {
-          return { ...stage, status: "complete" as const }
-        } else if (index === activeIndex) {
-          return { ...stage, status: "active" as const }
-        }
-        return { ...stage, status: "pending" as const }
-      })
-    })
-  }, [])
 
   useEffect(() => {
     if (hasCompletedRef.current) return
@@ -115,55 +210,49 @@ export function GenerationProgress({
 
         switch (data.type) {
           case "progress":
-            // Don't update progress for streaming events (progress = -1)
-            if (data.progress >= 0) {
-              setProgress(data.progress || 0)
-            }
-            
-            // Map pipeline stage to UI stage for display
-            const uiStage = STAGE_MAPPING[data.stage] || data.stage
-            setCurrentStage(uiStage)
-            setMessage(data.message || "")
-            updateStageStatuses(data.stage)
-
-            if (data.data?.papersFound) {
-              setPapersFound(data.data.papersFound)
-            }
-
             // Handle streaming chunks (live character-by-character content)
             if (data.data?.streaming && data.data?.streamingContent) {
-              // Update current section title and streaming content
-              if (data.data.sectionTitle) {
-                setCurrentSection(data.data.sectionTitle)
-              }
-              setCurrentSectionContent(data.data.streamingContent)
+              dispatch({
+                type: 'STREAMING_UPDATE',
+                payload: {
+                  sectionTitle: data.data.sectionTitle,
+                  streamingContent: data.data.streamingContent,
+                },
+              })
               break
             }
             
             // Handle section completion with content
             if (data.data?.sectionComplete && data.data?.sectionContent) {
-              // Add completed section to list
-              setCompletedSections(prev => [...prev, {
-                title: data.data.sectionTitle || currentSection || 'Section',
-                content: data.data.sectionContent
-              }])
-              // Clear current section content since it's now complete
-              setCurrentSection(null)
-              setCurrentSectionContent("")
+              dispatch({
+                type: 'SECTION_COMPLETE',
+                payload: {
+                  sectionTitle: data.data.sectionTitle || 'Section',
+                  sectionContent: data.data.sectionContent,
+                },
+              })
             } else {
+              // Regular progress update (batched into single state change)
+              dispatch({
+                type: 'PROGRESS_UPDATE',
+                payload: {
+                  progress: data.progress,
+                  stage: data.stage,
+                  message: data.message || "",
+                  papersFound: data.data?.papersFound,
+                },
+              })
+              
               // Parse section info from message for "in progress" state
               const sectionMatch = data.message?.match(/Writing\s+(.+?)\s+\((\d+)\/(\d+)\)/)
               if (sectionMatch) {
-                setCurrentSection(sectionMatch[1])
+                dispatch({ type: 'SECTION_STARTED', payload: { sectionTitle: sectionMatch[1] } })
               } else if ((data.stage === 'writing' || data.stage === 'generation') && data.message) {
                 // Try to extract section name from various message formats
                 const altMatch = data.message.match(/Writing\s+(.+?)(?:\s+\(|\.\.\.|$)/) ||
                                data.message.match(/Completed\s+(.+?)(?:\s+\(|$)/)
-                if (altMatch) {
-                  // If message says "Completed", don't set as current
-                  if (!data.message.includes('Completed')) {
-                    setCurrentSection(altMatch[1])
-                  }
+                if (altMatch && !data.message.includes('Completed')) {
+                  dispatch({ type: 'SECTION_STARTED', payload: { sectionTitle: altMatch[1] } })
                 }
               }
             }
@@ -171,10 +260,7 @@ export function GenerationProgress({
 
           case "complete":
             hasCompletedRef.current = true
-            setProgress(100)
-            setCurrentStage("complete")
-            setMessage("Paper generated successfully!")
-            setStages((prev) => prev.map((s) => ({ ...s, status: "complete" as const })))
+            dispatch({ type: 'COMPLETE' })
 
             setTimeout(() => {
               onComplete(data.content)
@@ -183,8 +269,7 @@ export function GenerationProgress({
 
           case "error":
             hasCompletedRef.current = true
-            setError(data.error)
-            setStages((prev) => prev.map((s) => (s.status === "active" ? { ...s, status: "error" as const } : s)))
+            dispatch({ type: 'ERROR', payload: { error: data.error } })
             onError(data.error)
             break
         }
@@ -193,10 +278,9 @@ export function GenerationProgress({
       }
     }
 
-    eventSource.onerror = (err) => {
-      console.error("EventSource error:", err)
+    eventSource.onerror = () => {
       if (!hasCompletedRef.current) {
-        setError("Connection lost. Please refresh and try again.")
+        dispatch({ type: 'ERROR', payload: { error: "Connection lost. Please refresh and try again." } })
         onError("Connection lost")
       }
       eventSource.close()
@@ -207,7 +291,7 @@ export function GenerationProgress({
       eventSourceRef.current = null
       connectionIdRef.current = null
     }
-  }, [projectId, topic, paperType, onComplete, onError, updateStageStatuses])
+  }, [projectId, topic, paperType, onComplete, onError])
 
   const handleCancel = useCallback(() => {
     if (eventSourceRef.current) {

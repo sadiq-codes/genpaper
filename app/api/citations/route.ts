@@ -26,7 +26,7 @@ const BatchResolveSchema = z.object({
     context: z.string().optional(),
     fallbackText: z.string().optional()
   })).min(1),
-  style: z.enum(['apa', 'mla', 'chicago', 'ieee']).optional().default('apa')
+  style: z.string().min(1).max(100).optional().default('apa')
 })
 
 export async function GET(request: NextRequest) {

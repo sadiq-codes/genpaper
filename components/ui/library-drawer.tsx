@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, memo } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { 
   Search, 
@@ -452,7 +452,10 @@ interface PaperCardProps {
   onToggleExpand: () => void
 }
 
-function PaperCard({ 
+/**
+ * PaperCard - Memoized to prevent re-renders during search/filter operations
+ */
+const PaperCard = memo(function PaperCard({ 
   paper, 
   onAdd, 
   isProcessing, 
@@ -607,4 +610,4 @@ function PaperCard({
       </div>
     </div>
   )
-}
+})

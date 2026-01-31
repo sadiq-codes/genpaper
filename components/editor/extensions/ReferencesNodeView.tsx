@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useEffect, useState } from 'react'
+import { useMemo, useEffect, useState, useRef } from 'react'
 import { NodeViewWrapper } from '@tiptap/react'
 import type { NodeViewProps } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
@@ -22,16 +22,38 @@ import {
  * - Hidden when no citations exist in the document
  */
 export function ReferencesNodeView({ editor }: NodeViewProps) {
-  // Track document version to trigger re-renders on citation changes
-  const [docVersion, setDocVersion] = useState(0)
+  // Track citation signature to trigger re-renders only when citations actually change
+  const [citationSignature, setCitationSignature] = useState('')
+  const prevSignatureRef = useRef('')
   
-  // Listen for document changes to update bibliography
+  // Listen for document changes - only update when citations change
   useEffect(() => {
     if (!editor) return
     
-    const handleUpdate = () => {
-      setDocVersion(v => v + 1)
+    // Compute citation signature (sorted list of citation IDs)
+    const computeCitationSignature = () => {
+      const ids = new Set<string>()
+      editor.state.doc.descendants((node) => {
+        if (node.type.name === 'citation' && node.attrs.id) {
+          ids.add(node.attrs.id)
+        }
+      })
+      return [...ids].sort().join(',')
     }
+    
+    const handleUpdate = () => {
+      // Only trigger re-render if citations actually changed
+      const newSignature = computeCitationSignature()
+      if (newSignature !== prevSignatureRef.current) {
+        prevSignatureRef.current = newSignature
+        setCitationSignature(newSignature)
+      }
+    }
+    
+    // Initial computation
+    const initialSignature = computeCitationSignature()
+    prevSignatureRef.current = initialSignature
+    setCitationSignature(initialSignature)
     
     editor.on('update', handleUpdate)
     
@@ -39,7 +61,10 @@ export function ReferencesNodeView({ editor }: NodeViewProps) {
     const handleTransaction = ({ transaction }: { transaction: unknown }) => {
       const tr = transaction as { getMeta?: (key: string) => unknown }
       if (tr.getMeta?.('citationStyleChange') || tr.getMeta?.('papersUpdated')) {
-        setDocVersion(v => v + 1)
+        // Force update on style/papers change
+        const newSignature = computeCitationSignature() + '-' + Date.now()
+        prevSignatureRef.current = newSignature
+        setCitationSignature(newSignature)
       }
     }
     
@@ -65,6 +90,7 @@ export function ReferencesNodeView({ editor }: NodeViewProps) {
   const papers = citationStorage?.papers || []
   
   // Extract all unique cited paper IDs from the document
+  // Uses citationSignature as dependency - only recomputes when citations actually change
   const citedPaperIds = useMemo(() => {
     if (!editor) return new Set<string>()
     
@@ -76,7 +102,7 @@ export function ReferencesNodeView({ editor }: NodeViewProps) {
     })
     return ids
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, docVersion])
+  }, [editor, citationSignature])
   
   // Filter papers to only those that are cited
   const citedPapers = useMemo(() => {

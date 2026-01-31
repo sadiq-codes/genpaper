@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, memo, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -12,6 +12,18 @@ import type { PendingToolCall } from '../hooks/useEditorChat'
 import type { ProjectPaper } from '../types'
 import { cn } from '@/lib/utils'
 import { useChatImageUpload } from '../hooks/useChatImageUpload'
+
+// =============================================================================
+// STREAMING OPTIMIZATION
+// =============================================================================
+
+/**
+ * Memoized markdown renderer that only re-renders when content changes.
+ * During streaming, this prevents expensive markdown parsing on every character.
+ */
+const MemoizedMarkdown = memo(function MemoizedMarkdown({ content }: { content: string }) {
+  return <ReactMarkdown>{content}</ReactMarkdown>
+})
 
 // =============================================================================
 // TYPES
@@ -128,29 +140,36 @@ function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
     })
 }
 
-function MessageBubble({ 
+/**
+ * MessageBubble - Memoized to prevent re-renders during streaming.
+ * Only re-renders when message content actually changes.
+ */
+const MessageBubble = memo(function MessageBubble({ 
   message, 
 }: { 
   message: UIMessage
 }) {
   const isAssistant = message.role === 'assistant'
   
-  // Get content string from parts (new v6 API)
-  const content = getMessageText(message)
-  const toolInvocations = getToolInvocations(message)
+  // Memoize content extraction to avoid recalculating on every render
+  const content = useMemo(() => getMessageText(message), [message])
+  const toolInvocations = useMemo(() => getToolInvocations(message), [message])
 
-  // Debug: log if message has no displayable content
-  if (process.env.NODE_ENV === 'development' && !content && isAssistant && toolInvocations.length === 0) {
-    console.log('[ChatTab] Assistant message with no text content:', {
-      id: message.id,
-      role: message.role,
-      partsCount: message.parts?.length || 0,
-      parts: message.parts?.map(p => ({ type: p.type })),
-    })
-  }
+  // Debug: log if message has no displayable content (only in dev)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development' && !content && isAssistant && toolInvocations.length === 0) {
+      console.log('[ChatTab] Assistant message with no text content:', {
+        id: message.id,
+        role: message.role,
+        partsCount: message.parts?.length || 0,
+        parts: message.parts?.map(p => ({ type: p.type })),
+      })
+    }
+  }, [content, isAssistant, toolInvocations.length, message.id, message.role, message.parts])
 
-  // Get timestamp from metadata if available
-  const timestamp = new Date()
+  // Memoize timestamp - stable per message (created once when message first renders)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const timestamp = useMemo(() => new Date(), [])
 
   return (
     <div className="flex gap-3 px-4 py-4">
@@ -175,7 +194,7 @@ function MessageBubble({
         
         {(content || toolInvocations.length > 0) && (
           <div className="text-[13px] leading-relaxed text-foreground/80 prose prose-sm prose-neutral dark:prose-invert max-w-none chat-message-content [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_p]:my-3 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium [&_h1]:mt-4 [&_h2]:mt-4 [&_h3]:mt-3 [&_code]:text-xs [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-muted">
-            {content ? <ReactMarkdown>{content}</ReactMarkdown> : <span className="text-muted-foreground italic">Applying suggested edits…</span>}
+            {content ? <MemoizedMarkdown content={content} /> : <span className="text-muted-foreground italic">Applying suggested edits…</span>}
           </div>
         )}
 
@@ -190,7 +209,7 @@ function MessageBubble({
       </div>
     </div>
   )
-}
+})
 
 function LoadingBubble() {
   return (
@@ -282,19 +301,42 @@ export function ChatTab({
   onClearHistory,
 }: ChatTabProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const scrollRafRef = useRef<number | null>(null)
+  const lastMessageCountRef = useRef(messages.length)
   
   // Image upload hook
   const { uploadImage, isUploading } = useChatImageUpload({ projectId })
   
-  // Auto-scroll to bottom on new messages
+  // Throttled auto-scroll using requestAnimationFrame
+  // Only scrolls when message count changes or loading state changes (not during streaming content updates)
   useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight
+    // Only trigger scroll on actual message count change or loading state change
+    const messageCountChanged = messages.length !== lastMessageCountRef.current
+    lastMessageCountRef.current = messages.length
+    
+    if (!messageCountChanged && !isLoading) return
+    
+    // Cancel any pending scroll
+    if (scrollRafRef.current) {
+      cancelAnimationFrame(scrollRafRef.current)
+    }
+    
+    // Schedule scroll on next frame
+    scrollRafRef.current = requestAnimationFrame(() => {
+      if (scrollAreaRef.current) {
+        const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight
+        }
+      }
+    })
+    
+    return () => {
+      if (scrollRafRef.current) {
+        cancelAnimationFrame(scrollRafRef.current)
       }
     }
-  }, [messages, isLoading, pendingTools])
+  }, [messages.length, isLoading])
 
   // Handle send from RichChatInput
   const handleSend = useCallback((

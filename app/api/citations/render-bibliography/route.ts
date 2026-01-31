@@ -12,7 +12,7 @@ import { CitationService, BIBLIOGRAPHY_STYLES } from '@/lib/citations/immediate-
 // Schema for bibliography rendering request
 const RenderBibliographySchema = z.object({
   projectId: z.string().uuid(),
-  style: z.enum(['apa', 'mla', 'chicago', 'ieee']).default('apa')
+  style: z.string().min(1).max(100).default('apa')
 })
 
 export async function GET(request: NextRequest) {

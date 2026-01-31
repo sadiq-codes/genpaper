@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Check, ChevronsUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -17,14 +17,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import {
-  CSL_STYLES,
-  getPopularStyles,
-  getStyleById,
-  getCategoryDisplayName,
-  type CSLStyleInfo,
-  type CSLStyleCategory,
-} from '@/lib/citations/csl-styles'
+import { CSL_STYLES, getStyleById, type CSLStyleCategory } from '@/lib/citations/csl-styles'
 
 interface CitationStyleSelectorProps {
   value: string
@@ -39,45 +32,77 @@ export function CitationStyleSelector({
 }: CitationStyleSelectorProps) {
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [remoteStyleIds, setRemoteStyleIds] = useState<string[]>([])
+  const [isLoading, setIsLoading] = useState(false)
 
   const selectedStyle = getStyleById(value)
+  const fallbackSelected = value
+    ? {
+        id: value,
+        name: formatStyleName(value),
+        shortName: undefined,
+        inlineExample: undefined,
+        category: 'author-date' as CSLStyleCategory
+      }
+    : null
   
-  // Group styles for display
-  const groupedStyles = useMemo(() => {
-    const popular = getPopularStyles()
-    const popularIds = new Set(popular.map(s => s.id))
-    
-    // Filter by search query
-    const filteredStyles = searchQuery
-      ? CSL_STYLES.filter(s => 
-          s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          s.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (s.shortName?.toLowerCase().includes(searchQuery.toLowerCase()))
-        )
-      : CSL_STYLES
-    
-    // If searching, just return flat list grouped by category
-    if (searchQuery) {
-      const byCategory: Record<string, CSLStyleInfo[]> = {}
-      filteredStyles.forEach(style => {
-        const cat = style.category
-        if (!byCategory[cat]) byCategory[cat] = []
-        byCategory[cat].push(style)
-      })
-      return { popular: [], byCategory }
+  useEffect(() => {
+    if (!open) return
+    const query = searchQuery.trim()
+    const controller = new AbortController()
+    const timeout = setTimeout(async () => {
+      try {
+        setIsLoading(true)
+        const url = new URL('/api/citations/styles', window.location.origin)
+        if (query) {
+          url.searchParams.set('q', query)
+        }
+        url.searchParams.set('limit', '200')
+        const response = await fetch(url.toString(), { signal: controller.signal })
+        if (!response.ok) throw new Error('Failed to fetch styles')
+        const data = await response.json() as { styles: string[] }
+        setRemoteStyleIds(data.styles || [])
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('Failed to load CSL styles:', error)
+          setRemoteStyleIds([])
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }, query ? 200 : 0)
+    return () => {
+      controller.abort()
+      clearTimeout(timeout)
     }
-    
-    // Otherwise show popular first, then by category
-    const nonPopular = CSL_STYLES.filter(s => !popularIds.has(s.id))
-    const byCategory: Record<string, CSLStyleInfo[]> = {}
-    nonPopular.forEach(style => {
-      const cat = style.category
-      if (!byCategory[cat]) byCategory[cat] = []
-      byCategory[cat].push(style)
+  }, [open, searchQuery])
+
+  const displayStyles = useMemo(() => {
+    const baseIds = remoteStyleIds.length > 0
+      ? remoteStyleIds
+      : CSL_STYLES.map(style => style.id)
+
+    const styles = baseIds.map(id => {
+      const known = getStyleById(id)
+      return {
+        id,
+        name: known?.name || formatStyleName(id),
+        shortName: known?.shortName,
+        inlineExample: known?.inlineExample
+      }
     })
-    
-    return { popular, byCategory }
-  }, [searchQuery])
+
+    if (!value || styles.some(s => s.id === value)) return styles
+    return [
+      {
+        id: value,
+        name: formatStyleName(value),
+        shortName: undefined,
+        inlineExample: undefined
+      },
+      ...styles
+    ]
+  }, [remoteStyleIds, value])
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -90,12 +115,16 @@ export function CitationStyleSelector({
           disabled={disabled}
         >
           <div className="flex items-center gap-2 truncate">
-            {selectedStyle ? (
+            {selectedStyle || fallbackSelected ? (
               <>
-                <span className="truncate">{selectedStyle.shortName || selectedStyle.name}</span>
-                <span className="text-muted-foreground text-xs shrink-0">
-                  {selectedStyle.inlineExample}
+                <span className="truncate">
+                  {(selectedStyle || fallbackSelected)?.shortName || (selectedStyle || fallbackSelected)?.name}
                 </span>
+                {(selectedStyle?.inlineExample || '') && (
+                  <span className="text-muted-foreground text-xs shrink-0">
+                    {selectedStyle?.inlineExample}
+                  </span>
+                )}
               </>
             ) : (
               <span className="text-muted-foreground">Select citation style...</span>
@@ -112,45 +141,24 @@ export function CitationStyleSelector({
             onValueChange={setSearchQuery}
           />
           <CommandList className="max-h-[400px]">
-            <CommandEmpty>No citation style found.</CommandEmpty>
+            <CommandEmpty>
+              {isLoading ? 'Loading citation styles...' : 'No citation style found.'}
+            </CommandEmpty>
             
-            {/* Popular styles (when not searching) */}
-            {groupedStyles.popular.length > 0 && (
-              <CommandGroup heading="Popular">
-                {groupedStyles.popular.map((style) => (
-                  <StyleItem
-                    key={style.id}
-                    style={style}
-                    isSelected={value === style.id}
-                    onSelect={() => {
-                      onValueChange(style.id)
-                      setOpen(false)
-                      setSearchQuery('')
-                    }}
-                  />
-                ))}
-              </CommandGroup>
-            )}
-            
-            {/* Styles by category */}
-            {Object.entries(groupedStyles.byCategory).map(([category, styles]) => (
-              styles.length > 0 && (
-                <CommandGroup key={category} heading={getCategoryDisplayName(category as CSLStyleCategory)}>
-                  {styles.map((style) => (
-                    <StyleItem
-                      key={style.id}
-                      style={style}
-                      isSelected={value === style.id}
-                      onSelect={() => {
-                        onValueChange(style.id)
-                        setOpen(false)
-                        setSearchQuery('')
-                      }}
-                    />
-                  ))}
-                </CommandGroup>
-              )
-            ))}
+            <CommandGroup heading={searchQuery.trim() ? 'Results' : 'All CSL Styles'}>
+              {displayStyles.map((style) => (
+                <StyleItem
+                  key={style.id}
+                  style={style}
+                  isSelected={value === style.id}
+                  onSelect={() => {
+                    onValueChange(style.id)
+                    setOpen(false)
+                    setSearchQuery('')
+                  }}
+                />
+              ))}
+            </CommandGroup>
           </CommandList>
         </Command>
       </PopoverContent>
@@ -159,7 +167,12 @@ export function CitationStyleSelector({
 }
 
 interface StyleItemProps {
-  style: CSLStyleInfo
+  style: {
+    id: string
+    name: string
+    shortName?: string
+    inlineExample?: string
+  }
   isSelected: boolean
   onSelect: () => void
 }
@@ -180,18 +193,24 @@ function StyleItem({ style, isSelected, onSelect }: StyleItemProps) {
         />
         <div className="min-w-0">
           <div className="truncate text-sm">
-            {style.shortName || style.name}
+            {style.name}
           </div>
-          {style.shortName && (
-            <div className="text-xs text-muted-foreground truncate">
-              {style.name}
-            </div>
-          )}
+          <div className="text-xs text-muted-foreground truncate">
+            {style.id}
+          </div>
         </div>
       </div>
-      <span className="text-xs text-muted-foreground shrink-0 font-mono">
-        {style.inlineExample}
-      </span>
+      {style.inlineExample && (
+        <span className="text-xs text-muted-foreground shrink-0 font-mono">
+          {style.inlineExample}
+        </span>
+      )}
     </CommandItem>
   )
+}
+
+function formatStyleName(id: string): string {
+  return id
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase())
 }

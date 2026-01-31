@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useMemo, memo } from "react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -171,6 +171,86 @@ function PaperSkeleton({ currentSection }: { currentSection: string | null }) {
 // LIVE CONTENT PREVIEW
 // =============================================================================
 
+// Simple markdown rendering for headings and paragraphs - extracted as pure function
+function renderMarkdownContent(text: string, isStreaming = false) {
+  const lines = text.split('\n')
+  return lines.map((line, i) => {
+    const trimmed = line.trim()
+    
+    // Skip empty lines but preserve spacing
+    if (!trimmed) {
+      return <div key={i} className="h-2" />
+    }
+    
+    // H1
+    if (trimmed.startsWith('# ')) {
+      return (
+        <h1 key={i} className="text-xl font-bold mt-4 mb-2 first:mt-0 text-foreground">
+          {trimmed.slice(2)}
+        </h1>
+      )
+    }
+    
+    // H2
+    if (trimmed.startsWith('## ')) {
+      return (
+        <h2 key={i} className="text-lg font-semibold mt-3 mb-2 text-foreground">
+          {trimmed.slice(3)}
+        </h2>
+      )
+    }
+    
+    // H3
+    if (trimmed.startsWith('### ')) {
+      return (
+        <h3 key={i} className="text-base font-medium mt-2 mb-1 text-foreground">
+          {trimmed.slice(4)}
+        </h3>
+      )
+    }
+    
+    // Regular paragraph
+    return (
+      <p key={i} className={cn(
+        "text-sm leading-relaxed mb-1.5",
+        isStreaming ? "text-foreground" : "text-muted-foreground"
+      )}>
+        {trimmed}
+      </p>
+    )
+  })
+}
+
+// Memoized section content renderer - prevents re-rendering completed sections
+const MemoizedSectionContent = memo(function MemoizedSectionContent({ 
+  content, 
+  isStreaming = false 
+}: { 
+  content: string
+  isStreaming?: boolean 
+}) {
+  return <>{renderMarkdownContent(content, isStreaming)}</>
+})
+
+// Memoized completed section - prevents re-render when streaming content changes
+const CompletedSectionItem = memo(function CompletedSectionItem({ 
+  section 
+}: { 
+  section: CompletedSection 
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
+        <h2 className="text-lg font-semibold text-foreground">{section.title}</h2>
+      </div>
+      <div className="pl-6 border-l-2 border-success/20">
+        <MemoizedSectionContent content={section.content} />
+      </div>
+    </div>
+  )
+})
+
 function LiveContentPreview({ 
   currentSection,
   currentSectionContent = "",
@@ -182,77 +262,56 @@ function LiveContentPreview({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentEndRef = useRef<HTMLDivElement>(null)
+  const scrollRafRef = useRef<number | null>(null)
+  const lastScrollTriggerRef = useRef({ sectionsCount: 0, hasContent: false })
 
-  // Auto-scroll to bottom when new content arrives
+  // Throttled auto-scroll using requestAnimationFrame
+  // Only scrolls when sections change or content appears (not every character)
   useEffect(() => {
-    if (contentEndRef.current) {
-      contentEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    const currentTrigger = { 
+      sectionsCount: completedSections.length, 
+      hasContent: currentSectionContent.length > 0 
     }
-  }, [currentSectionContent, completedSections.length])
-
-  // Simple markdown rendering for headings and paragraphs
-  const renderContent = (text: string, isStreaming = false) => {
-    const lines = text.split('\n')
-    return lines.map((line, i) => {
-      const trimmed = line.trim()
-      
-      // Skip empty lines but preserve spacing
-      if (!trimmed) {
-        return <div key={i} className="h-2" />
+    
+    // Only scroll when section count changes or content first appears
+    const shouldScroll = 
+      currentTrigger.sectionsCount !== lastScrollTriggerRef.current.sectionsCount ||
+      (currentTrigger.hasContent && !lastScrollTriggerRef.current.hasContent)
+    
+    lastScrollTriggerRef.current = currentTrigger
+    
+    if (!shouldScroll) return
+    
+    // Cancel pending scroll
+    if (scrollRafRef.current) {
+      cancelAnimationFrame(scrollRafRef.current)
+    }
+    
+    // Schedule scroll on next frame
+    scrollRafRef.current = requestAnimationFrame(() => {
+      if (contentEndRef.current) {
+        contentEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
       }
-      
-      // H1
-      if (trimmed.startsWith('# ')) {
-        return (
-          <h1 key={i} className="text-xl font-bold mt-4 mb-2 first:mt-0 text-foreground">
-            {trimmed.slice(2)}
-          </h1>
-        )
-      }
-      
-      // H2
-      if (trimmed.startsWith('## ')) {
-        return (
-          <h2 key={i} className="text-lg font-semibold mt-3 mb-2 text-foreground">
-            {trimmed.slice(3)}
-          </h2>
-        )
-      }
-      
-      // H3
-      if (trimmed.startsWith('### ')) {
-        return (
-          <h3 key={i} className="text-base font-medium mt-2 mb-1 text-foreground">
-            {trimmed.slice(4)}
-          </h3>
-        )
-      }
-      
-      // Regular paragraph
-      return (
-        <p key={i} className={cn(
-          "text-sm leading-relaxed mb-1.5",
-          isStreaming ? "text-foreground" : "text-muted-foreground"
-        )}>
-          {trimmed}
-        </p>
-      )
     })
-  }
+    
+    return () => {
+      if (scrollRafRef.current) {
+        cancelAnimationFrame(scrollRafRef.current)
+      }
+    }
+  }, [currentSectionContent.length, completedSections.length])
+
+  // Memoize streaming content render to reduce re-renders
+  const streamingContent = useMemo(() => {
+    if (!currentSectionContent) return null
+    return <MemoizedSectionContent content={currentSectionContent} isStreaming />
+  }, [currentSectionContent])
 
   return (
     <div ref={scrollRef} className="p-6 space-y-4">
-      {/* Render completed sections */}
+      {/* Render completed sections - each is memoized */}
       {completedSections.map((section, idx) => (
-        <div key={idx} className="space-y-2">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
-            <h2 className="text-lg font-semibold text-foreground">{section.title}</h2>
-          </div>
-          <div className="pl-6 border-l-2 border-success/20">
-            {renderContent(section.content)}
-          </div>
-        </div>
+        <CompletedSectionItem key={idx} section={section} />
       ))}
       
       {/* Show current section being written */}
@@ -263,9 +322,7 @@ function LiveContentPreview({
             <h2 className="text-lg font-semibold">Writing: {currentSection}</h2>
           </div>
           <div className="pl-6 border-l-2 border-primary/30">
-            {currentSectionContent ? (
-              renderContent(currentSectionContent, true)
-            ) : (
+            {streamingContent ?? (
               <div className="space-y-2 py-2">
                 <ShimmerBar className="h-3 w-full" />
                 <ShimmerBar className="h-3 w-5/6" delay={50} />

@@ -11,6 +11,7 @@
 
 import { v4 as uuidv4 } from 'uuid'
 import type { CSLItem } from '@/lib/utils/csl'
+import { isNumericStyleId } from '@/lib/citations/csl-styles'
 
 // ============================================================================
 // Types
@@ -89,6 +90,19 @@ export function formatInlineCitation(paper: PaperMetadata, style: CitationStyle)
     default:
       return formatAPA(lastNames, year)
   }
+}
+
+/**
+ * Check if a style is numeric (IEEE/Vancouver/etc.)
+ */
+function isNumericCitationStyle(style: CitationStyle): boolean {
+  const normalized = style.toLowerCase().trim()
+  if (isNumericStyleId(normalized)) return true
+  return (
+    normalized.includes('number') ||
+    normalized.includes('numeric') ||
+    normalized.includes('superscript')
+  )
 }
 
 function formatAPA(lastNames: string[], year: number): string {
@@ -261,7 +275,9 @@ export function processNumberedCitations(
     
     // New marker format with instance tracking: [@paperId#instanceId]
     const marker = `[@${citation.paperId}#${instanceId}]`
-    const formatted = formatInlineCitation(paper, style)
+    const formatted = isNumericCitationStyle(style)
+      ? `[${index}]`
+      : formatInlineCitation(paper, style)
     
     replacements.push({
       start: match.index,

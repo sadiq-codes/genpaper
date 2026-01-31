@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
     if (citation_style !== undefined) {
       if (!isValidCitationStyle(citation_style)) {
         return NextResponse.json(
-          { error: 'Invalid citation style. Must be one of: apa, mla, chicago, ieee, harvard' },
+          { error: 'Invalid citation style. Must be a non-empty CSL style ID.' },
           { status: 400 }
         )
       }

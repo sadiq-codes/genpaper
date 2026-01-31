@@ -14,6 +14,7 @@
 import Cite from 'citation-js'
 import '@citation-js/plugin-csl'
 import { plugins } from '@citation-js/core'
+import { isNumericStyleId } from '@/lib/citations/csl-styles'
 
 // =============================================================================
 // Types
@@ -93,8 +94,13 @@ export function resolveStyleId(styleId: string): string {
  */
 export function isNumericStyle(styleId: string): boolean {
   const resolved = resolveStyleId(styleId)
-  return ['ieee', 'vancouver', 'nature', 'science', 'numbered', 'elsevier-with-titles']
-    .some(s => resolved.includes(s))
+  const normalized = resolved.toLowerCase()
+  if (isNumericStyleId(normalized)) return true
+  return (
+    normalized.includes('number') ||
+    normalized.includes('numeric') ||
+    normalized.includes('superscript')
+  )
 }
 
 /**
