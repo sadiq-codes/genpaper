@@ -4,7 +4,6 @@ import { getCachedQueryEmbedding } from './embedding-cache'
 import { 
   normalizeScore, 
   deduplicateChunks, 
-  balanceChunks,
   reciprocalRankFusion,
   type RetrievedChunk,
   type SearchMode
@@ -16,7 +15,8 @@ import {
  * Responsibilities:
  * - Multi-modal search (hybrid, vector, keyword)
  * - Cross-encoder reranking (Cohere)
- * - Result deduplication and balancing
+ * - Result deduplication
+ * - Token-based evidence selection (semantic relevance is primary filter)
  * 
  * This class does NOT handle:
  * - Context building/formatting (see ContextBuilder)
@@ -33,12 +33,10 @@ export interface RetrievalConfig {
   mode: SearchMode
   /** Weight for vector search in hybrid mode (0-1) */
   vectorWeight: number
-  /** Minimum similarity score threshold */
+  /** Minimum similarity score threshold - primary quality filter */
   minScore: number
   /** Maximum chunks to retrieve before reranking */
   retrieveLimit: number
-  /** Final limit after reranking */
-  finalLimit: number
   /** Enable citation-based boosting */
   useCitationBoost: boolean
   /** Max citation boost factor (0-1) */
@@ -47,27 +45,31 @@ export interface RetrievalConfig {
   useReranking: boolean
   /** Number of top candidates to rerank */
   rerankTopK: number
-  /** Maximum chunks per paper for diversity */
-  maxPerPaper: number
+  /** Maximum tokens for evidence - the primary limit (replaces chunk count limits) */
+  maxEvidenceTokens: number
+  /** Minimum chunks to return even if below minScore (fallback guarantee) */
+  minChunksFallback: number
 }
 
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   mode: 'hybrid',
   vectorWeight: 0.7,
-  // REDUCED from 0.1 to 0.05: Let more chunks through for niche/specialized topics
-  // Many relevant papers have lower similarity scores due to terminology differences
-  minScore: 0.05,
-  // INCREASED from 100 to 150: Larger candidate pool before reranking
-  retrieveLimit: 150,
-  // INCREASED from 25 to 38: ~50% more material for synthesis
-  finalLimit: 38,
+  // Relevance threshold - primary quality filter
+  // Chunks below this score are excluded unless fallback kicks in
+  minScore: 0.15,
+  // Large candidate pool for reranking to select from
+  retrieveLimit: 200,
   useCitationBoost: true,
   citationBoostFactor: 0.1,
   useReranking: true,
-  // INCREASED from 30 to 45: Rerank more candidates for better final selection
-  rerankTopK: 45,
-  // INCREASED from 6 to 8: More context per source for deeper understanding
-  maxPerPaper: 8
+  // Rerank top candidates for better relevance ordering
+  rerankTopK: 100,
+  // Token budget for evidence - this is the primary limit
+  // 25000 tokens ≈ 50-100 chunks depending on size
+  // Leaves room for system prompt, output, and section context
+  maxEvidenceTokens: 25000,
+  // Fallback: if no chunks pass minScore, return top N anyway
+  minChunksFallback: 10
 }
 
 export interface RetrievalRequest {
@@ -84,7 +86,21 @@ export interface RetrievalResult {
     retrievalTimeMs: number
     rerankTimeMs: number
     uniquePapers: number
+    totalTokens: number
   }
+}
+
+// =============================================================================
+// TOKEN ESTIMATION
+// =============================================================================
+
+/**
+ * Estimate token count for a string.
+ * Uses rough approximation: ~4 characters per token for English text.
+ * This is conservative to avoid exceeding limits.
+ */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4)
 }
 
 // =============================================================================
@@ -112,7 +128,7 @@ export class ChunkRetriever {
         chunks: [],
         totalRetrieved: 0,
         wasReranked: false,
-        metrics: { retrievalTimeMs: 0, rerankTimeMs: 0, uniquePapers: 0 }
+        metrics: { retrievalTimeMs: 0, rerankTimeMs: 0, uniquePapers: 0, totalTokens: 0 }
       }
     }
     
@@ -125,7 +141,7 @@ export class ChunkRetriever {
         chunks: [],
         totalRetrieved: 0,
         wasReranked: false,
-        metrics: { retrievalTimeMs: retrievalTime, rerankTimeMs: 0, uniquePapers: 0 }
+        metrics: { retrievalTimeMs: retrievalTime, rerankTimeMs: 0, uniquePapers: 0, totalTokens: 0 }
       }
     }
     
@@ -136,7 +152,7 @@ export class ChunkRetriever {
     let rerankTime = 0
     let wasReranked = false
     
-    if (config.useReranking && chunks.length > config.finalLimit && this.cohereApiKey) {
+    if (config.useReranking && chunks.length > 20 && this.cohereApiKey) {
       const rerankStart = Date.now()
       const topCandidates = chunks.slice(0, config.rerankTopK)
       
@@ -152,8 +168,20 @@ export class ChunkRetriever {
       rerankTime = Date.now() - rerankStart
     }
     
-    // Step 4: Balance across papers and apply final limit
-    chunks = balanceChunks(chunks, config.maxPerPaper, config.finalLimit)
+    // Step 4: Select chunks by token budget (semantic relevance is primary filter)
+    const { selected, totalTokens } = this.selectByTokenBudget(chunks, config)
+    chunks = selected
+    
+    // Fallback: if minScore filtered out everything, return top N regardless
+    if (chunks.length === 0 && rawChunks.length > 0) {
+      console.warn(`⚠️ No chunks passed minScore threshold. Using fallback: top ${config.minChunksFallback} chunks.`)
+      const sortedRaw = deduplicateChunks(rawChunks).sort((a, b) => b.score - a.score)
+      const fallbackResult = this.selectByTokenBudget(
+        sortedRaw.slice(0, config.minChunksFallback), 
+        config
+      )
+      chunks = fallbackResult.selected
+    }
     
     // Calculate metrics
     const uniquePapers = new Set(chunks.map(c => c.paper_id)).size
@@ -165,7 +193,8 @@ export class ChunkRetriever {
       metrics: {
         retrievalTimeMs: retrievalTime,
         rerankTimeMs: rerankTime,
-        uniquePapers
+        uniquePapers,
+        totalTokens
       }
     }
   }
@@ -198,26 +227,64 @@ export class ChunkRetriever {
         chunks: [],
         totalRetrieved: 0,
         wasReranked: false,
-        metrics: { retrievalTimeMs: retrievalTime, rerankTimeMs: 0, uniquePapers: 0 }
+        metrics: { retrievalTimeMs: retrievalTime, rerankTimeMs: 0, uniquePapers: 0, totalTokens: 0 }
       }
     }
     
-    // Deduplicate and balance
+    // Deduplicate and select by token budget
     chunks = deduplicateChunks(chunks)
-    chunks = balanceChunks(chunks, mergedConfig.maxPerPaper, mergedConfig.finalLimit)
+    const { selected, totalTokens } = this.selectByTokenBudget(chunks, mergedConfig)
     
-    const uniquePapers = new Set(chunks.map(c => c.paper_id)).size
+    const uniquePapers = new Set(selected.map(c => c.paper_id)).size
     
     return {
-      chunks,
+      chunks: selected,
       totalRetrieved: resultSets.reduce((sum, r) => sum + r.length, 0),
       wasReranked: false, // RRF doesn't use reranking
       metrics: {
         retrievalTimeMs: retrievalTime,
         rerankTimeMs: 0,
-        uniquePapers
+        uniquePapers,
+        totalTokens
       }
     }
+  }
+  
+  /**
+   * Select chunks based on token budget.
+   * Iterates through relevance-sorted chunks and adds them until budget is exhausted.
+   * This is the primary selection mechanism - semantic relevance determines what gets included.
+   */
+  private selectByTokenBudget(
+    chunks: RetrievedChunk[],
+    config: RetrievalConfig
+  ): { selected: RetrievedChunk[]; totalTokens: number } {
+    const selected: RetrievedChunk[] = []
+    let totalTokens = 0
+    
+    // Chunks should already be sorted by relevance score
+    for (const chunk of chunks) {
+      const chunkTokens = estimateTokens(chunk.content)
+      
+      // Check if adding this chunk would exceed budget
+      if (totalTokens + chunkTokens > config.maxEvidenceTokens) {
+        // If we haven't selected anything yet, include at least this one
+        if (selected.length === 0) {
+          selected.push(chunk)
+          totalTokens += chunkTokens
+        }
+        break
+      }
+      
+      selected.push(chunk)
+      totalTokens += chunkTokens
+    }
+    
+    // Log selection stats
+    const uniquePapers = new Set(selected.map(c => c.paper_id)).size
+    console.log(`📊 Token-based selection: ${selected.length} chunks (${totalTokens.toLocaleString()} tokens) from ${uniquePapers} papers`)
+    
+    return { selected, totalTokens }
   }
   
   // ===========================================================================

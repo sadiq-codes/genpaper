@@ -5,7 +5,7 @@ import { NodeViewWrapper } from '@tiptap/react'
 import type { NodeViewProps } from '@tiptap/react'
 import type { CitationAttributes } from './Citation'
 import type { ProjectPaper } from '../types'
-import { formatInline } from '@/lib/citations/local-formatter'
+import { formatInline, isNumericStyle } from '@/lib/citations/local-formatter'
 
 // Citation style type
 export type CitationStyleType = string
@@ -107,9 +107,28 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
   }, [paper, attrs])
   
   // Format the citation - synchronous and instant
+  const resolvedCitationNumber = useMemo(() => {
+    if (!isNumericStyle(style)) return citationNumber
+    if (citationNumber !== undefined) return citationNumber
+    if (!editor || editor.isDestroyed) return undefined
+
+    // Fallback: rebuild number map from the document if storage is stale.
+    const numbers = new Map<string, number>()
+    let counter = 1
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === 'citation' && node.attrs?.id) {
+        const id = String(node.attrs.id)
+        if (!numbers.has(id)) {
+          numbers.set(id, counter++)
+        }
+      }
+    })
+    return numbers.get(String(attrs.id))
+  }, [style, citationNumber, editor, attrs.id, storageVersion])
+
   const text = useMemo(() => {
-    return formatCitationByStyle(displayAttrs, style, citationNumber)
-  }, [displayAttrs, style, citationNumber])
+    return formatCitationByStyle(displayAttrs, style, resolvedCitationNumber)
+  }, [displayAttrs, style, resolvedCitationNumber])
 
   return (
     <NodeViewWrapper

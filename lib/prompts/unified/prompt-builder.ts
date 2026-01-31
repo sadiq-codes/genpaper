@@ -178,38 +178,22 @@ async function generatePromptData(
   
   console.log(`📊 Evidence filtering: ${workingChunks.length} total → ${freshChunks.length} unused chunks`)
 
-  // SIMPLIFIED: Evidence selection with per-paper limits only
-  // Upstream deduplication (chunk-retriever.ts) already handles content-level dedup
-  // We just apply per-paper limits for source diversity
-  // INCREASED from 35 to 50: Allow more evidence snippets for richer synthesis
-  const MAX_SNIPPETS = Math.min(50, Math.max(totalDistinctPapers, freshChunks.length))
-  // INCREASED from 2 to 3: More context per paper for deeper analysis
-  const MAX_PER_PAPER = 3
+  // Use all fresh chunks - token budget is already enforced upstream by ChunkRetriever
+  // Chunks are sorted by relevance, so the most relevant evidence is first
+  const distinctChunks = freshChunks
   
-  console.log(`📊 Evidence limits: MAX_SNIPPETS=${MAX_SNIPPETS}, MAX_PER_PAPER=${MAX_PER_PAPER}`)
-
-  // Simple per-paper limiting - trust upstream deduplication
-  const distinctChunks: typeof freshChunks = []
-  const perPaper = new Map<string, number>()
-  
-  for (const chunk of freshChunks) {
-    const pid = chunk.paper_id || 'unknown'
-    const count = perPaper.get(pid) || 0
-    if (count >= MAX_PER_PAPER) continue
-    
-    distinctChunks.push(chunk)
-    perPaper.set(pid, count + 1)
-    if (distinctChunks.length >= MAX_SNIPPETS) break
-  }
+  const uniquePapersInContext = new Set(distinctChunks.map(c => c.paper_id)).size
+  console.log(`📊 Evidence: ${distinctChunks.length} chunks from ${uniquePapersInContext} papers`)
 
   // JSON-format evidence for the template
   const evidenceSnippets = PromptService.formatEvidenceSnippets(distinctChunks)
 
-  // Target words: calibrate to available facts (prevent padding)
-  const baseWords = options.targetWords ?? (options.sentenceMode ? 50 : (context.expectedWords ?? 300))
-  const extraDistinctChunks = Math.max(0, distinctChunks.length - distinctPapers)
-  const dynamicWords = Math.min(450, 120 * distinctPapers + 40 * extraDistinctChunks)
-  const targetWords = options.targetWords ? baseWords : Math.min(baseWords, dynamicWords)
+  // Target words: use section's expected words from paper profile
+  // The paper profile already determines appropriate word counts per section based on paper type
+  // We only apply a minimum floor to ensure substantive content
+  const MIN_SECTION_WORDS = 200
+  const targetWords = options.targetWords 
+    ?? (options.sentenceMode ? 50 : Math.max(MIN_SECTION_WORDS, context.expectedWords ?? 500))
 
   // Build new contextual data for repetition reduction
   // Note: alreadyCovered is empty until project service integration provides claim tracking

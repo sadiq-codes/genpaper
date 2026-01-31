@@ -61,6 +61,8 @@ export interface GenerationRetrievalParams {
   sentenceMinScore?: number
   /** Token budget for context (default 8000) */
   maxTokens?: number
+  /** Token budget for evidence chunks (default 25000) */
+  maxEvidenceTokens?: number
 }
 
 export interface GenerationRetrievalResult extends BaseRetrievalResult {
@@ -139,22 +141,22 @@ let contextBuilderInstance: ContextBuilder | null = null
 
 function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
   // Create or update retriever with current params
-  // TUNED: Reduced filtering aggression for more synthesis material
+  // Uses token-based limits - semantic relevance is the primary filter
   const config = {
     mode: params.mode || 'hybrid',
     vectorWeight: params.vectorWeight || 0.7,
-    // REDUCED from 0.1 to 0.05: Let more chunks through for niche topics
-    minScore: params.minScore || 0.05,
-    // INCREASED from 100 to 150: Larger candidate pool before reranking
-    retrieveLimit: 150,
-    // INCREASED default from 25 to 38: ~50% more material for synthesis
-    finalLimit: params.limit || 38,
+    // Relevance threshold - primary quality filter
+    minScore: params.minScore || 0.15,
+    // Large candidate pool for reranking
+    retrieveLimit: 200,
     useCitationBoost: params.useCitationBoost ?? true,
     useReranking: params.useReranking ?? true,
-    // INCREASED from 30 to 45: Rerank more candidates for better selection
-    rerankTopK: params.rerankTopK || 45,
-    // INCREASED from 6 to 8: More context per paper for deeper understanding
-    maxPerPaper: 8
+    // Rerank more candidates for better selection
+    rerankTopK: params.rerankTopK || 100,
+    // Token budget for evidence - replaces arbitrary chunk limits
+    maxEvidenceTokens: params.maxEvidenceTokens || 25000,
+    // Fallback if nothing passes minScore
+    minChunksFallback: 10
   }
   
   if (!retrieverInstance) {
@@ -531,22 +533,22 @@ export class GenerationContextService {
         const targetIds = ids.length > 0 ? ids : allPaperIds
         
         try {
-          // INCREASED limits: More material for synthesis
-          // INCREASED from 25 to 38, minimum from 15 to 20
+          // Retrieve chunks for this section
+          // Token-based selection (upstream) determines how many chunks are included
+          // The limit parameter is now just for initial retrieval pool
           contextChunks = await this.getRelevantChunks(
             `${section.title}: ${(section.keyPoints || []).join('. ')}`,
             targetIds,
-            Math.min(38, Math.max(targetIds.length * 3, 20)),
+            200, // Large pool - token budget determines final selection
             allPapers
           )
         } catch (firstError) {
           if (ids.length > 0 && allPaperIds.length > ids.length) {
             console.warn(`⚠️ Assigned papers for "${section.title}" have no content, trying all papers...`)
-            // INCREASED from 25 to 38, minimum from 15 to 20
             contextChunks = await this.getRelevantChunks(
               topic,
               allPaperIds,
-              Math.min(38, Math.max(allPaperIds.length * 2, 20)),
+              200, // Large pool - token budget determines final selection
               allPapers
             )
           } else {

@@ -98,22 +98,46 @@ export async function logChunkCitations(entries: CitationLogEntry[]): Promise<vo
 
 /**
  * Extract cited chunk IDs from generated content.
- * Looks for citation markers like [CITE: paper_id] in the content.
+ * 
+ * Supports multiple citation formats:
+ * 1. New format: <!-- CITATIONS [1] paper_id: xxx | quote: "..." -->
+ * 2. Legacy format: [CITE: paper_id]
+ * 3. Pandoc format: [@paper_id]
  */
 export function extractCitedChunksFromContent(
   content: string,
   retrievedChunks: Array<{ id?: string; paper_id: string; content: string }>
 ): string[] {
-  // Extract paper IDs from citation markers
   const citedPaperIds = new Set<string>()
   
-  // Match [CITE: xxx] patterns
-  const citeMatches = content.matchAll(/\[CITE:\s*([^\]]+)\]/g)
-  for (const match of citeMatches) {
+  // 1. New format: Extract from <!-- CITATIONS ... --> blocks
+  // Matches: [1] paper_id: abc-123 | quote: "..."
+  const citationBlockPattern = /<!--\s*CITATIONS?\s*([\s\S]*?)-->/gi
+  const citationBlocks = content.matchAll(citationBlockPattern)
+  
+  for (const blockMatch of citationBlocks) {
+    const blockContent = blockMatch[1]
+    // Match individual citation entries: [N] paper_id: xxx
+    const entryPattern = /\[\d+\]\s*paper_id:\s*([a-f0-9-]+)/gi
+    const entries = blockContent.matchAll(entryPattern)
+    for (const entry of entries) {
+      citedPaperIds.add(entry[1].trim())
+    }
+  }
+  
+  // 2. Legacy format: [CITE: paper_id]
+  const legacyMatches = content.matchAll(/\[CITE:\s*([a-f0-9-]+)\]/gi)
+  for (const match of legacyMatches) {
     citedPaperIds.add(match[1].trim())
   }
   
-  // Find chunks that were from cited papers
+  // 3. Pandoc format: [@paper_id]
+  const pandocMatches = content.matchAll(/\[@([a-f0-9-]+)\]/gi)
+  for (const match of pandocMatches) {
+    citedPaperIds.add(match[1].trim())
+  }
+  
+  // Find chunks from cited papers
   const citedChunkIds: string[] = []
   for (const chunk of retrievedChunks) {
     if (chunk.id && citedPaperIds.has(chunk.paper_id)) {

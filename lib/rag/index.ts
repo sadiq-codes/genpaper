@@ -28,7 +28,6 @@ export {
   formatChunksForPrompt,
   formatPapersForPrompt,
   deduplicateChunks,
-  balanceChunks,
   createEmptyResult,
   reciprocalRankFusion,
   type SearchMode,

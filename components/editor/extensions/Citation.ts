@@ -1,6 +1,7 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 import { CitationNodeView, formatCitationByStyle, type CitationStyleType } from './CitationNodeView'
+import { isNumericStyle as isNumericCitationStyle } from '@/lib/citations/local-formatter'
 import type { ProjectPaper } from '../types'
 
 export interface CitationAttributes {
@@ -153,8 +154,7 @@ export const Citation = Node.create<CitationOptions>({
         this.storage.citationStyle = style
         
         // Check if this is a numeric style (IEEE, Vancouver, Nature, etc.)
-        const isNumericStyle = ['ieee', 'vancouver', 'nature', 'science', 'numbered']
-          .some(s => style.toLowerCase().includes(s))
+        const isNumericStyle = isNumericCitationStyle(style)
         
         console.log(`[Citation] setCitationStyle: ${style}, isNumeric: ${isNumericStyle}`)
         
