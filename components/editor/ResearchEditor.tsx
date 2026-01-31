@@ -439,7 +439,7 @@ export function ResearchEditor({
   // ============================================================================
 
   return (
-    <div className="h-screen w-full flex flex-col rounded-3xl border-2 border-foreground/10 overflow-hidden bg-background">
+    <div className="h-screen w-full flex flex-col rounded-xl border border-border overflow-hidden bg-background">
       {/* Top Navigation */}
       <EditorTopNav
         projectTitle={projectTitle}

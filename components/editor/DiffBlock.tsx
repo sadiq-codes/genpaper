@@ -51,25 +51,25 @@ function getEditTypeConfig(type: 'delete' | 'insert' | 'replace') {
       return {
         icon: Minus,
         label: 'Delete',
-        borderClass: 'border-red-300 dark:border-red-800',
-        headerClass: 'bg-red-50 dark:bg-red-950/30',
-        iconClass: 'text-red-600 dark:text-red-400',
+        borderClass: 'border-diff-delete/50',
+        headerClass: 'bg-diff-delete/10',
+        iconClass: 'text-diff-delete',
       }
     case 'insert':
       return {
         icon: Plus,
         label: 'Insert',
-        borderClass: 'border-green-300 dark:border-green-800',
-        headerClass: 'bg-green-50 dark:bg-green-950/30',
-        iconClass: 'text-green-600 dark:text-green-400',
+        borderClass: 'border-diff-insert/50',
+        headerClass: 'bg-diff-insert/10',
+        iconClass: 'text-diff-insert',
       }
     case 'replace':
       return {
         icon: ArrowLeftRight,
         label: 'Replace',
-        borderClass: 'border-blue-300 dark:border-blue-800',
-        headerClass: 'bg-blue-50 dark:bg-blue-950/30',
-        iconClass: 'text-blue-600 dark:text-blue-400',
+        borderClass: 'border-diff-modify/50',
+        headerClass: 'bg-diff-modify/10',
+        iconClass: 'text-diff-modify',
       }
   }
 }
@@ -109,16 +109,16 @@ function ContentSection({
       className={cn(
         'relative',
         isOld 
-          ? 'bg-red-50/80 dark:bg-red-950/20 border-b border-dashed border-red-200 dark:border-red-800/50' 
-          : 'bg-green-50/80 dark:bg-green-950/20'
+          ? 'bg-diff-delete/10 border-b border-dashed border-diff-delete/30' 
+          : 'bg-diff-insert/10'
       )}
     >
       {/* Label */}
       <div className={cn(
         'px-4 py-1.5 text-xs font-medium border-b',
         isOld 
-          ? 'text-red-600 dark:text-red-400 bg-red-100/50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50' 
-          : 'text-green-600 dark:text-green-400 bg-green-100/50 dark:bg-green-900/20 border-green-200 dark:border-green-800/50'
+          ? 'text-diff-delete bg-diff-delete/15 border-diff-delete/30' 
+          : 'text-diff-insert bg-diff-insert/15 border-diff-insert/30'
       )}>
         <span className="flex items-center gap-1.5">
           {isOld ? <Minus className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
@@ -133,8 +133,8 @@ function ContentSection({
           'p-4 text-sm leading-relaxed whitespace-pre-wrap',
           isScrollable && 'max-h-[200px] overflow-y-auto',
           isOld 
-            ? 'text-red-800 dark:text-red-200 line-through decoration-red-400/60 dark:decoration-red-500/60 decoration-2' 
-            : 'text-green-800 dark:text-green-200'
+            ? 'text-foreground/80 line-through decoration-diff-delete/60 decoration-2' 
+            : 'text-foreground/90'
         )}
       >
         {content}
@@ -142,15 +142,15 @@ function ContentSection({
 
       {/* Expand button if content overflows */}
       {isOverflowing && onExpand && (
-        <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-white dark:from-gray-900 to-transparent flex items-end justify-center pb-2">
+        <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-background to-transparent flex items-end justify-center pb-2">
           <button
             onClick={onExpand}
             className={cn(
               'flex items-center gap-1 text-xs font-medium px-3 py-1 rounded-full',
-              'bg-white dark:bg-gray-800 shadow-sm border',
+              'bg-card shadow-sm border border-border',
               isOld 
-                ? 'text-red-600 dark:text-red-400 border-red-200 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-950/50' 
-                : 'text-green-600 dark:text-green-400 border-green-200 dark:border-green-700 hover:bg-green-50 dark:hover:bg-green-950/50'
+                ? 'text-diff-delete hover:bg-diff-delete/10' 
+                : 'text-diff-insert hover:bg-diff-insert/10'
             )}
           >
             <Maximize2 className="h-3 w-3" />
@@ -306,8 +306,7 @@ export function DiffBlock({
             onClick={onReject}
             className={cn(
               'min-h-[44px] min-w-[100px] font-medium',
-              'border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700',
-              'dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300'
+              'border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive'
             )}
             aria-label="Reject this edit"
           >
@@ -318,8 +317,7 @@ export function DiffBlock({
             onClick={onAccept}
             className={cn(
               'min-h-[44px] min-w-[100px] font-medium',
-              'bg-green-600 text-white hover:bg-green-700',
-              'dark:bg-green-700 dark:hover:bg-green-600'
+              'bg-primary text-primary-foreground hover:bg-primary/90'
             )}
             aria-label="Accept this edit"
           >

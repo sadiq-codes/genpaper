@@ -81,12 +81,12 @@ export function EditorTopNav({
           )}
           {saveStatus === 'saved' && (
             <>
-              <Check className="h-3 w-3 text-green-600" />
+              <Check className="h-3 w-3 text-success" />
               <span className="hidden sm:inline">Saved</span>
             </>
           )}
           {saveStatus === 'unsaved' && (
-            <span className="text-amber-600">Unsaved changes</span>
+            <span className="text-warning">Unsaved changes</span>
           )}
         </div>
       </div>

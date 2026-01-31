@@ -101,7 +101,7 @@ function LoginPageContent() {
             <div className="flex items-center justify-center mb-8">
               <div className="flex items-center space-x-2">
                 <Sparkles className="h-8 w-8 text-primary" />
-                <span className="text-2xl font-bold text-gray-900">GenPaper</span>
+                <span className="text-2xl font-bold text-foreground">GenPaper</span>
               </div>
             </div>
 
@@ -154,8 +154,8 @@ function LoginPageContent() {
 
             <form onSubmit={handleSubmit} className="space-y-4 mb-6">
               {error && (
-                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-3">
-                  <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+                  <p className="text-sm text-destructive">{error}</p>
                 </div>
               )}
               
@@ -205,7 +205,7 @@ function LoginPageContent() {
             </form>
 
             <div className="text-center mb-6">
-              <a href="#" className="text-sm text-gray-500 hover:text-primary">
+              <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
                 Forgot your password?
               </a>
             </div>

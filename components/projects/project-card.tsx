@@ -38,7 +38,7 @@ const paperTypeConfig: Record<PaperTypeKey, { icon: LucideIcon; label: string; c
   literatureReview: {
     icon: BookOpen,
     label: "Literature Review",
-    color: "text-slate-600 bg-slate-50 border-slate-200",
+    color: "text-muted-foreground bg-muted/50 border-border",
   },
   researchArticle: {
     icon: FlaskConical,
@@ -48,17 +48,17 @@ const paperTypeConfig: Record<PaperTypeKey, { icon: LucideIcon; label: string; c
   mastersThesis: {
     icon: GraduationCap,
     label: "Master's Thesis",
-    color: "text-cyan-600 bg-cyan-50 border-cyan-200",
+    color: "text-muted-foreground bg-muted/50 border-border",
   },
   phdDissertation: {
     icon: ScrollText,
     label: "PhD Dissertation",
-    color: "text-blue-600 bg-blue-50 border-blue-200",
+    color: "text-muted-foreground bg-muted/50 border-border",
   },
   capstoneProject: {
     icon: Briefcase,
     label: "Capstone Project",
-    color: "text-emerald-600 bg-emerald-50 border-emerald-200",
+    color: "text-muted-foreground bg-muted/50 border-border",
   },
 }
 

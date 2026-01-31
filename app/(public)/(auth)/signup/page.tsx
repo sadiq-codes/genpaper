@@ -115,13 +115,13 @@ function SignupContent() {
           <div className="flex items-center justify-center mb-6">
             <div className="flex items-center space-x-2">
               <Sparkles className="h-8 w-8 text-primary" />
-              <span className="text-2xl font-bold text-gray-900">GenPaper</span>
+              <span className="text-2xl font-bold text-foreground">GenPaper</span>
             </div>
           </div>
           
           <div className="bg-card border rounded-lg p-6 space-y-4">
-            <div className="w-16 h-16 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-16 h-16 bg-success/20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
             </div>
@@ -166,7 +166,7 @@ function SignupContent() {
             <div className="flex items-center justify-center mb-8">
               <div className="flex items-center space-x-2">
                 <Sparkles className="h-8 w-8 text-primary" />
-                <span className="text-2xl font-bold text-gray-900">GenPaper</span>
+                <span className="text-2xl font-bold text-foreground">GenPaper</span>
               </div>
             </div>
 
@@ -221,8 +221,8 @@ function SignupContent() {
 
             <form onSubmit={handleSubmit} className="space-y-4 mb-6">
               {error && (
-                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-3">
-                  <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+                  <p className="text-sm text-destructive">{error}</p>
                   {error.includes("already exists") && (
                     <div className="mt-2">
                       <Link href="/login">
@@ -315,9 +315,9 @@ function SignupContent() {
             <div className="text-center">
               <p className="text-xs text-muted-foreground">
                 By creating an account, you agree to our{" "}
-                <a href="#" className="text-gray-500 hover:text-primary">Terms of Service</a>{" "}
+                <a href="#" className="text-muted-foreground hover:text-primary transition-colors">Terms of Service</a>{" "}
                 and{" "}
-                <a href="#" className="text-gray-500 hover:text-primary">Privacy Policy</a>
+                <a href="#" className="text-muted-foreground hover:text-primary transition-colors">Privacy Policy</a>
               </p>
             </div>
           </div>

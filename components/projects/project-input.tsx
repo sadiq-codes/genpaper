@@ -264,14 +264,14 @@ export function ProjectInput() {
 
           {/* Validation feedback */}
           {!isTopicValid && topic.length > 0 && topic.length < 10 && (
-            <p className="text-xs text-amber-600">
+            <p className="text-xs text-warning">
               Please provide at least 10 characters ({10 - topic.length} more needed)
             </p>
           )}
 
           {/* Key findings validation */}
           {showKeyFindings && !isKeyFindingsValid && keyFindings.length > 0 && (
-            <p className="text-xs text-amber-600">
+            <p className="text-xs text-warning">
               Please provide more detail in your key findings ({10 - keyFindings.length} more characters needed)
             </p>
           )}

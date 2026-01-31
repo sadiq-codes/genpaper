@@ -40,11 +40,11 @@ export interface DiffExpandModalProps {
 function getEditTypeConfig(type: 'delete' | 'insert' | 'replace') {
   switch (type) {
     case 'delete':
-      return { icon: Minus, label: 'Delete', color: 'red' }
+      return { icon: Minus, label: 'Delete', colorClass: 'text-diff-delete' }
     case 'insert':
-      return { icon: Plus, label: 'Insert', color: 'green' }
+      return { icon: Plus, label: 'Insert', colorClass: 'text-diff-insert' }
     case 'replace':
-      return { icon: ArrowLeftRight, label: 'Replace', color: 'blue' }
+      return { icon: ArrowLeftRight, label: 'Replace', colorClass: 'text-diff-modify' }
   }
 }
 
@@ -84,12 +84,7 @@ export function DiffExpandModal({
       <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Icon className={cn(
-              'h-5 w-5',
-              config.color === 'red' && 'text-red-600',
-              config.color === 'green' && 'text-green-600',
-              config.color === 'blue' && 'text-blue-600'
-            )} />
+            <Icon className={cn('h-5 w-5', config.colorClass)} />
             <span>{config.label}</span>
             {sectionLabel && (
               <span className="text-muted-foreground font-normal">
@@ -106,15 +101,15 @@ export function DiffExpandModal({
         )}>
           {/* Old content */}
           {showOldContent && oldContent && (
-            <div className="flex flex-col min-h-0 rounded-lg border border-red-200 dark:border-red-800 overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-800">
-                <Minus className="h-4 w-4 text-red-600 dark:text-red-400" />
-                <span className="text-sm font-medium text-red-700 dark:text-red-300">
+            <div className="flex flex-col min-h-0 rounded-lg border border-diff-delete/50 overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2 bg-diff-delete/15 border-b border-diff-delete/30">
+                <Minus className="h-4 w-4 text-diff-delete" />
+                <span className="text-sm font-medium text-diff-delete">
                   Current content (will be removed)
                 </span>
               </div>
-              <ScrollArea className="flex-1 p-4 bg-red-50/50 dark:bg-red-950/10">
-                <div className="text-sm leading-relaxed whitespace-pre-wrap text-red-800 dark:text-red-200 line-through decoration-red-400/60 decoration-2">
+              <ScrollArea className="flex-1 p-4 bg-diff-delete/5">
+                <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/80 line-through decoration-diff-delete/60 decoration-2">
                   {oldContent}
                 </div>
               </ScrollArea>
@@ -123,15 +118,15 @@ export function DiffExpandModal({
 
           {/* New content */}
           {showNewContent && newContent && (
-            <div className="flex flex-col min-h-0 rounded-lg border border-green-200 dark:border-green-800 overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-2 bg-green-50 dark:bg-green-950/30 border-b border-green-200 dark:border-green-800">
-                <Plus className="h-4 w-4 text-green-600 dark:text-green-400" />
-                <span className="text-sm font-medium text-green-700 dark:text-green-300">
+            <div className="flex flex-col min-h-0 rounded-lg border border-diff-insert/50 overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2 bg-diff-insert/15 border-b border-diff-insert/30">
+                <Plus className="h-4 w-4 text-diff-insert" />
+                <span className="text-sm font-medium text-diff-insert">
                   New content (will be added)
                 </span>
               </div>
-              <ScrollArea className="flex-1 p-4 bg-green-50/50 dark:bg-green-950/10">
-                <div className="text-sm leading-relaxed whitespace-pre-wrap text-green-800 dark:text-green-200">
+              <ScrollArea className="flex-1 p-4 bg-diff-insert/5">
+                <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
                   {newContent}
                 </div>
               </ScrollArea>
@@ -151,8 +146,7 @@ export function DiffExpandModal({
             onClick={handleReject}
             className={cn(
               'min-h-[44px] min-w-[100px] font-medium',
-              'border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700',
-              'dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950/50'
+              'border-destructive/50 text-destructive hover:bg-destructive/10'
             )}
           >
             <X className="h-4 w-4 mr-2" />
@@ -162,8 +156,7 @@ export function DiffExpandModal({
             onClick={handleAccept}
             className={cn(
               'min-h-[44px] min-w-[100px] font-medium',
-              'bg-green-600 text-white hover:bg-green-700',
-              'dark:bg-green-700 dark:hover:bg-green-600'
+              'bg-primary text-primary-foreground hover:bg-primary/90'
             )}
           >
             <Check className="h-4 w-4 mr-2" />

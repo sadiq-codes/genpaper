@@ -158,24 +158,24 @@ export default function CommandPalette({
       className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm animate-in fade-in-0 duration-200"
     >
       <div className="fixed left-1/2 top-1/4 -translate-x-1/2 w-full max-w-lg mx-auto">
-        <div className="bg-white border border-gray-200 rounded-lg shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="bg-card border border-border rounded-lg shadow-sm animate-in zoom-in-95 duration-200">
           {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100">
-            <div className="flex items-center gap-2 text-gray-500">
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+            <div className="flex items-center gap-2 text-muted-foreground">
               <CommandIcon className="h-4 w-4" />
               <span className="text-sm font-medium">Command Palette</span>
             </div>
             <div className="flex items-center gap-1 ml-auto">
-              <kbd className="inline-flex items-center rounded border bg-gray-100 px-1.5 py-0.5 text-xs font-mono text-gray-600">
+              <kbd className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs font-mono text-muted-foreground">
                 esc
               </kbd>
-              <span className="text-xs text-gray-500">to close</span>
+              <span className="text-xs text-muted-foreground">to close</span>
             </div>
           </div>
 
           {/* Search Input */}
           <div className="relative px-4 py-3">
-            <Search className="absolute left-7 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Search className="absolute left-7 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               ref={inputRef}
               placeholder="Search library, projects, or run commands..."
@@ -188,7 +188,7 @@ export default function CommandPalette({
           {/* Commands */}
           <ScrollArea className="max-h-96">
             <div className="px-2 pb-2">
-              {filteredCommands.length > 0 ? (
+                {filteredCommands.length > 0 ? (
                 <div className="space-y-1">
                   {filteredCommands.map((command, index) => (
                     <Button
@@ -196,8 +196,8 @@ export default function CommandPalette({
                       variant="ghost"
                       className={`w-full justify-start h-auto p-3 ${
                         index === selectedIndex 
-                          ? 'bg-gray-100 text-gray-700 border-gray-300' 
-                          : 'hover:bg-gray-50'
+                          ? 'bg-muted text-foreground' 
+                          : 'hover:bg-muted/50'
                       }`}
                       onClick={command.action}
                     >
@@ -210,7 +210,7 @@ export default function CommandPalette({
                             {command.title}
                           </div>
                           {command.description && (
-                            <div className="text-xs text-gray-500 mt-0.5">
+                            <div className="text-xs text-muted-foreground mt-0.5">
                               {command.description}
                             </div>
                           )}
@@ -220,7 +220,7 @@ export default function CommandPalette({
                             {command.category}
                           </Badge>
                           {command.shortcut && (
-                            <kbd className="inline-flex items-center rounded border bg-gray-100 px-1.5 py-0.5 text-xs font-mono text-gray-600">
+                            <kbd className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs font-mono text-muted-foreground">
                               {command.shortcut}
                             </kbd>
                           )}
@@ -231,9 +231,9 @@ export default function CommandPalette({
                 </div>
               ) : (
                 <div className="text-center py-8">
-                  <Search className="h-8 w-8 text-gray-300 mx-auto mb-3" />
-                  <p className="text-sm text-gray-500">No commands found</p>
-                  <p className="text-xs text-gray-400 mt-1">
+                  <Search className="h-8 w-8 text-muted-foreground/50 mx-auto mb-3" />
+                  <p className="text-sm text-muted-foreground">No commands found</p>
+                  <p className="text-xs text-muted-foreground/70 mt-1">
                     Try searching for &quot;library&quot; or &quot;projects&quot;
                   </p>
                 </div>
@@ -242,17 +242,17 @@ export default function CommandPalette({
           </ScrollArea>
 
           {/* Footer */}
-          <div className="px-4 py-2 border-t border-gray-100 bg-gray-50 rounded-b-lg">
-            <div className="flex items-center justify-between text-xs text-gray-500">
+          <div className="px-4 py-2 border-t border-border bg-muted/50 rounded-b-lg">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-1">
-                  <kbd className="inline-flex items-center rounded border bg-white px-1 py-0.5 font-mono">
+                  <kbd className="inline-flex items-center rounded border border-border bg-card px-1 py-0.5 font-mono">
                     ↑↓
                   </kbd>
                   <span>navigate</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <kbd className="inline-flex items-center rounded border bg-white px-1 py-0.5 font-mono">
+                  <kbd className="inline-flex items-center rounded border border-border bg-card px-1 py-0.5 font-mono">
                     ↵
                   </kbd>
                   <span>select</span>

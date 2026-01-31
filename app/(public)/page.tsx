@@ -225,7 +225,7 @@ export default function LandingPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
+            <Card className="border border-border hover:border-primary/30 bg-card transition-colors duration-200 rounded-lg">
               <CardHeader>
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
                   <Brain className="h-6 w-6 text-primary" />
@@ -237,7 +237,7 @@ export default function LandingPage() {
               </CardHeader>
             </Card>
 
-            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
+            <Card className="border border-border hover:border-primary/30 bg-card transition-colors duration-200 rounded-lg">
               <CardHeader>
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
                   <Search className="h-6 w-6 text-primary" />
@@ -249,7 +249,7 @@ export default function LandingPage() {
               </CardHeader>
             </Card>
 
-            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
+            <Card className="border border-border hover:border-primary/30 bg-card transition-colors duration-200 rounded-lg">
               <CardHeader>
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
                   <FileText className="h-6 w-6 text-primary" />
@@ -261,7 +261,7 @@ export default function LandingPage() {
               </CardHeader>
             </Card>
 
-            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
+            <Card className="border border-border hover:border-primary/30 bg-card transition-colors duration-200 rounded-lg">
               <CardHeader>
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
                   <BookOpen className="h-6 w-6 text-primary" />
@@ -273,7 +273,7 @@ export default function LandingPage() {
               </CardHeader>
             </Card>
 
-            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
+            <Card className="border border-border hover:border-primary/30 bg-card transition-colors duration-200 rounded-lg">
               <CardHeader>
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
                   <Clock className="h-6 w-6 text-primary" />
@@ -285,7 +285,7 @@ export default function LandingPage() {
               </CardHeader>
             </Card>
 
-            <Card className="border border-border hover:border-primary/50 bg-card transition-all duration-300 hover:shadow-lg hover:-translate-y-1 rounded-xl">
+            <Card className="border border-border hover:border-primary/30 bg-card transition-colors duration-200 rounded-lg">
               <CardHeader>
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
                   <Shield className="h-6 w-6 text-primary" />

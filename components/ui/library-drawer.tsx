@@ -250,7 +250,7 @@ export default function LibraryDrawer({
       />
       
       {/* Drawer */}
-      <div className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col">
+      <div className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l shadow-sm animate-in slide-in-from-right duration-300 flex flex-col">
         {/* Header */}
         <div className="flex-none border-b bg-muted/30">
           <div className="flex items-center justify-between px-5 py-4">

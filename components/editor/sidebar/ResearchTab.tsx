@@ -89,7 +89,7 @@ function ProcessingStatusBadge({
       <TooltipProvider delayDuration={300}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400">
+            <span className="flex items-center gap-1 text-[10px] text-success">
               <CheckCircle2 className="h-3 w-3" />
               Ready
             </span>
@@ -105,7 +105,7 @@ function ProcessingStatusBadge({
       <TooltipProvider delayDuration={300}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="flex items-center gap-1 text-[10px] text-blue-600 dark:text-blue-400">
+            <span className="flex items-center gap-1 text-[10px] text-info">
               <Loader2 className="h-3 w-3 animate-spin" />
               Processing
             </span>
@@ -384,7 +384,7 @@ export function ResearchTab({
         {hasUploadedPapers && processingSummary && (hasProcessingPapers || hasFailedPapers) && (
           <div className="mt-2 flex items-center gap-2 text-xs">
             {hasProcessingPapers && (
-              <span className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+              <span className="flex items-center gap-1.5 text-info">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Processing {processingSummary.processing + processingSummary.pending} uploaded
               </span>
@@ -396,7 +396,7 @@ export function ResearchTab({
               </span>
             )}
             {!hasProcessingPapers && !hasFailedPapers && processingSummary.allProcessed && (
-              <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+              <span className="flex items-center gap-1 text-success">
                 <CheckCircle2 className="h-3 w-3" />
                 Uploads ready
               </span>

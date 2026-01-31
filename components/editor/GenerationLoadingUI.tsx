@@ -126,7 +126,7 @@ function PaperSkeleton({ currentSection }: { currentSection: string | null }) {
             {/* Section heading */}
             <div className="flex items-center gap-2">
               {isComplete ? (
-                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
               ) : isActive ? (
                 <Loader2 className="h-4 w-4 text-primary animate-spin flex-shrink-0" />
               ) : (
@@ -246,10 +246,10 @@ function LiveContentPreview({
       {completedSections.map((section, idx) => (
         <div key={idx} className="space-y-2">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+            <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
             <h2 className="text-lg font-semibold text-foreground">{section.title}</h2>
           </div>
-          <div className="pl-6 border-l-2 border-green-500/20">
+          <div className="pl-6 border-l-2 border-success/20">
             {renderContent(section.content)}
           </div>
         </div>
@@ -315,7 +315,7 @@ function StatusPanel({
         {error ? (
           <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
         ) : progress >= 100 ? (
-          <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+          <CheckCircle2 className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
         ) : (
           <Loader2 className="h-5 w-5 text-primary animate-spin flex-shrink-0 mt-0.5" />
         )}
@@ -368,7 +368,7 @@ function StatusPanel({
           >
             <div className="flex-shrink-0 w-5 flex items-center justify-center">
               {stage.status === "complete" ? (
-                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                <CheckCircle2 className="h-4 w-4 text-success" />
               ) : stage.status === "error" ? (
                 <XCircle className="h-4 w-4" />
               ) : stage.status === "active" ? (

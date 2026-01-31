@@ -188,11 +188,11 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
         return <FileText className="h-4 w-4 text-muted-foreground" />
       case 'uploading':
       case 'processing':
-        return <LoadingSpinner size="sm" className="h-4 w-4 text-gray-1000" />
+        return <LoadingSpinner size="sm" className="h-4 w-4 text-foreground" />
       case 'success':
-        return <CheckCircle className="h-4 w-4 text-green-500" />
+        return <CheckCircle className="h-4 w-4 text-success" />
       case 'error':
-        return <AlertCircle className="h-4 w-4 text-red-500" />
+        return <AlertCircle className="h-4 w-4 text-destructive" />
     }
   }
 
@@ -202,11 +202,11 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
         return 'border-muted'
       case 'uploading':
       case 'processing':
-        return 'border-gray-300 bg-gray-100'
+        return 'border-border bg-muted/50'
       case 'success':
-        return 'border-green-200 bg-green-50'
+        return 'border-success/30 bg-success/10'
       case 'error':
-        return 'border-red-200 bg-red-50'
+        return 'border-destructive/30 bg-destructive/10'
     }
   }
 
@@ -342,14 +342,14 @@ export default function FileUpload({ onUploadComplete, className }: FileUploadPr
 
                   {/* Error Message */}
                   {uploadedFile.status === 'error' && uploadedFile.error && (
-                    <div className="mt-2 text-xs text-red-600">
+                    <div className="mt-2 text-xs text-destructive">
                       {uploadedFile.error}
                     </div>
                   )}
 
                   {/* Extracted Data Preview */}
                   {uploadedFile.status === 'success' && uploadedFile.extractedData && (
-                    <div className="mt-2 text-xs text-green-700">
+                    <div className="mt-2 text-xs text-success-foreground">
                       <p><strong>Title:</strong> {uploadedFile.extractedData.title || 'Not detected'}</p>
                       {uploadedFile.extractedData.authors && (
                         <p><strong>Authors:</strong> {uploadedFile.extractedData.authors.join(', ')}</p>
