@@ -300,35 +300,67 @@ export function ResearchEditor({
       if (!editor) return
 
       try {
+        // Show loading toast for PDF (can be slow)
+        const loadingToast = format === 'pdf' 
+          ? toast.loading('Generating PDF... This may take a few seconds.')
+          : null
+
+        // Get editor JSON and citation metadata
+        const editorDocument = editor.getJSON()
+        const citationStorage = (editor.storage as Record<string, unknown>).citation as {
+          citationStyle?: string
+          papers?: Array<{
+            id: string
+            title?: string
+            authors?: string[]
+            year?: number
+            journal?: string
+            venue?: string
+            doi?: string
+          }>
+        } | undefined
+
         const response = await fetch("/api/editor/export", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             format,
-            content: editorToMarkdown(editor),
+            document: editorDocument,
+            papers: citationStorage?.papers || papers,
+            citationStyle: citationStorage?.citationStyle || 'apa',
             title: projectTitle,
           }),
         })
 
-        if (!response.ok) throw new Error("Export failed")
+        if (loadingToast) toast.dismiss(loadingToast)
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Export failed' }))
+          throw new Error(error.error || 'Export failed')
+        }
 
         const blob = await response.blob()
         const url = URL.createObjectURL(blob)
         const a = document.createElement("a")
         a.href = url
-        a.download = `${projectTitle}.${format === "latex" ? "tex" : format}`
+        
+        // LaTeX export is now a ZIP file
+        const extension = format === "latex" ? "zip" : format
+        a.download = `${projectTitle}.${extension}`
+        
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
 
-        toast.success(`Exported as ${format.toUpperCase()}`)
+        toast.success(`Exported as ${format.toUpperCase()}${format === 'latex' ? ' (ZIP with .tex and .bib files)' : ''}`)
       } catch (error) {
         console.error("Export error:", error)
-        toast.error("Export failed")
+        const message = error instanceof Error ? error.message : "Export failed"
+        toast.error(message)
       }
     },
-    [editor, projectTitle]
+    [editor, projectTitle, papers]
   )
 
   // Handle generation completion
