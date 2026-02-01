@@ -1,126 +1,35 @@
+/**
+ * Export API Route
+ * 
+ * Exports documents to DOCX, LaTeX (ZIP), or PDF formats.
+ * Handles TipTap JSON with proper citation formatting.
+ */
+
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
-import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx'
+import { parseDocument } from '@/lib/export/document-parser'
+import { generateDocx } from '@/lib/export/docx-generator'
+import { generateLatexZip } from '@/lib/export/latex-generator'
+import { generatePdf } from '@/lib/export/pdf-generator'
+import type { TipTapDocument, ExportPaper, ExportFormat } from '@/lib/export/types'
+
+// =============================================================================
+// TYPES
+// =============================================================================
 
 interface ExportRequest {
-  format: 'pdf' | 'docx' | 'latex'
-  content: string
+  format: ExportFormat
+  document: TipTapDocument
+  papers: ExportPaper[]
+  citationStyle: string
   title: string
+  authors?: string[]
+  abstract?: string
 }
 
-// Convert HTML to plain text structure
-function parseHtmlToSections(html: string): Array<{ type: 'heading' | 'paragraph'; level?: number; text: string }> {
-  const sections: Array<{ type: 'heading' | 'paragraph'; level?: number; text: string }> = []
-  
-  // Simple regex-based parsing (for production, use a proper HTML parser)
-  const tagRegex = /<(h[1-3]|p)[^>]*>([\s\S]*?)<\/\1>/gi
-  let match
-  
-  while ((match = tagRegex.exec(html)) !== null) {
-    const tag = match[1].toLowerCase()
-    const text = match[2]
-      .replace(/<[^>]+>/g, '') // Remove nested tags
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .trim()
-    
-    if (!text) continue
-    
-    if (tag.startsWith('h')) {
-      const level = parseInt(tag[1])
-      sections.push({ type: 'heading', level, text })
-    } else {
-      sections.push({ type: 'paragraph', text })
-    }
-  }
-  
-  return sections
-}
-
-// Generate DOCX
-async function generateDocx(content: string, title: string): Promise<Buffer> {
-  const sections = parseHtmlToSections(content)
-  
-  const children = sections.map(section => {
-    if (section.type === 'heading') {
-      const headingLevel = section.level === 1 
-        ? HeadingLevel.HEADING_1 
-        : section.level === 2 
-          ? HeadingLevel.HEADING_2 
-          : HeadingLevel.HEADING_3
-      
-      return new Paragraph({
-        text: section.text,
-        heading: headingLevel,
-      })
-    } else {
-      return new Paragraph({
-        children: [new TextRun(section.text)],
-      })
-    }
-  })
-
-  const doc = new Document({
-    sections: [{
-      properties: {},
-      children: [
-        new Paragraph({
-          text: title,
-          heading: HeadingLevel.TITLE,
-        }),
-        ...children,
-      ],
-    }],
-  })
-
-  return await Packer.toBuffer(doc)
-}
-
-// Generate LaTeX
-function generateLatex(content: string, title: string): string {
-  const sections = parseHtmlToSections(content)
-  
-  let latex = `\\documentclass[12pt]{article}
-\\usepackage[utf8]{inputenc}
-\\usepackage[T1]{fontenc}
-\\usepackage{amsmath}
-\\usepackage{hyperref}
-\\usepackage{natbib}
-
-\\title{${escapeLatex(title)}}
-\\author{}
-\\date{\\today}
-
-\\begin{document}
-
-\\maketitle
-
-`
-
-  for (const section of sections) {
-    if (section.type === 'heading') {
-      const cmd = section.level === 1 ? 'section' : section.level === 2 ? 'subsection' : 'subsubsection'
-      latex += `\\${cmd}{${escapeLatex(section.text)}}\n\n`
-    } else {
-      latex += `${escapeLatex(section.text)}\n\n`
-    }
-  }
-
-  latex += `\\end{document}\n`
-  
-  return latex
-}
-
-function escapeLatex(text: string): string {
-  return text
-    .replace(/\\/g, '\\textbackslash{}')
-    .replace(/[&%$#_{}]/g, '\\$&')
-    .replace(/~/g, '\\textasciitilde{}')
-    .replace(/\^/g, '\\textasciicircum{}')
-}
+// =============================================================================
+// ROUTE HANDLER
+// =============================================================================
 
 export async function POST(request: NextRequest) {
   try {
@@ -133,52 +42,109 @@ export async function POST(request: NextRequest) {
     }
 
     const body: ExportRequest = await request.json()
-    const { format, content, title } = body
+    const { format, document, papers, citationStyle, title, authors, abstract } = body
 
-    let result: Buffer | string
+    // Validate request
+    if (!document || !document.type) {
+      return NextResponse.json({ error: 'Invalid document format' }, { status: 400 })
+    }
+
+    if (!['pdf', 'docx', 'latex'].includes(format)) {
+      return NextResponse.json({ error: 'Invalid export format' }, { status: 400 })
+    }
+
+    console.log(`[Export] Starting ${format} export for "${title}"`)
+    console.log(`[Export] Document has ${document.content?.length || 0} top-level nodes`)
+    console.log(`[Export] Citation style: ${citationStyle}`)
+    console.log(`[Export] Papers available: ${papers.length}`)
+
+    // Parse the TipTap document
+    const parsed = parseDocument(
+      document,
+      title || 'Untitled Document',
+      authors || [],
+      abstract || ''
+    )
+
+    console.log(`[Export] Parsed ${parsed.sections.length} sections`)
+    console.log(`[Export] Found ${parsed.citedPaperIds.size} unique citations`)
+
+    // Generate the appropriate format
+    let result: Buffer
     let contentType: string
     let filename: string
 
     switch (format) {
       case 'docx':
-        result = await generateDocx(content, title)
+        result = await generateDocx(parsed, papers, citationStyle)
         contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        filename = `${title}.docx`
+        filename = `${sanitizeFilename(title)}.docx`
         break
         
       case 'latex':
-        result = generateLatex(content, title)
-        contentType = 'application/x-tex'
-        filename = `${title}.tex`
+        result = await generateLatexZip(parsed, papers, citationStyle)
+        contentType = 'application/zip'
+        filename = `${sanitizeFilename(title)}.zip`
         break
         
       case 'pdf':
-        // For PDF, we'll return the LaTeX and let the client handle it
-        // In production, you'd use a service like Overleaf API or a LaTeX compiler
-        result = generateLatex(content, title)
-        contentType = 'application/x-tex'
-        filename = `${title}.tex`
+        result = await generatePdf(parsed, papers, citationStyle)
+        contentType = 'application/pdf'
+        filename = `${sanitizeFilename(title)}.pdf`
         break
         
       default:
         return NextResponse.json({ error: 'Invalid format' }, { status: 400 })
     }
 
-    // NextResponse expects a Web BodyInit; ensure we pass a compatible type.
-    const responseBody = typeof result === 'string' ? result : new Uint8Array(result)
+    console.log(`[Export] Generated ${format} file: ${result.length} bytes`)
 
-    return new NextResponse(responseBody, {
+    return new NextResponse(new Uint8Array(result), {
       headers: {
         'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': result.length.toString(),
       },
     })
 
   } catch (error) {
-    console.error('Export error:', error)
+    console.error('[Export] Error:', error)
+    
+    // Provide more specific error messages
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    
+    // Check for Puppeteer-specific errors
+    if (message.includes('puppeteer') || message.includes('chromium')) {
+      return NextResponse.json(
+        { error: 'PDF generation is temporarily unavailable. Please try DOCX or LaTeX export.' },
+        { status: 503 }
+      )
+    }
+    
     return NextResponse.json(
-      { error: 'Failed to export document' },
+      { error: `Failed to export document: ${message}` },
       { status: 500 }
     )
   }
 }
+
+// =============================================================================
+// UTILITIES
+// =============================================================================
+
+/**
+ * Sanitize filename for safe download
+ */
+function sanitizeFilename(name: string): string {
+  return name
+    .replace(/[<>:"/\\|?*]/g, '') // Remove invalid characters
+    .replace(/\s+/g, '_')          // Replace spaces with underscores
+    .slice(0, 100)                 // Limit length
+    || 'document'
+}
+
+// =============================================================================
+// ROUTE CONFIG
+// =============================================================================
+
+export const maxDuration = 60 // Allow up to 60 seconds for PDF generation
