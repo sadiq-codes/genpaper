@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const CSL_STYLES_REPO_API = 'https://api.github.com/repos/citation-style-language/styles/contents'
+const CSL_STYLES_TREE_API = 'https://api.github.com/repos/citation-style-language/styles/git/trees/master?recursive=1'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
 let cachedStyleIds: string[] | null = null
@@ -11,35 +11,26 @@ async function fetchAllStyleIds(): Promise<string[]> {
     return cachedStyleIds
   }
 
-  const ids: string[] = []
-  let page = 1
+  const response = await fetch(CSL_STYLES_TREE_API, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'genpaper'
+    },
+    next: { revalidate: 3600 }
+  })
 
-  while (true) {
-    const url = new URL(CSL_STYLES_REPO_API)
-    url.searchParams.set('per_page', '100')
-    url.searchParams.set('page', String(page))
-
-    const response = await fetch(url.toString(), {
-      headers: {
-        Accept: 'application/vnd.github+json',
-      },
-      next: { revalidate: 3600 }
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch CSL styles list: ${response.status}`)
-    }
-
-    const data = await response.json() as Array<{ name: string; type: string }>
-    const pageIds = data
-      .filter(item => item.type === 'file' && item.name.endsWith('.csl'))
-      .map(item => item.name.replace(/\.csl$/i, ''))
-
-    ids.push(...pageIds)
-
-    if (data.length < 100) break
-    page += 1
+  if (!response.ok) {
+    throw new Error(`Failed to fetch CSL styles list: ${response.status}`)
   }
+
+  const data = await response.json() as {
+    tree?: Array<{ path: string; type: string }>
+  }
+
+  // Only include root-level .csl files, exclude subdirectories like 'dependent/'
+  const ids = (data.tree || [])
+    .filter(item => item.type === 'blob' && item.path.endsWith('.csl') && !item.path.includes('/'))
+    .map(item => item.path.replace(/\.csl$/i, ''))
 
   const unique = Array.from(new Set(ids)).sort()
   cachedStyleIds = unique

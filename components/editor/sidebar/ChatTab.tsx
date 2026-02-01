@@ -302,19 +302,32 @@ export function ChatTab({
 }: ChatTabProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const scrollRafRef = useRef<number | null>(null)
-  const lastMessageCountRef = useRef(messages.length)
+  const lastScrollTriggerRef = useRef({ messageCount: 0, lastMessageLength: 0 })
   
   // Image upload hook
   const { uploadImage, isUploading } = useChatImageUpload({ projectId })
   
+  // Get length of the last message content (for streaming detection)
+  const lastMessage = messages[messages.length - 1]
+  const lastMessageContent = lastMessage ? getMessageText(lastMessage) : ''
+  
   // Throttled auto-scroll using requestAnimationFrame
-  // Only scrolls when message count changes or loading state changes (not during streaming content updates)
+  // Scrolls when: message count changes, loading starts, OR streaming content grows
   useEffect(() => {
-    // Only trigger scroll on actual message count change or loading state change
-    const messageCountChanged = messages.length !== lastMessageCountRef.current
-    lastMessageCountRef.current = messages.length
+    const currentTrigger = {
+      messageCount: messages.length,
+      lastMessageLength: lastMessageContent.length,
+    }
     
-    if (!messageCountChanged && !isLoading) return
+    const prev = lastScrollTriggerRef.current
+    const messageCountChanged = currentTrigger.messageCount !== prev.messageCount
+    const contentGrew = currentTrigger.lastMessageLength > prev.lastMessageLength
+    
+    lastScrollTriggerRef.current = currentTrigger
+    
+    // Scroll on new messages, or when streaming content grows (while loading)
+    const shouldScroll = messageCountChanged || (isLoading && contentGrew)
+    if (!shouldScroll) return
     
     // Cancel any pending scroll
     if (scrollRafRef.current) {
@@ -336,7 +349,7 @@ export function ChatTab({
         cancelAnimationFrame(scrollRafRef.current)
       }
     }
-  }, [messages.length, isLoading])
+  }, [messages.length, isLoading, lastMessageContent.length])
 
   // Handle send from RichChatInput
   const handleSend = useCallback((

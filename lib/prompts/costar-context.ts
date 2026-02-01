@@ -116,11 +116,12 @@ export interface ChatCOStarContext extends COStarBaseContext {
 
 /**
  * Extended context for autocomplete
+ * 
+ * Note: suggestionType/suggestionObjective removed - the LLM now analyzes
+ * writing intent semantically rather than using pre-classified suggestion types.
  */
 export interface CompleteCOStarContext extends COStarBaseContext {
   // Cursor context
-  suggestionType: string
-  suggestionObjective: string
   precedingText: string
   followingText?: string
   
@@ -285,13 +286,14 @@ export function buildChatContext(params: {
 
 /**
  * Build full context for autocomplete
+ * 
+ * Note: suggestionType/suggestionObjective removed - the unified prompt
+ * instructs the LLM to analyze writing intent semantically.
  */
 export function buildCompleteContext(params: {
   topic: string
   paperType: string
   currentSection: string
-  suggestionType: string
-  suggestionObjective: string
   precedingText: string
   followingText?: string
   outlineContext: string
@@ -307,8 +309,6 @@ export function buildCompleteContext(params: {
     topic,
     paperType,
     currentSection,
-    suggestionType,
-    suggestionObjective,
     precedingText,
     followingText,
     outlineContext,
@@ -326,8 +326,6 @@ export function buildCompleteContext(params: {
   
   return {
     ...base,
-    suggestionType,
-    suggestionObjective,
     precedingText: precedingText.slice(-300), // Limit preceding text
     followingText,
     sectionGuidance: getSectionGuidance(currentSection),

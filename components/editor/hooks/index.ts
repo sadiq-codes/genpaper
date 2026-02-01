@@ -21,5 +21,9 @@ export { useSmartCompletion } from './useSmartCompletion'
 export { useCitationFormatter, clearAllCitationCaches } from './useCitationFormatter'
 export type { CitationPaper } from './useCitationFormatter'
 
+// Autocomplete preferences hook
+export { useAutocompletePrefs } from './useAutocompletePrefs'
+export type { AutocompletePrefs } from './useAutocompletePrefs'
+
 // Note: useCitationManager hooks have been removed.
 // Citation formatting is now 100% local via CitationNodeView + local-formatter.ts

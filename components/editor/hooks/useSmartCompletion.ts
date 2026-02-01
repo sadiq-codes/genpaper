@@ -4,15 +4,11 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
 import { hasGhostText, type GhostTextCitation } from '../extensions/GhostText'
+import { toast } from 'sonner'
+import type { AutocompletePrefs } from './useAutocompletePrefs'
 
-// Suggestion types based on context
-export type SuggestionType =
-  | 'opening_sentence'   // Start of section paragraph
-  | 'complete_sentence'  // Finish incomplete sentence
-  | 'next_sentence'      // Continue after complete sentence
-  | 'provide_examples'   // After "such as", "for example"
-  | 'contrast_point'     // After "however", "although"
-  | 'contextual'         // Manual trigger - AI decides
+// Note: SuggestionType removed - the unified prompt now handles all cases
+// The LLM analyzes writing intent semantically rather than using pre-classified types
 
 interface UseSmartCompletionOptions {
   editor: Editor | null
@@ -20,6 +16,8 @@ interface UseSmartCompletionOptions {
   papers: ProjectPaper[]
   projectId: string
   projectTopic: string
+  /** Autocomplete preferences from useAutocompletePrefs */
+  prefs?: AutocompletePrefs
 }
 
 interface UseSmartCompletionReturn {
@@ -27,6 +25,10 @@ interface UseSmartCompletionReturn {
   triggerCompletion: () => void
   showNextQueuedSentence: () => boolean  // Returns true if there was a queued sentence to show
   hasQueuedSentences: boolean
+  /** Current loading message for display */
+  loadingMessage: string | null
+  /** Number of queued sentences */
+  queueCount: number
 }
 
 interface EditorContext {
@@ -39,28 +41,8 @@ interface EditorContext {
   hasHeadingAbove: boolean
 }
 
-// Pattern matchers for smart detection
-const EXAMPLE_PATTERNS = /(?:such as|for example|for instance|e\.g\.|including)\s*$/i
-const CONTRAST_PATTERNS = /(?:however|although|but|yet|nevertheless|on the other hand)\s*$/i
-const SENTENCE_END_PATTERN = /[.!?]\s*$/
-
-// Get debounce delay based on suggestion type
-function getDebounceDelay(suggestionType: SuggestionType): number {
-  switch (suggestionType) {
-    case 'opening_sentence':
-      return 1000  // Fast for empty paragraphs
-    case 'provide_examples':
-    case 'contrast_point':
-      return 800   // Pattern detected - quick
-    case 'complete_sentence':
-    case 'next_sentence':
-      return 1500  // User might still be thinking
-    case 'contextual':
-      return 1200
-    default:
-      return 1500
-  }
-}
+// Auto-trigger debounce delay (only used when autoSuggestions enabled)
+const AUTO_TRIGGER_DEBOUNCE_MS = 1200
 
 // Find the last complete sentence in text
 // Returns the sentence text or empty string if no complete sentence found
@@ -157,49 +139,24 @@ function extractEditorContext(editor: Editor): EditorContext | null {
   }
 }
 
-// Determine what type of suggestion to generate
-function detectSuggestionType(context: EditorContext): SuggestionType | null {
+// Check if context has enough content to generate a completion
+// No longer determines suggestion type - the LLM does that semantically
+function shouldTriggerCompletion(context: EditorContext): boolean {
   const { precedingText, isEmptyParagraph, hasHeadingAbove, currentSection } = context
 
-  // Empty paragraph after a real heading -> opening sentence
+  // Empty paragraph after a real heading -> good for opening sentence
   if (isEmptyParagraph && hasHeadingAbove && currentSection !== 'Untitled Section') {
-    return 'opening_sentence'
+    return true
   }
 
-  // No text to analyze
+  // Need at least some text to work with
   if (!precedingText.trim()) {
-    return null
+    return false
   }
 
-  // Check for example patterns
-  if (EXAMPLE_PATTERNS.test(precedingText)) {
-    return 'provide_examples'
-  }
-
-  // Check for contrast patterns
-  if (CONTRAST_PATTERNS.test(precedingText)) {
-    return 'contrast_point'
-  }
-
-  // End of sentence -> next sentence
-  if (SENTENCE_END_PATTERN.test(precedingText)) {
-    return 'next_sentence'
-  }
-
-  // Has some text but not a complete sentence -> complete it
-  const trimmedText = precedingText.trim()
-  const wordCount = trimmedText.split(/\s+/).length
-  
-  if (wordCount >= 3 && !SENTENCE_END_PATTERN.test(precedingText)) {
-    return 'complete_sentence'
-  }
-
-  // Fallback: if there's any meaningful text (2+ words), use contextual completion
-  if (wordCount >= 2) {
-    return 'contextual'
-  }
-
-  return null
+  // Has meaningful text (2+ words) -> good for completion
+  const wordCount = precedingText.trim().split(/\s+/).length
+  return wordCount >= 2
 }
 
 // Processed sentence from API response
@@ -262,9 +219,11 @@ export function useSmartCompletion({
   enabled,
   papers,
   projectId,
-  projectTopic
+  projectTopic,
+  prefs
 }: UseSmartCompletionOptions): UseSmartCompletionReturn {
   const [isGenerating, setIsGenerating] = useState(false)
+  const [loadingMessage, setLoadingMessage] = useState<string | null>(null)
   
   // Use refs for values that shouldn't trigger re-renders or recreate callbacks
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -327,15 +286,29 @@ export function useSmartCompletion({
     }
   }, [])
 
+  // Show error toast with retry action
+  const showErrorToast = useCallback((message: string, onRetry?: () => void) => {
+    if (onRetry) {
+      toast.error(message, {
+        action: {
+          label: 'Try Again',
+          onClick: onRetry,
+        },
+        duration: 5000,
+      })
+    } else {
+      toast.error(message, { duration: 4000 })
+    }
+  }, [])
+
   // Generate completion from API
+  // Note: suggestionType removed - the LLM now analyzes writing intent semantically
   const generateCompletion = useCallback(async (
-    context: EditorContext,
-    suggestionType: SuggestionType
+    context: EditorContext
   ) => {
     console.log('[Autocomplete] generateCompletion called', { 
       hasEditor: !!editor, 
-      projectId,
-      suggestionType 
+      projectId
     })
     
     if (!editor || !projectId) {
@@ -359,7 +332,7 @@ export function useSmartCompletion({
     // Create context key to avoid duplicate requests
     // Include cursor position to distinguish same text at different positions
     const cursorPos = editor.state.selection.from
-    const contextKey = `${context.currentSection}:${context.precedingText}:${suggestionType}:${cursorPos}`
+    const contextKey = `${context.currentSection}:${context.precedingText}:${cursorPos}`
     
     // Check for duplicate context (same content already requested)
     if (contextKey === lastContextKeyRef.current) {
@@ -383,6 +356,7 @@ export function useSmartCompletion({
     
     console.log('[Autocomplete] Starting API request...', { signalAborted: signal.aborted })
     setIsGenerating(true)
+    setLoadingMessage('AI is thinking...')
 
     // Create the request promise and store it for deduplication
     const requestPromise = (async () => {
@@ -390,7 +364,10 @@ export function useSmartCompletion({
       // Early exit if already aborted or unmounted (race condition protection)
       if (signal.aborted || !mountedRef.current) {
         console.log('[Autocomplete] Early exit: already aborted or unmounted', { signalAborted: signal.aborted, mounted: mountedRef.current })
-        if (mountedRef.current) setIsGenerating(false)
+        if (mountedRef.current) {
+          setIsGenerating(false)
+          setLoadingMessage(null)
+        }
         return
       }
       const currentPapers = papersRef.current
@@ -412,9 +389,9 @@ export function useSmartCompletion({
               currentSection: context.currentSection,
               documentOutline: context.documentOutline
             },
-            paperIds: currentPapers.map(p => p.id),
-            topic: projectTopic,
-            suggestionType
+            paperIds: prefs?.includeCitations ? currentPapers.map(p => p.id) : [],
+            topic: projectTopic
+            // suggestionType removed - LLM analyzes intent semantically
           }),
           signal
         })
@@ -434,6 +411,12 @@ export function useSmartCompletion({
           console.log('[Autocomplete] AbortError, returning')
           return
         }
+        // Network error - show toast
+        if (fetchError instanceof Error) {
+          showErrorToast('Connection lost', () => {
+            generateCompletion(context)
+          })
+        }
         // Re-throw non-abort errors
         throw fetchError
       }
@@ -448,6 +431,18 @@ export function useSmartCompletion({
         // Read the actual error message from the API
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
         console.log('[Autocomplete] API error response:', response.status, errorData)
+        
+        // Show appropriate error toast
+        if (response.status === 404) {
+          showErrorToast('No suggestions for this context')
+        } else if (response.status >= 500) {
+          showErrorToast('Server error. Please try again.', () => {
+            generateCompletion(context)
+          })
+        } else {
+          showErrorToast(errorData.message || errorData.error || 'Failed to generate completion')
+        }
+        
         throw new Error(errorData.message || errorData.error || 'Failed to generate completion')
       }
 
@@ -519,6 +514,7 @@ export function useSmartCompletion({
                   })
                 } else if (data.type === 'error') {
                   console.log('[Autocomplete] Stream error:', data.error)
+                  showErrorToast(data.error || 'Failed to generate suggestions')
                   throw new Error(data.error)
                 }
               } catch (parseErr) {
@@ -567,7 +563,8 @@ export function useSmartCompletion({
           firstSentence.text,        // rawText with [@paperId#instanceId] markers
           firstSentence.displayText, // displayText with formatted citations
           firstSentence.citations,
-          currentPapers
+          currentPapers,
+          queuedSentences.length - 1  // queueCount (remaining after showing first)
         )
         
         // Queue remaining sentences for instant display on accept
@@ -578,6 +575,9 @@ export function useSmartCompletion({
         
         // Reset context key after successful ghost text display
         lastContextKeyRef.current = ''
+      } else {
+        // No suggestions returned
+        showErrorToast('No suggestions for this context')
       }
     } catch (error: unknown) {
       // Ignore all abort errors - check multiple conditions
@@ -604,6 +604,7 @@ export function useSmartCompletion({
       // Only update state if component is still mounted
       if (mountedRef.current) {
         setIsGenerating(false)
+        setLoadingMessage(null)
       }
       // Reset context key only if request wasn't aborted
       // This allows new requests with the same context after successful completion
@@ -618,7 +619,7 @@ export function useSmartCompletion({
     inFlightRequestRef.current.set(contextKey, requestPromise)
     
     return requestPromise
-  }, [editor, projectId, projectTopic])
+  }, [editor, projectId, projectTopic, prefs?.includeCitations, showErrorToast])
 
   // Use a ref to track generating state to avoid stale closure in setTimeout
   const isGeneratingRef = useRef(isGenerating)
@@ -626,11 +627,13 @@ export function useSmartCompletion({
     isGeneratingRef.current = isGenerating
   }, [isGenerating])
 
-  // Debounced check for auto-trigger - replaces polling
+  // Schedule completion request (auto-trigger based on prefs)
+  // This is called by: manual trigger (Ctrl+Space) and background queue refill
   const scheduleAutoTrigger = useCallback(() => {
     console.log('[Autocomplete] scheduleAutoTrigger called', { 
       hasEditor: !!editor, 
       enabled, 
+      autoSuggestions: prefs?.autoSuggestions,
       isGenerating,
       isFocused: editor?.isFocused 
     })
@@ -639,6 +642,13 @@ export function useSmartCompletion({
       console.log('[Autocomplete] Early return: basic checks failed')
       return
     }
+    
+    // Only auto-trigger if autoSuggestions is enabled
+    if (!prefs?.autoSuggestions) {
+      console.log('[Autocomplete] Early return: autoSuggestions disabled')
+      return
+    }
+    
     if (hasGhostText(editor)) {
       console.log('[Autocomplete] Early return: ghost text already showing')
       return
@@ -661,11 +671,9 @@ export function useSmartCompletion({
       currentSection: context.currentSection
     })
 
-    const suggestionType = detectSuggestionType(context)
-    console.log('[Autocomplete] Suggestion type:', suggestionType)
-    
-    if (!suggestionType) {
-      console.log('[Autocomplete] Early return: no suggestion type detected')
+    // Check if we should trigger completion (has enough context)
+    if (!shouldTriggerCompletion(context)) {
+      console.log('[Autocomplete] Early return: not enough context for completion')
       return
     }
 
@@ -674,9 +682,8 @@ export function useSmartCompletion({
       clearTimeout(debounceTimeoutRef.current)
     }
 
-    // Schedule the completion with appropriate delay
-    const delay = getDebounceDelay(suggestionType)
-    console.log('[Autocomplete] Scheduling with delay:', delay)
+    // Schedule the completion with fixed delay (no longer varies by suggestion type)
+    console.log('[Autocomplete] Scheduling with delay:', AUTO_TRIGGER_DEBOUNCE_MS)
     
     debounceTimeoutRef.current = setTimeout(() => {
       console.log('[Autocomplete] Timeout fired, checking conditions...')
@@ -702,20 +709,16 @@ export function useSmartCompletion({
         return
       }
       
-      const freshType = detectSuggestionType(freshContext)
-      console.log('[Autocomplete] Timeout: fresh context', {
-        precedingText: freshContext.precedingText.slice(-50),
-        freshType
-      })
-      if (!freshType) {
-        console.log('[Autocomplete] Timeout: no fresh suggestion type')
+      // Check again that we have enough context
+      if (!shouldTriggerCompletion(freshContext)) {
+        console.log('[Autocomplete] Timeout: not enough context')
         return
       }
       
-      console.log('[Autocomplete] Calling generateCompletion with type:', freshType)
-      generateCompletion(freshContext, freshType)
-    }, delay)
-  }, [editor, enabled, isGenerating, generateCompletion])
+      console.log('[Autocomplete] Calling generateCompletion')
+      generateCompletion(freshContext)
+    }, AUTO_TRIGGER_DEBOUNCE_MS)
+  }, [editor, enabled, isGenerating, prefs?.autoSuggestions, generateCompletion])
 
   // Manual trigger - always generates
   const triggerCompletion = useCallback(() => {
@@ -728,9 +731,8 @@ export function useSmartCompletion({
     sentenceQueueRef.current = []
     queueContextRef.current = ''
 
-    // For manual trigger, determine type or use contextual
-    const suggestionType = detectSuggestionType(context) || 'contextual'
-    generateCompletion(context, suggestionType)
+    // For manual trigger, always generate (LLM determines what's appropriate)
+    generateCompletion(context)
   }, [editor, enabled, generateCompletion])
 
   // Show next queued sentence as ghost text (called after user accepts current sentence)
@@ -757,11 +759,12 @@ export function useSmartCompletion({
       nextSentence.text,
       nextSentence.displayText,
       nextSentence.citations,
-      papersRef.current
+      papersRef.current,
+      sentenceQueueRef.current.length  // queueCount (remaining after popping)
     )
     
     // If queue is getting low (1 or 0 left), trigger background refetch
-    if (queue.length <= 1 && enabled) {
+    if (queue.length <= 1 && enabled && prefs?.autoSuggestions) {
       console.log('[Autocomplete] Queue low, scheduling background refetch')
       // Delay slightly to let the current sentence be processed
       setTimeout(() => {
@@ -770,14 +773,13 @@ export function useSmartCompletion({
         const context = extractEditorContext(editor)
         if (!context) return
         
-        const suggestionType = detectSuggestionType(context) || 'contextual'
         // This will fetch new sentences in the background
-        generateCompletion(context, suggestionType)
+        generateCompletion(context)
       }, 500)
     }
     
     return true
-  }, [editor, enabled, generateCompletion])
+  }, [editor, enabled, prefs?.autoSuggestions, generateCompletion])
 
   // Store callbacks in refs to avoid effect re-runs when they change
   const scheduleAutoTriggerRef = useRef(scheduleAutoTrigger)
@@ -819,7 +821,7 @@ export function useSmartCompletion({
     // Used to detect initial content load period
     editorSetupTimeRef.current = Date.now()
 
-    // On content change, schedule auto-trigger check
+    // On content change, cancel pending requests and optionally auto-trigger
     const handleUpdate = () => {
       const now = Date.now()
       const timeSinceSetup = now - editorSetupTimeRef.current
@@ -830,15 +832,17 @@ export function useSmartCompletion({
       
       if (isInitialLoadPeriod) {
         console.log('[Autocomplete] In initial load period, not cancelling request', { timeSinceSetup })
-        // Just reschedule, don't cancel
-        scheduleAutoTriggerRef.current()
         return
       }
       
       // After initial period, any doc change should cancel pending requests (user is typing)
       console.log('[Autocomplete] User edit detected, cancelling pending request')
       cancelPendingRequestRef.current()
-      scheduleAutoTriggerRef.current()
+      
+      // Auto-trigger if enabled in preferences
+      if (prefs?.autoSuggestions) {
+        scheduleAutoTriggerRef.current()
+      }
     }
 
     // Clear ghost text on selection change
@@ -878,7 +882,7 @@ export function useSmartCompletion({
         selectionTimeoutRef.current = null
       }
     }
-  }, [editor, enabled]) // Only re-run when editor or enabled changes
+  }, [editor, enabled, prefs?.autoSuggestions])
 
   // Handle Ctrl+Space for manual trigger - only when editor is focused
   useEffect(() => {
@@ -901,11 +905,14 @@ export function useSmartCompletion({
 
   // Check if there are queued sentences available
   const hasQueuedSentences = sentenceQueueRef.current.length > 0
+  const queueCount = sentenceQueueRef.current.length
 
   return {
     isGenerating,
     triggerCompletion,
     showNextQueuedSentence,
-    hasQueuedSentences
+    hasQueuedSentences,
+    loadingMessage,
+    queueCount,
   }
 }

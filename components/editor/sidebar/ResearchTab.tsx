@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, memo } from 'react'
+import { useState, memo, useCallback } from 'react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -330,6 +330,50 @@ function EmptyState({ onOpenLibrary }: { onOpenLibrary: () => void }) {
 }
 
 // =============================================================================
+// MEMOIZED PAPER CARD ITEM
+// Wraps PaperCard to prevent parent re-renders from affecting memoization
+// =============================================================================
+
+interface PaperListItemProps {
+  paper: ProjectPaper
+  onInsertCitation: (paper: ProjectPaper) => void
+  onRemovePaper: (paperId: string) => void
+  processingStatus?: ProcessingStatus
+  onRetryPaper?: (paperId: string) => void
+}
+
+const PaperListItem = memo(function PaperListItem({
+  paper,
+  onInsertCitation,
+  onRemovePaper,
+  processingStatus,
+  onRetryPaper,
+}: PaperListItemProps) {
+  // These callbacks close over the paper prop but use stable parent callbacks
+  const handleInsertCitation = useCallback(() => {
+    onInsertCitation(paper)
+  }, [onInsertCitation, paper])
+  
+  const handleRemove = useCallback(() => {
+    onRemovePaper(paper.id)
+  }, [onRemovePaper, paper.id])
+  
+  const handleRetry = useCallback(() => {
+    onRetryPaper?.(paper.id)
+  }, [onRetryPaper, paper.id])
+  
+  return (
+    <PaperCard
+      paper={paper}
+      onInsertCitation={handleInsertCitation}
+      onRemove={handleRemove}
+      processingStatus={processingStatus}
+      onRetry={onRetryPaper ? handleRetry : undefined}
+    />
+  )
+})
+
+// =============================================================================
 // MAIN COMPONENT
 // =============================================================================
 
@@ -351,6 +395,19 @@ export function ResearchTab({
   const hasProcessingPapers = hasUploadedPapers && processingSummary && 
     (processingSummary.pending > 0 || processingSummary.processing > 0)
   const hasFailedPapers = hasUploadedPapers && processingSummary && processingSummary.failed > 0
+  
+  // Stable callbacks for paper actions - prevents unnecessary re-renders
+  const handleInsertCitation = useCallback((paper: ProjectPaper) => {
+    onInsertCitation(paper)
+  }, [onInsertCitation])
+  
+  const handleRemovePaper = useCallback((paperId: string) => {
+    onRemovePaper(paperId, 0)
+  }, [onRemovePaper])
+  
+  const handleRetryPaper = useCallback((paperId: string) => {
+    onRetryPaper?.(paperId)
+  }, [onRetryPaper])
   
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -421,13 +478,13 @@ export function ResearchTab({
                 // Search/generation papers don't need status tracking
                 const isUploadedPaper = paper.source === 'upload'
                 return (
-                  <PaperCard 
-                    key={paper.id} 
+                  <PaperListItem
+                    key={paper.id}
                     paper={paper}
-                    onInsertCitation={() => onInsertCitation(paper)}
-                    onRemove={() => onRemovePaper(paper.id, 0)}
+                    onInsertCitation={handleInsertCitation}
+                    onRemovePaper={handleRemovePaper}
                     processingStatus={isUploadedPaper ? getProcessingStatus?.(paper.id) : undefined}
-                    onRetry={isUploadedPaper && onRetryPaper ? () => onRetryPaper(paper.id) : undefined}
+                    onRetryPaper={isUploadedPaper ? handleRetryPaper : undefined}
                   />
                 )
               })}

@@ -32,6 +32,7 @@ import { SlashCommands } from '../extensions/SlashCommands'
 import { BlockId } from '../extensions/BlockId'
 import { ReferencesBlock } from '../extensions/ReferencesBlock'
 import { useSmartCompletion } from '../hooks/useSmartCompletion'
+import { useAutocompletePrefs } from '../hooks/useAutocompletePrefs'
 import { useReferencesManager } from '../hooks/useReferencesManager'
 import { processContent, hasMarkdownFormatting } from '../utils/content-processor'
 import { editorToMarkdown } from '../utils/tiptap-to-markdown'
@@ -141,6 +142,9 @@ export function DocumentEditor({
   onAcceptAllEdits,
   onRejectAllEdits,
 }: DocumentEditorProps) {
+  // Ref for debouncing markdown conversion - prevents typing lag in large documents
+  const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  
   const [mathDialogOpen, setMathDialogOpen] = useState(false)
   const [mathLatex, setMathLatex] = useState('')
   const [mathDisplayMode, setMathDisplayMode] = useState(false)
@@ -299,9 +303,16 @@ export function DocumentEditor({
       },
     },
     onUpdate: ({ editor }) => {
-      // Save as markdown, not HTML
-      const markdown = editorToMarkdown(editor)
-      onUpdate?.(markdown)
+      // Debounce markdown conversion to prevent typing lag in large documents
+      // This avoids blocking the main thread on every keystroke
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current)
+      }
+      debounceTimeoutRef.current = setTimeout(() => {
+        const markdown = editorToMarkdown(editor)
+        onUpdate?.(markdown)
+        debounceTimeoutRef.current = null
+      }, 300)
     },
     onCreate: ({ editor }) => {
       onEditorReady?.(editor)
@@ -409,17 +420,26 @@ export function DocumentEditor({
   // This allows CitationNodeView to look up paper metadata at render time,
   // ensuring citations always display correctly even when node.attrs are incomplete
   const prevPapersRef = useRef<ProjectPaper[]>([])
+  
+  // Fast signature function for paper comparison - avoids expensive JSON.stringify
+  const getPaperSignature = useCallback((p: ProjectPaper) => 
+    `${p.id}|${p.title}|${p.year}|${p.authors?.join(',') || ''}`, 
+    []
+  )
+  
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     
     // Detect if paper metadata has changed (not just array reference)
+    // Uses fast signature comparison instead of JSON.stringify for better performance
     const papersChanged = papers.length !== prevPapersRef.current.length ||
       papers.some((p, i) => {
         const prev = prevPapersRef.current[i]
-        return !prev || p.id !== prev.id || 
+        if (!prev) return true
+        return p.id !== prev.id || 
           p.title !== prev.title || 
           p.year !== prev.year ||
-          JSON.stringify(p.authors) !== JSON.stringify(prev?.authors)
+          getPaperSignature(p) !== getPaperSignature(prev)
       })
     
     if (papersChanged) {
@@ -438,7 +458,7 @@ export function DocumentEditor({
     if (process.env.NODE_ENV === 'development' && papers.length > 0) {
       console.log(`[DocumentEditor] Synced ${papers.length} papers to Citation extension storage`)
     }
-  }, [editor, papers])
+  }, [editor, papers, getPaperSignature])
   
   // Fetch citation instance quotes after content is loaded
   // This populates citedContent for hover previews
@@ -478,12 +498,17 @@ export function DocumentEditor({
   }, [editor, projectId, initialContent, processedWithPapersCount])
 
   // Smart completion hook - ghost text appears seamlessly
+  // Autocomplete preferences
+  const { prefs: autocompletePrefs } = useAutocompletePrefs()
+
+  // Smart completion hook - ghost text appears seamlessly
   useSmartCompletion({
     editor,
     enabled: autocompleteEnabled,
     papers,
     projectId,
-    projectTopic
+    projectTopic,
+    prefs: autocompletePrefs
   })
   
   // References manager - auto-inserts/removes References section based on citations
@@ -575,6 +600,16 @@ export function DocumentEditor({
       setMathDialogOpen(false)
     }
   }, [editor, mathLatex, mathDisplayMode])
+
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current)
+        debounceTimeoutRef.current = null
+      }
+    }
+  }, [])
 
   const renderMathPreview = () => {
     try {

@@ -5,6 +5,9 @@ import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,24 +19,20 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { Input } from '@/components/ui/input'
 import {
   AtSign,
   MessageSquare,
   Sparkles,
-  Heading2,
   ChevronDown,
-  Palette,
   Bold,
   Italic,
   Underline,
   Strikethrough,
   Code,
-  Link,
-  Undo,
-  Redo,
+  Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useAutocompletePrefs } from '../hooks/useAutocompletePrefs'
 
 interface FloatingToolbarProps {
   editor: Editor
@@ -61,6 +60,9 @@ export function FloatingToolbar({
   const [linkUrl, setLinkUrl] = useState('')
   // Store selection when bubble menu opens to prevent losing it on dropdown click
   const selectionRef = useRef<{ from: number; to: number } | null>(null)
+  
+  // Autocomplete preferences
+  const { prefs, setAutoSuggestions, setIncludeCitations, setAcceptKey } = useAutocompletePrefs()
   
   const getSelectedText = useCallback(() => {
     const { from, to } = editor.state.selection
@@ -92,6 +94,17 @@ export function FloatingToolbar({
     if (editor.isActive('heading', { level: 3 })) return 'Heading 3'
     return 'Paragraph'
   }
+
+  // Memoized formatting handlers to prevent unnecessary re-renders
+  const toggleBold = useCallback(() => editor.chain().focus().toggleBold().run(), [editor])
+  const toggleItalic = useCallback(() => editor.chain().focus().toggleItalic().run(), [editor])
+  const toggleUnderline = useCallback(() => editor.chain().focus().toggleUnderline().run(), [editor])
+  const toggleStrike = useCallback(() => editor.chain().focus().toggleStrike().run(), [editor])
+  const toggleCode = useCallback(() => editor.chain().focus().toggleCode().run(), [editor])
+  const setParagraph = useCallback(() => editor.chain().focus().setParagraph().run(), [editor])
+  const toggleHeading1 = useCallback(() => editor.chain().focus().toggleHeading({ level: 1 }).run(), [editor])
+  const toggleHeading2 = useCallback(() => editor.chain().focus().toggleHeading({ level: 2 }).run(), [editor])
+  const toggleHeading3 = useCallback(() => editor.chain().focus().toggleHeading({ level: 3 }).run(), [editor])
 
   // Apply text style with saved selection to prevent affecting entire document
   const applyTextStyle = useCallback((action: () => void) => {
@@ -164,6 +177,79 @@ export function FloatingToolbar({
         Cite
       </Button>
 
+      {/* AI Settings Popover */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+          >
+            <Settings className="h-3.5 w-3.5" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-72 p-4" align="start" side="bottom" sideOffset={8}>
+          <div className="space-y-4">
+            <h4 className="font-medium text-sm">AI Suggestions</h4>
+            
+            {/* Auto-suggestions toggle */}
+            <div className="flex items-center justify-between space-y-0">
+              <div className="space-y-0.5">
+                <Label htmlFor="auto-suggestions" className="text-sm cursor-pointer">
+                  Auto-suggestions
+                </Label>
+                <p className="text-xs text-muted-foreground">Experimental feature</p>
+              </div>
+              <Switch
+                id="auto-suggestions"
+                checked={prefs.autoSuggestions}
+                onCheckedChange={setAutoSuggestions}
+              />
+            </div>
+
+            {/* Include citations toggle */}
+            <div className="flex items-center justify-between space-y-0">
+              <div className="space-y-0.5">
+                <Label htmlFor="include-citations" className="text-sm cursor-pointer">
+                  Include citations
+                </Label>
+                <p className="text-xs text-muted-foreground">Add sources to suggestions</p>
+              </div>
+              <Switch
+                id="include-citations"
+                checked={prefs.includeCitations}
+                onCheckedChange={setIncludeCitations}
+              />
+            </div>
+
+            <Separator className="my-2" />
+
+            {/* Accept key selection */}
+            <div className="space-y-2">
+              <Label className="text-sm">Accept key</Label>
+              <RadioGroup
+                value={prefs.acceptKey}
+                onValueChange={(value) => setAcceptKey(value as 'tab' | 'ctrlEnter')}
+                className="flex flex-col gap-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="tab" id="tab" />
+                  <Label htmlFor="tab" className="text-sm font-normal cursor-pointer">
+                    Tab
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="ctrlEnter" id="ctrlEnter" />
+                  <Label htmlFor="ctrlEnter" className="text-sm font-normal cursor-pointer">
+                    Ctrl+Enter
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
+
       <Separator orientation="vertical" className="h-6 mx-0.5" />
 
       {/* Text formatting - Secondary group */}
@@ -171,7 +257,7 @@ export function FloatingToolbar({
         variant="ghost"
         size="icon"
         className={cn("h-8 w-8 rounded-full", editor.isActive('bold') && "bg-muted")}
-        onClick={() => editor.chain().focus().toggleBold().run()}
+        onClick={toggleBold}
       >
         <Bold className="h-3.5 w-3.5" />
       </Button>
@@ -180,7 +266,7 @@ export function FloatingToolbar({
         variant="ghost"
         size="icon"
         className={cn("h-8 w-8 rounded-full", editor.isActive('italic') && "bg-muted")}
-        onClick={() => editor.chain().focus().toggleItalic().run()}
+        onClick={toggleItalic}
       >
         <Italic className="h-3.5 w-3.5" />
       </Button>
@@ -189,7 +275,7 @@ export function FloatingToolbar({
         variant="ghost"
         size="icon"
         className={cn("h-8 w-8 rounded-full", editor.isActive('underline') && "bg-muted")}
-        onClick={() => editor.chain().focus().toggleUnderline().run()}
+        onClick={toggleUnderline}
       >
         <Underline className="h-3.5 w-3.5" />
       </Button>
@@ -209,11 +295,11 @@ export function FloatingToolbar({
           collisionPadding={8}
           avoidCollisions={true}
         >
-          {/* Heading options */}
+          {/* Heading options - using memoized handlers wrapped with applyTextStyle */}
           <DropdownMenuItem 
             onSelect={(e) => {
               e.preventDefault()
-              applyTextStyle(() => editor.chain().focus().setParagraph().run())
+              applyTextStyle(setParagraph)
             }}
           >
             Paragraph
@@ -221,7 +307,7 @@ export function FloatingToolbar({
           <DropdownMenuItem 
             onSelect={(e) => {
               e.preventDefault()
-              applyTextStyle(() => editor.chain().focus().toggleHeading({ level: 1 }).run())
+              applyTextStyle(toggleHeading1)
             }}
           >
             Heading 1
@@ -229,7 +315,7 @@ export function FloatingToolbar({
           <DropdownMenuItem 
             onSelect={(e) => {
               e.preventDefault()
-              applyTextStyle(() => editor.chain().focus().toggleHeading({ level: 2 }).run())
+              applyTextStyle(toggleHeading2)
             }}
           >
             Heading 2
@@ -237,7 +323,7 @@ export function FloatingToolbar({
           <DropdownMenuItem 
             onSelect={(e) => {
               e.preventDefault()
-              applyTextStyle(() => editor.chain().focus().toggleHeading({ level: 3 }).run())
+              applyTextStyle(toggleHeading3)
             }}
           >
             Heading 3
@@ -247,13 +333,19 @@ export function FloatingToolbar({
           
           {/* Additional formatting */}
           <DropdownMenuItem 
-            onSelect={() => editor.chain().focus().toggleStrike().run()}
+            onSelect={(e) => {
+              e.preventDefault()
+              applyTextStyle(toggleStrike)
+            }}
           >
             <Strikethrough className="h-3.5 w-3.5 mr-2" />
             Strikethrough
           </DropdownMenuItem>
           <DropdownMenuItem 
-            onSelect={() => editor.chain().focus().toggleCode().run()}
+            onSelect={(e) => {
+              e.preventDefault()
+              applyTextStyle(toggleCode)
+            }}
           >
             <Code className="h-3.5 w-3.5 mr-2" />
             Code

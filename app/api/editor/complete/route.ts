@@ -18,14 +18,8 @@ import { PromptService } from '@/lib/prompts/prompt-service'
 import { buildCompleteContext, formatPapersForContext } from '@/lib/prompts/costar-context'
 import { getUserLibraryPapers } from '@/lib/db/library'
 
-// Suggestion types for smart context-aware completion
-type SuggestionType =
-  | 'opening_sentence'
-  | 'complete_sentence'
-  | 'next_sentence'
-  | 'provide_examples'
-  | 'contrast_point'
-  | 'contextual'
+// Note: SuggestionType removed - the unified prompt now handles all cases
+// by having the LLM analyze writing intent semantically
 
 interface CompletionRequest {
   projectId: string
@@ -37,7 +31,7 @@ interface CompletionRequest {
   }
   paperIds: string[]
   topic: string
-  suggestionType?: SuggestionType
+  // suggestionType removed - no longer used
 }
 
 // Citation info returned to client
@@ -106,9 +100,11 @@ async function saveCitationInstances(
 
 /**
  * Build system prompt using CO-STAR framework template
+ * 
+ * Note: suggestionType removed - the unified prompt instructs the LLM
+ * to analyze writing intent semantically rather than using pre-classified types.
  */
 async function buildSystemPromptFromTemplate(
-  suggestionType: SuggestionType,
   context: CompletionRequest['context'],
   topic: string,
   paperType: string,
@@ -117,8 +113,6 @@ async function buildSystemPromptFromTemplate(
   outlineContext: string,
   voiceProfileId?: string | null
 ): Promise<string> {
-  const suggestionObjective = await PromptService.getSuggestionObjective(suggestionType)
-  
   // Validate voice profile ID
   type VoiceProfileId = 'conservative-reviewer' | 'confident-researcher' | 'senior-scholar' | 'balanced-academic'
   const validVoiceIds: VoiceProfileId[] = ['conservative-reviewer', 'confident-researcher', 'senior-scholar', 'balanced-academic']
@@ -130,8 +124,6 @@ async function buildSystemPromptFromTemplate(
     topic,
     paperType: paperType || 'research-article',
     currentSection: context.currentSection,
-    suggestionType,
-    suggestionObjective,
     precedingText: context.precedingText,
     outlineContext,
     chunksText: ragFormatted.chunksText,
@@ -326,7 +318,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 })
     }
 
-    const { projectId, context, paperIds, topic, suggestionType = 'contextual' } = body
+    const { projectId, context, paperIds, topic } = body
 
     if (!projectId) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
@@ -452,7 +444,6 @@ export async function POST(request: NextRequest) {
     const paperType = project.paper_type || 'literatureReview'
 
     const system = await buildSystemPromptFromTemplate(
-      suggestionType,
       context,
       topic || project.topic,
       paperType,

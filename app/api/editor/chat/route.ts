@@ -317,16 +317,16 @@ export async function POST(request: NextRequest) {
       .map(pp => pp.papers as unknown as PaperData | null)
       .filter((p): p is PaperData => p !== null)
 
-    // Filter to only processed papers for RAG (papers with chunks)
-    // Pending/failed papers can still be shown in the UI but won't be used for RAG
-    const papers = allPapers.filter(p => p.processing_status === 'processed' || !p.processing_status)
+    // Use all papers for chat context; only processed papers should be used for RAG
+    const papers = allPapers
+    const processedPapers = allPapers.filter(p => p.processing_status === 'processed' || !p.processing_status)
     const pendingPapers = allPapers.filter(p => p.processing_status === 'pending' || p.processing_status === 'processing')
     
     if (pendingPapers.length > 0) {
       console.log('[Chat API] Papers still processing:', pendingPapers.map(p => p.title?.slice(0, 30)))
     }
 
-    const paperIds = papers.map(p => p.id)
+    const paperIds = processedPapers.map(p => p.id)
     console.log('[Chat API] Processed paper IDs available for RAG:', paperIds.length)
 
     // Get the last user message for RAG query
@@ -355,7 +355,7 @@ export async function POST(request: NextRequest) {
     let mentionedPapers: PaperData[] | undefined
     if (mentionedPaperIds.length > 0) {
       // First try to find in project papers
-      mentionedPapers = papers.filter(p => mentionedPaperIds.includes(p.id))
+      mentionedPapers = allPapers.filter(p => mentionedPaperIds.includes(p.id))
       console.log('[Chat API] Mentioned papers found in project:', mentionedPapers.length, 'of', mentionedPaperIds.length)
       
       // If some mentioned papers are not in project, fetch them directly

@@ -718,6 +718,43 @@ kbd {
   color: oklch(0.7 0.15 250);
 }
 
+/* Ghost Text Loading State */
+.ghost-text-loading {
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  font-style: italic;
+  pointer-events: none;
+  user-select: none;
+  animation: ghost-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ghost-pulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Ghost Text Queue Indicator */
+.ghost-text-queue {
+  color: var(--muted-foreground);
+  opacity: 0.4;
+  font-size: 0.85em;
+  font-style: normal;
+  margin-left: 0.25em;
+}
+
+.dark .ghost-text-loading {
+  opacity: 0.5;
+}
+
+.dark .ghost-text-queue {
+  opacity: 0.35;
+}
+
+
 /* Slash Command Menu - Notion-like styling */
 .slash-command-menu {
   @apply bg-background border border-border rounded-lg shadow-lg overflow-hidden min-w-[280px] max-h-[400px] overflow-y-auto;
