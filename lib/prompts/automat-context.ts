@@ -185,6 +185,8 @@ export function getPreferredTools(
         ? ['replaceBlock', 'replaceInSection'] 
         : ['replaceBlock', 'rewriteSection']
     case 'cite':
+      // addCitation for single citations to existing text
+      // insertContent/replaceBlock for new content or multi-citation edits
       return ['addCitation', 'insertContent', 'replaceBlock']
     case 'suggest':
       return ['addComment', 'highlightText']
@@ -220,17 +222,21 @@ export function getTargetingStrategy(
 
 /**
  * Default tool definitions for chat
+ * 
+ * Citation tools:
+ * - addCitation: Single citation to existing text (no text change)
+ * - insertContent/replaceBlock with markers: New/edited content with citations
  */
 export const DEFAULT_CHAT_TOOLS: ToolDefinition[] = [
   {
     name: 'insertContent',
-    description: 'Add new content at a specific location',
-    preferredFor: 'Adding new paragraphs, sections, or content blocks',
+    description: 'Add new content at a specific location. Use [N] markers with CITATIONS block for citations.',
+    preferredFor: 'Adding new paragraphs, sections, content with citations',
   },
   {
     name: 'replaceBlock',
-    description: 'Replace a block\'s content entirely (use blockId)',
-    preferredFor: 'Rewriting paragraphs, fixing content, making targeted edits',
+    description: 'Replace a block\'s content entirely (use blockId). Preserve existing [@...] citation markers.',
+    preferredFor: 'Rewriting paragraphs with citations, editing content',
   },
   {
     name: 'replaceInSection',
@@ -249,8 +255,8 @@ export const DEFAULT_CHAT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'addCitation',
-    description: 'Insert a citation at a specific location',
-    preferredFor: 'Adding references to claims',
+    description: 'Add a single citation to existing text WITHOUT modifying the text. Requires afterPhrase and quote.',
+    preferredFor: 'Adding citation to a claim that has no citation yet',
   },
   {
     name: 'highlightText',

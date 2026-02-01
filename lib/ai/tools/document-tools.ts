@@ -126,24 +126,47 @@ User will confirm deletions.`,
 })
 
 /**
- * Add a citation at a specific location.
+ * Add a citation to existing text WITHOUT modifying the text.
+ * 
+ * Use this tool when:
+ * - Adding a citation to a claim that doesn't have one yet
+ * - The surrounding text should NOT be changed
+ * 
+ * Do NOT use this tool when:
+ * - You need to rewrite/edit the text (use replaceBlock with markers instead)
+ * - You're writing new content (use insertContent with markers instead)
+ * - The claim already has a citation (check for [@...] markers in the document)
  */
 export const addCitationTool = tool({
-  description: `Add a citation to support a claim.
+  description: `Add a citation to existing text WITHOUT changing the text itself.
 
-Targeting (in order of preference):
-1. afterPhrase - Insert citation right after specific text (most precise)
-2. blockId - Add citation at end of block
-3. Cursor position (fallback)
+⚠️ IMPORTANT: Check the document first - if the text already has a citation marker ([@...]), do NOT add another one.
 
-Examples:
-- After specific claim: { paperId: "...", afterPhrase: "climate change impacts are significant" }
-- At end of paragraph: { paperId: "...", blockId: "par_abc123" }`,
+When to use addCitation:
+- Single citation to existing claim that has NO citation
+- You want to preserve the exact text, just add a reference
+
+When to use insertContent/replaceBlock with [N] markers instead:
+- Writing new text with citations
+- Editing text AND adding citations
+- Adding multiple citations at once
+
+Required parameters:
+- paperId: From INTERNAL REFERENCE section
+- afterPhrase: The exact text to insert citation after (REQUIRED for precision)
+- quote: The exact supporting quote from the source (REQUIRED for research tracking)
+
+Example:
+{ 
+  "paperId": "abc-123", 
+  "afterPhrase": "climate change impacts are significant", 
+  "quote": "Global temperatures have risen by 1.1°C since pre-industrial times"
+}`,
   inputSchema: z.object({
-    paperId: z.string().describe('Paper ID from available sources'),
-    afterPhrase: z.string().optional().describe('Insert citation after this text (preferred)'),
-    blockId: z.string().optional().describe('Block to add citation to (adds at end)'),
-    section: z.string().optional().describe('Section to scope the search'),
+    paperId: z.string().describe('Paper ID from INTERNAL REFERENCE section'),
+    afterPhrase: z.string().describe('Insert citation immediately after this exact text'),
+    quote: z.string().describe('Exact quote from source that supports this claim'),
+    blockId: z.string().optional().describe('Block ID to scope the search (optional but recommended)'),
   }),
 })
 
@@ -187,6 +210,17 @@ Attach to specific content using blockId or nearPhrase.`,
 // TOOL COLLECTION
 // =============================================================================
 
+/**
+ * Active document tools exposed to AI.
+ * 
+ * Citation tools:
+ * - addCitation: Add a single citation to existing text (no text modification)
+ * - insertContent/replaceBlock with [N] markers: Write/edit text with citations
+ * 
+ * Best practices:
+ * - Use addCitation when ONLY adding a citation (text stays the same)
+ * - Use marker-based approach when writing new content or editing text
+ */
 export const documentTools = {
   insertContent,
   replaceBlock,
@@ -202,13 +236,13 @@ export const documentTools = {
 // CONFIRMATION REQUIREMENTS
 // =============================================================================
 
-export const toolConfirmationLevels: Record<keyof typeof documentTools, ToolConfirmationLevel> = {
+export const toolConfirmationLevels: Record<string, ToolConfirmationLevel> = {
   insertContent: 'preview',  // Show ghost preview before inserting
   replaceBlock: 'preview',
   replaceInSection: 'preview',
   rewriteSection: 'confirm',
   deleteContent: 'confirm',
-  addCitation: 'none',
+  addCitation: 'none',  // Kept for backwards compat if tool is used directly
   highlightText: 'none',
   addComment: 'none',
 }

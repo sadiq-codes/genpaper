@@ -940,8 +940,16 @@ function executeDeleteContent(
 }
 
 /**
- * Add a citation marker.
- * Inserts a proper citation node (not raw text) so it renders formatted.
+ * Add a citation to existing text WITHOUT modifying the text.
+ * 
+ * This tool is for adding a single citation to a claim that doesn't have one.
+ * For writing new content or editing text with citations, use insertContent/replaceBlock
+ * with [N] markers and CITATIONS block.
+ * 
+ * Features:
+ * - Checks for existing citations at the target position (prevents duplicates)
+ * - Requires afterPhrase for precise placement
+ * - Requires quote for research tracking
  */
 function executeAddCitation(
   editor: Editor,
@@ -950,18 +958,64 @@ function executeAddCitation(
   const paperId = args.paperId as string
   const blockId = args.blockId as string | undefined
   const afterPhrase = args.afterPhrase as string | undefined
-  const section = args.section as string | undefined
-  const quote = args.quote as string | undefined  // Optional quote for the citation
+  const quote = args.quote as string | undefined
 
+  // Validation
   if (!paperId) {
     return { success: false, message: 'Missing paper ID' }
+  }
+  
+  if (!afterPhrase) {
+    return { success: false, message: 'Missing afterPhrase - specify where to insert the citation' }
+  }
+  
+  if (!quote) {
+    console.warn('[ToolExecutor] addCitation called without quote - citation will have no supporting evidence')
+  }
+
+  // Find the target location
+  const docText = editor.getText()
+  const match = blockId 
+    ? findInSection(docText, blockId, afterPhrase) // Use blockId as section scope
+    : fuzzyFindPhrase(docText, afterPhrase)
+
+  if (!match.found) {
+    const preview = afterPhrase.slice(0, 50)
+    toast.error(`Could not find text: "${preview}..."`)
+    return { success: false, message: `Could not find text: "${preview}..."` }
+  }
+
+  // Convert text position to document position
+  const insertPos = findTipTapPosition(editor, match.endIndex)
+  
+  // Check if there's already a citation immediately after this position
+  // Look at the node at and after the insert position
+  const resolvedPos = editor.state.doc.resolve(insertPos)
+  const nodeAfter = resolvedPos.nodeAfter
+  const nodeBefore = resolvedPos.nodeBefore
+  
+  // Check if the next node is a citation (already has one)
+  if (nodeAfter?.type.name === 'citation') {
+    toast.warning('Citation already exists at this location')
+    return { 
+      success: false, 
+      message: 'Citation already exists at this location - skipping to prevent duplicate' 
+    }
+  }
+  
+  // Also check if we're inside or right after a citation
+  if (nodeBefore?.type.name === 'citation') {
+    toast.warning('Citation already exists before this text')
+    return { 
+      success: false, 
+      message: 'Citation already exists before this text - skipping to prevent duplicate' 
+    }
   }
 
   // Generate instanceId for this citation occurrence
   const instanceId = uuidv4()
   
   // Build citation node content (TipTap JSON format)
-  // CitationNodeView will look up paper metadata from editor.storage.citation.papers at render time
   const citationNode = {
     type: 'citation',
     attrs: {
@@ -986,45 +1040,19 @@ function executeAddCitation(
     }])
   }
 
-  // Priority 1: Add at end of specific block
-  if (blockId) {
-    const block = findBlockById(editor, blockId)
-    if (block) {
-      // Find the end of text content within the block
-      const insertPos = block.pos + block.node.nodeSize - 1
-      editor.chain()
-        .focus()
-        .setTextSelection(insertPos)
-        .insertContent(contentToInsert)
-        .run()
-      toast.success('Citation added')
-      return { success: true, message: 'Citation added to block', blockId }
-    }
+  // Insert the citation
+  editor.chain()
+    .focus()
+    .setTextSelection(insertPos)
+    .insertContent(contentToInsert)
+    .run()
+  
+  toast.success('Citation added')
+  return { 
+    success: true, 
+    message: 'Citation added',
+    affectedRange: { from: insertPos, to: insertPos + 2 }, // Approximate range
   }
-
-  // Priority 2: Find by text
-  if (afterPhrase) {
-    const docText = editor.getText()
-    const match = section 
-      ? findInSection(docText, section, afterPhrase)
-      : fuzzyFindPhrase(docText, afterPhrase)
-
-    if (match.found) {
-      const insertPos = findTipTapPosition(editor, match.endIndex)
-      editor.chain()
-        .focus()
-        .setTextSelection(insertPos)
-        .insertContent(contentToInsert)
-        .run()
-      toast.success('Citation added')
-      return { success: true, message: 'Citation added' }
-    }
-  }
-
-  // Fallback: Insert at cursor
-  editor.chain().focus().insertContent(contentToInsert).run()
-  toast.warning('Could not find location, added at cursor')
-  return { success: true, message: 'Citation added at cursor (location not found)' }
 }
 
 /**

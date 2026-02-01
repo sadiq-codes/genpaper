@@ -171,16 +171,33 @@ export const BlockId = Extension.create<BlockIdOptions>({
 // UTILITY FUNCTIONS
 // =============================================================================
 
+import { getNodeTextWithCitations } from '../utils/ai-context-serializer'
+
 export interface BlockInfo {
   id: string
   type: string
-  text: string
+  text: string        // Text content with citation markers
   pos: number
   size: number
+  citationCount: number  // Number of citations in this block
+}
+
+/**
+ * Count citations in a node
+ */
+function countCitations(node: ProseMirrorNode): number {
+  let count = 0
+  node.descendants((child: ProseMirrorNode) => {
+    if (child.type.name === 'citation') {
+      count++
+    }
+  })
+  return count
 }
 
 /**
  * Extract all blocks with their IDs from a TipTap editor.
+ * Uses citation-aware text serialization so AI sees [@paperId#instanceId] markers.
  */
 export function extractBlocks(editor: { state: { doc: ProseMirrorNode } }): BlockInfo[] {
   const blocks: BlockInfo[] = []
@@ -194,9 +211,10 @@ export function extractBlocks(editor: { state: { doc: ProseMirrorNode } }): Bloc
     blocks.push({
       id: blockId,
       type: node.type.name,
-      text: node.textContent,
+      text: getNodeTextWithCitations(node),  // Use citation-aware serialization
       pos,
       size: node.nodeSize,
+      citationCount: countCitations(node),
     })
   })
   
@@ -284,6 +302,9 @@ function calculateSimilarity(a: string, b: string): number {
 /**
  * Get a document summary with block IDs for AI context.
  * This is a compact representation that AI can use for targeting.
+ * 
+ * Citations are shown as [@paperId#instanceId] markers in the preview.
+ * Citation count is shown at the end to help AI understand existing citations.
  */
 export function getDocumentStructure(editor: { state: { doc: ProseMirrorNode } }): string {
   const blocks = extractBlocks(editor)
@@ -291,7 +312,8 @@ export function getDocumentStructure(editor: { state: { doc: ProseMirrorNode } }
   const lines = blocks.map(block => {
     const textPreview = block.text.slice(0, 80).replace(/\n/g, ' ')
     const suffix = block.text.length > 80 ? '...' : ''
-    return `[${block.id}] ${block.type}: "${textPreview}${suffix}"`
+    const citationInfo = block.citationCount > 0 ? ` [${block.citationCount} citation${block.citationCount > 1 ? 's' : ''}]` : ''
+    return `[${block.id}] ${block.type}: "${textPreview}${suffix}"${citationInfo}`
   })
   
   return lines.join('\n')

@@ -29,6 +29,7 @@ interface ToolInvocation {
 import { getConfirmationLevel, validateToolCall, type ToolConfirmationLevel } from '@/lib/ai/tools/document-tools'
 import { getDocumentStructure } from '../extensions/BlockId'
 import { calculateEdit, type CalculatedEdit } from '../services/edit-calculator'
+import { serializeForAIContext } from '../utils/ai-context-serializer'
 import { hasGhostEdits, getActiveEditIndex } from '../extensions/GhostEdit'
 
 // =============================================================================
@@ -287,13 +288,17 @@ export function useEditorChat({
     const ed = editorRef.current
     if (!ed) return { documentContent: '', selectedText: undefined, documentStructure: '' }
 
-    let documentContent = ed.getText()
+    // Use citation-aware serializer so AI sees [@paperId#instanceId] markers
+    // This prevents AI from adding duplicate citations where they already exist
+    let documentContent = serializeForAIContext(ed.state.doc)
+    
     const { from, to } = ed.state.selection
     const selectedText = from !== to 
       ? ed.state.doc.textBetween(from, to) 
       : undefined
     
     // Get document structure with block IDs for AI targeting
+    // Also shows citation markers and counts per block
     const documentStructure = getDocumentStructure(ed)
 
     // Speed: cap very large documents sent to the chat endpoint.
