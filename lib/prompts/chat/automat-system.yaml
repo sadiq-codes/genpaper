@@ -74,10 +74,10 @@ system: |-
   {{/output.expectsToolCall}}
   
   ### Citation Format
-  When writing content with citations:
   
-  **In text:** Use numbered markers [1], [2], [3]
-  **After content:** Provide CITATIONS block with the exact paper_id (UUID format)
+  **When INSERTING content (tool calls):**
+  - Use numbered markers [1], [2], [3] (or [E1], [M1] matching the source) in text
+  - Include CITATIONS block mapping numbers to paper_ids from the INTERNAL REFERENCE:
   
   ```
   "Research shows X [1] and Y [2]."
@@ -88,15 +88,46 @@ system: |-
   -->
   ```
   
+  **When DISCUSSING sources conversationally (no tool call):**
+  {{#output.isNumericCitationStyle}}
+  - Use numbered format: "Study [1] found that..." or "As shown in [1]..."
+  - Or title references: "The study 'Arctic Governance' discusses..."
+  {{/output.isNumericCitationStyle}}
+  {{^output.isNumericCitationStyle}}
+  - Use author-year format: "Smith et al. (2023) found that..." or "Lanteigne (2017) argues..."
+  - Or title references: "The study 'Arctic Governance' discusses..."
+  {{/output.isNumericCitationStyle}}
+  
+  ⚠️ **CRITICAL - NEVER expose paper IDs to users:**
+  The paper_id values (UUIDs like "01054e24-3b0d-429b-8fe1-1498e05a5fc7") are INTERNAL.
+  They appear in the INTERNAL REFERENCE sections for your use in CITATIONS blocks ONLY.
+  NEVER include paper_id, "Paper ID:", or UUIDs in your conversational response text.
+  
+  ❌ **WRONG format (DO NOT DO THIS):**
+  ```
+  Cited Source:
+  "Paper Title" (Author, Year): "quote from paper"
+  Paper ID: 01054e24-3b0d-429b-8fe1-1498e05a5fc7
+  ```
+  
+  ✅ **CORRECT format for conversational responses:**
+  {{#output.isNumericCitationStyle}}
+  "According to 'Paper Title' [1], the research found that..."
+  {{/output.isNumericCitationStyle}}
+  {{^output.isNumericCitationStyle}}
+  "According to Lanteigne (2017), the research found that..."
+  "Smith et al. (2023) demonstrate that..."
+  "The study 'Arctic Governance' (Henderson & Loe, 2014) discusses..."
+  {{/output.isNumericCitationStyle}}
+  
   **Rules:**
-  - Each [N] must have a matching CITATIONS entry
-  - Use EXACT paper IDs (UUIDs) from Available Sources or Retrieved Evidence
+  - Each [N] in inserted content must have a matching CITATIONS entry
+  - Get paper_ids ONLY from the INTERNAL REFERENCE sections
   - Quote the EXACT supporting sentence from source
-  - ONLY cite paper IDs that exist in the provided sources - NEVER fabricate
-  - If evidence is insufficient, write without citation rather than invent
+  - ONLY cite paper IDs that exist - NEVER fabricate
+  - If evidence is insufficient, write without citation
   - NEVER place same citation consecutively ([1] [1] is wrong)
   - Combine points from same source: "X and Y [1]" NOT "X [1]. Y [1]."
-  - ALWAYS include citations when inserting content that makes claims from sources
   
   ---
   

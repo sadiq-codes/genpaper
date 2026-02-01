@@ -23,6 +23,17 @@ import {
   shouldIncludeVoiceForAction,
   type VoiceProfileId
 } from '@/lib/generation/voice-profiles'
+import { isNumericStyle } from '@/lib/citations/local-formatter'
+
+// Re-export shared paper formatting utilities
+// These are the canonical implementations - use these for all paper formatting
+export { 
+  formatPapersForContext,
+  formatMentionedPapersForContext,
+  formatRAGChunksForContext,
+  type PaperForContext,
+  type RAGChunk,
+} from './format-papers'
 
 /**
  * Tool definition for the prompt
@@ -67,7 +78,9 @@ export interface ChatAUTOMATContext {
   output: {
     expectsToolCall: boolean
     preferredTools: string[]  // Tools most likely needed for this action
-    citationFormat: 'numbered'  // Always numbered for chat
+    citationFormat: 'numbered'  // Always numbered for tool call insertions
+    conversationalCiteFormat: 'numbered' | 'author-year'  // For discussion without tool calls
+    isNumericCitationStyle: boolean  // True for IEEE/Vancouver/etc
   }
   
   // === METHOD ===
@@ -278,6 +291,10 @@ export function buildChatAUTOMATContext(params: {
   // Voice configuration (optional)
   // Pass the project's voiceProfileId to include voice guidance for content-generating actions
   voiceProfileId?: VoiceProfileId | null
+  
+  // Citation style (optional)
+  // Used to determine conversational citation format (author-year vs numbered)
+  citationStyle?: string
 }): ChatAUTOMATContext {
   const {
     userMessage,
@@ -293,6 +310,7 @@ export function buildChatAUTOMATContext(params: {
     maxContentLength = 3000,
     tools = DEFAULT_CHAT_TOOLS,
     voiceProfileId,
+    citationStyle = 'apa',
   } = params
   
   // Infer action from message
@@ -341,6 +359,9 @@ export function buildChatAUTOMATContext(params: {
       expectsToolCall: actionType !== 'explain',
       preferredTools: getPreferredTools(actionType, hasSelection),
       citationFormat: 'numbered',
+      // For conversational responses (no tool call), use author-year or numbered based on style
+      conversationalCiteFormat: isNumericStyle(citationStyle) ? 'numbered' : 'author-year',
+      isNumericCitationStyle: isNumericStyle(citationStyle),
     },
     
     // METHOD
@@ -370,65 +391,5 @@ export function buildChatAUTOMATContext(params: {
   }
 }
 
-/**
- * Format papers array for AI prompt context
- */
-export function formatPapersForContext(
-  papers: Array<{ id: string; title: string; authors?: string[]; year?: number }>
-): string {
-  if (!papers || papers.length === 0) {
-    // Return empty string so Mustache {{^papersContext}} block triggers
-    // The template will show the "No papers available" warning with explicit instructions
-    return ''
-  }
-  
-  return papers.slice(0, 10).map(p => {
-    const authorStr = p.authors?.slice(0, 2).join(', ') || 'Unknown'
-    const authorSuffix = (p.authors?.length || 0) > 2 ? ' et al.' : ''
-    return `- [${p.id}] "${p.title}" by ${authorStr}${authorSuffix}${p.year ? ` (${p.year})` : ''}`
-  }).join('\n')
-}
-
-/**
- * Format mentioned papers for AI prompt context
- */
-export function formatMentionedPapersForContext(
-  papers: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
-  ragChunks?: Array<{ paper_id: string; content: string }>
-): string {
-  if (!papers || papers.length === 0) {
-    return ''
-  }
-  
-  const formatted = papers.map(p => {
-    const authorStr = p.authors?.slice(0, 3).join(', ') || 'Unknown'
-    const authorSuffix = (p.authors?.length || 0) > 3 ? ' et al.' : ''
-    
-    let entry = `### ${p.title}\n`
-    entry += `**Authors:** ${authorStr}${authorSuffix}\n`
-    if (p.year) entry += `**Year:** ${p.year}\n`
-    entry += `**Paper ID:** ${p.id}\n`
-    
-    if (p.abstract) {
-      entry += `**Abstract:** ${p.abstract.slice(0, 500)}${p.abstract.length > 500 ? '...' : ''}\n`
-    }
-    
-    if (ragChunks) {
-      const paperChunks = ragChunks.filter(c => c.paper_id === p.id)
-      if (paperChunks.length > 0) {
-        entry += `\n**Relevant excerpts:**\n`
-        for (const chunk of paperChunks.slice(0, 2)) {
-          entry += `> ${chunk.content.slice(0, 300)}${chunk.content.length > 300 ? '...' : ''}\n`
-        }
-      }
-    }
-    
-    return entry
-  }).join('\n---\n\n')
-  
-  return `## Papers Referenced by User (@mentions)
-
-The user has explicitly mentioned these papers. Prioritize these sources.
-
-${formatted}`
-}
+// Note: formatPapersForContext and formatMentionedPapersForContext are now
+// exported from ./format-papers.ts via the re-export at the top of this file.

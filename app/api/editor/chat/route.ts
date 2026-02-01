@@ -9,8 +9,10 @@ import {
   buildChatAUTOMATContext, 
   formatPapersForContext, 
   formatMentionedPapersForContext,
+  formatRAGChunksForContext,
   DEFAULT_CHAT_TOOLS,
 } from '@/lib/prompts/automat-context'
+import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 
 // =============================================================================
 // TYPES
@@ -56,7 +58,8 @@ async function buildSystemPrompt(
   papers: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
   mentionedPapers?: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
   ragChunks?: Array<{ paper_id: string; content: string }>,
-  voiceProfileId?: string | null
+  voiceProfileId?: string | null,
+  citationStyle?: string
 ): Promise<string> {
   // Build mentioned papers context if any
   const mentionedPapersContext = mentionedPapers && mentionedPapers.length > 0
@@ -70,7 +73,7 @@ async function buildSystemPrompt(
     ? voiceProfileId as VoiceProfileId
     : undefined
 
-  // Build AUTOMAT context with optional voice
+  // Build AUTOMAT context with optional voice and citation style
   const context = buildChatAUTOMATContext({
     userMessage,
     projectTopic: topic,
@@ -83,6 +86,7 @@ async function buildSystemPrompt(
     mentionedPapersContext,
     tools: DEFAULT_CHAT_TOOLS,
     voiceProfileId: validatedVoiceId,
+    citationStyle,
   })
 
   // Build prompt from AUTOMAT template
@@ -150,11 +154,9 @@ async function getRAGContext(
     // Check if any chunks were truncated
     const truncatedCount = result.chunks.filter(c => c.content.length > 500).length
 
-    // Format RAG chunks with clear paper_id for AI to cite
-    // The AI should use paper_id in its CITATIONS block
-    const context = result.chunks.map((chunk, i) => 
-      `[${i + 1}] paper_id: ${chunk.paper_id}\n${chunk.content.slice(0, 500)}${chunk.content.length > 500 ? '...' : ''}`
-    ).join('\n\n---\n\n')
+    // Format RAG chunks using shared utility
+    // This keeps paper_ids hidden in an internal reference section
+    const context = formatRAGChunksForContext(result.chunks)
     
     // Return raw chunks for mentioned papers context
     const chunks = result.chunks.map(c => ({
@@ -289,8 +291,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    const extractYear = (publicationDate?: string | null): number | undefined => {
+      if (!publicationDate) return undefined
+      const parsed = new Date(publicationDate)
+      if (Number.isNaN(parsed.getTime())) return undefined
+      return parsed.getFullYear()
+    }
+
     // Get project papers from project_citations table
-    // Only include papers that have been processed (have chunks)
     const { data: projectPapers, error: papersError } = await supabase
       .from('project_citations')
       .select(`
@@ -299,7 +307,7 @@ export async function POST(request: NextRequest) {
           id,
           title,
           authors,
-          year,
+          publication_date,
           abstract,
           processing_status
         )
@@ -313,8 +321,27 @@ export async function POST(request: NextRequest) {
     console.log('[Chat API] Found papers in project_citations:', projectPapers?.length || 0)
 
     type PaperData = { id: string; title: string; authors?: string[]; year?: number; abstract?: string; processing_status?: string }
+    interface RawPaper {
+      id: string
+      title: string
+      authors?: string[]
+      publication_date?: string | null
+      abstract?: string
+      processing_status?: string
+    }
     const allPapers: PaperData[] = (projectPapers || [])
-      .map(pp => pp.papers as unknown as PaperData | null)
+      .map(pp => {
+        const paper = pp.papers as unknown as RawPaper | null
+        if (!paper) return null
+        return {
+          id: paper.id,
+          title: paper.title,
+          authors: paper.authors,
+          year: extractYear(paper.publication_date),
+          abstract: paper.abstract,
+          processing_status: paper.processing_status
+        } as PaperData
+      })
       .filter((p): p is PaperData => p !== null)
 
     // Use all papers for chat context; only processed papers should be used for RAG
@@ -364,14 +391,21 @@ export async function POST(request: NextRequest) {
         console.log('[Chat API] Fetching missing mentioned papers directly:', missingIds)
         const { data: fetchedPapers, error: fetchError } = await supabase
           .from('papers')
-          .select('id, title, authors, year, abstract')
+          .select('id, title, authors, publication_date, abstract')
           .in('id', missingIds)
         
         if (fetchError) {
           console.error('[Chat API] Error fetching mentioned papers:', fetchError)
         } else if (fetchedPapers && fetchedPapers.length > 0) {
           console.log('[Chat API] Fetched', fetchedPapers.length, 'additional mentioned papers')
-          mentionedPapers = [...mentionedPapers, ...fetchedPapers]
+          const mapped = fetchedPapers.map(paper => ({
+            id: paper.id,
+            title: paper.title,
+            authors: paper.authors,
+            year: extractYear(paper.publication_date),
+            abstract: paper.abstract
+          })) as PaperData[]
+          mentionedPapers = [...mentionedPapers, ...mapped]
         }
       }
       
@@ -394,9 +428,14 @@ export async function POST(request: NextRequest) {
       console.log('[Chat API] Using project voice profile:', voiceProfileId)
     }
 
+    // Get citation style for this project
+    const citationStyle = await getProjectCitationStyle(projectId, user.id)
+    console.log('[Chat API] Using citation style:', citationStyle)
+
     // Build system prompt using AUTOMAT framework
     // Pass ragChunks so mentioned papers can include relevant excerpts
     // Pass voiceProfileId for consistent authorial voice in content-generating actions
+    // Pass citationStyle for correct conversational citation format
     const systemPrompt = await buildSystemPrompt(
       ragQuery || '',  // User message for action inference
       project.topic || 'Research',
@@ -408,7 +447,8 @@ export async function POST(request: NextRequest) {
       papers,
       mentionedPapers,
       ragResult.chunks,  // Pass raw chunks for mentioned papers context
-      voiceProfileId     // Pass voice profile for content-generating actions
+      voiceProfileId,    // Pass voice profile for content-generating actions
+      citationStyle      // Pass citation style for correct format
     )
 
     // Filter out tool-related parts from message history before converting

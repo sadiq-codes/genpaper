@@ -18,6 +18,16 @@ import {
   type VoiceProfileId
 } from '@/lib/generation/voice-profiles'
 
+// Re-export shared paper formatting utilities
+// These are the canonical implementations - use these for all paper formatting
+export { 
+  formatPapersForContext,
+  formatMentionedPapersForContext,
+  formatRAGChunksForContext,
+  type PaperForContext,
+  type RAGChunk,
+} from './format-papers'
+
 // Paper type to style guidance mapping
 // Simplified from full paper profiles for chat/complete use
 const PAPER_TYPE_STYLES: Record<string, string> = {
@@ -337,67 +347,5 @@ export function buildCompleteContext(params: {
   }
 }
 
-/**
- * Format papers array for AI prompt context
- */
-export function formatPapersForContext(
-  papers: Array<{ id: string; title: string; authors?: string[]; year?: number }>
-): string {
-  if (!papers || papers.length === 0) {
-    // Return empty string so Mustache conditional blocks work correctly
-    return ''
-  }
-  
-  return papers.slice(0, 10).map(p => {
-    const authorStr = p.authors?.slice(0, 2).join(', ') || 'Unknown'
-    const authorSuffix = (p.authors?.length || 0) > 2 ? ' et al.' : ''
-    return `- [${p.id}] "${p.title}" by ${authorStr}${authorSuffix}${p.year ? ` (${p.year})` : ''}`
-  }).join('\n')
-}
-
-/**
- * Format mentioned papers for AI prompt context
- * These are papers explicitly referenced by the user using @ mentions
- */
-export function formatMentionedPapersForContext(
-  papers: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
-  ragChunks?: Array<{ paper_id: string; content: string }>
-): string {
-  if (!papers || papers.length === 0) {
-    return ''
-  }
-  
-  const formatted = papers.map(p => {
-    const authorStr = p.authors?.slice(0, 3).join(', ') || 'Unknown'
-    const authorSuffix = (p.authors?.length || 0) > 3 ? ' et al.' : ''
-    
-    let entry = `### ${p.title}\n`
-    entry += `**Authors:** ${authorStr}${authorSuffix}\n`
-    if (p.year) entry += `**Year:** ${p.year}\n`
-    entry += `**Paper ID:** ${p.id}\n`
-    
-    // Add abstract if available
-    if (p.abstract) {
-      entry += `**Abstract:** ${p.abstract.slice(0, 500)}${p.abstract.length > 500 ? '...' : ''}\n`
-    }
-    
-    // Add relevant RAG chunks for this paper
-    if (ragChunks) {
-      const paperChunks = ragChunks.filter(c => c.paper_id === p.id)
-      if (paperChunks.length > 0) {
-        entry += `\n**Relevant excerpts:**\n`
-        for (const chunk of paperChunks.slice(0, 2)) {
-          entry += `> ${chunk.content.slice(0, 300)}${chunk.content.length > 300 ? '...' : ''}\n`
-        }
-      }
-    }
-    
-    return entry
-  }).join('\n---\n\n')
-  
-  return `## Papers Referenced by User (@mentions)
-
-The user has explicitly mentioned these papers in their message. Focus on these sources when answering their question.
-
-${formatted}`
-}
+// Note: formatPapersForContext and formatMentionedPapersForContext are now
+// exported from ./format-papers.ts via the re-export at the top of this file.
