@@ -108,7 +108,8 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         : new Date().getFullYear(),
       journal: paper.venue || undefined,
       doi: paper.doi || undefined,
-      source: (paper.source as 'upload' | 'search' | 'manual' | 'generation') || undefined,
+      // Map old source values to new simplified types
+      source: paper.source === 'upload' ? 'upload' : 'search',
     })
   }
   

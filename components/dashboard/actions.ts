@@ -42,10 +42,15 @@ export async function createProjectAction(
   const topic = formData.get('topic') as string
   const paperType = formData.get('paperType') as string
   const generationMode = formData.get('generationMode') as string || 'generate'
-  const selectedPapers = formData.getAll('selectedPapers') as string[]
   
   // Uploaded PDF paper IDs
   const uploadedPaperIds = formData.getAll('uploadedPaperIds') as string[]
+  
+  // Selected paper IDs from library
+  const selectedPaperIds = formData.getAll('selectedPaperIds') as string[]
+  
+  // Combined paper IDs (both uploaded and selected from library)
+  const allPaperIds = [...new Set([...uploadedPaperIds, ...selectedPaperIds])]
   
   // Original research support
   const hasOriginalResearch = formData.get('hasOriginalResearch') === 'true'
@@ -61,8 +66,9 @@ export async function createProjectAction(
     generationMode,
     hasOriginalResearch,
     useLibraryOnly,
-    selectedPapersCount: selectedPapers.length,
-    uploadedPaperIdsCount: uploadedPaperIds.length
+    uploadedPaperIdsCount: uploadedPaperIds.length,
+    selectedPaperIdsCount: selectedPaperIds.length,
+    totalPapersCount: allPaperIds.length
   })
 
   if (!topic || topic.trim().length === 0) {
@@ -106,23 +112,24 @@ export async function createProjectAction(
           key_findings: keyFindings?.trim(),
         }
       }),
-      ...(selectedPapers.length > 0 && { library_papers_used: selectedPapers }),
+      ...(selectedPaperIds.length > 0 && { library_papers_used: selectedPaperIds }),
       // Track uploaded PDFs in config
       ...(uploadedPaperIds.length > 0 && { uploaded_paper_ids: uploadedPaperIds })
     }
 
     const project = await createResearchProject(user.id, topic.trim(), generationConfig)
     
-    // Link uploaded papers to the project via CitationService
-    if (uploadedPaperIds.length > 0) {
-      console.log(`📎 Linking ${uploadedPaperIds.length} uploaded papers to project ${project.id}`)
+    // Link all papers (uploaded + selected from library) to the project via CitationService
+    if (allPaperIds.length > 0) {
+      console.log(`📎 Linking ${allPaperIds.length} papers to project ${project.id}`)
       
-      for (const paperId of uploadedPaperIds) {
+      for (const paperId of allPaperIds) {
+        const isUploaded = uploadedPaperIds.includes(paperId)
         try {
           await CitationService.add({
             projectId: project.id,
             sourceRef: { paperId },
-            reason: 'Uploaded PDF'
+            reason: isUploaded ? 'Uploaded PDF' : 'Selected from library'
           })
           console.log(`  ✓ Linked paper ${paperId}`)
         } catch (linkError) {

@@ -9,7 +9,10 @@ export interface Citation {
   doi?: string
 }
 
-export type PaperSource = 'upload' | 'search' | 'manual' | 'generation'
+// Paper sources:
+// - 'upload': User uploaded a PDF (private to user)
+// - 'search': Found via online search or AI generation (shared globally)
+export type PaperSource = 'upload' | 'search'
 
 export interface ProjectPaper {
   id: string

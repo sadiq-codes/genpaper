@@ -1,7 +1,6 @@
 'use client'
 
 import { useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import { Plus, Link2, Library, FileUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,10 +15,11 @@ interface AddSourceMenuProps {
   disabled?: boolean
   /** Callback when PDF files are selected for upload */
   onPdfUpload?: (files: FileList) => void
+  /** Callback when "From Library" is clicked */
+  onOpenLibrary?: () => void
 }
 
-export function AddSourceMenu({ disabled, onPdfUpload }: AddSourceMenuProps) {
-  const router = useRouter()
+export function AddSourceMenu({ disabled, onPdfUpload, onOpenLibrary }: AddSourceMenuProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleAddUrl = () => {
@@ -29,7 +29,7 @@ export function AddSourceMenu({ disabled, onPdfUpload }: AddSourceMenuProps) {
   }
 
   const handleFromLibrary = () => {
-    router.push('/library')
+    onOpenLibrary?.()
   }
 
   const handleUploadPdf = () => {

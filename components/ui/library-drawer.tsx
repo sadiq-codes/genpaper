@@ -31,6 +31,12 @@ interface LibraryDrawerProps {
   onAddToProject?: (paperId: string, title: string) => void
   currentProjectId?: string
   initialQuery?: string
+  /** When true, shows "Save to Library" button instead of "Add to Project" for search results */
+  libraryOnlyMode?: boolean
+  /** When provided, shows "Select for Project" button - used when creating a new project */
+  onSelectForProject?: (paper: { id: string; title: string; authors: string[]; year: number | null }) => void
+  /** Paper IDs already selected for the new project */
+  selectedPaperIds?: string[]
 }
 
 interface SearchResult {
@@ -119,7 +125,10 @@ export default function LibraryDrawer({
   onClose, 
   onAddToProject,
   currentProjectId,
-  initialQuery = ''
+  initialQuery = '',
+  libraryOnlyMode = false,
+  onSelectForProject,
+  selectedPaperIds = []
 }: LibraryDrawerProps) {
   const queryClient = useQueryClient()
   const [query, setQuery] = useState(initialQuery)
@@ -127,6 +136,7 @@ export default function LibraryDrawer({
   const [searchMode, setSearchMode] = useState<SearchMode>('library')
   const [expandedAbstract, setExpandedAbstract] = useState<string | null>(null)
   const [addedPapers, setAddedPapers] = useState<Set<string>>(new Set())
+  const [savedToLibraryPapers, setSavedToLibraryPapers] = useState<Set<string>>(new Set())
 
   // Fetch library papers with React Query - cached across drawer opens
   const { 
@@ -182,6 +192,7 @@ export default function LibraryDrawer({
   useEffect(() => {
     if (isOpen) {
       setAddedPapers(new Set())
+      setSavedToLibraryPapers(new Set())
       if (initialQuery) {
         setQuery(initialQuery)
         if (initialQuery.trim()) {
@@ -233,6 +244,40 @@ export default function LibraryDrawer({
       console.error('Error adding paper:', error)
     }
   }, [currentProjectId, onAddToProject, addedPapers, addToLibraryMutation])
+
+  // Save paper to library only (no project)
+  const handleSaveToLibrary = useCallback(async (paper: SearchResult) => {
+    if (savedToLibraryPapers.has(paper.id) || paper.type === 'library') return
+
+    try {
+      await addToLibraryMutation.mutateAsync(paper.id)
+      setSavedToLibraryPapers(prev => new Set(prev).add(paper.id))
+    } catch (error) {
+      console.error('Error saving paper to library:', error)
+    }
+  }, [savedToLibraryPapers, addToLibraryMutation])
+
+  // Select paper for new project creation
+  const handleSelectForProject = useCallback(async (paper: SearchResult) => {
+    if (!onSelectForProject) return
+    
+    // If from online search, add to library first
+    if (paper.type === 'search') {
+      try {
+        await addToLibraryMutation.mutateAsync(paper.id)
+      } catch (error) {
+        console.error('Error adding paper to library:', error)
+        return
+      }
+    }
+    
+    onSelectForProject({
+      id: paper.id,
+      title: paper.title,
+      authors: paper.authors,
+      year: paper.year
+    })
+  }, [onSelectForProject, addToLibraryMutation])
 
   if (!isOpen) return null
 
@@ -389,9 +434,15 @@ export default function LibraryDrawer({
                     key={paper.id}
                     paper={paper}
                     onAdd={() => handleAddToProject(paper)}
+                    onSaveToLibrary={() => handleSaveToLibrary(paper)}
+                    onSelectForProject={() => handleSelectForProject(paper)}
                     isProcessing={addToLibraryMutation.isPending && addToLibraryMutation.variables === paper.id}
                     isAdded={addedPapers.has(paper.id)}
+                    isSavedToLibrary={savedToLibraryPapers.has(paper.id) || paper.type === 'library'}
+                    isSelectedForProject={selectedPaperIds.includes(paper.id)}
                     showAddButton={!!currentProjectId}
+                    showSaveToLibraryButton={libraryOnlyMode && !currentProjectId && !onSelectForProject}
+                    showSelectForProjectButton={!!onSelectForProject}
                     isExpanded={expandedAbstract === paper.id}
                     onToggleExpand={() => setExpandedAbstract(
                       expandedAbstract === paper.id ? null : paper.id
@@ -445,9 +496,15 @@ function EmptyState({
 interface PaperCardProps {
   paper: SearchResult
   onAdd: () => void
+  onSaveToLibrary?: () => void
+  onSelectForProject?: () => void
   isProcessing: boolean
   isAdded: boolean
+  isSavedToLibrary: boolean
+  isSelectedForProject: boolean
   showAddButton: boolean
+  showSaveToLibraryButton: boolean
+  showSelectForProjectButton: boolean
   isExpanded: boolean
   onToggleExpand: () => void
 }
@@ -457,10 +514,16 @@ interface PaperCardProps {
  */
 const PaperCard = memo(function PaperCard({ 
   paper, 
-  onAdd, 
+  onAdd,
+  onSaveToLibrary,
+  onSelectForProject,
   isProcessing, 
   isAdded,
+  isSavedToLibrary,
+  isSelectedForProject,
   showAddButton,
+  showSaveToLibraryButton,
+  showSelectForProjectButton,
   isExpanded,
   onToggleExpand
 }: PaperCardProps) {
@@ -581,6 +644,7 @@ const PaperCard = memo(function PaperCard({
           )}
         </div>
         
+        {/* Add to Project button (editor context) */}
         {showAddButton && (
           <Button
             size="sm"
@@ -603,6 +667,62 @@ const PaperCard = memo(function PaperCard({
               <>
                 <Plus className="h-3 w-3 mr-1" />
                 Add to Project
+              </>
+            )}
+          </Button>
+        )}
+        
+        {/* Save to Library button (library-only mode, only for search results not in library) */}
+        {showSaveToLibraryButton && paper.type === 'search' && (
+          <Button
+            size="sm"
+            variant={isSavedToLibrary ? "secondary" : "default"}
+            onClick={onSaveToLibrary}
+            disabled={isProcessing || isSavedToLibrary}
+            className="h-7 px-3 text-xs"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                Saving...
+              </>
+            ) : isSavedToLibrary ? (
+              <>
+                <Check className="h-3 w-3 mr-1" />
+                In Library
+              </>
+            ) : (
+              <>
+                <Plus className="h-3 w-3 mr-1" />
+                Save to Library
+              </>
+            )}
+          </Button>
+        )}
+        
+        {/* Select for Project button (new project creation flow) */}
+        {showSelectForProjectButton && (
+          <Button
+            size="sm"
+            variant={isSelectedForProject ? "secondary" : "default"}
+            onClick={onSelectForProject}
+            disabled={isProcessing || isSelectedForProject}
+            className="h-7 px-3 text-xs"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                Adding...
+              </>
+            ) : isSelectedForProject ? (
+              <>
+                <Check className="h-3 w-3 mr-1" />
+                Selected
+              </>
+            ) : (
+              <>
+                <Plus className="h-3 w-3 mr-1" />
+                Use in Project
               </>
             )}
           </Button>

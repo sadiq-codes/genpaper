@@ -2,6 +2,7 @@
 
 import { useActionState, useState, useEffect, useMemo, useCallback, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Loader2, BookOpen } from 'lucide-react'
@@ -13,8 +14,14 @@ import { AddSourceMenu } from './add-source-menu'
 import { AdvancedOptionsPopover } from './advanced-options-popover'
 import { QuickActions } from './quick-actions'
 import { PdfChipList } from './pdf-chip'
+import { PaperChipList } from './paper-chip'
 import { usePdfUpload } from './hooks/usePdfUpload'
-import type { UploadedPdf } from './types'
+import type { UploadedPdf, SelectedPaper } from './types'
+
+// Lazy load the library drawer
+const LibraryDrawer = dynamic(() => import('@/components/ui/library-drawer'), {
+  ssr: false,
+})
 
 // Paper type categories for determining behavior
 const EMPIRICAL_PAPER_TYPES: PaperTypeValue[] = ['researchArticle', 'mastersThesis', 'phdDissertation']
@@ -58,6 +65,10 @@ export function ProjectInputSection() {
   // PDF upload state - shared between ProjectInput area and QuickActions
   const [uploadedPdfs, setUploadedPdfs] = useState<UploadedPdf[]>([])
   
+  // Selected papers from library
+  const [selectedPapers, setSelectedPapers] = useState<SelectedPaper[]>([])
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false)
+  
   // PDF upload hook
   const { uploadFiles } = usePdfUpload({
     onUploadStart: (pdf) => {
@@ -87,10 +98,36 @@ export function ProjectInputSection() {
     setUploadedPdfs((prev) => prev.filter((pdf) => pdf.id !== id))
   }, [])
   
+  // Handle selecting a paper from library
+  const handleSelectPaper = useCallback((paper: SelectedPaper) => {
+    setSelectedPapers((prev) => {
+      // Don't add duplicates
+      if (prev.some(p => p.id === paper.id)) return prev
+      return [...prev, paper]
+    })
+  }, [])
+  
+  // Handle removing a selected paper
+  const handleRemovePaper = useCallback((id: string) => {
+    setSelectedPapers((prev) => prev.filter((p) => p.id !== id))
+  }, [])
+  
   // Get paper IDs for successfully uploaded PDFs
   const uploadedPaperIds = useMemo(
     () => uploadedPdfs.filter((pdf) => pdf.status === 'ready' && pdf.paperId).map((pdf) => pdf.paperId!),
     [uploadedPdfs]
+  )
+  
+  // Get paper IDs for selected papers from library
+  const selectedPaperIds = useMemo(
+    () => selectedPapers.map((p) => p.id),
+    [selectedPapers]
+  )
+  
+  // Combined paper IDs (uploads + library selections)
+  const allPaperIds = useMemo(
+    () => [...new Set([...uploadedPaperIds, ...selectedPaperIds])],
+    [uploadedPaperIds, selectedPaperIds]
   )
   
   // Check if any uploads are in progress
@@ -157,6 +194,13 @@ export function ProjectInputSection() {
               disabled={isLoading}
             />
             
+            {/* Selected Paper Chips */}
+            <PaperChipList
+              papers={selectedPapers}
+              onRemove={handleRemovePaper}
+              disabled={isLoading}
+            />
+            
             {/* Textarea */}
             <Textarea
               name="topic"
@@ -181,7 +225,11 @@ export function ProjectInputSection() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3 pb-3 pt-1">
               {/* Left Controls */}
               <div className="flex items-center gap-0.5 flex-wrap">
-                <AddSourceMenu disabled={isLoading} onPdfUpload={handlePdfUpload} />
+                <AddSourceMenu 
+                disabled={isLoading} 
+                onPdfUpload={handlePdfUpload} 
+                onOpenLibrary={() => setIsLibraryOpen(true)}
+              />
                 <AdvancedOptionsPopover
                   hasOriginalResearch={hasOriginalResearch}
                   onHasOriginalResearchChange={setHasOriginalResearch}
@@ -239,6 +287,10 @@ export function ProjectInputSection() {
           {uploadedPaperIds.map((paperId) => (
             <input key={paperId} type="hidden" name="uploadedPaperIds" value={paperId} />
           ))}
+          {/* Hidden fields for selected library paper IDs */}
+          {selectedPaperIds.map((paperId) => (
+            <input key={`selected-${paperId}`} type="hidden" name="selectedPaperIds" value={paperId} />
+          ))}
 
           {/* Helper Text & Status */}
           <div className="text-center space-y-2">
@@ -294,6 +346,15 @@ export function ProjectInputSection() {
       <QuickActions 
         onPdfUpload={handlePdfUpload} 
         disabled={isLoading || hasUploadsInProgress} 
+        onOpenLibrary={() => setIsLibraryOpen(true)}
+      />
+      
+      {/* Library Drawer for selecting papers */}
+      <LibraryDrawer
+        isOpen={isLibraryOpen}
+        onClose={() => setIsLibraryOpen(false)}
+        onSelectForProject={handleSelectPaper}
+        selectedPaperIds={selectedPaperIds}
       />
     </div>
   )

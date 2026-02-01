@@ -29,6 +29,8 @@ import {
   CheckCircle2,
   AlertCircle,
   RefreshCw,
+  Upload,
+  Search,
 } from 'lucide-react'
 import type { ProjectPaper } from '../types'
 import { cn } from '@/lib/utils'
@@ -76,6 +78,42 @@ function formatAuthors(authors: string[] | undefined): string {
 // =============================================================================
 // PAPER CARD COMPONENT
 // =============================================================================
+
+/**
+ * SourceBadge - Shows where the paper came from (upload vs search)
+ */
+function SourceBadge({ source }: { source?: 'upload' | 'search' }) {
+  if (source === 'upload') {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+              <Upload className="h-2.5 w-2.5" />
+              Uploaded
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>You uploaded this PDF</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
+  
+  // Default to search for backward compatibility (including 'generation', 'manual', or undefined)
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+            <Search className="h-2.5 w-2.5" />
+            Found
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>Found via search</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
 
 function ProcessingStatusBadge({ 
   status, 
@@ -195,7 +233,7 @@ const PaperCard = memo(function PaperCard({
             )}
           </div>
           
-          {/* Meta row: Authors, Year */}
+          {/* Meta row: Authors, Year, Source */}
           <div className="flex items-center gap-x-3 text-xs text-muted-foreground mb-2 min-w-0">
             {/* Authors */}
             <span className="flex items-center gap-1 min-w-0 flex-1">
@@ -210,6 +248,9 @@ const PaperCard = memo(function PaperCard({
                 {paper.year}
               </span>
             )}
+            
+            {/* Source Badge */}
+            <SourceBadge source={paper.source} />
           </div>
           
           {/* Journal - subtle */}

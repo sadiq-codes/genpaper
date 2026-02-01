@@ -30,3 +30,13 @@ export interface PdfUploadResult {
   }
   error?: string
 }
+
+/**
+ * Selected paper from library for new project creation
+ */
+export interface SelectedPaper {
+  id: string
+  title: string
+  authors: string[]
+  year: number | null
+}

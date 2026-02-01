@@ -2,20 +2,20 @@
 
 import type React from 'react'
 import { useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { FileUp, Library, Link2 } from 'lucide-react'
 import { toast } from 'sonner'
 
-interface QuickActionsProps {
+export interface QuickActionsProps {
   /** Callback when PDF files are selected for upload */
   onPdfUpload?: (files: FileList) => void
   /** Whether actions are disabled */
   disabled?: boolean
+  /** Callback when "From Library" is clicked */
+  onOpenLibrary?: () => void
 }
 
-export function QuickActions({ onPdfUpload, disabled }: QuickActionsProps) {
-  const router = useRouter()
+export function QuickActions({ onPdfUpload, disabled, onOpenLibrary }: QuickActionsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleImportPDF = () => {
@@ -43,7 +43,7 @@ export function QuickActions({ onPdfUpload, disabled }: QuickActionsProps) {
   }
 
   const handleFromLibrary = () => {
-    router.push('/library')
+    onOpenLibrary?.()
   }
 
   const handlePasteUrl = () => {
