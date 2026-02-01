@@ -8,8 +8,11 @@
 
 import type { Editor } from '@tiptap/react'
 import { findBlockById } from '../extensions/BlockId'
-import { fuzzyFindPhrase, findSection } from '@/lib/utils/fuzzy-match'
-import { textIndexToDocPosition } from '../utils/position-utils'
+import { 
+  findTextInStructure, 
+  findSectionBounds, 
+  matchToRange 
+} from '../utils/structure-search'
 
 // =============================================================================
 // TYPES
@@ -103,24 +106,26 @@ function calculateInsert(
 
   let insertPos: number
 
-  // Priority 1: After specific phrase
+  // Priority 1: After specific phrase (structure-aware search)
   if (afterPhrase) {
-    const docText = editor.getText()
-    const match = fuzzyFindPhrase(docText, afterPhrase)
+    const match = findTextInStructure(editor, afterPhrase)
     if (match.found) {
-      insertPos = findTipTapPosition(editor, match.endIndex)
-      return {
-        success: true,
-        edit: {
-          id: editId,
-          type: 'insert',
-          toolName,
-          toolArgs: args,
-          from: insertPos,
-          to: insertPos,
-          oldContent: '',
-          newContent: content,
-          description: `Insert after "${afterPhrase.slice(0, 30)}..."`,
+      const range = matchToRange(match)
+      if (range) {
+        insertPos = range.to
+        return {
+          success: true,
+          edit: {
+            id: editId,
+            type: 'insert',
+            toolName,
+            toolArgs: args,
+            from: insertPos,
+            to: insertPos,
+            oldContent: '',
+            newContent: content,
+            description: `Insert after "${afterPhrase.slice(0, 30)}..."`,
+          }
         }
       }
     }
@@ -173,10 +178,9 @@ function calculateInsert(
 
   if (afterMatch) {
     const sectionName = afterMatch[1]
-    const docText = editor.getText()
-    const section = findSection(docText, sectionName)
-    if (section.found) {
-      insertPos = findTipTapPosition(editor, section.contentEnd)
+    const sectionBounds = findSectionBounds(editor, sectionName)
+    if (sectionBounds.found) {
+      insertPos = sectionBounds.contentEndPos
       return {
         success: true,
         edit: {
@@ -197,10 +201,9 @@ function calculateInsert(
 
   if (startMatch) {
     const sectionName = startMatch[1]
-    const docText = editor.getText()
-    const section = findSection(docText, sectionName)
-    if (section.found) {
-      insertPos = findTipTapPosition(editor, section.contentStart)
+    const sectionBounds = findSectionBounds(editor, sectionName)
+    if (sectionBounds.found) {
+      insertPos = sectionBounds.contentStartPos
       return {
         success: true,
         edit: {
@@ -255,17 +258,19 @@ function calculateReplace(
     return { success: false, error: 'No new content provided' }
   }
 
-  const docText = editor.getText()
-
-  // Text-level replacement
+  // Text-level replacement (structure-aware)
   if (searchPhrase) {
-    const match = fuzzyFindPhrase(docText, searchPhrase)
+    const match = findTextInStructure(editor, searchPhrase, { blockId })
     if (!match.found) {
       return { success: false, error: `Could not find text: "${searchPhrase.slice(0, 50)}..."` }
     }
 
-    const from = findTipTapPosition(editor, match.startIndex)
-    const to = findTipTapPosition(editor, match.endIndex)
+    const range = matchToRange(match)
+    if (!range) {
+      return { success: false, error: 'Failed to calculate edit range' }
+    }
+
+    const oldContent = match.node?.textContent.slice(match.startOffset, match.endOffset) || ''
 
     return {
       success: true,
@@ -274,11 +279,11 @@ function calculateReplace(
         type: 'replace',
         toolName,
         toolArgs: args,
-        from,
-        to,
-        oldContent: match.matchedText,
+        from: range.from,
+        to: range.to,
+        oldContent,
         newContent,
-        description: `Replace "${match.matchedText.slice(0, 30)}..."`,
+        description: `Replace "${oldContent.slice(0, 30)}..."`,
       }
     }
   }
@@ -308,14 +313,19 @@ function calculateReplace(
 
   // Section-level (for replaceInSection without searchPhrase - shouldn't happen but handle it)
   if (section) {
-    const sec = findSection(docText, section)
-    if (!sec.found) {
+    const sectionBounds = findSectionBounds(editor, section)
+    if (!sectionBounds.found) {
       return { success: false, error: `Section "${section}" not found` }
     }
 
-    const from = findTipTapPosition(editor, sec.contentStart)
-    const to = findTipTapPosition(editor, sec.contentEnd)
-    const oldContent = docText.slice(sec.contentStart, sec.contentEnd)
+    // Get old content from the section
+    let oldContent = ''
+    editor.state.doc.nodesBetween(sectionBounds.contentStartPos, sectionBounds.contentEndPos, (node) => {
+      if (node.isTextblock) {
+        oldContent += node.textContent + '\n\n'
+      }
+    })
+    oldContent = oldContent.trim()
 
     return {
       success: true,
@@ -324,8 +334,8 @@ function calculateReplace(
         type: 'replace',
         toolName,
         toolArgs: args,
-        from,
-        to,
+        from: sectionBounds.contentStartPos,
+        to: sectionBounds.contentEndPos,
         oldContent,
         newContent,
         description: `Replace content in ${section}`,
@@ -350,17 +360,19 @@ function calculateDelete(
   const searchPhrase = args.searchPhrase as string | undefined
   const reason = args.reason as string | undefined
 
-  const docText = editor.getText()
-
-  // Text-level deletion
+  // Text-level deletion (structure-aware)
   if (searchPhrase) {
-    const match = fuzzyFindPhrase(docText, searchPhrase)
+    const match = findTextInStructure(editor, searchPhrase, { blockId })
     if (!match.found) {
       return { success: false, error: `Could not find text: "${searchPhrase.slice(0, 50)}..."` }
     }
 
-    const from = findTipTapPosition(editor, match.startIndex)
-    const to = findTipTapPosition(editor, match.endIndex)
+    const range = matchToRange(match)
+    if (!range) {
+      return { success: false, error: 'Failed to calculate delete range' }
+    }
+
+    const oldContent = match.node?.textContent.slice(match.startOffset, match.endOffset) || ''
 
     return {
       success: true,
@@ -369,11 +381,11 @@ function calculateDelete(
         type: 'delete',
         toolName,
         toolArgs: args,
-        from,
-        to,
-        oldContent: match.matchedText,
+        from: range.from,
+        to: range.to,
+        oldContent,
         newContent: '',
-        description: reason || `Delete "${match.matchedText.slice(0, 30)}..."`,
+        description: reason || `Delete "${oldContent.slice(0, 30)}..."`,
       }
     }
   }
@@ -403,14 +415,19 @@ function calculateDelete(
 
   // Section-level
   if (section) {
-    const sec = findSection(docText, section)
-    if (!sec.found) {
+    const sectionBounds = findSectionBounds(editor, section)
+    if (!sectionBounds.found) {
       return { success: false, error: `Section "${section}" not found` }
     }
 
-    const from = findTipTapPosition(editor, sec.contentStart)
-    const to = findTipTapPosition(editor, sec.contentEnd)
-    const oldContent = docText.slice(sec.contentStart, sec.contentEnd)
+    // Get old content from the section
+    let oldContent = ''
+    editor.state.doc.nodesBetween(sectionBounds.contentStartPos, sectionBounds.contentEndPos, (node) => {
+      if (node.isTextblock) {
+        oldContent += node.textContent + '\n\n'
+      }
+    })
+    oldContent = oldContent.trim()
 
     return {
       success: true,
@@ -419,8 +436,8 @@ function calculateDelete(
         type: 'delete',
         toolName,
         toolArgs: args,
-        from,
-        to,
+        from: sectionBounds.contentStartPos,
+        to: sectionBounds.contentEndPos,
         oldContent,
         newContent: '',
         description: reason || `Delete content in ${section}`,
@@ -448,16 +465,20 @@ function calculateRewriteSection(
     return { success: false, error: 'Missing section name or new content' }
   }
 
-  const docText = editor.getText()
-  const section = findSection(docText, sectionName)
+  const sectionBounds = findSectionBounds(editor, sectionName)
 
-  if (!section.found) {
+  if (!sectionBounds.found) {
     return { success: false, error: `Section "${sectionName}" not found` }
   }
 
-  const from = findTipTapPosition(editor, section.contentStart)
-  const to = findTipTapPosition(editor, section.contentEnd)
-  const oldContent = docText.slice(section.contentStart, section.contentEnd)
+  // Get old content from the section
+  let oldContent = ''
+  editor.state.doc.nodesBetween(sectionBounds.contentStartPos, sectionBounds.contentEndPos, (node) => {
+    if (node.isTextblock) {
+      oldContent += node.textContent + '\n\n'
+    }
+  })
+  oldContent = oldContent.trim()
 
   return {
     success: true,
@@ -466,8 +487,8 @@ function calculateRewriteSection(
       type: 'replace',
       toolName,
       toolArgs: args,
-      from,
-      to,
+      from: sectionBounds.contentStartPos,
+      to: sectionBounds.contentEndPos,
       oldContent,
       newContent: '\n\n' + newContent + '\n\n',
       description: reason || `Rewrite ${sectionName} section`,
@@ -476,8 +497,8 @@ function calculateRewriteSection(
 }
 
 // =============================================================================
-// POSITION HELPER
+// NOTES
 // =============================================================================
 
-// Use shared utility to avoid duplication
-const findTipTapPosition = textIndexToDocPosition
+// Note: findTipTapPosition removed - now using structure-aware search via 
+// findTextInStructure() which returns document positions directly

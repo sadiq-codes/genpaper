@@ -11,10 +11,15 @@
 import type { Editor } from '@tiptap/react'
 import { v4 as uuidv4 } from 'uuid'
 import { findBlockById } from '../extensions/BlockId'
-import { fuzzyFindPhrase, findSection, findInSection } from '@/lib/utils/fuzzy-match'
 import { toast } from 'sonner'
 import { hasMarkdownFormatting, processAIContent } from '../utils/content-processor'
-import { textIndexToDocPosition, validatePositions } from '../utils/position-utils'
+import { validatePositions } from '../utils/position-utils'
+import { 
+  findTextInStructure, 
+  findSectionBounds, 
+  matchToRange,
+  type StructureMatch 
+} from '../utils/structure-search'
 import type { ProjectPaper } from '../types'
 
 // Papers context for citation resolution
@@ -105,36 +110,33 @@ function findTargetBlock(
     console.warn(`[ToolExecutor] Block ID not found: ${args.blockId}, trying fallback`)
   }
 
-  // Strategy 2: Fall back to text search
+  // Strategy 2: Fall back to text search (structure-aware)
   if (args.searchPhrase) {
-    const docText = editor.getText()
-    const match = args.section 
-      ? findInSection(docText, args.section, args.searchPhrase)
-      : fuzzyFindPhrase(docText, args.searchPhrase)
+    const match = findTextInStructure(editor, args.searchPhrase, { 
+      section: args.section 
+    })
 
     if (match.found) {
-      const from = findTipTapPosition(editor, match.startIndex)
-      const to = findTipTapPosition(editor, match.endIndex)
-      return {
-        found: true,
-        pos: from,
-        endPos: to,
-        method: 'text',
+      const range = matchToRange(match)
+      if (range) {
+        return {
+          found: true,
+          pos: range.from,
+          endPos: range.to,
+          method: 'text',
+        }
       }
     }
   }
 
   // Strategy 3: Section-level targeting
   if (args.section) {
-    const docText = editor.getText()
-    const section = findSection(docText, args.section)
-    if (section.found) {
-      const from = findTipTapPosition(editor, section.contentStart)
-      const to = findTipTapPosition(editor, section.contentEnd)
+    const sectionBounds = findSectionBounds(editor, args.section)
+    if (sectionBounds.found) {
       return {
         found: true,
-        pos: from,
-        endPos: to,
+        pos: sectionBounds.contentStartPos,
+        endPos: sectionBounds.contentEndPos,
         method: 'section',
       }
     }
@@ -514,35 +516,35 @@ function executeInsertContent(
 
   // Priority 1: Insert after specific phrase (most precise)
   if (afterPhrase) {
-    const docText = editor.getText()
-    const match = fuzzyFindPhrase(docText, afterPhrase)
+    const match = findTextInStructure(editor, afterPhrase)
     
     if (match.found) {
-      const insertPos = findTipTapPosition(editor, match.endIndex)
-      
-      // Determine if we need a space before the content
-      // Don't add space if:
-      // - Content is markdown (TipTap handles spacing)
-      // - Previous char is whitespace
-      // - We're at start of document
-      let contentToInsert = content
-      if (!isMarkdown && typeof content === 'string') {
-        const charBefore = match.endIndex > 0 ? docText[match.endIndex - 1] : ''
-        const charAfter = match.endIndex < docText.length ? docText[match.endIndex] : ''
-        const needsSpaceBefore = charBefore && !/\s/.test(charBefore) && !/\s/.test(content[0] || '')
-        const needsSpaceAfter = charAfter && !/\s/.test(charAfter) && !/\s/.test(content[content.length - 1] || '')
+      const range = matchToRange(match)
+      if (range) {
+        const insertPos = range.to
         
-        if (needsSpaceBefore) contentToInsert = ' ' + contentToInsert
-        if (needsSpaceAfter) contentToInsert = contentToInsert + ' '
+        // Determine if we need a space before the content
+        // Don't add space if content is markdown (TipTap handles spacing)
+        let contentToInsert = content
+        if (!isMarkdown && typeof content === 'string' && match.node) {
+          const nodeText = match.node.textContent
+          const charBefore = match.endOffset > 0 ? nodeText[match.endOffset - 1] : ''
+          const charAfter = match.endOffset < nodeText.length ? nodeText[match.endOffset] : ''
+          const needsSpaceBefore = charBefore && !/\s/.test(charBefore) && !/\s/.test(content[0] || '')
+          const needsSpaceAfter = charAfter && !/\s/.test(charAfter) && !/\s/.test(content[content.length - 1] || '')
+          
+          if (needsSpaceBefore) contentToInsert = ' ' + contentToInsert
+          if (needsSpaceAfter) contentToInsert = contentToInsert + ' '
+        }
+        
+        editor.chain()
+          .focus()
+          .setTextSelection(insertPos)
+          .insertContent(contentToInsert)
+          .run()
+        toast.success('Content inserted after phrase')
+        return { success: true, message: 'Inserted after phrase' }
       }
-      
-      editor.chain()
-        .focus()
-        .setTextSelection(insertPos)
-        .insertContent(contentToInsert)
-        .run()
-      toast.success('Content inserted after phrase')
-      return { success: true, message: 'Inserted after phrase' }
     }
     console.warn(`[ToolExecutor] Phrase not found: "${afterPhrase.slice(0, 30)}..."`)
   }
@@ -586,15 +588,14 @@ function executeInsertContent(
 
   if (afterMatch) {
     const sectionName = afterMatch[1]
-    const docText = editor.getText()
-    const section = findSection(docText, sectionName)
+    const sectionBounds = findSectionBounds(editor, sectionName)
     
-    if (!section.found) {
+    if (!sectionBounds.found) {
       toast.error(`Section "${sectionName}" not found`)
       return { success: false, message: `Section "${sectionName}" not found` }
     }
 
-    const insertPos = findTipTapPosition(editor, section.contentEnd)
+    const insertPos = sectionBounds.contentEndPos
     editor.chain().focus().setTextSelection(insertPos).insertContent(content).run()
     toast.success(`Content added to ${sectionName}`)
     return { success: true, message: `Inserted at end of ${sectionName}` }
@@ -602,15 +603,14 @@ function executeInsertContent(
 
   if (startMatch) {
     const sectionName = startMatch[1]
-    const docText = editor.getText()
-    const section = findSection(docText, sectionName)
+    const sectionBounds = findSectionBounds(editor, sectionName)
     
-    if (!section.found) {
+    if (!sectionBounds.found) {
       toast.error(`Section "${sectionName}" not found`)
       return { success: false, message: `Section "${sectionName}" not found` }
     }
 
-    const insertPos = findTipTapPosition(editor, section.contentStart)
+    const insertPos = sectionBounds.contentStartPos
     editor.chain().focus().setTextSelection(insertPos).insertContent(content).run()
     toast.success(`Content added to ${sectionName}`)
     return { success: true, message: `Inserted at start of ${sectionName}` }
@@ -652,8 +652,8 @@ function executeReplaceBlock(
 
   // If searchPhrase is provided, do text-level replacement
   if (searchPhrase) {
-    const docText = editor.getText()
-    const match = fuzzyFindPhrase(docText, searchPhrase)
+    // Use structure-aware search - can scope to blockId if provided
+    const match = findTextInStructure(editor, searchPhrase, { blockId })
     
     if (!match.found) {
       const message = `Could not find text: "${searchPhrase.slice(0, 50)}..."`
@@ -661,16 +661,17 @@ function executeReplaceBlock(
       return { success: false, message }
     }
 
-    // If blockId provided, log warning if match isn't in that block (but proceed)
-    if (blockId) {
-      const block = findBlockById(editor, blockId)
-      if (block && !block.node.textContent.toLowerCase().includes(searchPhrase.toLowerCase().slice(0, 20))) {
-        console.warn(`[ToolExecutor] Text found but not in specified block ${blockId}`)
-      }
+    // Log if we found it but in a different block than specified
+    if (blockId && match.blockId && match.blockId !== blockId) {
+      console.warn(`[ToolExecutor] Text found in block ${match.blockId}, not specified block ${blockId}`)
     }
 
-    const rawFrom = findTipTapPosition(editor, match.startIndex)
-    const rawTo = findTipTapPosition(editor, match.endIndex)
+    const range = matchToRange(match)
+    if (!range) {
+      return { success: false, message: 'Failed to calculate edit range' }
+    }
+    const rawFrom = range.from
+    const rawTo = range.to
 
     // Validate positions before edit
     const validated = validateEditRange(editor, rawFrom, rawTo)
@@ -816,16 +817,15 @@ function executeRewriteSection(
   const { content: newContent, instances } = prepareContent(rawContent, papers)
   const isMarkdown = typeof newContent !== 'string'
 
-  const docText = editor.getText()
-  const section = findSection(docText, sectionName)
+  const sectionBounds = findSectionBounds(editor, sectionName)
 
-  if (!section.found) {
+  if (!sectionBounds.found) {
     toast.error(`Section "${sectionName}" not found`)
     return { success: false, message: `Section "${sectionName}" not found` }
   }
 
-  const rawFrom = findTipTapPosition(editor, section.contentStart)
-  const rawTo = findTipTapPosition(editor, section.contentEnd)
+  const rawFrom = sectionBounds.contentStartPos
+  const rawTo = sectionBounds.contentEndPos
 
   // Validate positions before edit
   const validated = validateEditRange(editor, rawFrom, rawTo)
@@ -872,10 +872,8 @@ function executeDeleteContent(
 
   // If searchPhrase is provided, do partial deletion (text-level)
   if (searchPhrase) {
-    const docText = editor.getText()
-    
-    // Search in full document text, but optionally verify it's in the right scope
-    const match = fuzzyFindPhrase(docText, searchPhrase)
+    // Use structure-aware search - can scope to blockId if provided
+    const match = findTextInStructure(editor, searchPhrase, { blockId })
     
     if (!match.found) {
       const message = `Could not find text: "${searchPhrase.slice(0, 50)}..."`
@@ -883,21 +881,18 @@ function executeDeleteContent(
       return { success: false, message }
     }
 
-    // If blockId provided, verify the match is within that block
-    if (blockId) {
-      const block = findBlockById(editor, blockId)
-      if (block) {
-        const blockText = block.node.textContent.toLowerCase()
-        if (!blockText.includes(searchPhrase.toLowerCase().slice(0, 20))) {
-          // Match found but not in specified block - warn but proceed
-          console.warn(`[ToolExecutor] Text found but not in specified block ${blockId}`)
-        }
-      }
+    // Log if we found it but in a different block than specified
+    if (blockId && match.blockId && match.blockId !== blockId) {
+      console.warn(`[ToolExecutor] Text found in block ${match.blockId}, not specified block ${blockId}`)
     }
 
     // Calculate actual document positions
-    const rawFrom = findTipTapPosition(editor, match.startIndex)
-    const rawTo = findTipTapPosition(editor, match.endIndex)
+    const range = matchToRange(match)
+    if (!range) {
+      return { success: false, message: 'Failed to calculate edit range' }
+    }
+    const rawFrom = range.from
+    const rawTo = range.to
 
     // Validate positions before edit
     const validated = validateEditRange(editor, rawFrom, rawTo)
@@ -1014,9 +1009,8 @@ function executeAddCitation(
     // Then add the phrase index + phrase length to get end position
     insertPos = block.pos + 1 + phraseIndex + afterPhrase.length
   } else {
-    // No blockId, search entire document
-    const docText = editor.getText()
-    const match = fuzzyFindPhrase(docText, afterPhrase)
+    // No blockId, search entire document using structure-aware search
+    const match = findTextInStructure(editor, afterPhrase)
     
     if (!match.found) {
       const preview = afterPhrase.slice(0, 50)
@@ -1024,7 +1018,11 @@ function executeAddCitation(
       return { success: false, message: `Could not find text: "${preview}..."` }
     }
     
-    insertPos = findTipTapPosition(editor, match.endIndex)
+    const range = matchToRange(match)
+    if (!range) {
+      return { success: false, message: 'Failed to calculate citation position' }
+    }
+    insertPos = range.to
   }
   
   // Check if there's already a citation near this position
@@ -1143,8 +1141,7 @@ function executeHighlightText(
 
   // If searchPhrase provided, find and highlight that specific text
   if (searchPhrase) {
-    const docText = editor.getText()
-    const match = fuzzyFindPhrase(docText, searchPhrase)
+    const match = findTextInStructure(editor, searchPhrase, { blockId, section })
     
     if (!match.found) {
       const message = `Could not find text to highlight: "${searchPhrase.slice(0, 50)}..."`
@@ -1152,8 +1149,12 @@ function executeHighlightText(
       return { success: false, message }
     }
 
-    from = findTipTapPosition(editor, match.startIndex)
-    to = findTipTapPosition(editor, match.endIndex)
+    const range = matchToRange(match)
+    if (!range) {
+      return { success: false, message: 'Failed to calculate highlight range' }
+    }
+    from = range.from
+    to = range.to
   } else {
     // No searchPhrase → highlight entire block
     const target = findTargetBlock(editor, { blockId, section })
@@ -1243,5 +1244,5 @@ function executeAddComment(
 // HELPERS
 // =============================================================================
 
-// Alias for backward compatibility - uses shared utility
-const findTipTapPosition = textIndexToDocPosition
+// Note: findTipTapPosition removed - now using structure-aware search via 
+// findTextInStructure() which returns document positions directly
