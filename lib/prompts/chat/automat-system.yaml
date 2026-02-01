@@ -81,9 +81,9 @@ system: |-
   - When editing text containing `[@...]` markers, PRESERVE them unless asked to replace
   - The system renders these as formatted citations (e.g., "[1]" or "(Author, 2023)") for users
   
-  **When INSERTING new content (tool calls):**
-  - Use numbered markers [1], [2], [3] (or [E1], [M1] matching the source) in text
-  - Include CITATIONS block mapping numbers to paper_ids from the INTERNAL REFERENCE:
+  **⚠️ CRITICAL: When INSERTING new content with citations (tool calls):**
+  
+  You MUST use this EXACT format - citations WITHOUT a CITATIONS block will be STRIPPED:
   
   ```
   "Research shows X [1] and Y [2]."
@@ -94,6 +94,11 @@ system: |-
   -->
   ```
   
+  **The CITATIONS block is MANDATORY.** Without it:
+  - All [1], [2], [3] markers will be automatically removed
+  - No clickable citations will appear in the document
+  - The user will see plain text without any citation links
+  
   **When EDITING existing content with citations:**
   - PRESERVE existing `[@paperId#instanceId]` markers in the text
   - Only ADD new [N] markers for NEW citations (with CITATIONS block)
@@ -101,7 +106,7 @@ system: |-
   
   **When DISCUSSING sources conversationally (no tool call):**
   {{#output.isNumericCitationStyle}}
-  - Use numbered format: "Study [1] found that..." or "As shown in [1]..."
+  - Use author-year format: "Smith et al. (2023) found that..." or "Lanteigne (2017) argues..."
   - Or title references: "The study 'Arctic Governance' discusses..."
   {{/output.isNumericCitationStyle}}
   {{^output.isNumericCitationStyle}}
@@ -113,7 +118,15 @@ system: |-
   The paper_id values (UUIDs) are INTERNAL for CITATIONS blocks ONLY.
   NEVER include "Paper ID:", raw UUIDs, or "Cited Source:" blocks in conversational responses.
   
-  ❌ **WRONG formats:**
+  ❌ **WRONG formats (citations will be STRIPPED):**
+  ```
+  "Claim [1]."
+  Cited Source: [1] Smith (2023)
+  ```
+  ```
+  "Claim [1]."
+  [1] Heidbrink (2022)
+  ```
   ```
   Cited Source:
   "Paper Title" (Author, Year): "quote"
@@ -126,19 +139,23 @@ system: |-
   "claim [@abc#123] [1]"  ← adding [1] where [@...] already exists
   ```
   
-  ✅ **CORRECT formats:**
-  {{#output.isNumericCitationStyle}}
-  "According to 'Paper Title' [1], the research found that..."
-  {{/output.isNumericCitationStyle}}
+  ✅ **CORRECT format (citations will become clickable):**
+  ```
+  "Claim supported by research [1]."
+  
+  <!-- CITATIONS
+  [1] paper_id: 9b3a0210-f79c-4b76-a675-2b3de888dd6b | quote: "Exact supporting sentence"
+  -->
+  ```
   {{^output.isNumericCitationStyle}}
-  "According to Lanteigne (2017), the research found that..."
+  For conversational responses: "According to Lanteigne (2017), the research found that..."
   {{/output.isNumericCitationStyle}}
   "Existing claim [@abc#123] remains supported."  ← preserving existing citation
   
   **Rules:**
   - PRESERVE existing `[@paperId#instanceId]` markers when editing
-  - Each NEW [N] marker must have a matching CITATIONS entry
-  - Get paper_ids ONLY from INTERNAL REFERENCE sections
+  - Each NEW [N] marker MUST have a matching entry in the CITATIONS block
+  - Get paper_ids ONLY from INTERNAL REFERENCE sections (look for `<!-- INTERNAL REFERENCE` comments)
   - Quote the EXACT supporting sentence from source
   - NEVER add a citation where one already exists (check for `[@...]`)
   - NEVER place same citation consecutively ([1] [1] is wrong)

@@ -315,29 +315,74 @@ function executeWithGhostMeta(
  * Also extracts citation instances with their quotes for saving to database
  * 
  * Each citation occurrence gets a unique instanceId for tracking the specific quote used.
+ * 
+ * STRICT MODE: If content has [N] markers but no CITATIONS block, markers are STRIPPED
+ * and a warning is logged. This prevents invalid plain-text citations from being inserted.
  */
 function convertNumberedCitations(content: string): { content: string; instances: ExtractedCitationInstance[] } {
+  // Check if content has numbered markers [1], [2], etc. (but not things like [E1], [M1])
+  const numberedMarkerPattern = /\[(\d+)\]/g
+  const numberedMarkers = content.match(numberedMarkerPattern)
+  const hasNumberedMarkers = numberedMarkers && numberedMarkers.length > 0
+  
   // Pattern to extract the CITATIONS block
   const citationsBlockPattern = /<!--\s*CITATIONS\s*([\s\S]*?)-->/i
   const blockMatch = content.match(citationsBlockPattern)
   
+  if (hasNumberedMarkers && !blockMatch) {
+    // STRICT: Content has [N] markers but NO CITATIONS block
+    // These markers are useless without paper ID mapping - strip them
+    const uniqueMarkers = [...new Set(numberedMarkers)]
+    console.warn('[ToolExecutor] ⚠️ CITATION FORMAT ERROR: Content has numbered markers but NO CITATIONS block!')
+    console.warn(`[ToolExecutor] Found markers: ${uniqueMarkers.join(', ')}`)
+    console.warn('[ToolExecutor] These markers will be STRIPPED. AI must include <!-- CITATIONS --> block.')
+    console.warn('[ToolExecutor] Expected format:')
+    console.warn('  "Claim [1] and finding [2]."')
+    console.warn('  <!-- CITATIONS')
+    console.warn('  [1] paper_id: uuid-here | quote: "exact quote"')
+    console.warn('  [2] paper_id: uuid-here | quote: "exact quote"')
+    console.warn('  -->')
+    
+    // Strip all numbered markers since we can't map them to papers
+    const stripped = content.replace(numberedMarkerPattern, '')
+    return { content: stripped, instances: [] }
+  }
+  
   if (!blockMatch) {
-    // No CITATIONS block, return as-is
-    console.log('[ToolExecutor] No CITATIONS block found in content')
+    // No numbered markers and no CITATIONS block - nothing to do
     return { content, instances: [] }
   }
   
   console.log('[ToolExecutor] Found CITATIONS block, parsing...')
   
+  // UUID format pattern for validation
+  const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  
   // Parse citation entries: [N] paper_id: xxx | quote: "yyy"
   const entryPattern = /\[(\d+)\]\s*paper_id:\s*([a-f0-9-]+)(?:\s*\|\s*quote:\s*"([^"]*)")?/gi
   const citationsMap = new Map<number, { paperId: string; quote?: string }>()
+  const invalidCitations: Array<{ index: number; paperId: string; reason: string }> = []
   
   for (const match of blockMatch[1].matchAll(entryPattern)) {
-    citationsMap.set(parseInt(match[1], 10), {
-      paperId: match[2],
-      quote: match[3] || undefined
-    })
+    const index = parseInt(match[1], 10)
+    const paperId = match[2]
+    const quote = match[3] || undefined
+    
+    // Validate UUID format
+    if (!UUID_PATTERN.test(paperId)) {
+      invalidCitations.push({ index, paperId, reason: 'malformed UUID format' })
+      continue
+    }
+    
+    citationsMap.set(index, { paperId, quote })
+  }
+  
+  // Log invalid citations
+  if (invalidCitations.length > 0) {
+    console.warn(`[ToolExecutor] ⚠️ Rejected ${invalidCitations.length} citation(s) with invalid paper_id format:`)
+    for (const { index, paperId, reason } of invalidCitations) {
+      console.warn(`  [${index}] paper_id: "${paperId}" - ${reason}`)
+    }
   }
   
   if (citationsMap.size === 0) {
@@ -345,7 +390,7 @@ function convertNumberedCitations(content: string): { content: string; instances
     return { content: content.replace(citationsBlockPattern, '').trim(), instances: [] }
   }
   
-  console.log(`[ToolExecutor] Parsed ${citationsMap.size} citations from block:`, 
+  console.log(`[ToolExecutor] Parsed ${citationsMap.size} valid citations from block:`, 
     Array.from(citationsMap.entries()).map(([i, c]) => `[${i}] -> ${c.paperId}`)
   )
   

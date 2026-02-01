@@ -261,8 +261,31 @@ export function getConfirmationLevel(toolName: string): ToolConfirmationLevel {
 // =============================================================================
 
 /**
+ * Check if content has numbered citation markers but no CITATIONS block.
+ * Returns a warning message if format is invalid, null otherwise.
+ */
+function checkCitationFormat(content: string): string | null {
+  // Check if content has numbered markers [1], [2], etc.
+  const numberedMarkerPattern = /\[(\d+)\]/g
+  const numberedMarkers = content.match(numberedMarkerPattern)
+  const hasNumberedMarkers = numberedMarkers && numberedMarkers.length > 0
+  
+  // Check for CITATIONS block
+  const hasCitationsBlock = /<!--\s*CITATIONS/i.test(content)
+  
+  if (hasNumberedMarkers && !hasCitationsBlock) {
+    const uniqueMarkers = [...new Set(numberedMarkers)]
+    return `Content has citation markers (${uniqueMarkers.join(', ')}) but NO CITATIONS block. ` +
+           `These will be STRIPPED. Include <!-- CITATIONS [1] paper_id: ... --> block.`
+  }
+  
+  return null
+}
+
+/**
  * Validate that a tool call has the required arguments.
  * Returns { valid: true } or { valid: false, error: string }
+ * Also logs warnings for citation format issues.
  */
 export function validateToolCall(
   toolName: string, 
@@ -279,6 +302,11 @@ export function validateToolCall(
       if (!args.content || typeof args.content !== 'string' || args.content.trim() === '') {
         return { valid: false, error: 'insertContent requires non-empty content' }
       }
+      // Check citation format
+      const insertCitationWarning = checkCitationFormat(args.content)
+      if (insertCitationWarning) {
+        console.warn(`[validateToolCall] ⚠️ insertContent: ${insertCitationWarning}`)
+      }
       break
       
     case 'replaceBlock':
@@ -288,6 +316,11 @@ export function validateToolCall(
       // Need at least one targeting method
       if (!args.blockId && !args.searchPhrase && !args.section) {
         return { valid: false, error: 'replaceBlock requires blockId, searchPhrase, or section' }
+      }
+      // Check citation format
+      const replaceCitationWarning = checkCitationFormat(args.newContent)
+      if (replaceCitationWarning) {
+        console.warn(`[validateToolCall] ⚠️ replaceBlock: ${replaceCitationWarning}`)
       }
       break
       
@@ -301,6 +334,11 @@ export function validateToolCall(
       if (!args.newContent || typeof args.newContent !== 'string') {
         return { valid: false, error: 'replaceInSection requires newContent' }
       }
+      // Check citation format
+      const replaceInSectionWarning = checkCitationFormat(args.newContent)
+      if (replaceInSectionWarning) {
+        console.warn(`[validateToolCall] ⚠️ replaceInSection: ${replaceInSectionWarning}`)
+      }
       break
       
     case 'rewriteSection':
@@ -309,6 +347,11 @@ export function validateToolCall(
       }
       if (!args.newContent || typeof args.newContent !== 'string') {
         return { valid: false, error: 'rewriteSection requires newContent' }
+      }
+      // Check citation format
+      const rewriteWarning = checkCitationFormat(args.newContent)
+      if (rewriteWarning) {
+        console.warn(`[validateToolCall] ⚠️ rewriteSection: ${rewriteWarning}`)
       }
       break
       
