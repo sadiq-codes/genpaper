@@ -2,8 +2,9 @@
 
 import type React from "react"
 
-import { useState, useCallback, useTransition } from "react"
+import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -72,18 +73,8 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
   const router = useRouter()
   const [_isPending, startTransition] = useTransition()
   const [isDeleting, setIsDeleting] = useState(false)
-  const [hasPrefetched, setHasPrefetched] = useState(false)
 
-  // Prefetch on hover for instant navigation
-  const handleMouseEnter = useCallback(() => {
-    if (hasPrefetched) return
-    
-    // Prefetch the route (Next.js will cache this)
-    router.prefetch(`/editor/${project.id}`)
-    
-    // Mark as prefetched to avoid redundant calls
-    setHasPrefetched(true)
-  }, [router, project.id, hasPrefetched])
+  const editorUrl = `/editor/${project.id}`
 
   const getPaperType = (): PaperTypeKey | undefined => {
     if (project.paper_type) return project.paper_type
@@ -101,13 +92,8 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
   const isOriginalResearch = hasOriginalResearch()
   const typeConfig = paperType ? paperTypeConfig[paperType] : null
 
-  const handleClick = () => {
-    // Navigation is instant due to prefetching + loading.tsx skeleton
-    router.push(`/editor/${project.id}`)
-  }
-
   const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation()
+    e.preventDefault()
     setIsDeleting(true)
     startTransition(async () => {
       const result = await deleteProjectAction(project.id)
@@ -119,7 +105,7 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
   }
 
   const handleViewDetails = (e: React.MouseEvent) => {
-    e.stopPropagation()
+    e.preventDefault()
     router.push(`/projects/${project.id}`)
   }
 
@@ -169,26 +155,28 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
   }
 
   return (
-    <Card
-      className={cn(
-        "group cursor-pointer transition-all duration-200",
-        "hover:shadow-md hover:border-primary/30",
-        "relative overflow-hidden",
-        isDeleting && "opacity-50 pointer-events-none",
-      )}
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
-      onFocus={handleMouseEnter}
+    <Link
+      href={editorUrl}
+      className="block"
+      prefetch={true}
     >
-      {/* Top accent bar on hover */}
-      <div className="absolute inset-x-0 top-0 h-0.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+      <Card
+        className={cn(
+          "group cursor-pointer transition-all duration-200",
+          "hover:shadow-md hover:border-primary/30",
+          "relative overflow-hidden",
+          isDeleting && "opacity-50 pointer-events-none",
+        )}
+      >
+        {/* Top accent bar on hover */}
+        <div className="absolute inset-x-0 top-0 h-0.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity" />
 
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <CardTitle className="text-base font-semibold line-clamp-2 leading-snug">{project.topic}</CardTitle>
 
           <DropdownMenu>
-            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+            <DropdownMenuTrigger asChild onClick={(e) => e.preventDefault()}>
               <Button
                 variant="ghost"
                 size="icon"
@@ -198,14 +186,11 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleClick()
-                }}
-              >
-                <PenLine className="h-4 w-4 mr-2" />
-                Open Editor
+              <DropdownMenuItem asChild>
+                <Link href={editorUrl}>
+                  <PenLine className="h-4 w-4 mr-2" />
+                  Open Editor
+                </Link>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleViewDetails}>
                 <ExternalLink className="h-4 w-4 mr-2" />
@@ -269,6 +254,7 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
           </Badge>
         </div>
       </CardContent>
-    </Card>
+      </Card>
+    </Link>
   )
 }
