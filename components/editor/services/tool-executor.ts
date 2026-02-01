@@ -214,41 +214,56 @@ export function executeDocumentTool(
   console.log(`[ToolExecutor] Executing ${toolName}`)
   console.log(`[ToolExecutor] Args:`, JSON.stringify(args, null, 2))
   
-  // Get papers context (from options or global fallback)
+  // Get context (from options or global fallback)
   const papers = options.papers || _globalPapersContext
+  const projectId = options.projectId || _globalProjectId
   
   try {
     // If we have a ghost edit ID, wrap execution to set the meta
     if (options.ghostEditId) {
       // Use a chain to ensure the meta is set on the same transaction
-      return executeWithGhostMeta(editor, toolName, args, options.ghostEditId, papers)
+      return executeWithGhostMeta(editor, toolName, args, options.ghostEditId, papers, projectId)
     }
     
-    switch (toolName) {
-      case 'insertContent':
-        return executeInsertContent(editor, args, papers)
-      case 'replaceBlock':
-        return executeReplaceBlock(editor, args, papers)
-      case 'replaceInSection':
-        return executeReplaceInSection(editor, args, papers)
-      case 'rewriteSection':
-        return executeRewriteSection(editor, args, papers)
-      case 'deleteContent':
-        return executeDeleteContent(editor, args)
-      case 'addCitation':
-        return executeAddCitation(editor, args)
-      case 'highlightText':
-        return executeHighlightText(editor, args)
-      case 'addComment':
-        return executeAddComment(editor, args)
-      default:
-        return { success: false, message: `Unknown tool: ${toolName}` }
-    }
+    return dispatchTool(editor, toolName, args, papers, projectId)
   } catch (error) {
     console.error(`[ToolExecutor] Error in ${toolName}:`, error)
     const message = error instanceof Error ? error.message : 'Unknown error'
     toast.error(`Edit failed: ${message}`)
     return { success: false, message }
+  }
+}
+
+/**
+ * Dispatch a tool call to the appropriate executor.
+ * Extracted to avoid code duplication between normal and ghost-meta paths.
+ */
+function dispatchTool(
+  editor: Editor,
+  toolName: string,
+  args: Record<string, unknown>,
+  papers: ProjectPaper[],
+  projectId?: string
+): ToolExecutionResult {
+  switch (toolName) {
+    case 'insertContent':
+      return executeInsertContent(editor, args, papers, projectId)
+    case 'replaceBlock':
+      return executeReplaceBlock(editor, args, papers, projectId)
+    case 'replaceInSection':
+      return executeReplaceInSection(editor, args, papers, projectId)
+    case 'rewriteSection':
+      return executeRewriteSection(editor, args, papers, projectId)
+    case 'deleteContent':
+      return executeDeleteContent(editor, args)
+    case 'addCitation':
+      return executeAddCitation(editor, args, projectId)
+    case 'highlightText':
+      return executeHighlightText(editor, args)
+    case 'addComment':
+      return executeAddComment(editor, args)
+    default:
+      return { success: false, message: `Unknown tool: ${toolName}` }
   }
 }
 
@@ -261,7 +276,8 @@ function executeWithGhostMeta(
   toolName: string,
   args: Record<string, unknown>,
   ghostEditId: string,
-  papers: ProjectPaper[] = []
+  papers: ProjectPaper[] = [],
+  projectId?: string
 ): ToolExecutionResult {
   // We need to intercept the transaction and add our meta
   // Use appendTransaction-style approach via editor.view.dispatch wrapper
@@ -277,34 +293,8 @@ function executeWithGhostMeta(
   }
   
   try {
-    switch (toolName) {
-      case 'insertContent':
-        result = executeInsertContent(editor, args, papers)
-        break
-      case 'replaceBlock':
-        result = executeReplaceBlock(editor, args, papers)
-        break
-      case 'replaceInSection':
-        result = executeReplaceInSection(editor, args, papers)
-        break
-      case 'rewriteSection':
-        result = executeRewriteSection(editor, args, papers)
-        break
-      case 'deleteContent':
-        result = executeDeleteContent(editor, args)
-        break
-      case 'addCitation':
-        result = executeAddCitation(editor, args)
-        break
-      case 'highlightText':
-        result = executeHighlightText(editor, args)
-        break
-      case 'addComment':
-        result = executeAddComment(editor, args)
-        break
-      default:
-        result = { success: false, message: `Unknown tool: ${toolName}` }
-    }
+    // Use shared dispatch function to avoid code duplication
+    result = dispatchTool(editor, toolName, args, papers, projectId)
   } finally {
     // Restore original dispatch
     editor.view.dispatch = originalDispatch
@@ -517,9 +507,9 @@ function executeInsertContent(
   }
   
   // Save citation instances to database (async, don't block)
-  // Use _globalProjectId like other tool functions do (projectId param is legacy)
-  if (_globalProjectId && instances.length > 0) {
-    saveCitationInstancesToDatabase(_globalProjectId, instances)
+  const effectiveProjectId = projectId || _globalProjectId
+  if (effectiveProjectId && instances.length > 0) {
+    saveCitationInstancesToDatabase(effectiveProjectId, instances)
   }
 
   // Priority 1: Insert after specific phrase (most precise)
@@ -529,10 +519,27 @@ function executeInsertContent(
     
     if (match.found) {
       const insertPos = findTipTapPosition(editor, match.endIndex)
+      
+      // Determine if we need a space before the content
+      // Don't add space if:
+      // - Content is markdown (TipTap handles spacing)
+      // - Previous char is whitespace
+      // - We're at start of document
+      let contentToInsert = content
+      if (!isMarkdown && typeof content === 'string') {
+        const charBefore = match.endIndex > 0 ? docText[match.endIndex - 1] : ''
+        const charAfter = match.endIndex < docText.length ? docText[match.endIndex] : ''
+        const needsSpaceBefore = charBefore && !/\s/.test(charBefore) && !/\s/.test(content[0] || '')
+        const needsSpaceAfter = charAfter && !/\s/.test(charAfter) && !/\s/.test(content[content.length - 1] || '')
+        
+        if (needsSpaceBefore) contentToInsert = ' ' + contentToInsert
+        if (needsSpaceAfter) contentToInsert = contentToInsert + ' '
+      }
+      
       editor.chain()
         .focus()
         .setTextSelection(insertPos)
-        .insertContent(isMarkdown ? content : ' ' + content)
+        .insertContent(contentToInsert)
         .run()
       toast.success('Content inserted after phrase')
       return { success: true, message: 'Inserted after phrase' }
@@ -626,7 +633,8 @@ function executeInsertContent(
 function executeReplaceBlock(
   editor: Editor,
   args: Record<string, unknown>,
-  papers: ProjectPaper[] = []
+  papers: ProjectPaper[] = [],
+  projectId?: string
 ): ToolExecutionResult {
   const blockId = args.blockId as string | undefined
   const section = args.section as string | undefined
@@ -678,9 +686,10 @@ function executeReplaceBlock(
       .insertContent(newContent)
       .run()
 
-    // Save citation instances (async, don't block) - projectId passed via global or options
-    if (instances.length > 0 && _globalProjectId) {
-      saveCitationInstancesToDatabase(_globalProjectId, instances)
+    // Save citation instances (async, don't block)
+    const effectiveProjectId = projectId || _globalProjectId
+    if (instances.length > 0 && effectiveProjectId) {
+      saveCitationInstancesToDatabase(effectiveProjectId, instances)
     }
 
     toast.success('Text replaced')
@@ -714,8 +723,9 @@ function executeReplaceBlock(
     .run()
   
   // Save citation instances (async, don't block)
-  if (instances.length > 0 && _globalProjectId) {
-    saveCitationInstancesToDatabase(_globalProjectId, instances)
+  const effectiveProjectId2 = projectId || _globalProjectId
+  if (instances.length > 0 && effectiveProjectId2) {
+    saveCitationInstancesToDatabase(effectiveProjectId2, instances)
   }
 
   const methodNote = target.method === 'blockId' ? ' (entire block)' : ` (found via ${target.method})`
@@ -736,7 +746,8 @@ function executeReplaceBlock(
 function executeReplaceInSection(
   editor: Editor,
   args: Record<string, unknown>,
-  papers: ProjectPaper[] = []
+  papers: ProjectPaper[] = [],
+  projectId?: string
 ): ToolExecutionResult {
   const section = args.section as string
   const searchPhrase = args.searchPhrase as string
@@ -771,8 +782,9 @@ function executeReplaceInSection(
     .run()
 
   // Save citation instances (async, don't block)
-  if (instances.length > 0 && _globalProjectId) {
-    saveCitationInstancesToDatabase(_globalProjectId, instances)
+  const effectiveProjectId = projectId || _globalProjectId
+  if (instances.length > 0 && effectiveProjectId) {
+    saveCitationInstancesToDatabase(effectiveProjectId, instances)
   }
 
   toast.success('Content replaced')
@@ -790,7 +802,8 @@ function executeReplaceInSection(
 function executeRewriteSection(
   editor: Editor,
   args: Record<string, unknown>,
-  papers: ProjectPaper[] = []
+  papers: ProjectPaper[] = [],
+  projectId?: string
 ): ToolExecutionResult {
   const sectionName = args.section as string
   const rawContent = args.newContent as string
@@ -829,8 +842,9 @@ function executeRewriteSection(
     .run()
 
   // Save citation instances (async, don't block)
-  if (instances.length > 0 && _globalProjectId) {
-    saveCitationInstancesToDatabase(_globalProjectId, instances)
+  const effectiveProjectId = projectId || _globalProjectId
+  if (instances.length > 0 && effectiveProjectId) {
+    saveCitationInstancesToDatabase(effectiveProjectId, instances)
   }
 
   toast.success(`Rewrote ${sectionName}`)
@@ -953,7 +967,8 @@ function executeDeleteContent(
  */
 function executeAddCitation(
   editor: Editor,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  projectId?: string
 ): ToolExecutionResult {
   const paperId = args.paperId as string
   const blockId = args.blockId as string | undefined
@@ -974,27 +989,51 @@ function executeAddCitation(
   }
 
   // Find the target location
-  const docText = editor.getText()
-  const match = blockId 
-    ? findInSection(docText, blockId, afterPhrase) // Use blockId as section scope
-    : fuzzyFindPhrase(docText, afterPhrase)
-
-  if (!match.found) {
-    const preview = afterPhrase.slice(0, 50)
-    toast.error(`Could not find text: "${preview}..."`)
-    return { success: false, message: `Could not find text: "${preview}..."` }
-  }
-
-  // Convert text position to document position
-  const insertPos = findTipTapPosition(editor, match.endIndex)
+  let insertPos: number
   
-  // Check if there's already a citation immediately after this position
-  // Look at the node at and after the insert position
+  if (blockId) {
+    // If blockId provided, search within that specific block
+    const block = findBlockById(editor, blockId)
+    if (!block) {
+      toast.error(`Block not found: ${blockId}`)
+      return { success: false, message: `Block not found: ${blockId}` }
+    }
+    
+    // Get text content of the block and search within it
+    const blockText = block.node.textContent
+    const phraseIndex = blockText.toLowerCase().indexOf(afterPhrase.toLowerCase())
+    
+    if (phraseIndex === -1) {
+      const preview = afterPhrase.slice(0, 50)
+      toast.error(`Could not find text in block: "${preview}..."`)
+      return { success: false, message: `Could not find text in block: "${preview}..."` }
+    }
+    
+    // Calculate position within the block
+    // block.pos is the start of the block, +1 for the opening tag
+    // Then add the phrase index + phrase length to get end position
+    insertPos = block.pos + 1 + phraseIndex + afterPhrase.length
+  } else {
+    // No blockId, search entire document
+    const docText = editor.getText()
+    const match = fuzzyFindPhrase(docText, afterPhrase)
+    
+    if (!match.found) {
+      const preview = afterPhrase.slice(0, 50)
+      toast.error(`Could not find text: "${preview}..."`)
+      return { success: false, message: `Could not find text: "${preview}..."` }
+    }
+    
+    insertPos = findTipTapPosition(editor, match.endIndex)
+  }
+  
+  // Check if there's already a citation near this position
+  // Scan a short range (up to 5 nodes) after the insertion point
   const resolvedPos = editor.state.doc.resolve(insertPos)
   const nodeAfter = resolvedPos.nodeAfter
   const nodeBefore = resolvedPos.nodeBefore
   
-  // Check if the next node is a citation (already has one)
+  // Check immediate neighbor nodes
   if (nodeAfter?.type.name === 'citation') {
     toast.warning('Citation already exists at this location')
     return { 
@@ -1003,13 +1042,40 @@ function executeAddCitation(
     }
   }
   
-  // Also check if we're inside or right after a citation
   if (nodeBefore?.type.name === 'citation') {
     toast.warning('Citation already exists before this text')
     return { 
       success: false, 
       message: 'Citation already exists before this text - skipping to prevent duplicate' 
     }
+  }
+  
+  // Scan a few nodes ahead (whitespace, punctuation, then citation)
+  // This catches cases like "claim. [citation]" where there's punctuation/space between
+  let scanPos = insertPos
+  const maxScanDistance = 10 // characters
+  const endScanPos = Math.min(insertPos + maxScanDistance, editor.state.doc.content.size)
+  
+  while (scanPos < endScanPos) {
+    const scanResolved = editor.state.doc.resolve(scanPos)
+    const scanNode = scanResolved.nodeAfter
+    
+    if (!scanNode) break
+    
+    if (scanNode.type.name === 'citation') {
+      toast.warning('Citation already exists shortly after this location')
+      return { 
+        success: false, 
+        message: 'Citation already exists shortly after this location - skipping to prevent duplicate' 
+      }
+    }
+    
+    // If we hit actual text content (not just whitespace/punctuation), stop scanning
+    if (scanNode.isText && scanNode.text && /[a-zA-Z0-9]/.test(scanNode.text)) {
+      break
+    }
+    
+    scanPos += scanNode.nodeSize
   }
 
   // Generate instanceId for this citation occurrence
@@ -1032,8 +1098,9 @@ function executeAddCitation(
   ]
   
   // Save citation instance to database (async, don't block)
-  if (_globalProjectId) {
-    saveCitationInstancesToDatabase(_globalProjectId, [{
+  const effectiveProjectId = projectId || _globalProjectId
+  if (effectiveProjectId) {
+    saveCitationInstancesToDatabase(effectiveProjectId, [{
       instanceId,
       paperId,
       quote: quote || '',
