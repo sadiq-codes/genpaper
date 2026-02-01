@@ -51,7 +51,7 @@ interface LibraryPaper {
 
 // Fetch library papers
 async function fetchLibraryPapers(): Promise<LibraryPaper[]> {
-  const response = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=200')
+  const response = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=100')
   if (!response.ok) throw new Error('Failed to load library')
   const data = await response.json()
   return data.papers || []
