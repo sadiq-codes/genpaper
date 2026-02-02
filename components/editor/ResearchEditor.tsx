@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils"
 import { processContent } from "./utils/content-processor"
 import { editorToMarkdown } from "./utils/tiptap-to-markdown"
 import { GenerationProgress } from "./GenerationProgress"
-import { setToolExecutorPapers, setToolExecutorProjectId } from "./services/tool-executor"
+import { setToolExecutorPapers, setToolExecutorProjectId, processFailedCitationQueue } from "./services/tool-executor"
 
 // Hooks
 import {
@@ -259,6 +259,11 @@ export function ResearchEditor({
       setToolExecutorProjectId(projectId)
     }
   }, [projectId])
+
+  // Process any failed citation saves from previous sessions
+  useEffect(() => {
+    processFailedCitationQueue()
+  }, [])
 
   // ============================================================================
   // Handlers

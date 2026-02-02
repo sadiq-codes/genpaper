@@ -507,16 +507,89 @@ async function saveCitationInstancesToDatabase(
   // All retries failed - queue for later or log
   console.error(`[ToolExecutor] Failed to save citation instances after ${maxRetries} attempts:`, lastError)
   
-  // Store failed instances in localStorage for potential recovery
+  // Store failed instances in localStorage for recovery on next page load
   try {
     const failedQueue = JSON.parse(localStorage.getItem('failedCitationInstances') || '[]')
     failedQueue.push({ projectId, instances, timestamp: Date.now() })
     // Keep only last 50 failed saves to prevent localStorage bloat
     if (failedQueue.length > 50) failedQueue.shift()
     localStorage.setItem('failedCitationInstances', JSON.stringify(failedQueue))
-    console.log('[ToolExecutor] Queued failed citation instances for later retry')
+    console.log('[ToolExecutor] Queued failed citation instances for recovery')
   } catch {
     // localStorage not available, silently fail
+  }
+}
+
+/**
+ * Process failed citation saves from localStorage queue.
+ * Called on editor mount to recover from previous failures.
+ * 
+ * - Retries each failed batch once
+ * - Removes successful or expired entries (>24h old)
+ * - Keeps failed entries for next attempt
+ */
+export async function processFailedCitationQueue(): Promise<void> {
+  if (typeof localStorage === 'undefined') return
+  
+  try {
+    const failedQueue = JSON.parse(localStorage.getItem('failedCitationInstances') || '[]') as Array<{
+      projectId: string
+      instances: ExtractedCitationInstance[]
+      timestamp: number
+    }>
+    
+    if (failedQueue.length === 0) return
+    
+    console.log(`[ToolExecutor] Processing ${failedQueue.length} failed citation batches from queue`)
+    
+    const now = Date.now()
+    const ONE_DAY = 24 * 60 * 60 * 1000
+    const remainingQueue: typeof failedQueue = []
+    
+    for (const entry of failedQueue) {
+      // Skip entries older than 24 hours - they're likely stale
+      if (now - entry.timestamp > ONE_DAY) {
+        console.log(`[ToolExecutor] Dropping expired citation batch (${Math.round((now - entry.timestamp) / 3600000)}h old)`)
+        continue
+      }
+      
+      // Attempt to save
+      try {
+        const response = await fetch('/api/citation-instances', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: entry.projectId,
+            instances: entry.instances.map(inst => ({
+              id: inst.instanceId,
+              paperId: inst.paperId,
+              quote: inst.quote,
+            }))
+          })
+        })
+        
+        if (response.ok) {
+          console.log(`[ToolExecutor] Successfully recovered ${entry.instances.length} citation instances`)
+        } else {
+          // Keep for next attempt
+          remainingQueue.push(entry)
+        }
+      } catch {
+        // Network error - keep for next attempt
+        remainingQueue.push(entry)
+      }
+    }
+    
+    // Update queue with remaining entries
+    if (remainingQueue.length > 0) {
+      localStorage.setItem('failedCitationInstances', JSON.stringify(remainingQueue))
+      console.log(`[ToolExecutor] ${remainingQueue.length} citation batches still pending recovery`)
+    } else {
+      localStorage.removeItem('failedCitationInstances')
+      console.log('[ToolExecutor] Citation recovery queue cleared')
+    }
+  } catch (error) {
+    console.warn('[ToolExecutor] Error processing citation recovery queue:', error)
   }
 }
 
