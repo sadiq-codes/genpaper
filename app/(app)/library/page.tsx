@@ -14,8 +14,7 @@ export default function LibraryPage() {
           <div className="space-y-1">
             <h2 className="text-2xl font-bold tracking-tight">Paper Library</h2>
             <p className="text-muted-foreground">
-              Manage your research papers. Uploaded PDFs are private to you. 
-              Papers found via search are available to all users.
+              All your research papers in one place - from uploads, searches, and projects.
             </p>
           </div>
 
