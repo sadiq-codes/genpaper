@@ -55,6 +55,12 @@ export interface AggregatedSearchOptions extends SearchOptions {
   recencyWeight?: number
   sources?: PaperSources
   // discipline is inherited from SearchOptions
+  
+  // Fast mode options for two-phase search
+  /** Skip LLM-based query rewrites (use original query only) */
+  skipQueryRewrites?: boolean
+  /** Skip semantic re-ranking (return BM25-ranked results only) */
+  skipSemanticRerank?: boolean
 }
 
 // ---------- Enhanced BM25 utilities with proper tf-idf calculation ----------
@@ -235,7 +241,9 @@ export async function parallelSearch(
     includePreprints = true,
     sources = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'], // All sources by default
     fastMode = false,
-    discipline
+    discipline,
+    skipQueryRewrites = false,
+    skipSemanticRerank = false
   } = options
   
   // Filter to only supported sources to prevent pubmed config mismatch
@@ -262,14 +270,22 @@ export async function parallelSearch(
   }
   
   // Generate embedding-based query rewrites (async) with discipline context
-  // Now uses ALL rewrites for multi-query parallel search
-  const expandedQueries = await generateQueryRewrites(query, 3, discipline)
+  // Skip query rewrites in fast mode for immediate results
+  let expandedQueries: string[]
+  if (skipQueryRewrites) {
+    expandedQueries = [query.trim()]
+    console.log(`⚡ Fast mode: Skipping query rewrites, using original query only`)
+  } else {
+    expandedQueries = await generateQueryRewrites(query, 3, discipline)
+  }
   const primaryQuery = expandedQueries[0]
   
-  console.log(`Starting multi-query parallel search`)
-  console.log(`Query rewrites (${expandedQueries.length}): ${expandedQueries.map((q, i) => `\n  ${i + 1}. "${q}"`).join('')}`)
+  console.log(`Starting ${skipQueryRewrites ? 'fast' : 'multi-query'} parallel search`)
+  if (!skipQueryRewrites) {
+    console.log(`Query rewrites (${expandedQueries.length}): ${expandedQueries.map((q, i) => `\n  ${i + 1}. "${q}"`).join('')}`)
+  }
   console.log(`Source priority order: ${sourcesByPriority.join(' → ')}`)
-  console.log(`Fast mode: ${fastMode ? 'ON' : 'OFF'}`)
+  console.log(`Fast mode: ${fastMode ? 'ON' : 'OFF'}, Skip rewrites: ${skipQueryRewrites}, Skip semantic: ${skipSemanticRerank}`)
   if (discipline) {
     console.log(`Discipline filter: ${discipline}`)
   }
@@ -396,7 +412,8 @@ export async function parallelSearch(
   
   // If we have enough papers after pre-filtering, use semantic re-ranking
   // This provides much better relevance than BM25 alone
-  if (papersToRank.length >= 3) {
+  // Skip semantic reranking in fast mode for immediate results
+  if (papersToRank.length >= 3 && !skipSemanticRerank) {
     try {
       // Prepare papers for semantic re-ranking
       const papersForRerank = papersToRank.map(p => ({
@@ -440,6 +457,8 @@ export async function parallelSearch(
       console.warn('Semantic re-ranking failed, falling back to BM25:', error)
       // Fall through to BM25 ranking
     }
+  } else if (skipSemanticRerank) {
+    console.log(`⚡ Fast mode: Skipping semantic re-ranking`)
   }
   
   // Fallback: BM25 ranking (for when semantic fails or too few papers)

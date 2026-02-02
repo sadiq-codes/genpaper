@@ -25,83 +25,91 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url)
     const projectFilter = url.searchParams.get('projectId') // Optional: filter by project
 
-    // Step 1: Get user's projects
-    const { data: userProjects, error: projectsError } = await supabase
-      .from('research_projects')
-      .select('id, topic')
-      .eq('user_id', user.id)
+    // OPTIMIZATION: Run all 3 queries in parallel (they're independent)
+    // We'll filter project_citations by projectIds after the queries complete
+    const [projectsResult, libraryResult, citationsResult] = await Promise.all([
+      // Step 1: Get user's projects
+      supabase
+        .from('research_projects')
+        .select('id, topic')
+        .eq('user_id', user.id),
+      
+      // Step 2: Get papers from library_papers
+      supabase
+        .from('library_papers')
+        .select(`
+          paper_id,
+          added_at,
+          notes,
+          papers:paper_id (
+            id,
+            title,
+            abstract,
+            authors,
+            publication_date,
+            venue,
+            doi,
+            pdf_url,
+            source,
+            citation_count,
+            processing_status,
+            owner_id
+          )
+        `)
+        .eq('user_id', user.id),
+      
+      // Step 3: Get ALL project_citations - we'll filter by user's projects in memory
+      // This is still efficient because project_citations are indexed by project_id
+      supabase
+        .from('project_citations')
+        .select(`
+          paper_id,
+          project_id,
+          created_at,
+          papers:paper_id (
+            id,
+            title,
+            abstract,
+            authors,
+            publication_date,
+            venue,
+            doi,
+            pdf_url,
+            source,
+            citation_count,
+            processing_status,
+            owner_id
+          )
+        `),
+    ])
 
-    if (projectsError) {
-      console.error('Failed to fetch projects:', projectsError)
+    // Handle errors
+    if (projectsResult.error) {
+      console.error('Failed to fetch projects:', projectsResult.error)
       return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 })
     }
-
-    const projectIds = userProjects?.map(p => p.id) || []
-    const projectMap = new Map(userProjects?.map(p => [p.id, p.topic]) || [])
-
-    // Step 2: Get papers from library_papers
-    const { data: libraryPapers, error: libraryError } = await supabase
-      .from('library_papers')
-      .select(`
-        paper_id,
-        added_at,
-        notes,
-        papers:paper_id (
-          id,
-          title,
-          abstract,
-          authors,
-          publication_date,
-          venue,
-          doi,
-          pdf_url,
-          source,
-          citation_count,
-          processing_status,
-          owner_id
-        )
-      `)
-      .eq('user_id', user.id)
-
-    if (libraryError) {
-      console.error('Failed to fetch library papers:', libraryError)
+    if (libraryResult.error) {
+      console.error('Failed to fetch library papers:', libraryResult.error)
       return NextResponse.json({ error: 'Failed to fetch library papers' }, { status: 500 })
     }
-
-    // Step 3: Get papers from project_citations
-    let projectCitationsQuery = supabase
-      .from('project_citations')
-      .select(`
-        paper_id,
-        project_id,
-        created_at,
-        papers:paper_id (
-          id,
-          title,
-          abstract,
-          authors,
-          publication_date,
-          venue,
-          doi,
-          pdf_url,
-          source,
-          citation_count,
-          processing_status,
-          owner_id
-        )
-      `)
-      .in('project_id', projectIds.length > 0 ? projectIds : ['no-projects'])
-
-    if (projectFilter) {
-      projectCitationsQuery = projectCitationsQuery.eq('project_id', projectFilter)
-    }
-
-    const { data: projectCitations, error: citationsError } = await projectCitationsQuery
-
-    if (citationsError) {
-      console.error('Failed to fetch project citations:', citationsError)
+    if (citationsResult.error) {
+      console.error('Failed to fetch project citations:', citationsResult.error)
       return NextResponse.json({ error: 'Failed to fetch project papers' }, { status: 500 })
     }
+
+    const userProjects = projectsResult.data || []
+    const libraryPapers = libraryResult.data || []
+    const allCitations = citationsResult.data || []
+
+    const projectIds = new Set(userProjects.map(p => p.id))
+    const projectMap = new Map(userProjects.map(p => [p.id, p.topic]))
+
+    // Filter citations to only user's projects (and optionally by projectFilter)
+    const projectCitations = allCitations.filter(c => {
+      if (!projectIds.has(c.project_id)) return false
+      if (projectFilter && c.project_id !== projectFilter) return false
+      return true
+    })
 
     // Step 4: Build unified paper map
     interface UnifiedPaper {

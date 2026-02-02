@@ -1,9 +1,8 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback, memo, startTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -36,7 +35,6 @@ import {
   Users,
   FileText,
   FolderOpen,
-  Star,
   Bookmark,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -118,9 +116,204 @@ function formatDate(dateString: string | null): string {
   }
 }
 
+// OPTIMIZATION: Hoist static skeleton JSX (rule: rendering-hoist-jsx)
+const paperListSkeleton = (
+  <div className="space-y-3">
+    {[0, 1, 2, 3, 4].map((i) => (
+      <Card key={i} className="p-4">
+        <div className="animate-pulse space-y-3">
+          <div className="h-5 bg-muted rounded w-3/4" />
+          <div className="h-4 bg-muted rounded w-1/2" />
+          <div className="flex gap-2">
+            <div className="h-6 bg-muted rounded w-20" />
+            <div className="h-6 bg-muted rounded w-16" />
+          </div>
+        </div>
+      </Card>
+    ))}
+  </div>
+)
+
+// OPTIMIZATION: Memoized PaperCard component (rule: rerender-memo)
+interface PaperCardProps {
+  paper: UnifiedPaper
+  onNavigate: (id: string) => void
+  onDelete: (paper: UnifiedPaper) => void
+  onBookmark: (id: string) => void
+  isBookmarking: boolean
+}
+
+const PaperCard = memo(function PaperCard({
+  paper,
+  onNavigate,
+  onDelete,
+  onBookmark,
+  isBookmarking,
+}: PaperCardProps) {
+  const handleClick = useCallback(() => {
+    onNavigate(paper.id)
+  }, [onNavigate, paper.id])
+
+  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    onDelete(paper)
+  }, [onDelete, paper])
+
+  const handleBookmarkClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    onBookmark(paper.id)
+  }, [onBookmark, paper.id])
+
+  const handleExternalClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (paper.doi) {
+      window.open(`https://doi.org/${paper.doi}`, '_blank')
+    }
+  }, [paper.doi])
+
+  return (
+    <Card 
+      className={cn(
+        "p-4 hover:shadow-md transition-shadow cursor-pointer",
+        // OPTIMIZATION: content-visibility for long lists (rule: rendering-content-visibility)
+        "[content-visibility:auto] [contain-intrinsic-size:0_120px]"
+      )}
+      onClick={handleClick}
+    >
+      <div className="flex items-start gap-4">
+        {/* Icon + Bookmark indicator */}
+        <div className="flex-shrink-0 mt-1 relative">
+          {paper.source === 'upload' ? (
+            <div className="p-2 rounded-lg bg-blue-500/10">
+              <FileText className="h-4 w-4 text-blue-500" />
+            </div>
+          ) : (
+            <div className="p-2 rounded-lg bg-green-500/10">
+              <Search className="h-4 w-4 text-green-500" />
+            </div>
+          )}
+          {paper.isBookmarked && (
+            <div className="absolute -top-1 -right-1 bg-amber-500 rounded-full p-0.5">
+              <Bookmark className="h-2.5 w-2.5 text-white fill-white" />
+            </div>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0 space-y-2">
+          <h3 className="font-medium leading-snug line-clamp-2">{paper.title}</h3>
+
+          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <span className="flex items-center gap-1 truncate">
+              <Users className="h-3.5 w-3.5 flex-shrink-0" />
+              {formatAuthors(paper.authors)}
+            </span>
+            {paper.publication_date && (
+              <span className="flex items-center gap-1 flex-shrink-0">
+                <Calendar className="h-3.5 w-3.5" />
+                {formatDate(paper.publication_date)}
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {paper.venue && (
+              <Badge variant="secondary" className="text-xs">
+                {paper.venue}
+              </Badge>
+            )}
+            <Badge variant="outline" className="text-xs">
+              {paper.source === 'upload' ? 'Uploaded' : 'Found'}
+            </Badge>
+            
+            {/* Projects using this paper */}
+            {paper.projects.length > 0 && (
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge 
+                      variant="outline" 
+                      className="text-xs bg-purple-500/10 text-purple-600 border-purple-500/20 cursor-help"
+                    >
+                      <FolderOpen className="h-3 w-3 mr-1" />
+                      {paper.projects.length} project{paper.projects.length !== 1 ? 's' : ''}
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <div className="text-xs">
+                      <p className="font-medium mb-1">Used in:</p>
+                      {paper.projects.slice(0, 3).map((proj) => (
+                        <p key={proj.id} className="truncate max-w-[200px]">• {proj.topic}</p>
+                      ))}
+                      {paper.projects.length > 3 && (
+                        <p className="text-muted-foreground">+{paper.projects.length - 3} more</p>
+                      )}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {/* Bookmark button */}
+          {!paper.isBookmarked && (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-amber-500"
+                    onClick={handleBookmarkClick}
+                    disabled={isBookmarking}
+                  >
+                    {isBookmarking ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Bookmark className="h-4 w-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Save to library</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          
+          {paper.doi && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={handleExternalClick}
+            >
+              <ExternalLink className="h-4 w-4" />
+            </Button>
+          )}
+          
+          {paper.isBookmarked && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+              onClick={handleDeleteClick}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  )
+})
+
 export function LibraryPage() {
   const router = useRouter()
   const queryClient = useQueryClient()
+  
+  // OPTIMIZATION: Could combine into single state object, but keeping separate for simplicity
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'added_at' | 'title' | 'year'>('added_at')
   const [filterSource, setFilterSource] = useState<'all' | 'upload' | 'search'>('all')
@@ -128,15 +321,17 @@ export function LibraryPage() {
   const [filterBookmarked, setFilterBookmarked] = useState<'all' | 'bookmarked' | 'not-bookmarked'>('all')
   const [paperToDelete, setPaperToDelete] = useState<UnifiedPaper | null>(null)
 
-  // Fetch all papers
+  // Fetch all papers with keepPreviousData for smooth filter transitions
   const { data, isLoading, error } = useQuery({
     queryKey: ['library', 'all-papers'],
     queryFn: () => fetchAllPapers(),
     staleTime: 2 * 60 * 1000,
+    placeholderData: keepPreviousData, // OPTIMIZATION: Smooth transitions
   })
 
-  const papers = data?.papers || []
-  const projects = data?.projects || []
+  // OPTIMIZATION: Memoize data extraction to prevent useMemo dependency changes
+  const papers = useMemo(() => data?.papers ?? [], [data?.papers])
+  const projects = useMemo(() => data?.projects ?? [], [data?.projects])
 
   // Delete mutation
   const deleteMutation = useMutation({
@@ -163,9 +358,35 @@ export function LibraryPage() {
     },
   })
 
+  // Sort comparator function
+  const getSortComparator = useCallback((sortKey: typeof sortBy) => {
+    return (a: UnifiedPaper, b: UnifiedPaper) => {
+      switch (sortKey) {
+        case 'title':
+          return a.title.localeCompare(b.title)
+        case 'year':
+          const yearA = a.publication_date ? new Date(a.publication_date).getTime() : 0
+          const yearB = b.publication_date ? new Date(b.publication_date).getTime() : 0
+          return yearB - yearA
+        case 'added_at':
+        default:
+          return new Date(b.firstAddedAt).getTime() - new Date(a.firstAddedAt).getTime()
+      }
+    }
+  }, [])
+
   // Filter and sort papers
   const filteredPapers = useMemo(() => {
-    let result = [...papers]
+    // OPTIMIZATION: Early return if no filters active (rule: js-early-exit)
+    const hasFilters = searchQuery.trim() || filterSource !== 'all' || 
+                       filterProject !== 'all' || filterBookmarked !== 'all'
+    
+    if (!hasFilters) {
+      // OPTIMIZATION: Use toSorted() for immutability (rule: js-tosorted-immutable)
+      return papers.toSorted(getSortComparator(sortBy))
+    }
+
+    let result = papers
 
     // Filter by search query
     if (searchQuery.trim()) {
@@ -200,25 +421,11 @@ export function LibraryPage() {
       result = result.filter((p) => !p.isBookmarked)
     }
 
-    // Sort
-    result.sort((a, b) => {
-      switch (sortBy) {
-        case 'title':
-          return a.title.localeCompare(b.title)
-        case 'year':
-          const yearA = a.publication_date ? new Date(a.publication_date).getTime() : 0
-          const yearB = b.publication_date ? new Date(b.publication_date).getTime() : 0
-          return yearB - yearA
-        case 'added_at':
-        default:
-          return new Date(b.firstAddedAt).getTime() - new Date(a.firstAddedAt).getTime()
-      }
-    })
+    // OPTIMIZATION: Use toSorted() for immutability (rule: js-tosorted-immutable)
+    return result.toSorted(getSortComparator(sortBy))
+  }, [papers, searchQuery, sortBy, filterSource, filterProject, filterBookmarked, getSortComparator])
 
-    return result
-  }, [papers, searchQuery, sortBy, filterSource, filterProject, filterBookmarked])
-
-  // Stats
+  // Stats - memoized
   const stats = useMemo(() => {
     const uploadCount = papers.filter((p) => p.source === 'upload').length
     const searchCount = papers.filter((p) => p.source !== 'upload').length
@@ -226,6 +433,50 @@ export function LibraryPage() {
     const projectCount = projects.length
     return { total: papers.length, uploaded: uploadCount, searched: searchCount, bookmarked: bookmarkedCount, projects: projectCount }
   }, [papers, projects])
+
+  // OPTIMIZATION: Stable callbacks for PaperCard (rule: rerender-functional-setstate)
+  const handleNavigate = useCallback((id: string) => {
+    router.push(`/library/${id}`)
+  }, [router])
+
+  const handleDelete = useCallback((paper: UnifiedPaper) => {
+    setPaperToDelete(paper)
+  }, [])
+
+  const handleBookmark = useCallback((paperId: string) => {
+    bookmarkMutation.mutate(paperId)
+  }, [bookmarkMutation])
+
+  // OPTIMIZATION: Use startTransition for non-urgent filter updates (rule: rerender-transitions)
+  const handleSearchChange = useCallback((value: string) => {
+    startTransition(() => {
+      setSearchQuery(value)
+    })
+  }, [])
+
+  const handleSourceChange = useCallback((value: typeof filterSource) => {
+    startTransition(() => {
+      setFilterSource(value)
+    })
+  }, [])
+
+  const handleProjectChange = useCallback((value: string) => {
+    startTransition(() => {
+      setFilterProject(value)
+    })
+  }, [])
+
+  const handleBookmarkedChange = useCallback((value: typeof filterBookmarked) => {
+    startTransition(() => {
+      setFilterBookmarked(value)
+    })
+  }, [])
+
+  const handleSortChange = useCallback((value: typeof sortBy) => {
+    startTransition(() => {
+      setSortBy(value)
+    })
+  }, [])
 
   if (error) {
     return (
@@ -302,12 +553,12 @@ export function LibraryPage() {
           <Input
             placeholder="Search papers by title, author, or venue..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-9 pr-9"
           />
           {searchQuery && (
             <button
-              onClick={() => setSearchQuery('')}
+              onClick={() => handleSearchChange('')}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               <X className="h-4 w-4" />
@@ -317,7 +568,7 @@ export function LibraryPage() {
 
         {/* Filter row */}
         <div className="flex flex-wrap gap-2">
-          <Select value={filterSource} onValueChange={(v) => setFilterSource(v as typeof filterSource)}>
+          <Select value={filterSource} onValueChange={handleSourceChange}>
             <SelectTrigger className="w-32">
               <SelectValue placeholder="Source" />
             </SelectTrigger>
@@ -328,7 +579,7 @@ export function LibraryPage() {
             </SelectContent>
           </Select>
 
-          <Select value={filterProject} onValueChange={setFilterProject}>
+          <Select value={filterProject} onValueChange={handleProjectChange}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Project" />
             </SelectTrigger>
@@ -343,7 +594,7 @@ export function LibraryPage() {
             </SelectContent>
           </Select>
 
-          <Select value={filterBookmarked} onValueChange={(v) => setFilterBookmarked(v as typeof filterBookmarked)}>
+          <Select value={filterBookmarked} onValueChange={handleBookmarkedChange}>
             <SelectTrigger className="w-36">
               <SelectValue placeholder="Bookmarked" />
             </SelectTrigger>
@@ -354,7 +605,7 @@ export function LibraryPage() {
             </SelectContent>
           </Select>
 
-          <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+          <Select value={sortBy} onValueChange={handleSortChange}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
@@ -369,20 +620,7 @@ export function LibraryPage() {
 
       {/* Papers List */}
       {isLoading ? (
-        <div className="space-y-3">
-          {[...Array(5)].map((_, i) => (
-            <Card key={i} className="p-4">
-              <div className="animate-pulse space-y-3">
-                <div className="h-5 bg-muted rounded w-3/4" />
-                <div className="h-4 bg-muted rounded w-1/2" />
-                <div className="flex gap-2">
-                  <div className="h-6 bg-muted rounded w-20" />
-                  <div className="h-6 bg-muted rounded w-16" />
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
+        paperListSkeleton
       ) : filteredPapers.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="rounded-full bg-muted p-4 mb-4">
@@ -405,146 +643,14 @@ export function LibraryPage() {
         <ScrollArea className="h-[calc(100vh-480px)] min-h-[300px]">
           <div className="space-y-3 pr-4">
             {filteredPapers.map((paper) => (
-              <Card 
-                key={paper.id} 
-                className="p-4 hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => router.push(`/library/${paper.id}`)}
-              >
-                <div className="flex items-start gap-4">
-                  {/* Icon + Bookmark indicator */}
-                  <div className="flex-shrink-0 mt-1 relative">
-                    {paper.source === 'upload' ? (
-                      <div className="p-2 rounded-lg bg-blue-500/10">
-                        <FileText className="h-4 w-4 text-blue-500" />
-                      </div>
-                    ) : (
-                      <div className="p-2 rounded-lg bg-green-500/10">
-                        <Search className="h-4 w-4 text-green-500" />
-                      </div>
-                    )}
-                    {paper.isBookmarked && (
-                      <div className="absolute -top-1 -right-1 bg-amber-500 rounded-full p-0.5">
-                        <Bookmark className="h-2.5 w-2.5 text-white fill-white" />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <h3 className="font-medium leading-snug line-clamp-2">{paper.title}</h3>
-
-                    <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1 truncate">
-                        <Users className="h-3.5 w-3.5 flex-shrink-0" />
-                        {formatAuthors(paper.authors)}
-                      </span>
-                      {paper.publication_date && (
-                        <span className="flex items-center gap-1 flex-shrink-0">
-                          <Calendar className="h-3.5 w-3.5" />
-                          {formatDate(paper.publication_date)}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      {paper.venue && (
-                        <Badge variant="secondary" className="text-xs">
-                          {paper.venue}
-                        </Badge>
-                      )}
-                      <Badge variant="outline" className="text-xs">
-                        {paper.source === 'upload' ? 'Uploaded' : 'Found'}
-                      </Badge>
-                      
-                      {/* Projects using this paper */}
-                      {paper.projects.length > 0 && (
-                        <TooltipProvider delayDuration={300}>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Badge 
-                                variant="outline" 
-                                className="text-xs bg-purple-500/10 text-purple-600 border-purple-500/20 cursor-help"
-                              >
-                                <FolderOpen className="h-3 w-3 mr-1" />
-                                {paper.projects.length} project{paper.projects.length !== 1 ? 's' : ''}
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="text-xs">
-                                <p className="font-medium mb-1">Used in:</p>
-                                {paper.projects.slice(0, 3).map((proj) => (
-                                  <p key={proj.id} className="truncate max-w-[200px]">• {proj.topic}</p>
-                                ))}
-                                {paper.projects.length > 3 && (
-                                  <p className="text-muted-foreground">+{paper.projects.length - 3} more</p>
-                                )}
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    {/* Bookmark button */}
-                    {!paper.isBookmarked && (
-                      <TooltipProvider delayDuration={300}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-amber-500"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                bookmarkMutation.mutate(paper.id)
-                              }}
-                              disabled={bookmarkMutation.isPending}
-                            >
-                              {bookmarkMutation.isPending ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Bookmark className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Save to library</TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
-                    
-                    {paper.doi && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          window.open(`https://doi.org/${paper.doi}`, '_blank')
-                        }}
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                      </Button>
-                    )}
-                    
-                    {paper.isBookmarked && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setPaperToDelete(paper)
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </Card>
+              <PaperCard
+                key={paper.id}
+                paper={paper}
+                onNavigate={handleNavigate}
+                onDelete={handleDelete}
+                onBookmark={handleBookmark}
+                isBookmarking={bookmarkMutation.isPending}
+              />
             ))}
           </div>
         </ScrollArea>

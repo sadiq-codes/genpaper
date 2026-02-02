@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, memo } from 'react'
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useState, useEffect, useCallback, useMemo, memo, useRef, startTransition } from 'react'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { 
   Search, 
   BookOpen, 
@@ -15,7 +15,8 @@ import {
   Check,
   Library,
   FileText,
-  ChevronDown
+  ChevronDown,
+  Loader2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -54,9 +55,19 @@ interface SearchResult {
 
 type SearchMode = 'library' | 'online'
 
+const LIBRARY_PAGE_SIZE = 25
+
 // API fetchers
-async function fetchLibraryPapers(): Promise<SearchResult[]> {
-  const response = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=100')
+async function fetchLibraryPapers({ 
+  offset = 0, 
+  limit = LIBRARY_PAGE_SIZE 
+}: { 
+  offset?: number
+  limit?: number 
+} = {}): Promise<SearchResult[]> {
+  const response = await fetch(
+    `/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=${limit}&offset=${offset}`
+  )
   if (!response.ok) throw new Error('Failed to load library')
   
   const data = await response.json()
@@ -75,8 +86,12 @@ async function fetchLibraryPapers(): Promise<SearchResult[]> {
   }))
 }
 
-async function searchPapersOnline(query: string): Promise<SearchResult[]> {
-  const response = await fetch('/api/library-search', {
+// Fast search (Phase 1) - BM25 only, skips LLM and embeddings
+async function searchPapersFast(
+  query: string, 
+  signal?: AbortSignal
+): Promise<{ papers: SearchResult[], phase: 'fast' }> {
+  const response = await fetch('/api/library-search/fast', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -85,13 +100,67 @@ async function searchPapersOnline(query: string): Promise<SearchResult[]> {
         maxResults: 25,
         sources: ['openalex', 'crossref', 'semantic_scholar']
       }
-    })
+    }),
+    signal,
   })
 
   if (!response.ok) throw new Error('Search failed')
   
   const data = await response.json()
   if (!data.success) throw new Error('Search failed')
+  
+  return {
+    papers: data.papers.map((paper: any) => ({
+      id: paper.canonical_id,
+      title: paper.title,
+      authors: paper.authors || [],
+      year: paper.year,
+      journal: paper.venue,
+      abstract: paper.abstract,
+      doi: paper.doi,
+      url: paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : undefined),
+      citationCount: paper.citationCount,
+      relevanceScore: paper.bm25Score,
+      source: paper.source,
+      type: 'search' as const
+    })),
+    phase: 'fast'
+  }
+}
+
+// Semantic rerank (Phase 2) - Reorders results using embeddings
+async function rerankPapers(
+  query: string,
+  papers: SearchResult[],
+  signal?: AbortSignal
+): Promise<SearchResult[]> {
+  if (papers.length === 0) return papers
+  
+  const response = await fetch('/api/library-search/rerank', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query,
+      papers: papers.map(p => ({
+        canonical_id: p.id,
+        title: p.title,
+        abstract: p.abstract,
+        authors: p.authors,
+        year: p.year,
+        venue: p.journal,
+        doi: p.doi,
+        url: p.url,
+        citationCount: p.citationCount,
+        source: p.source
+      }))
+    }),
+    signal,
+  })
+
+  if (!response.ok) throw new Error('Rerank failed')
+  
+  const data = await response.json()
+  if (!data.success) throw new Error('Rerank failed')
   
   return data.papers.map((paper: any) => ({
     id: paper.canonical_id,
@@ -103,7 +172,7 @@ async function searchPapersOnline(query: string): Promise<SearchResult[]> {
     doi: paper.doi,
     url: paper.url || (paper.doi ? `https://doi.org/${paper.doi}` : undefined),
     citationCount: paper.citationCount,
-    relevanceScore: paper.relevanceScore,
+    relevanceScore: paper.semanticScore,
     source: paper.source,
     type: 'search' as const
   }))
@@ -158,29 +227,74 @@ export default function LibraryDrawer({
   const [expandedAbstract, setExpandedAbstract] = useState<string | null>(null)
   const [addedPapers, setAddedPapers] = useState<Set<string>>(new Set())
   const [savedToLibraryPapers, setSavedToLibraryPapers] = useState<Set<string>>(new Set())
+  const [isTyping, setIsTyping] = useState(false)
+  
+  // Ref for infinite scroll sentinel
+  const loadMoreRef = useRef<HTMLDivElement>(null)
 
-  // Fetch library papers with React Query - cached across drawer opens
-  const { 
-    data: libraryPapers = [], 
-    isLoading: isLoadingLibrary 
-  } = useQuery({
+  // Fetch library papers with infinite query for pagination
+  const {
+    data: libraryData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading: isLoadingLibrary,
+  } = useInfiniteQuery({
     queryKey: ['library', 'papers'],
-    queryFn: fetchLibraryPapers,
+    queryFn: ({ pageParam = 0 }) => fetchLibraryPapers({ offset: pageParam, limit: LIBRARY_PAGE_SIZE }),
+    getNextPageParam: (lastPage, allPages) => 
+      lastPage.length === LIBRARY_PAGE_SIZE ? allPages.length * LIBRARY_PAGE_SIZE : undefined,
+    initialPageParam: 0,
     enabled: isOpen,
     staleTime: 5 * 60 * 1000,
   })
 
-  // Online search with React Query
+  // Flatten paginated library results
+  const libraryPapers = useMemo(
+    () => libraryData?.pages.flat() ?? [],
+    [libraryData]
+  )
+
+  // Phase 1: Fast BM25 search - returns results quickly
   const { 
-    data: onlineResults = [], 
-    isFetching: isSearchingOnline
+    data: fastSearchData,
+    isFetching: isFetchingFast
   } = useQuery({
-    queryKey: ['papers', 'search', debouncedQuery],
-    queryFn: () => searchPapersOnline(debouncedQuery),
+    queryKey: ['papers', 'search', 'fast', debouncedQuery],
+    queryFn: async ({ signal }) => {
+      const result = await searchPapersFast(debouncedQuery, signal)
+      return result.papers
+    },
     enabled: isOpen && searchMode === 'online' && debouncedQuery.length >= 3,
     staleTime: 2 * 60 * 1000,
     placeholderData: keepPreviousData,
   })
+
+  // Create a stable key from fast result IDs to trigger rerank when results change
+  const fastResultIds = useMemo(
+    () => fastSearchData?.map(p => p.id).join(',') ?? '',
+    [fastSearchData]
+  )
+
+  // Phase 2: Background semantic rerank - runs after fast results arrive
+  // Query key includes fastResultIds so rerank re-runs when fast results change
+  const { 
+    data: rerankedData,
+    isFetching: isReranking
+  } = useQuery({
+    queryKey: ['papers', 'search', 'rerank', debouncedQuery, fastResultIds],
+    queryFn: async ({ signal }) => {
+      if (!fastSearchData || fastSearchData.length === 0) return null
+      const reranked = await rerankPapers(debouncedQuery, fastSearchData, signal)
+      return reranked
+    },
+    enabled: isOpen && searchMode === 'online' && debouncedQuery.length >= 3 && !!fastSearchData && fastSearchData.length > 0,
+    staleTime: 5 * 60 * 1000, // Reranked results can be cached longer
+  })
+
+  // Use reranked results if available, otherwise use fast results
+  const onlineResults = rerankedData ?? fastSearchData ?? []
+  const isSearchingOnline = isFetchingFast
 
   // Mutation for adding papers to library
   const addToLibraryMutation = useMutation({
@@ -190,16 +304,26 @@ export default function LibraryDrawer({
     }
   })
 
-  // Debounce search query
+  // Debounce search query with reduced delay and typing indicator
   useEffect(() => {
     if (searchMode === 'online' && query.trim().length < 3) {
       setDebouncedQuery('')
+      setIsTyping(false)
       return
     }
     
+    // Show typing indicator immediately for online search
+    if (searchMode === 'online' && query.trim().length >= 3) {
+      setIsTyping(true)
+    }
+    
     const timer = setTimeout(() => {
-      setDebouncedQuery(query)
-    }, searchMode === 'online' ? 800 : 150)
+      // Use startTransition for non-urgent search updates
+      startTransition(() => {
+        setDebouncedQuery(query)
+        setIsTyping(false)
+      })
+    }, searchMode === 'online' ? 500 : 150) // Reduced from 800ms to 500ms
     
     return () => clearTimeout(timer)
   }, [query, searchMode])
@@ -209,6 +333,7 @@ export default function LibraryDrawer({
     if (isOpen) {
       setAddedPapers(new Set())
       setSavedToLibraryPapers(new Set())
+      setIsTyping(false)
       if (initialQuery) {
         setQuery(initialQuery)
         if (initialQuery.trim()) {
@@ -229,7 +354,33 @@ export default function LibraryDrawer({
     }
   }, [isOpen])
 
-  // Filter library papers locally (instant)
+  // Infinite scroll observer for library mode
+  useEffect(() => {
+    if (!isOpen || searchMode !== 'library') return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage()
+        }
+      },
+      { threshold: 0.1 }
+    )
+    
+    const currentRef = loadMoreRef.current
+    if (currentRef) {
+      observer.observe(currentRef)
+    }
+    
+    return () => {
+      if (currentRef) {
+        observer.unobserve(currentRef)
+      }
+      observer.disconnect()
+    }
+  }, [isOpen, searchMode, hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  // Filter library papers locally (instant) - only for library mode
   const filteredLibraryPapers = useMemo(() => {
     if (!query.trim()) return libraryPapers
     
@@ -242,20 +393,27 @@ export default function LibraryDrawer({
     )
   }, [libraryPapers, query])
 
+  // Memoize libraryIds Set separately for O(1) lookups
+  // This prevents recreating the Set when only onlineResults changes
+  const libraryIdsSet = useMemo(
+    () => new Set(libraryPapers.map(p => p.id)),
+    [libraryPapers]
+  )
+
   // Mark online results that are already in library
   const enrichedOnlineResults = useMemo(() => {
-    const libraryIds = new Set(libraryPapers.map(p => p.id))
     return onlineResults.map(paper => ({
       ...paper,
-      type: libraryIds.has(paper.id) ? 'library' as const : 'search' as const
+      type: libraryIdsSet.has(paper.id) ? 'library' as const : 'search' as const
     }))
-  }, [onlineResults, libraryPapers])
+  }, [onlineResults, libraryIdsSet])
 
   // Determine which results to show
   const results = searchMode === 'library' ? filteredLibraryPapers : enrichedOnlineResults
-  const isSearching = searchMode === 'online' && isSearchingOnline
+  const isSearching = searchMode === 'online' && (isSearchingOnline || isTyping)
 
   // Add paper to project - OPTIMISTIC UPDATE
+  // Stable callback that takes paper as argument
   const handleAddToProject = useCallback(async (paper: SearchResult) => {
     if (!currentProjectId || addedPapers.has(paper.id)) return
 
@@ -279,6 +437,7 @@ export default function LibraryDrawer({
   }, [currentProjectId, onAddToProject, addedPapers, addToLibraryMutation])
 
   // Save paper to library only - OPTIMISTIC UPDATE
+  // Stable callback that takes paper as argument
   const handleSaveToLibrary = useCallback(async (paper: SearchResult) => {
     if (savedToLibraryPapers.has(paper.id) || paper.type === 'library') return
 
@@ -299,6 +458,7 @@ export default function LibraryDrawer({
   }, [savedToLibraryPapers, addToLibraryMutation])
 
   // Select paper for new project creation - OPTIMISTIC UPDATE
+  // Stable callback that takes paper as argument
   const handleSelectForProject = useCallback(async (paper: SearchResult) => {
     if (!onSelectForProject) return
     
@@ -347,7 +507,7 @@ export default function LibraryDrawer({
       
       {/* Drawer */}
       <div 
-        className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l shadow-lg animate-in slide-in-from-right duration-300 flex flex-col overscroll-contain"
+        className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l shadow-lg animate-in slide-in-from-right duration-300 flex flex-col overflow-hidden"
         role="dialog"
         aria-label="Paper library"
       >
@@ -422,17 +582,31 @@ export default function LibraryDrawer({
                 aria-label={searchMode === 'library' ? "Filter papers" : "Search papers"}
               />
             </div>
-            {/* Subtle searching indicator when we have results */}
-            {isSearching && results.length > 0 && (
+            {/* Searching/Typing indicator */}
+            {isTyping && (
+              <p className="text-[11px] text-muted-foreground mt-2 text-center flex items-center justify-center gap-1.5" aria-live="polite">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                Searching…
+              </p>
+            )}
+            {/* Subtle updating indicator when we have results */}
+            {isSearchingOnline && !isTyping && results.length > 0 && (
               <p className="text-[11px] text-muted-foreground mt-2 text-center" aria-live="polite">
                 Updating results…
+              </p>
+            )}
+            {/* Reranking indicator - shows when fast results displayed, semantic rerank in progress */}
+            {isReranking && !isSearchingOnline && results.length > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-2 text-center flex items-center justify-center gap-1.5" aria-live="polite">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                Improving results…
               </p>
             )}
           </div>
         </div>
 
-        {/* Results */}
-        <ScrollArea className="flex-1 overscroll-contain">
+        {/* Results - min-h-0 allows flex child to shrink below content size */}
+        <ScrollArea className="flex-1 min-h-0 overscroll-contain">
           <div className="p-4 space-y-3">
             {/* Skeleton Loading */}
             {showSkeletons && (
@@ -500,9 +674,9 @@ export default function LibraryDrawer({
                   <PaperCard
                     key={paper.id}
                     paper={paper}
-                    onAdd={() => handleAddToProject(paper)}
-                    onSaveToLibrary={() => handleSaveToLibrary(paper)}
-                    onSelectForProject={() => handleSelectForProject(paper)}
+                    onAdd={handleAddToProject}
+                    onSaveToLibrary={handleSaveToLibrary}
+                    onSelectForProject={handleSelectForProject}
                     isAdded={addedPapers.has(paper.id)}
                     isSavedToLibrary={savedToLibraryPapers.has(paper.id) || paper.type === 'library'}
                     isSelectedForProject={selectedPaperIds.includes(paper.id)}
@@ -515,6 +689,18 @@ export default function LibraryDrawer({
                     )}
                   />
                 ))}
+                
+                {/* Infinite scroll sentinel for library mode */}
+                {searchMode === 'library' && (
+                  <div ref={loadMoreRef} className="h-10 flex items-center justify-center">
+                    {isFetchingNextPage && (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading more papers" />
+                    )}
+                    {!hasNextPage && libraryPapers.length > LIBRARY_PAGE_SIZE && (
+                      <p className="text-[11px] text-muted-foreground">All papers loaded</p>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -525,6 +711,7 @@ export default function LibraryDrawer({
           <div className="flex-none px-5 py-3 border-t text-center">
             <p className="text-[11px] text-muted-foreground">
               {results.length} {results.length === 1 ? 'paper' : 'papers'}
+              {searchMode === 'library' && hasNextPage && ' (scroll for more)'}
             </p>
           </div>
         )}
@@ -540,7 +727,7 @@ function EmptyState({
   description, 
   action 
 }: { 
-  icon: any
+  icon: React.ComponentType<{ className?: string }>
   title: string
   description: string
   action?: React.ReactNode
@@ -557,12 +744,12 @@ function EmptyState({
   )
 }
 
-// Paper Card Component - simplified, no loading spinners
+// Paper Card Component - optimized with proper callback memoization
 interface PaperCardProps {
   paper: SearchResult
-  onAdd: () => void
-  onSaveToLibrary?: () => void
-  onSelectForProject?: () => void
+  onAdd: (paper: SearchResult) => void
+  onSaveToLibrary: (paper: SearchResult) => void
+  onSelectForProject: (paper: SearchResult) => void
   isAdded: boolean
   isSavedToLibrary: boolean
   isSelectedForProject: boolean
@@ -593,6 +780,19 @@ const PaperCard = memo(function PaperCard({
     return `${paper.authors[0]} et al.`
   }, [paper.authors])
 
+  // Memoized click handlers that call parent with paper
+  const handleAddClick = useCallback(() => {
+    onAdd(paper)
+  }, [onAdd, paper])
+
+  const handleSaveClick = useCallback(() => {
+    onSaveToLibrary(paper)
+  }, [onSaveToLibrary, paper])
+
+  const handleSelectClick = useCallback(() => {
+    onSelectForProject(paper)
+  }, [onSelectForProject, paper])
+
   // Handle keyboard activation for title
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -602,10 +802,16 @@ const PaperCard = memo(function PaperCard({
   }, [onToggleExpand])
 
   return (
-    <div className={cn(
-      "rounded-lg border bg-card p-4 transition-colors",
-      isAdded && "border-primary/40 bg-primary/5"
-    )}>
+    <div 
+      className={cn(
+        // Base styles
+        "rounded-lg border bg-card p-4 transition-colors",
+        // content-visibility for rendering optimization (off-screen cards skip layout/paint)
+        "[content-visibility:auto] [contain-intrinsic-size:0_140px]",
+        // Added state
+        isAdded && "border-primary/40 bg-primary/5"
+      )}
+    >
       {/* Header Row */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
@@ -698,7 +904,7 @@ const PaperCard = memo(function PaperCard({
           <Button
             size="sm"
             variant={isAdded ? "secondary" : "default"}
-            onClick={onAdd}
+            onClick={handleAddClick}
             disabled={isAdded}
             className="h-7 px-3 text-xs"
           >
@@ -715,7 +921,7 @@ const PaperCard = memo(function PaperCard({
           <Button
             size="sm"
             variant={isSavedToLibrary ? "secondary" : "default"}
-            onClick={onSaveToLibrary}
+            onClick={handleSaveClick}
             disabled={isSavedToLibrary}
             className="h-7 px-3 text-xs"
           >
@@ -732,7 +938,7 @@ const PaperCard = memo(function PaperCard({
           <Button
             size="sm"
             variant={isSelectedForProject ? "secondary" : "default"}
-            onClick={onSelectForProject}
+            onClick={handleSelectClick}
             disabled={isSelectedForProject}
             className="h-7 px-3 text-xs"
           >

@@ -173,10 +173,15 @@ export async function generatePaper(
     }
   }
   
-  // Check for cancellation at pipeline start
-  if (signal?.aborted) {
-    throw new CancellationError('Pipeline cancelled before start')
+  // Helper to check for cancellation at key checkpoints
+  const checkCancellation = (stage: string) => {
+    if (signal?.aborted) {
+      throw new CancellationError(`Pipeline cancelled during ${stage}`)
+    }
   }
+  
+  // Check for cancellation at pipeline start
+  checkCancellation('initialization')
   
   onProgress?.('initialization', 0, 'Starting paper generation pipeline...')
   
@@ -324,6 +329,9 @@ export async function generatePaper(
 
     const allPapers = await collectPapers(discoveryOptions)
     
+    // Check cancellation after paper discovery
+    checkCancellation('paper discovery')
+    
     if (allPapers.length === 0) {
       throw new Error('No papers found for the given topic')
     }
@@ -436,6 +444,9 @@ export async function generatePaper(
       })
     }
 
+    // Check cancellation after theme extraction
+    checkCancellation('theme extraction')
+
     // Continue planning: Generate Outline (now with theme-informed profile)
     const outlineStartTime = Date.now()
     
@@ -520,6 +531,9 @@ export async function generatePaper(
       avgChunksPerSection: totalChunks / sectionContexts.length
     })
 
+    // Check cancellation before content generation (the longest phase)
+    checkCancellation('context building')
+
     // Generate Content
     const generationStartTime = Date.now()
     
@@ -601,6 +615,9 @@ export async function generatePaper(
     const overlapRatios: number[] = []
     
     for (let i = 0; i < results.length; i++) {
+      // Check cancellation at each section in quality loop
+      checkCancellation(`quality check for section ${i + 1}`)
+      
       const sectionQualityStart = Date.now()
       let result = results[i]
       const sectionContext = sectionContexts[i]

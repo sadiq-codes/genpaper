@@ -34,7 +34,7 @@ async function PaperDetail({ paperId }: { paperId: string }) {
     notFound()
   }
 
-  // Fetch paper details
+  // Fetch paper details first (needed for auth check)
   const { data: paper, error: paperError } = await supabase
     .from('papers')
     .select(`
@@ -65,28 +65,41 @@ async function PaperDetail({ paperId }: { paperId: string }) {
     notFound() // User doesn't have access to this private paper
   }
 
-  // Check if paper is in user's library
-  const { data: libraryEntry } = await supabase
-    .from('library_papers')
-    .select('id, notes, added_at')
-    .eq('user_id', user.id)
-    .eq('paper_id', paperId)
-    .single()
-
-  // Get projects that cite this paper
-  const { data: projectCitationsRaw } = await supabase
-    .from('project_citations')
-    .select(`
-      id,
-      reason,
-      created_at,
-      research_projects:project_id (
+  // OPTIMIZATION: Run these 3 queries in parallel (they're independent)
+  const [libraryEntryResult, projectCitationsResult, chunkCountResult] = await Promise.all([
+    // Check if paper is in user's library
+    supabase
+      .from('library_papers')
+      .select('id, notes, added_at')
+      .eq('user_id', user.id)
+      .eq('paper_id', paperId)
+      .single(),
+    
+    // Get projects that cite this paper
+    supabase
+      .from('project_citations')
+      .select(`
         id,
-        topic,
-        created_at
-      )
-    `)
-    .eq('paper_id', paperId)
+        reason,
+        created_at,
+        research_projects:project_id (
+          id,
+          topic,
+          created_at
+        )
+      `)
+      .eq('paper_id', paperId),
+    
+    // Get chunk count (for processing status)
+    supabase
+      .from('paper_chunks')
+      .select('id', { count: 'exact', head: true })
+      .eq('paper_id', paperId),
+  ])
+
+  const libraryEntry = libraryEntryResult.data
+  const projectCitationsRaw = projectCitationsResult.data
+  const chunkCount = chunkCountResult.count
 
   // Transform to expected shape (research_projects comes as object or array from join)
   const projectCitations = (projectCitationsRaw || []).map((citation) => {
@@ -100,12 +113,6 @@ async function PaperDetail({ paperId }: { paperId: string }) {
       research_projects: project as { id: string; topic: string; created_at: string } | null,
     }
   })
-
-  // Get chunk count (for processing status)
-  const { count: chunkCount } = await supabase
-    .from('paper_chunks')
-    .select('id', { count: 'exact', head: true })
-    .eq('paper_id', paperId)
 
   return (
     <PaperDetailContent

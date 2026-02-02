@@ -11,6 +11,8 @@ interface GenerationProgressProps {
   onComplete: (content: string) => void
   onError: (error: string) => void
   onCancel?: () => void
+  /** Optional: Pass existing runId to resume watching */
+  runId?: string
 }
 
 // =============================================================================
@@ -19,21 +21,9 @@ interface GenerationProgressProps {
 
 interface ConnectionState {
   isConnected: boolean
-  reconnectAttempts: number
+  runId: string | null
+  lastEventId: number
   wasDisconnectedWhileHidden: boolean
-}
-
-const MAX_RECONNECT_ATTEMPTS = 5
-const BASE_RECONNECT_DELAY = 1000 // 1 second
-const MAX_RECONNECT_DELAY = 30000 // 30 seconds
-
-/**
- * Calculate exponential backoff delay
- */
-function getReconnectDelay(attempt: number): number {
-  const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, attempt), MAX_RECONNECT_DELAY)
-  // Add jitter (±20%) to prevent thundering herd
-  return delay * (0.8 + Math.random() * 0.4)
 }
 
 // Stage configuration - maps pipeline stage IDs to display labels and icons
@@ -50,7 +40,7 @@ const STAGE_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
   complete: { label: "Complete", icon: <CheckCircle2 className="h-4 w-4" /> },
 }
 
-// UI stages displayed to user (6 clear stages)
+// UI stages displayed to user (5 clear stages)
 const ORDERED_STAGES = ["profiling", "search", "planning", "writing", "finishing"]
 
 // Map pipeline stages to UI stages (for stages that were combined)
@@ -79,15 +69,18 @@ interface GenerationState {
   currentSection: string | null
   currentSectionContent: string
   completedSections: CompletedSection[]
+  // Track processed event IDs to prevent duplicate processing on reconnect
+  processedEventIds: Set<number>
 }
 
 type GenerationAction =
-  | { type: 'PROGRESS_UPDATE'; payload: { progress?: number; stage: string; message: string; papersFound?: number } }
+  | { type: 'PROGRESS_UPDATE'; payload: { progress?: number; stage: string; message: string; papersFound?: number; eventId?: number } }
+  | { type: 'STREAMING_CHUNK'; payload: { sectionTitle?: string; chunkText: string; eventId?: number } }
   | { type: 'STREAMING_UPDATE'; payload: { sectionTitle?: string; streamingContent: string } }
-  | { type: 'SECTION_COMPLETE'; payload: { sectionTitle: string; sectionContent: string } }
-  | { type: 'SECTION_STARTED'; payload: { sectionTitle: string } }
-  | { type: 'COMPLETE' }
-  | { type: 'ERROR'; payload: { error: string } }
+  | { type: 'SECTION_COMPLETE'; payload: { sectionTitle: string; sectionContent: string; eventId?: number } }
+  | { type: 'SECTION_STARTED'; payload: { sectionTitle: string; eventId?: number } }
+  | { type: 'COMPLETE'; payload?: { eventId?: number } }
+  | { type: 'ERROR'; payload: { error: string; eventId?: number } }
 
 function createInitialState(): GenerationState {
   return {
@@ -105,6 +98,7 @@ function createInitialState(): GenerationState {
     currentSection: null,
     currentSectionContent: "",
     completedSections: [],
+    processedEventIds: new Set(),
   }
 }
 
@@ -123,9 +117,17 @@ function updateStageStatuses(stages: ProgressStage[], pipelineStage: string): Pr
 }
 
 function generationReducer(state: GenerationState, action: GenerationAction): GenerationState {
+  // Helper to track processed event IDs for idempotency
+  const markEventProcessed = (eventId?: number): Set<number> => {
+    if (eventId === undefined || eventId < 0) return state.processedEventIds
+    const newSet = new Set(state.processedEventIds)
+    newSet.add(eventId)
+    return newSet
+  }
+
   switch (action.type) {
     case 'PROGRESS_UPDATE': {
-      const { progress, stage, message, papersFound } = action.payload
+      const { progress, stage, message, papersFound, eventId } = action.payload
       const uiStage = STAGE_MAPPING[stage] || stage
       const newStages = updateStageStatuses(state.stages, stage)
       
@@ -136,10 +138,24 @@ function generationReducer(state: GenerationState, action: GenerationAction): Ge
         message,
         stages: newStages,
         papersFound: papersFound ?? state.papersFound,
+        processedEventIds: markEventProcessed(eventId),
+      }
+    }
+    
+    case 'STREAMING_CHUNK': {
+      // Accumulate text chunks locally for live preview
+      const { sectionTitle, chunkText, eventId } = action.payload
+      return {
+        ...state,
+        currentSection: sectionTitle ?? state.currentSection,
+        // Append chunk to existing content
+        currentSectionContent: state.currentSectionContent + chunkText,
+        processedEventIds: markEventProcessed(eventId),
       }
     }
     
     case 'STREAMING_UPDATE': {
+      // Legacy: full content replacement (kept for backwards compatibility)
       const { sectionTitle, streamingContent } = action.payload
       return {
         ...state,
@@ -149,19 +165,29 @@ function generationReducer(state: GenerationState, action: GenerationAction): Ge
     }
     
     case 'SECTION_COMPLETE': {
-      const { sectionTitle, sectionContent } = action.payload
+      const { sectionTitle, sectionContent, eventId } = action.payload
+      // Check if we already have this section (idempotency)
+      const alreadyCompleted = state.completedSections.some(s => s.title === sectionTitle)
+      if (alreadyCompleted) {
+        return { ...state, processedEventIds: markEventProcessed(eventId) }
+      }
       return {
         ...state,
         completedSections: [...state.completedSections, { title: sectionTitle, content: sectionContent }],
         currentSection: null,
         currentSectionContent: "",
+        processedEventIds: markEventProcessed(eventId),
       }
     }
     
     case 'SECTION_STARTED': {
+      const { sectionTitle, eventId } = action.payload
       return {
         ...state,
-        currentSection: action.payload.sectionTitle,
+        currentSection: sectionTitle,
+        // Clear content when starting a new section
+        currentSectionContent: "",
+        processedEventIds: markEventProcessed(eventId),
       }
     }
     
@@ -172,6 +198,7 @@ function generationReducer(state: GenerationState, action: GenerationAction): Ge
         currentStage: "complete",
         message: "Paper generated successfully!",
         stages: state.stages.map((s) => ({ ...s, status: "complete" as const })),
+        processedEventIds: markEventProcessed(action.payload?.eventId),
       }
     }
     
@@ -182,6 +209,7 @@ function generationReducer(state: GenerationState, action: GenerationAction): Ge
         stages: state.stages.map((s) => 
           s.status === "active" ? { ...s, status: "error" as const } : s
         ),
+        processedEventIds: markEventProcessed(action.payload.eventId),
       }
     }
     
@@ -197,116 +225,193 @@ export function GenerationProgress({
   onComplete,
   onError,
   onCancel,
+  runId: initialRunId,
 }: GenerationProgressProps) {
   // Use reducer for batched state updates - prevents multiple re-renders per SSE event
   const [state, dispatch] = useReducer(generationReducer, null, createInitialState)
-  const { progress, currentStage, message, stages, error, papersFound, currentSection, currentSectionContent, completedSections } = state
+  const { progress, currentStage, message, stages, error, papersFound, currentSection, currentSectionContent, completedSections, processedEventIds } = state
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasCompletedRef = useRef(false)
-  const connectionIdRef = useRef<string | null>(null)
+  const isStartingRef = useRef(false)
   
   // Connection state for reconnection handling
   const [connectionState, setConnectionState] = useState<ConnectionState>({
     isConnected: false,
-    reconnectAttempts: 0,
+    runId: initialRunId || null,
+    lastEventId: 0,
     wasDisconnectedWhileHidden: false,
   })
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isPageVisibleRef = useRef(true)
 
-  useEffect(() => {
-    if (hasCompletedRef.current) return
-    if (connectionIdRef.current === projectId) return
+  // Start generation and get runId
+  const startGeneration = useCallback(async () => {
+    if (isStartingRef.current || hasCompletedRef.current) return
+    isStartingRef.current = true
 
+    try {
+      console.log('[Generation] Starting generation for project:', projectId)
+      
+      const response = await fetch('/api/generate/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic,
+          paperType,
+          projectId,
+          length: 'medium',
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to start generation')
+      }
+
+      const data = await response.json()
+      
+      // Handle already complete case
+      if (data.status === 'already_complete' && data.content) {
+        console.log('[Generation] Project already complete')
+        hasCompletedRef.current = true
+        dispatch({ type: 'COMPLETE' })
+        onComplete(data.content)
+        return
+      }
+
+      console.log('[Generation] Started run:', data.runId)
+      setConnectionState(prev => ({
+        ...prev,
+        runId: data.runId,
+      }))
+    } catch (err) {
+      console.error('[Generation] Failed to start:', err)
+      dispatch({ type: 'ERROR', payload: { error: err instanceof Error ? err.message : 'Failed to start generation' } })
+      onError(err instanceof Error ? err.message : 'Failed to start generation')
+    } finally {
+      isStartingRef.current = false
+    }
+  }, [projectId, topic, paperType, onComplete, onError])
+
+  // Connect to event stream once we have a runId
+  const connectToEvents = useCallback((runId: string, lastEventId: number = 0) => {
+    if (hasCompletedRef.current) return
+    
+    // Close existing connection
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
       eventSourceRef.current = null
     }
 
-    connectionIdRef.current = projectId
-
-    const params = new URLSearchParams({
-      topic,
-      projectId,
-      length: "medium",
-      paperType,
-    })
-
-    const eventSource = new EventSource(`/api/generate?${params.toString()}`)
+    console.log('[Generation] Connecting to events stream, runId:', runId, 'lastEventId:', lastEventId)
+    
+    // Create EventSource with Last-Event-ID support
+    const url = `/api/generate/${runId}/events`
+    const eventSource = new EventSource(url)
     eventSourceRef.current = eventSource
+
+    // Note: EventSource doesn't support Last-Event-ID on initial connection via header
+    // The server handles this via query params or we reconnect with it
+    // For now, the server will send all events and we filter client-side if needed
 
     eventSource.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data)
+        // Parse event ID for idempotency and resume support
+        let eventId: number | undefined
+        if (event.lastEventId) {
+          const parsedId = parseInt(event.lastEventId, 10)
+          if (!isNaN(parsedId)) {
+            eventId = parsedId
+            setConnectionState(prev => ({ ...prev, lastEventId: parsedId }))
+          }
+        }
 
+        // Skip already-processed events (idempotency on reconnect)
+        if (eventId !== undefined && state.processedEventIds.has(eventId)) {
+          return
+        }
+
+        const data = JSON.parse(event.data)
+        
         switch (data.type) {
-          case "progress":
+          case 'progress':
             // Handle streaming chunks (live character-by-character content)
-            if (data.data?.streaming && data.data?.streamingContent) {
+            if (data.streaming && data.streamingContent) {
               dispatch({
                 type: 'STREAMING_UPDATE',
                 payload: {
-                  sectionTitle: data.data.sectionTitle,
-                  streamingContent: data.data.streamingContent,
+                  sectionTitle: data.sectionTitle,
+                  streamingContent: data.streamingContent,
                 },
               })
               break
             }
             
-            // Handle section completion with content
-            if (data.data?.sectionComplete && data.data?.sectionContent) {
-              dispatch({
-                type: 'SECTION_COMPLETE',
-                payload: {
-                  sectionTitle: data.data.sectionTitle || 'Section',
-                  sectionContent: data.data.sectionContent,
-                },
-              })
-            } else {
-              // Regular progress update (batched into single state change)
-              dispatch({
-                type: 'PROGRESS_UPDATE',
-                payload: {
-                  progress: data.progress,
-                  stage: data.stage,
-                  message: data.message || "",
-                  papersFound: data.data?.papersFound,
-                },
-              })
-              
-              // Parse section info from message for "in progress" state
-              const sectionMatch = data.message?.match(/Writing\s+(.+?)\s+\((\d+)\/(\d+)\)/)
-              if (sectionMatch) {
-                dispatch({ type: 'SECTION_STARTED', payload: { sectionTitle: sectionMatch[1] } })
-              } else if ((data.stage === 'writing' || data.stage === 'generation') && data.message) {
-                // Try to extract section name from various message formats
-                const altMatch = data.message.match(/Writing\s+(.+?)(?:\s+\(|\.\.\.|$)/) ||
-                               data.message.match(/Completed\s+(.+?)(?:\s+\(|$)/)
-                if (altMatch && !data.message.includes('Completed')) {
-                  dispatch({ type: 'SECTION_STARTED', payload: { sectionTitle: altMatch[1] } })
-                }
-              }
-            }
+            // Regular progress update
+            dispatch({
+              type: 'PROGRESS_UPDATE',
+              payload: {
+                progress: data.progress,
+                stage: data.stage,
+                message: data.message || "",
+                papersFound: data.papersFound,
+                eventId,
+              },
+            })
             break
 
-          case "complete":
-            hasCompletedRef.current = true
-            dispatch({ type: 'COMPLETE' })
+          case 'text_chunk':
+            // Streaming text chunk - accumulate locally (no fullContentSoFar from server)
+            dispatch({
+              type: 'STREAMING_CHUNK',
+              payload: {
+                sectionTitle: data.section,
+                chunkText: data.text,
+                eventId,
+              },
+            })
+            break
 
+          case 'section_start':
+            dispatch({ 
+              type: 'SECTION_STARTED', 
+              payload: { sectionTitle: data.section, eventId } 
+            })
+            break
+
+          case 'section_complete':
+            dispatch({
+              type: 'SECTION_COMPLETE',
+              payload: {
+                sectionTitle: data.section,
+                sectionContent: data.content,
+                eventId,
+              },
+            })
+            break
+
+          case 'complete':
+            hasCompletedRef.current = true
+            dispatch({ type: 'COMPLETE', payload: { eventId } })
             setTimeout(() => {
               onComplete(data.content)
             }, 500)
             break
 
-          case "error":
+          case 'error':
             hasCompletedRef.current = true
-            dispatch({ type: 'ERROR', payload: { error: data.error } })
-            onError(data.error)
+            dispatch({ type: 'ERROR', payload: { error: data.message, eventId } })
+            onError(data.message)
+            break
+
+          case 'cancelled':
+            hasCompletedRef.current = true
+            dispatch({ type: 'ERROR', payload: { error: 'Generation was cancelled', eventId } })
+            onError('Generation was cancelled')
             break
         }
       } catch (err) {
-        console.error("Failed to parse SSE message:", err)
+        console.error("[Generation] Failed to parse SSE message:", err)
       }
     }
 
@@ -314,8 +419,8 @@ export function GenerationProgress({
       console.log('[Generation] EventSource connected')
       setConnectionState(prev => ({ 
         ...prev, 
-        isConnected: true, 
-        reconnectAttempts: 0 
+        isConnected: true,
+        wasDisconnectedWhileHidden: false,
       }))
     }
 
@@ -332,42 +437,41 @@ export function GenerationProgress({
           return
         }
         
-        // Attempt reconnection with exponential backoff
-        setConnectionState(prev => {
-          if (prev.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            dispatch({ type: 'ERROR', payload: { error: "Connection lost. Please refresh and try again." } })
-            onError("Connection lost after multiple retries")
-            return prev
+        // Auto-reconnect after a short delay
+        // The event stream supports Last-Event-ID, so we'll get missed events
+        setTimeout(() => {
+          if (!hasCompletedRef.current && isPageVisibleRef.current && connectionState.runId) {
+            console.log('[Generation] Attempting reconnect...')
+            connectToEvents(connectionState.runId, connectionState.lastEventId)
           }
-          
-          const delay = getReconnectDelay(prev.reconnectAttempts)
-          console.log(`[Generation] Scheduling reconnect attempt ${prev.reconnectAttempts + 1} in ${Math.round(delay)}ms`)
-          
-          reconnectTimeoutRef.current = setTimeout(() => {
-            if (!hasCompletedRef.current && isPageVisibleRef.current) {
-              console.log('[Generation] Attempting reconnect...')
-              // Reset connection ID to force reconnect
-              connectionIdRef.current = null
-              // Trigger re-render to create new EventSource
-              setConnectionState(p => ({ ...p, reconnectAttempts: p.reconnectAttempts + 1 }))
-            }
-          }, delay)
-          
-          return { ...prev, reconnectAttempts: prev.reconnectAttempts + 1 }
-        })
+        }, 2000)
       }
       eventSource.close()
     }
 
     return () => {
       eventSource.close()
-      eventSourceRef.current = null
-      connectionIdRef.current = null
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current)
-      }
     }
-  }, [projectId, topic, paperType, onComplete, onError, connectionState.reconnectAttempts])
+  }, [connectionState.runId, connectionState.lastEventId, onComplete, onError, state.processedEventIds])
+
+  // Start generation on mount
+  useEffect(() => {
+    if (initialRunId) {
+      // Already have a runId - just connect to events
+      setConnectionState(prev => ({ ...prev, runId: initialRunId }))
+    } else {
+      // Need to start a new generation
+      startGeneration()
+    }
+  }, [initialRunId, startGeneration])
+
+  // Connect to events when we have a runId
+  useEffect(() => {
+    if (connectionState.runId && !hasCompletedRef.current) {
+      const cleanup = connectToEvents(connectionState.runId, connectionState.lastEventId)
+      return cleanup
+    }
+  }, [connectionState.runId, connectToEvents])
 
   // Handle page visibility changes - reconnect when page becomes visible
   useEffect(() => {
@@ -376,52 +480,51 @@ export function GenerationProgress({
       isPageVisibleRef.current = isVisible
       console.log('[Generation] Visibility changed:', isVisible ? 'visible' : 'hidden')
       
-      if (isVisible && !hasCompletedRef.current) {
-        // Page became visible - check if we need to reconnect or fetch status
+      if (isVisible && !hasCompletedRef.current && connectionState.runId) {
+        // Page became visible - check status and reconnect
         if (connectionState.wasDisconnectedWhileHidden || !connectionState.isConnected) {
           console.log('[Generation] Page visible after disconnect, checking status...')
           
           try {
-            // Check if generation is still running server-side
-            const response = await fetch(`/api/generate/status?projectId=${projectId}`)
+            // Check current run status
+            const response = await fetch(`/api/generate/${connectionState.runId}/status`)
             if (response.ok) {
               const status = await response.json()
               console.log('[Generation] Server status:', status)
               
-              if (!status.isGenerating && status.hasContent) {
-                // Generation completed while we were away - fetch content
-                console.log('[Generation] Generation completed while hidden, fetching content...')
+              if (status.status === 'completed' && status.content) {
+                // Generation completed while we were away
+                console.log('[Generation] Generation completed while hidden')
                 hasCompletedRef.current = true
                 dispatch({ type: 'COMPLETE' })
-                
-                // Fetch the actual content from the project
-                const projectResponse = await fetch(`/api/projects/${projectId}`)
-                if (projectResponse.ok) {
-                  const project = await projectResponse.json()
-                  if (project.content) {
-                    onComplete(project.content)
-                    return
-                  }
-                }
-              } else if (status.isGenerating) {
-                // Still generating - reconnect EventSource
+                onComplete(status.content)
+                return
+              } else if (status.status === 'failed') {
+                hasCompletedRef.current = true
+                dispatch({ type: 'ERROR', payload: { error: status.errorMessage || 'Generation failed' } })
+                onError(status.errorMessage || 'Generation failed')
+                return
+              } else if (status.status === 'cancelled') {
+                hasCompletedRef.current = true
+                dispatch({ type: 'ERROR', payload: { error: 'Generation was cancelled' } })
+                onError('Generation was cancelled')
+                return
+              } else if (status.status === 'running' || status.status === 'pending') {
+                // Still running - reconnect EventSource
                 console.log('[Generation] Generation still running, reconnecting...')
                 setConnectionState(prev => ({
                   ...prev,
                   wasDisconnectedWhileHidden: false,
-                  reconnectAttempts: 0,
                 }))
-                connectionIdRef.current = null // Force reconnect
+                connectToEvents(connectionState.runId!, connectionState.lastEventId)
               }
             }
           } catch (err) {
             console.warn('[Generation] Failed to check status:', err)
             // Try to reconnect anyway
-            setConnectionState(prev => ({
-              ...prev,
-              wasDisconnectedWhileHidden: false,
-            }))
-            connectionIdRef.current = null
+            if (connectionState.runId) {
+              connectToEvents(connectionState.runId, connectionState.lastEventId)
+            }
           }
         }
       }
@@ -429,17 +532,26 @@ export function GenerationProgress({
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [projectId, connectionState.wasDisconnectedWhileHidden, connectionState.isConnected, onComplete])
+  }, [connectionState.runId, connectionState.wasDisconnectedWhileHidden, connectionState.isConnected, connectionState.lastEventId, onComplete, onError, connectToEvents])
 
-  const handleCancel = useCallback(() => {
+  const handleCancel = useCallback(async () => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
     }
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current)
+    
+    // Cancel on server
+    if (connectionState.runId) {
+      try {
+        await fetch(`/api/generate/${connectionState.runId}/cancel`, {
+          method: 'POST',
+        })
+      } catch (err) {
+        console.warn('[Generation] Failed to cancel on server:', err)
+      }
     }
+    
     onCancel?.()
-  }, [onCancel])
+  }, [connectionState.runId, onCancel])
 
   const handleRetry = useCallback(() => {
     window.location.reload()

@@ -41,6 +41,9 @@ const PapersRequestSchema = z.object({
   
   // Processing options
   ingest: z.boolean().optional().default(true),
+  
+  // Pagination for library queries
+  offset: z.number().int().min(0).optional().default(0),
 })
 
 // ============================================================================
@@ -86,6 +89,7 @@ function parseQueryParams(url: URL): z.infer<typeof PapersRequestSchema> {
     sortBy: (url.searchParams.get('sortBy') as 'relevance' | 'date' | 'citations' | 'added_at') || 'relevance',
     sortOrder: (url.searchParams.get('sortOrder') as 'asc' | 'desc') || 'desc',
     ingest: url.searchParams.get('ingest') !== 'false',
+    offset: parseInt(url.searchParams.get('offset') || '0'),
   }
 }
 
@@ -242,6 +246,11 @@ async function handleLibraryQuery(
     query = query.order('citation_count', { foreignTable: 'papers', ascending: params.sortOrder === 'asc' })
   }
 
+  // Apply pagination: offset and limit
+  const offset = params.offset || 0
+  const limit = params.maxResults || 25
+  query = query.range(offset, offset + limit - 1)
+
   const { data: papers, error } = await query
 
   if (error) throw error
@@ -262,6 +271,8 @@ async function handleLibraryQuery(
   return NextResponse.json({
     papers: transformedPapers,
     count: transformedPapers.length,
+    offset,
+    limit,
     source: 'user_library',
   })
 }

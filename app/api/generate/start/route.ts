@@ -1,0 +1,249 @@
+import { NextRequest, NextResponse } from "next/server";
+import { authenticateUser, createProject } from "@/lib/services/project-service";
+import { getResearchProject, getProjectWithContent } from "@/lib/db/research";
+import { inngest } from "@/lib/inngest/client";
+import {
+  createRun,
+  cancelRunningGenerations,
+  getRunningRun,
+} from "@/lib/generation/run-manager";
+import { createServiceClient } from "@/lib/supabase/service";
+import { warn, error as logError } from "@/lib/utils/logger";
+
+export const runtime = "nodejs";
+
+const isDev = process.env.NODE_ENV !== "production";
+
+// Get allowed origins from environment or default to same-origin only
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",") || [];
+
+function getCorsHeaders(request: NextRequest): Record<string, string> {
+  const origin = request.headers.get("origin");
+
+  // In development, allow localhost origins
+  if (isDev && origin?.includes("localhost")) {
+    return {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
+    };
+  }
+
+  // In production, only allow configured origins
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    return {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
+    };
+  }
+
+  // Same-origin requests (no Origin header) are always allowed
+  return {};
+}
+
+export async function OPTIONS(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request);
+  return new Response(null, {
+    status: 200,
+    headers: {
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Accept",
+      "Access-Control-Max-Age": "86400",
+      ...corsHeaders,
+    },
+  });
+}
+
+/**
+ * POST /api/generate/start
+ * 
+ * Starts a new paper generation run.
+ * - Cancels any existing running generation for the project
+ * - Creates a new generation_runs record
+ * - Triggers the Inngest function
+ * - Returns the runId for the client to connect to events
+ */
+export async function POST(request: NextRequest) {
+  try {
+    // Authenticate user
+    const user = await authenticateUser();
+    if (!user) {
+      warn("Authentication failed for generation start request");
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401, headers: getCorsHeaders(request) }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const {
+      topic,
+      paperType = "literatureReview",
+      length = "medium",
+      useLibraryOnly = false,
+      libraryPaperIds = [],
+      projectId: existingProjectId,
+      temperature = 0.2,
+      maxTokens = 16000,
+      citationStyle = "apa",
+      hasOriginalResearch = false,
+      customInstructions,
+    } = body;
+
+    if (!topic) {
+      return NextResponse.json(
+        { error: "Topic is required" },
+        { status: 400, headers: getCorsHeaders(request) }
+      );
+    }
+
+    // Determine project ID (use existing or create new)
+    let projectId: string;
+    let finalPaperType = paperType;
+    let finalUseLibraryOnly = useLibraryOnly;
+    let finalLibraryPaperIds = libraryPaperIds;
+
+    if (existingProjectId) {
+      // Verify ownership of existing project
+      const existing = await getResearchProject(existingProjectId, user.id);
+      if (!existing) {
+        return NextResponse.json(
+          { error: "Project not found or access denied" },
+          { status: 404, headers: getCorsHeaders(request) }
+        );
+      }
+
+      // Return early if project is already complete with content
+      if (existing.status === "complete") {
+        const existingWithContent = await getProjectWithContent(existing.id);
+        if (existingWithContent?.content) {
+          return NextResponse.json(
+            {
+              projectId: existing.id,
+              runId: null,
+              status: "already_complete",
+              content: existingWithContent.content,
+            },
+            { headers: getCorsHeaders(request) }
+          );
+        }
+      }
+
+      projectId = existing.id;
+
+      // Load config from database (source of truth)
+      const supabase = createServiceClient();
+      const { data: projectConfig } = await supabase
+        .from("research_projects")
+        .select("generation_config, paper_type")
+        .eq("id", existingProjectId)
+        .eq("user_id", user.id)
+        .single();
+
+      if (projectConfig?.generation_config) {
+        const config = projectConfig.generation_config as Record<string, unknown>;
+
+        if (typeof config.useLibraryOnly === "boolean") {
+          finalUseLibraryOnly = config.useLibraryOnly;
+        }
+
+        const uploadedPaperIds = (config.uploaded_paper_ids as string[]) || [];
+        const libraryPapersUsed = (config.library_papers_used as string[]) || [];
+        finalLibraryPaperIds = [...new Set([...uploadedPaperIds, ...libraryPapersUsed])];
+
+        if (projectConfig.paper_type) {
+          finalPaperType = projectConfig.paper_type;
+        }
+      }
+    } else {
+      // Create new project
+      const config = {
+        temperature,
+        max_tokens: maxTokens,
+        sources: ["openalex", "core", "crossref", "semantic_scholar", "arxiv"],
+        limit: 25,
+        library_papers_used: libraryPaperIds,
+        length: length as "short" | "medium" | "long",
+        paperType: paperType as "researchArticle" | "literatureReview" | "capstoneProject" | "mastersThesis" | "phdDissertation",
+        useLibraryOnly,
+        localRegion: undefined,
+      };
+      const project = await createProject(user.id, topic, config);
+      projectId = project.id;
+    }
+
+    // Check if there's already a running generation
+    const existingRun = await getRunningRun(projectId);
+    if (existingRun) {
+      // Cancel the existing run
+      const cancelled = await cancelRunningGenerations(projectId);
+      if (cancelled.length > 0) {
+        console.log(`Cancelled ${cancelled.length} existing generation(s) for project ${projectId}`);
+        
+        // Also send cancel event to Inngest to stop the background job
+        for (const run of cancelled) {
+          await inngest.send({
+            name: "paper/generation.cancel",
+            data: {
+              runId: run.id,
+              projectId,
+            },
+          });
+        }
+      }
+    }
+
+    // Create new generation run
+    const run = await createRun(projectId, user.id);
+
+    // Get base URL for the pipeline
+    const url = new URL(request.url);
+    const baseUrl = url.origin;
+
+    // Trigger Inngest function
+    await inngest.send({
+      name: "paper/generation.start",
+      data: {
+        runId: run.id,
+        projectId,
+        userId: user.id,
+        config: {
+          topic,
+          paperType: finalPaperType,
+          length,
+          citationStyle,
+          hasOriginalResearch,
+          customInstructions,
+          useLibraryOnly: finalUseLibraryOnly,
+          libraryPaperIds: finalLibraryPaperIds,
+        },
+        baseUrl,
+      },
+    });
+
+    if (isDev) {
+      console.log("Started generation run:", {
+        runId: run.id,
+        projectId,
+        paperType: finalPaperType,
+        useLibraryOnly: finalUseLibraryOnly,
+        libraryPaperIds: finalLibraryPaperIds.length,
+      });
+    }
+
+    return NextResponse.json(
+      {
+        runId: run.id,
+        projectId,
+        status: "started",
+      },
+      { headers: getCorsHeaders(request) }
+    );
+  } catch (err) {
+    logError({ error: err }, "Failed to start generation");
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to start generation" },
+      { status: 500, headers: getCorsHeaders(request) }
+    );
+  }
+}
