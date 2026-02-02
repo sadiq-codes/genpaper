@@ -72,23 +72,25 @@ async function renderPdf(html: string, opts: PdfOptions): Promise<Buffer> {
     // In development, use regular puppeteer
     const isDev = process.env.NODE_ENV === 'development'
     
+    // Use puppeteer-core everywhere with different executable paths
+    const puppeteer = await import('puppeteer-core')
+    
     if (isDev) {
-      // Development: use puppeteer directly
-      const puppeteer = await import('puppeteer')
+      // Development: use local Chrome
       browser = await puppeteer.default.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       })
     } else {
-      // Production (Vercel): use puppeteer-core + @sparticuz/chromium
-      const puppeteer = await import('puppeteer-core')
+      // Production (Vercel): use @sparticuz/chromium
       const chromium = await import('@sparticuz/chromium')
       
       browser = await puppeteer.default.launch({
         args: chromium.default.args,
-        defaultViewport: chromium.default.defaultViewport,
+        defaultViewport: { width: 1200, height: 800 },
         executablePath: await chromium.default.executablePath(),
-        headless: chromium.default.headless,
+        headless: true,
       })
     }
     

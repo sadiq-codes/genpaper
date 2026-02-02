@@ -307,7 +307,7 @@ export function ResearchEditor({
 
         // Get editor JSON and citation metadata
         const editorDocument = editor.getJSON()
-        const citationStorage = (editor.storage as Record<string, unknown>).citation as {
+        const citationStorage = (editor.storage as unknown as Record<string, unknown>).citation as {
           citationStyle?: string
           papers?: Array<{
             id: string
