@@ -57,28 +57,53 @@ function generateSafeToolId(messageId: string, toolName: string, args: Record<st
 /**
  * Generate a brief summary of what a tool did/would do.
  * Used for AI follow-up responses.
+ * 
+ * Argument names match the actual tool schemas in document-tools.ts:
+ * - insertContent: content, afterBlockId, afterPhrase, location
+ * - replaceBlock: blockId, section, searchPhrase, newContent
+ * - replaceInSection: section, searchPhrase, newContent
+ * - rewriteSection: section, newContent, reason
+ * - deleteContent: blockId, section, searchPhrase, reason
  */
 function getToolSummary(toolName: string, args: Record<string, unknown>, accepted: boolean): string {
   const action = accepted ? 'Applied' : 'Rejected'
   
+  // Helper to get a preview of content
+  const preview = (text: unknown, maxLen = 30) => {
+    const str = String(text || '')
+    return str.length > maxLen ? str.slice(0, maxLen) + '...' : str
+  }
+  
   switch (toolName) {
-    case 'insertContent':
-      return `${action} insertion after "${String(args.targetText || '').slice(0, 30)}..."`
-    case 'replaceBlock':
-    case 'replaceInSection':
-      return `${action} replacement of "${String(args.targetText || '').slice(0, 30)}..."`
-    case 'rewriteSection':
-      return `${action} rewrite of section "${String(args.sectionHeading || args.targetText || '').slice(0, 30)}..."`
-    case 'deleteContent':
-      return `${action} deletion of "${String(args.targetText || '').slice(0, 30)}..."`
+    case 'insertContent': {
+      const location = args.afterPhrase || args.afterBlockId || args.location || 'document'
+      return `${action} insertion at ${preview(location)}`
+    }
+    case 'replaceBlock': {
+      const target = args.searchPhrase || args.blockId || args.section || 'block'
+      return `${action} replacement of "${preview(target)}"`
+    }
+    case 'replaceInSection': {
+      const section = args.section || 'section'
+      const phrase = args.searchPhrase
+      return `${action} replacement in ${section}${phrase ? `: "${preview(phrase)}"` : ''}`
+    }
+    case 'rewriteSection': {
+      const section = args.section || 'section'
+      return `${action} rewrite of ${section}`
+    }
+    case 'deleteContent': {
+      const target = args.searchPhrase || args.blockId || 'content'
+      return `${action} deletion of "${preview(target)}"`
+    }
     case 'addCitation':
-      return `${action} citation addition`
+      return `${action} citation`
     case 'highlightText':
       return `${action} highlight`
     case 'addComment':
       return `${action} comment`
     default:
-      return `${action} ${toolName} operation`
+      return `${action} ${toolName}`
   }
 }
 
@@ -205,6 +230,9 @@ export function useEditorChat({
     accepted: boolean 
     summary: string 
   }>>>(new Map())
+  
+  // Track the messageId of the current tool batch for follow-up
+  const currentToolMessageIdRef = useRef<string | null>(null)
   
   // Refs for confirm/reject functions to avoid stale closures in inline callbacks
   const confirmToolRef = useRef<((toolId: string) => void) | null>(null)
@@ -508,7 +536,8 @@ export function useEditorChat({
   }, [chatSendMessage, getEditorContext, projectId])
 
   /**
-   * Record a tool result and check if all tools for the message are resolved.
+   * Record a tool result. The useEffect below will trigger AI follow-up
+   * when pendingTools becomes empty.
    */
   const recordToolResult = useCallback((
     messageId: string, 
@@ -517,23 +546,36 @@ export function useEditorChat({
     accepted: boolean,
     summary: string
   ) => {
+    // Track which message we're processing for follow-up
+    currentToolMessageIdRef.current = messageId
+    
     // Add to results map
     const existing = toolResultsRef.current.get(messageId) || []
     existing.push({ toolName, toolId, accepted, summary })
     toolResultsRef.current.set(messageId, existing)
-    
-    // Check if all tools for this message are now resolved
-    const pendingForMessage = pendingToolsRef.current.filter(t => t.messageId === messageId)
-    const resolvedCount = existing.length
-    
-    // If all tools are resolved, send results to AI
-    if (pendingForMessage.length === 0 && resolvedCount > 0) {
-      // Small delay to let UI settle
-      setTimeout(() => {
-        sendToolResultsToAI(messageId)
-      }, 500)
+  }, [])
+
+  /**
+   * Effect: Send tool results to AI when all pending tools are resolved.
+   * This fires when pendingTools becomes empty AND we have recorded results.
+   */
+  useEffect(() => {
+    // Only trigger when pendingTools is empty and we have a message to follow up on
+    if (pendingTools.length === 0 && currentToolMessageIdRef.current) {
+      const messageId = currentToolMessageIdRef.current
+      const results = toolResultsRef.current.get(messageId)
+      
+      if (results && results.length > 0) {
+        // Clear the ref to prevent re-triggering
+        currentToolMessageIdRef.current = null
+        
+        // Small delay to let UI settle before AI responds
+        setTimeout(() => {
+          sendToolResultsToAI(messageId)
+        }, 500)
+      }
     }
-  }, [sendToolResultsToAI])
+  }, [pendingTools, sendToolResultsToAI])
 
   /**
    * Execute a tool call on the editor.
@@ -972,6 +1014,10 @@ export function useEditorChat({
   const confirmAllTools = useCallback(() => {
     const ed = editorRef.current
     const toolCount = pendingTools.length
+    if (toolCount === 0) return
+    
+    // Get messageId from first tool for follow-up
+    const messageId = pendingTools[0]?.messageId
     
     // Apply acceptance animation to all blocks
     pendingTools.forEach((tool, index) => {
@@ -990,6 +1036,10 @@ export function useEditorChat({
       for (const tool of pendingTools) {
         executeToolCall(tool.toolName, tool.args)
         executedTools.current.add(tool.id)
+        
+        // Record tool result for AI follow-up
+        const summary = getToolSummary(tool.toolName, tool.args, true)
+        recordToolResult(tool.messageId, tool.id, tool.toolName, true, summary)
       }
       
       setPendingTools([])
@@ -1006,7 +1056,7 @@ export function useEditorChat({
         duration: 4000,
       })
     }, 300 + (toolCount * 50))
-  }, [pendingTools, executeToolCall])
+  }, [pendingTools, executeToolCall, recordToolResult])
 
   /**
    * Reject all pending tool calls with staggered animation.
@@ -1014,6 +1064,7 @@ export function useEditorChat({
   const rejectAllTools = useCallback(() => {
     const ed = editorRef.current
     const toolCount = pendingTools.length
+    if (toolCount === 0) return
     
     // Apply rejection animation to all blocks
     pendingTools.forEach((tool, index) => {
@@ -1031,6 +1082,10 @@ export function useEditorChat({
     setTimeout(() => {
       for (const tool of pendingTools) {
         executedTools.current.add(tool.id)
+        
+        // Record tool result for AI follow-up
+        const summary = getToolSummary(tool.toolName, tool.args, false)
+        recordToolResult(tool.messageId, tool.id, tool.toolName, false, summary)
       }
       
       setPendingTools([])
@@ -1046,7 +1101,7 @@ export function useEditorChat({
         duration: 3000,
       })
     }, 250 + (toolCount * 30))
-  }, [pendingTools])
+  }, [pendingTools, recordToolResult])
 
   // Keep refs updated so inline callbacks can access latest functions
   useEffect(() => {
