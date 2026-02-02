@@ -116,6 +116,8 @@ export async function generateWithUnifiedTemplate(
   progress('generation', 20, 'Starting content generation...')
   
   const resolvedOptions = resolveGenOptions(options)
+  const targetWords = options.targetWords || 300
+  const targetChars = targetWords * 5.5 // Average chars per word
   
   // Use simple text streaming - no tools
   // Citations are handled via [CITE: paper_id] markers that are post-processed
@@ -128,16 +130,41 @@ export async function generateWithUnifiedTemplate(
   })
 
   // Sentence boundary detection with abbreviation handling
-  const ABBREVIATIONS = ['Dr', 'Mr', 'Mrs', 'Ms', 'Prof', 'vs', 'etc', 'e\\.g', 'i\\.e', 'U\\.S', 'Fig', 'No', 'Vol', 'pp', 'al']
+  // Extended abbreviation list for academic content
+  const ABBREVIATIONS = [
+    'Dr', 'Mr', 'Mrs', 'Ms', 'Prof', 'vs', 'etc', 
+    'e\\.g', 'i\\.e', 'U\\.S', 'Fig', 'No', 'Vol', 'pp', 'al',
+    'et', 'Eq', 'Ref', 'Inc', 'Jr', 'Sr', 'Ltd', 'Co', 'St'
+  ]
   const abbrevPattern = ABBREVIATIONS.join('|')
-  const sentenceEnd = new RegExp(`(?<!(?:${abbrevPattern}))\\.\\s+(?=[A-Z])|[!?]\\s+(?=[A-Z])`, 'g')
+  // Use NON-GLOBAL regex to avoid lastIndex mutation issues when slicing pendingText
+  const sentenceEndPattern = new RegExp(`(?<!(?:${abbrevPattern}))\\.(?=\\s+[A-Z])|[!?](?=\\s+[A-Z])`)
+  
   let pendingText = ''
+  let totalChars = 0
+  let lastProgressUpdate = 0
+  const PROGRESS_UPDATE_INTERVAL = 500 // Update progress every ~500 chars
+  const MAX_BUFFER_SIZE = 5000 // Force flush if buffer gets too large
 
   for await (const delta of result.fullStream) {
     if (delta.type === 'text-delta') {
       pendingText += delta.text
+      totalChars += delta.text.length
+      
+      // Real-time progress updates based on generated content
+      if (totalChars - lastProgressUpdate >= PROGRESS_UPDATE_INTERVAL) {
+        lastProgressUpdate = totalChars
+        // Progress from 20% to 45% during generation (leaving room for post-processing)
+        const generationProgress = Math.min(45, 20 + (totalChars / targetChars) * 25)
+        const wordsGenerated = Math.round(totalChars / 5.5)
+        progress('generation', generationProgress, `Generating... ${wordsGenerated} words`)
+      }
+      
+      // Extract complete sentences from buffer
+      // Using non-global regex + loop to avoid lastIndex mutation issues
       let match
-      while ((match = sentenceEnd.exec(pendingText))) {
+      while ((match = sentenceEndPattern.exec(pendingText))) {
+        // Include the punctuation mark in the sentence
         const sentence = pendingText.slice(0, match.index + 1)
         pendingText = pendingText.slice(match.index + 1)
         
@@ -145,10 +172,25 @@ export async function generateWithUnifiedTemplate(
         fullContent += sentence
         onStreamEvent?.({ type: 'sentence', data: { text: sentence }})
       }
+      
+      // Buffer overflow protection: force flush at paragraph or space boundary
+      if (pendingText.length > MAX_BUFFER_SIZE) {
+        // Try to find a good break point
+        let flushPoint = pendingText.lastIndexOf('\n\n', MAX_BUFFER_SIZE)
+        if (flushPoint === -1) flushPoint = pendingText.lastIndexOf('\n', MAX_BUFFER_SIZE)
+        if (flushPoint === -1) flushPoint = pendingText.lastIndexOf(' ', MAX_BUFFER_SIZE)
+        if (flushPoint === -1) flushPoint = MAX_BUFFER_SIZE
+        
+        const toFlush = pendingText.slice(0, flushPoint)
+        pendingText = pendingText.slice(flushPoint)
+        
+        fullContent += toFlush
+        onStreamEvent?.({ type: 'sentence', data: { text: toFlush }})
+      }
     }
   }
 
-  // Flush any final text
+  // Flush any remaining text
   if (pendingText) {
     fullContent += pendingText
     onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})

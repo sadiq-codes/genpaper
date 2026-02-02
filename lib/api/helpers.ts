@@ -190,3 +190,55 @@ export async function requireAuth(): Promise<User> {
   }
   return user
 }
+
+// ============================================================================
+// Resource Ownership Verification
+// ============================================================================
+
+/**
+ * Verify that a project belongs to the specified user.
+ * Throws NotFoundError if project doesn't exist or user doesn't own it.
+ * 
+ * @example
+ * ```ts
+ * export const GET = withErrorHandler(async (request) => {
+ *   const user = await requireAuth()
+ *   await verifyProjectOwnership(projectId, user.id)
+ *   // User owns the project, proceed...
+ * })
+ * ```
+ */
+export async function verifyProjectOwnership(projectId: string, userId: string): Promise<void> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('research_projects')
+    .select('id')
+    .eq('id', projectId)
+    .eq('user_id', userId)
+    .single()
+  
+  if (error || !data) {
+    // Import dynamically to avoid circular dependency
+    const { NotFoundError } = await import('@/lib/errors')
+    throw new NotFoundError('Project not found or access denied', 'PROJECT_ACCESS_DENIED')
+  }
+}
+
+/**
+ * Verify that a paper belongs to the specified user.
+ * Throws NotFoundError if paper doesn't exist or user doesn't own it.
+ */
+export async function verifyPaperOwnership(paperId: string, userId: string): Promise<void> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('papers')
+    .select('id')
+    .eq('id', paperId)
+    .eq('user_id', userId)
+    .single()
+  
+  if (error || !data) {
+    const { NotFoundError } = await import('@/lib/errors')
+    throw new NotFoundError('Paper not found or access denied', 'PAPER_ACCESS_DENIED')
+  }
+}

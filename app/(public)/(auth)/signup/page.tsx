@@ -9,7 +9,8 @@ import { createClient } from "@/lib/supabase/client"
 const supabase = createClient()
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Eye, EyeOff, Sparkles, Loader2 } from "lucide-react"
+import { Eye, EyeOff, Loader2 } from "lucide-react"
+import Image from "next/image"
 
 function SignupContent() {
   const [email, setEmail] = useState("")
@@ -114,7 +115,13 @@ function SignupContent() {
         <div className="max-w-md mx-auto text-center p-6">
           <div className="flex items-center justify-center mb-6">
             <div className="flex items-center space-x-2">
-              <Sparkles className="h-8 w-8 text-primary" />
+              <Image 
+                src="/favicon-32x32.png" 
+                alt="GenPaper" 
+                width={32} 
+                height={32} 
+                className="h-8 w-8"
+              />
               <span className="text-2xl font-bold text-foreground">GenPaper</span>
             </div>
           </div>
@@ -165,7 +172,13 @@ function SignupContent() {
 
             <div className="flex items-center justify-center mb-8">
               <div className="flex items-center space-x-2">
-                <Sparkles className="h-8 w-8 text-primary" />
+                <Image 
+                  src="/favicon-32x32.png" 
+                  alt="GenPaper" 
+                  width={32} 
+                  height={32} 
+                  className="h-8 w-8"
+                />
                 <span className="text-2xl font-bold text-foreground">GenPaper</span>
               </div>
             </div>

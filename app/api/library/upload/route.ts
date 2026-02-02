@@ -114,11 +114,11 @@ export async function POST(request: NextRequest) {
         if (uploadError.message?.includes('Bucket not found')) {
           warn('Storage bucket not found, attempting to create')
           
-          // Try to create the bucket
+          // Try to create the bucket (public for research papers)
           const { error: createError } = await serviceClient
             .storage
             .createBucket('papers', { 
-              public: false,
+              public: true,
               fileSizeLimit: maxSize
             })
           

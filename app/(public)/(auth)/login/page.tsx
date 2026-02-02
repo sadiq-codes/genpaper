@@ -7,7 +7,8 @@ import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Eye, EyeOff, Sparkles, Loader2 } from "lucide-react"
+import { Eye, EyeOff, Loader2 } from "lucide-react"
+import Image from "next/image"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
 function LoginPageContent() {
@@ -100,7 +101,13 @@ function LoginPageContent() {
           <div className="max-w-sm mx-auto w-full">
             <div className="flex items-center justify-center mb-8">
               <div className="flex items-center space-x-2">
-                <Sparkles className="h-8 w-8 text-primary" />
+                <Image 
+                  src="/favicon-32x32.png" 
+                  alt="GenPaper" 
+                  width={32} 
+                  height={32} 
+                  className="h-8 w-8"
+                />
                 <span className="text-2xl font-bold text-foreground">GenPaper</span>
               </div>
             </div>

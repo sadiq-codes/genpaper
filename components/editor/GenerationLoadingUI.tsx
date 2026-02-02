@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useRef, useMemo, memo } from "react"
+import { useEffect, useRef, useMemo, memo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -15,7 +15,8 @@ import {
   XCircle, 
   AlertCircle, 
   X,
-  FileStack
+  FileStack,
+  Smartphone
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -344,6 +345,29 @@ function LiveContentPreview({
 // STATUS PANEL
 // =============================================================================
 
+// Mobile detection hook
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false)
+  
+  useEffect(() => {
+    // Check for mobile via user agent and touch capability
+    const checkMobile = () => {
+      const userAgent = navigator.userAgent || navigator.vendor
+      const isMobileUA = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase())
+      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+      const isSmallScreen = window.innerWidth < 768
+      
+      setIsMobile(isMobileUA || (isTouchDevice && isSmallScreen))
+    }
+    
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+  
+  return isMobile
+}
+
 function StatusPanel({
   topic,
   progress,
@@ -356,8 +380,31 @@ function StatusPanel({
   onCancel,
   onRetry,
 }: Omit<GenerationLoadingUIProps, 'currentStage' | 'currentSectionContent' | 'generatedContent' | 'completedSections'>) {
+  const isMobile = useIsMobile()
+  const [dismissedWarning, setDismissedWarning] = useState(false)
+  
   return (
     <div className="flex flex-col h-full p-6 space-y-6">
+      {/* Mobile Warning Banner */}
+      {isMobile && !dismissedWarning && !error && progress < 100 && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+          <Smartphone className="h-4 w-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
+          <div className="flex-1 text-xs">
+            <p className="font-medium">Keep this tab open</p>
+            <p className="text-amber-600 dark:text-amber-500 mt-0.5">
+              Switching apps may interrupt generation
+            </p>
+          </div>
+          <button 
+            onClick={() => setDismissedWarning(true)}
+            className="text-amber-600 hover:text-amber-700 dark:text-amber-500"
+            aria-label="Dismiss warning"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="space-y-1">
         <h2 className="text-lg font-semibold">Generating Paper</h2>

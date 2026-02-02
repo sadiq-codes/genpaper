@@ -903,6 +903,33 @@ export function useSmartCompletion({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [editor, enabled, triggerCompletion])
 
+  // Pause autocomplete when page is hidden (saves API costs on mobile/tab switch)
+  useEffect(() => {
+    if (!enabled) return
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Page is hidden - cancel pending autocomplete requests and clear debounce
+        // Generation continues server-side, but we don't need to fetch new completions
+        console.log('[Autocomplete] Page hidden, pausing autocomplete')
+        cancelPendingRequestRef.current()
+        if (debounceTimeoutRef.current) {
+          clearTimeout(debounceTimeoutRef.current)
+          debounceTimeoutRef.current = null
+        }
+        // Clear sentence queue - context will likely be stale when user returns
+        sentenceQueueRef.current = []
+        queueContextRef.current = ''
+      } else {
+        console.log('[Autocomplete] Page visible again')
+        // Don't auto-trigger on return - let user action trigger it
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [enabled])
+
   // Check if there are queued sentences available
   const hasQueuedSentences = sentenceQueueRef.current.length > 0
   const queueCount = sentenceQueueRef.current.length

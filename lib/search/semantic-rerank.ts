@@ -3,6 +3,13 @@
  * 
  * Uses embeddings to re-rank search results by semantic similarity to the query.
  * This provides much better relevance than keyword-only matching (BM25).
+ * 
+ * PERFORMANCE OPTIMIZATION:
+ * To avoid slow embedding generation for large result sets, we use a 2-stage approach:
+ * 1. BM25 pre-filter: Quickly rank all papers using keyword matching
+ * 2. Semantic re-rank: Only embed the top N papers (default 50)
+ * 
+ * This reduces embedding calls from 2N+1 to 2*50+1 = 101 (87% reduction for 400 papers)
  */
 
 import { generateEmbeddings } from '@/lib/utils/embedding'
@@ -21,8 +28,130 @@ export type RerankedItem<T extends RerankableItem> = T & {
   originalRank: number
 }
 
+// Maximum papers to embed (performance optimization)
+const MAX_PAPERS_TO_EMBED = 50
+
+/**
+ * BM25 parameters for quick ranking
+ */
+interface BM25Params {
+  k1: number
+  b: number
+  avgDocLen: number
+  idf: Map<string, number>
+  queryTerms: string[]
+}
+
+/**
+ * Build BM25 environment for quick ranking
+ */
+function buildBM25Params(query: string, items: RerankableItem[]): BM25Params {
+  const k1 = 1.2
+  const b = 0.75
+  const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2)
+  const N = items.length
+
+  // Compute document frequencies
+  const dfCounts = new Map<string, number>()
+  for (const term of queryTerms) {
+    dfCounts.set(term, 0)
+  }
+
+  let totalDocLength = 0
+  for (const item of items) {
+    const text = `${item.title} ${item.abstract || ''}`.toLowerCase()
+    const tokens = text.split(/\s+/)
+    totalDocLength += tokens.length
+    
+    const seenTerms = new Set<string>()
+    for (const token of tokens) {
+      for (const term of queryTerms) {
+        if (token.includes(term) && !seenTerms.has(term)) {
+          dfCounts.set(term, (dfCounts.get(term) || 0) + 1)
+          seenTerms.add(term)
+        }
+      }
+    }
+  }
+
+  const idf = new Map<string, number>()
+  for (const term of queryTerms) {
+    const df = dfCounts.get(term) || 0
+    const idfVal = df === 0 ? 0 : Math.log((N - df + 0.5) / (df + 0.5))
+    idf.set(term, idfVal)
+  }
+
+  return {
+    k1,
+    b,
+    avgDocLen: totalDocLength / Math.max(1, N),
+    idf,
+    queryTerms
+  }
+}
+
+/**
+ * Calculate BM25 score for a single item
+ */
+function calculateBM25Score(params: BM25Params, title: string, abstract: string): number {
+  const { idf, avgDocLen, k1, b, queryTerms } = params
+
+  const titleTerms = title.toLowerCase().split(/\s+/)
+  const abstractTerms = abstract.toLowerCase().split(/\s+/)
+  const docLength = titleTerms.length + abstractTerms.length
+
+  let score = 0
+  for (const term of queryTerms) {
+    const idfVal = idf.get(term) || 0
+    if (idfVal === 0) continue
+
+    // Title terms weighted 2x
+    const tf = titleTerms.filter(t => t.includes(term)).length * 2 +
+               abstractTerms.filter(t => t.includes(term)).length
+
+    if (tf === 0) continue
+
+    const numerator = tf * (k1 + 1)
+    const denominator = tf + k1 * (1 - b + b * (docLength / avgDocLen))
+    score += idfVal * (numerator / denominator)
+  }
+
+  return score
+}
+
+/**
+ * Quick BM25 pre-filter to select top candidates before expensive embedding
+ */
+function bm25PreFilter<T extends RerankableItem>(
+  query: string, 
+  items: T[], 
+  maxItems: number
+): T[] {
+  if (items.length <= maxItems) {
+    return items
+  }
+
+  const params = buildBM25Params(query, items)
+  
+  const scored = items.map((item, index) => ({
+    item,
+    score: calculateBM25Score(params, item.title, item.abstract || ''),
+    originalIndex: index
+  }))
+
+  // Sort by BM25 score descending
+  scored.sort((a, b) => b.score - a.score)
+
+  // Return top items
+  return scored.slice(0, maxItems).map(s => s.item)
+}
+
 /**
  * Re-rank items by semantic similarity to a query
+ * 
+ * PERFORMANCE: Uses 2-stage ranking:
+ * 1. BM25 pre-filter to top 50 papers (fast, keyword-based)
+ * 2. Semantic re-rank on filtered set (slow, embedding-based)
  * 
  * @param query - The search query
  * @param items - Items to re-rank (must have title and optionally abstract)
@@ -41,13 +170,16 @@ export async function semanticRerank<T extends RerankableItem>(
     maxResults?: number
     /** Whether to boost exact phrase matches, default true */
     boostExactMatch?: boolean
+    /** Maximum items to embed (for performance), default 50 */
+    maxItemsToEmbed?: number
   } = {}
 ): Promise<RerankedItem<T>[]> {
   const {
     minScore = 0.25,
     titleWeight = 0.6,
     maxResults,
-    boostExactMatch = true
+    boostExactMatch = true,
+    maxItemsToEmbed = MAX_PAPERS_TO_EMBED
   } = options
 
   if (items.length === 0) {
@@ -58,22 +190,40 @@ export async function semanticRerank<T extends RerankableItem>(
   const startTime = Date.now()
 
   try {
+    // STAGE 1: BM25 pre-filter for large result sets
+    let itemsToEmbed: T[]
+    let preFilterApplied = false
+    
+    if (items.length > maxItemsToEmbed) {
+      console.log(`📊 Pre-filtering ${items.length} items to top ${maxItemsToEmbed} using BM25...`)
+      const preFilterStart = Date.now()
+      itemsToEmbed = bm25PreFilter(query, items, maxItemsToEmbed)
+      preFilterApplied = true
+      console.log(`   BM25 pre-filter completed in ${Date.now() - preFilterStart}ms`)
+    } else {
+      itemsToEmbed = items
+    }
+
+    // STAGE 2: Semantic re-ranking on filtered set
     // Prepare texts for embedding
     // We embed: query, all titles, all abstracts (if available)
     const queryNormalized = query.toLowerCase().trim()
-    const titles = items.map(item => item.title || '')
-    const abstracts = items.map(item => item.abstract || item.title || '') // Fallback to title if no abstract
+    const titles = itemsToEmbed.map(item => item.title || '')
+    const abstracts = itemsToEmbed.map(item => item.abstract || item.title || '') // Fallback to title if no abstract
     
     // Generate all embeddings in one batch for efficiency
     const allTexts = [query, ...titles, ...abstracts]
+    console.log(`🔢 Generating ${allTexts.length} embeddings (1 query + ${titles.length} titles + ${abstracts.length} abstracts)...`)
+    const embedStart = Date.now()
     const embeddings = await generateEmbeddings(allTexts)
+    console.log(`   Embeddings generated in ${Date.now() - embedStart}ms`)
     
     const queryEmbedding = embeddings[0]
-    const titleEmbeddings = embeddings.slice(1, items.length + 1)
-    const abstractEmbeddings = embeddings.slice(items.length + 1)
+    const titleEmbeddings = embeddings.slice(1, itemsToEmbed.length + 1)
+    const abstractEmbeddings = embeddings.slice(itemsToEmbed.length + 1)
 
     // Calculate semantic scores
-    const scored: RerankedItem<T>[] = items.map((item, index) => {
+    const scored: RerankedItem<T>[] = itemsToEmbed.map((item, index) => {
       const titleSimilarity = cosineSimilarity(queryEmbedding, titleEmbeddings[index])
       const abstractSimilarity = cosineSimilarity(queryEmbedding, abstractEmbeddings[index])
       
@@ -99,10 +249,15 @@ export async function semanticRerank<T extends RerankableItem>(
         }
       }
 
+      // Find original rank (before BM25 pre-filter)
+      const originalRank = preFilterApplied 
+        ? items.findIndex(orig => orig.id === item.id)
+        : index
+
       return {
         ...item,
         semanticScore,
-        originalRank: index
+        originalRank: originalRank >= 0 ? originalRank : index
       }
     })
 
@@ -117,6 +272,9 @@ export async function semanticRerank<T extends RerankableItem>(
 
     const elapsed = Date.now() - startTime
     console.log(`✅ Semantic re-ranking complete: ${items.length} → ${results.length} items in ${elapsed}ms`)
+    if (preFilterApplied) {
+      console.log(`   (Pre-filtered to ${itemsToEmbed.length} before embedding)`)
+    }
     console.log(`   Top 3 scores: ${results.slice(0, 3).map(r => r.semanticScore.toFixed(3)).join(', ')}`)
 
     return results

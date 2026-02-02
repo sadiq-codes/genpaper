@@ -11,13 +11,11 @@ import {
   Calendar,
   Users,
   Quote,
-  Loader2,
   Plus,
   Check,
   Library,
   FileText,
-  ChevronDown,
-  Sparkles
+  ChevronDown
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -120,6 +118,29 @@ async function addPaperToLibrary(paperId: string): Promise<void> {
   if (!response.ok) throw new Error('Failed to add paper to library')
 }
 
+// Skeleton component for loading state
+function PaperCardSkeleton() {
+  return (
+    <div className="rounded-lg border bg-card p-4 animate-pulse">
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="h-4 bg-muted rounded w-4/5 mb-2" />
+          <div className="h-4 bg-muted rounded w-3/5 mb-3" />
+          <div className="flex gap-3 mt-2">
+            <div className="h-3 bg-muted rounded w-24" />
+            <div className="h-3 bg-muted rounded w-12" />
+          </div>
+        </div>
+        <div className="h-5 bg-muted rounded w-14" />
+      </div>
+      <div className="flex justify-between mt-4 pt-3 border-t">
+        <div className="h-7 bg-muted rounded w-20" />
+        <div className="h-7 bg-muted rounded w-24" />
+      </div>
+    </div>
+  )
+}
+
 export default function LibraryDrawer({ 
   isOpen, 
   onClose, 
@@ -146,36 +167,31 @@ export default function LibraryDrawer({
     queryKey: ['library', 'papers'],
     queryFn: fetchLibraryPapers,
     enabled: isOpen,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   })
 
   // Online search with React Query
-  // Using keepPreviousData for smooth transitions - shows old results while loading new
   const { 
     data: onlineResults = [], 
-    isLoading: isSearchingOnline,
-    isFetching: isFetchingOnline,
-    isPlaceholderData
+    isFetching: isSearchingOnline
   } = useQuery({
     queryKey: ['papers', 'search', debouncedQuery],
     queryFn: () => searchPapersOnline(debouncedQuery),
     enabled: isOpen && searchMode === 'online' && debouncedQuery.length >= 3,
-    staleTime: 2 * 60 * 1000, // 2 minutes for search results
-    placeholderData: keepPreviousData, // Show previous results while fetching new ones
+    staleTime: 2 * 60 * 1000,
+    placeholderData: keepPreviousData,
   })
 
   // Mutation for adding papers to library
   const addToLibraryMutation = useMutation({
     mutationFn: addPaperToLibrary,
     onSuccess: () => {
-      // Invalidate library to refetch
       queryClient.invalidateQueries({ queryKey: ['library', 'papers'] })
     }
   })
 
   // Debounce search query
   useEffect(() => {
-    // For online search, require minimum 3 characters
     if (searchMode === 'online' && query.trim().length < 3) {
       setDebouncedQuery('')
       return
@@ -202,6 +218,17 @@ export default function LibraryDrawer({
     }
   }, [isOpen, initialQuery])
 
+  // Lock body scroll when drawer is open
+  useEffect(() => {
+    if (isOpen) {
+      const originalOverflow = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      return () => {
+        document.body.style.overflow = originalOverflow
+      }
+    }
+  }, [isOpen])
+
   // Filter library papers locally (instant)
   const filteredLibraryPapers = useMemo(() => {
     if (!query.trim()) return libraryPapers
@@ -226,46 +253,67 @@ export default function LibraryDrawer({
 
   // Determine which results to show
   const results = searchMode === 'library' ? filteredLibraryPapers : enrichedOnlineResults
-  const isSearching = searchMode === 'online' && (isSearchingOnline || isFetchingOnline)
+  const isSearching = searchMode === 'online' && isSearchingOnline
 
-  // Add paper to project
+  // Add paper to project - OPTIMISTIC UPDATE
   const handleAddToProject = useCallback(async (paper: SearchResult) => {
     if (!currentProjectId || addedPapers.has(paper.id)) return
 
+    // Optimistic: mark as added immediately
+    setAddedPapers(prev => new Set(prev).add(paper.id))
+
     try {
-      // If from online search, add to library first
       if (paper.type === 'search') {
         await addToLibraryMutation.mutateAsync(paper.id)
       }
-
       onAddToProject?.(paper.id, paper.title)
-      setAddedPapers(prev => new Set(prev).add(paper.id))
     } catch (error) {
+      // Revert on error
+      setAddedPapers(prev => {
+        const next = new Set(prev)
+        next.delete(paper.id)
+        return next
+      })
       console.error('Error adding paper:', error)
     }
   }, [currentProjectId, onAddToProject, addedPapers, addToLibraryMutation])
 
-  // Save paper to library only (no project)
+  // Save paper to library only - OPTIMISTIC UPDATE
   const handleSaveToLibrary = useCallback(async (paper: SearchResult) => {
     if (savedToLibraryPapers.has(paper.id) || paper.type === 'library') return
 
+    // Optimistic: mark as saved immediately
+    setSavedToLibraryPapers(prev => new Set(prev).add(paper.id))
+
     try {
       await addToLibraryMutation.mutateAsync(paper.id)
-      setSavedToLibraryPapers(prev => new Set(prev).add(paper.id))
     } catch (error) {
+      // Revert on error
+      setSavedToLibraryPapers(prev => {
+        const next = new Set(prev)
+        next.delete(paper.id)
+        return next
+      })
       console.error('Error saving paper to library:', error)
     }
   }, [savedToLibraryPapers, addToLibraryMutation])
 
-  // Select paper for new project creation
+  // Select paper for new project creation - OPTIMISTIC UPDATE
   const handleSelectForProject = useCallback(async (paper: SearchResult) => {
     if (!onSelectForProject) return
     
-    // If from online search, add to library first
     if (paper.type === 'search') {
+      // Mark as saved optimistically
+      setSavedToLibraryPapers(prev => new Set(prev).add(paper.id))
+      
       try {
         await addToLibraryMutation.mutateAsync(paper.id)
       } catch (error) {
+        setSavedToLibraryPapers(prev => {
+          const next = new Set(prev)
+          next.delete(paper.id)
+          return next
+        })
         console.error('Error adding paper to library:', error)
         return
       }
@@ -282,9 +330,11 @@ export default function LibraryDrawer({
   if (!isOpen) return null
 
   const showEmptyLibrary = searchMode === 'library' && libraryPapers.length === 0 && !query && !isLoadingLibrary
-  const showNoResults = results.length === 0 && query.trim().length >= 3 && !isSearching
-  const showSearchPrompt = searchMode === 'online' && !query && !isSearching
+  const showNoResults = results.length === 0 && query.trim().length >= 3 && !isSearching && !isLoadingLibrary
+  const showSearchPrompt = searchMode === 'online' && !query && !isSearching && onlineResults.length === 0
   const showMinCharsHint = searchMode === 'online' && query.trim().length > 0 && query.trim().length < 3
+  const showSkeletons = (isLoadingLibrary && libraryPapers.length === 0) || 
+                        (isSearching && results.length === 0)
 
   return (
     <div className="fixed inset-0 z-50">
@@ -292,55 +342,70 @@ export default function LibraryDrawer({
       <div 
         className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in-0 duration-200"
         onClick={onClose}
+        aria-hidden="true"
       />
       
       {/* Drawer */}
-      <div className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l shadow-sm animate-in slide-in-from-right duration-300 flex flex-col">
+      <div 
+        className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l shadow-lg animate-in slide-in-from-right duration-300 flex flex-col overscroll-contain"
+        role="dialog"
+        aria-label="Paper library"
+      >
         {/* Header */}
-        <div className="flex-none border-b bg-muted/30">
+        <div className="flex-none border-b">
           <div className="flex items-center justify-between px-5 py-4">
             <div className="flex items-center gap-3">
               <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary/10">
-                <Library className="h-5 w-5 text-primary" />
+                <Library className="h-5 w-5 text-primary" aria-hidden="true" />
               </div>
               <div>
-                <h2 className="font-semibold text-base">Paper Library</h2>
+                <h2 className="font-semibold text-base">Papers</h2>
                 <p className="text-xs text-muted-foreground">
-                  {libraryPapers.length} papers in your library
+                  {libraryPapers.length} in library
                 </p>
               </div>
             </div>
-            <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
-              <X className="h-4 w-4" />
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={onClose} 
+              className="h-8 w-8"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
 
           {/* Search Mode Toggle */}
-          <div className="px-5 pb-4">
-            <div className="flex gap-1 p-1 bg-muted rounded-lg">
+          <div className="px-5 pb-3">
+            <div className="flex gap-1 p-1 bg-muted rounded-lg" role="tablist">
               <button
+                role="tab"
+                aria-selected={searchMode === 'library'}
                 onClick={() => setSearchMode('library')}
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all",
+                  "flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   searchMode === 'library' 
                     ? "bg-background text-foreground shadow-sm" 
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                <BookOpen className="h-4 w-4" />
-                My Library
+                <BookOpen className="h-4 w-4" aria-hidden="true" />
+                Library
               </button>
               <button
+                role="tab"
+                aria-selected={searchMode === 'online'}
                 onClick={() => setSearchMode('online')}
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all",
+                  "flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   searchMode === 'online' 
                     ? "bg-background text-foreground shadow-sm" 
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                <Globe className="h-4 w-4" />
-                Search Online
+                <Globe className="h-4 w-4" aria-hidden="true" />
+                Online
               </button>
             </div>
           </div>
@@ -348,43 +413,45 @@ export default function LibraryDrawer({
           {/* Search Input */}
           <div className="px-5 pb-4">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden="true" />
               <Input
-                placeholder={searchMode === 'library' ? "Filter your papers..." : "Search academic papers..."}
+                placeholder={searchMode === 'library' ? "Filter papers…" : "Search papers…"}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="pl-10 h-10 bg-background"
-                autoFocus
+                className="pl-10 h-9 bg-background text-sm"
+                aria-label={searchMode === 'library' ? "Filter papers" : "Search papers"}
               />
-              {isSearching && (
-                <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
-              )}
             </div>
+            {/* Subtle searching indicator when we have results */}
+            {isSearching && results.length > 0 && (
+              <p className="text-[11px] text-muted-foreground mt-2 text-center" aria-live="polite">
+                Updating results…
+              </p>
+            )}
           </div>
         </div>
 
         {/* Results */}
-        <ScrollArea className="flex-1">
-          <div className="p-4">
-            {/* Loading State */}
-            {(isSearching || isLoadingLibrary) && results.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-                <p className="text-sm text-muted-foreground">
-                  {isLoadingLibrary ? 'Loading library...' : 'Searching papers...'}
-                </p>
-              </div>
+        <ScrollArea className="flex-1 overscroll-contain">
+          <div className="p-4 space-y-3">
+            {/* Skeleton Loading */}
+            {showSkeletons && (
+              <>
+                <PaperCardSkeleton />
+                <PaperCardSkeleton />
+                <PaperCardSkeleton />
+              </>
             )}
 
             {/* Empty Library */}
             {showEmptyLibrary && (
               <EmptyState
                 icon={BookOpen}
-                title="Your library is empty"
-                description="Search online to find and add papers to your library"
+                title="No papers yet"
+                description="Search online to find papers"
                 action={
-                  <Button onClick={() => setSearchMode('online')} size="sm">
-                    <Globe className="h-4 w-4 mr-2" />
+                  <Button onClick={() => setSearchMode('online')} size="sm" variant="outline">
+                    <Globe className="h-4 w-4 mr-2" aria-hidden="true" />
                     Search Online
                   </Button>
                 }
@@ -394,9 +461,9 @@ export default function LibraryDrawer({
             {/* Search Prompt */}
             {showSearchPrompt && (
               <EmptyState
-                icon={Sparkles}
+                icon={Search}
                 title="Search academic papers"
-                description="Find papers from OpenAlex, CrossRef, and Semantic Scholar"
+                description="Enter a topic to search across databases"
               />
             )}
 
@@ -404,8 +471,8 @@ export default function LibraryDrawer({
             {showMinCharsHint && (
               <EmptyState
                 icon={Search}
-                title="Keep typing..."
-                description="Enter at least 3 characters to search"
+                title="Keep typing…"
+                description="Enter at least 3 characters"
               />
             )}
 
@@ -415,11 +482,11 @@ export default function LibraryDrawer({
                 icon={FileText}
                 title="No papers found"
                 description={searchMode === 'library' 
-                  ? "Try different keywords or search online" 
+                  ? "Try different keywords" 
                   : "Try different search terms"}
                 action={searchMode === 'library' && (
                   <Button onClick={() => setSearchMode('online')} variant="outline" size="sm">
-                    <Globe className="h-4 w-4 mr-2" />
+                    <Globe className="h-4 w-4 mr-2" aria-hidden="true" />
                     Search Online
                   </Button>
                 )}
@@ -427,8 +494,8 @@ export default function LibraryDrawer({
             )}
 
             {/* Results List */}
-            {results.length > 0 && (
-              <div className="space-y-2">
+            {results.length > 0 && !showSkeletons && (
+              <>
                 {results.map((paper) => (
                   <PaperCard
                     key={paper.id}
@@ -436,7 +503,6 @@ export default function LibraryDrawer({
                     onAdd={() => handleAddToProject(paper)}
                     onSaveToLibrary={() => handleSaveToLibrary(paper)}
                     onSelectForProject={() => handleSelectForProject(paper)}
-                    isProcessing={addToLibraryMutation.isPending && addToLibraryMutation.variables === paper.id}
                     isAdded={addedPapers.has(paper.id)}
                     isSavedToLibrary={savedToLibraryPapers.has(paper.id) || paper.type === 'library'}
                     isSelectedForProject={selectedPaperIds.includes(paper.id)}
@@ -449,17 +515,16 @@ export default function LibraryDrawer({
                     )}
                   />
                 ))}
-              </div>
+              </>
             )}
           </div>
         </ScrollArea>
 
-        {/* Footer */}
-        {results.length > 0 && (
-          <div className="flex-none px-5 py-3 border-t bg-muted/30">
-            <p className="text-xs text-muted-foreground text-center">
-              Showing {results.length} {results.length === 1 ? 'paper' : 'papers'}
-              {searchMode === 'online' && ' from academic databases'}
+        {/* Footer - simplified */}
+        {results.length > 0 && !showSkeletons && (
+          <div className="flex-none px-5 py-3 border-t text-center">
+            <p className="text-[11px] text-muted-foreground">
+              {results.length} {results.length === 1 ? 'paper' : 'papers'}
             </p>
           </div>
         )}
@@ -468,7 +533,7 @@ export default function LibraryDrawer({
   )
 }
 
-// Empty State Component
+// Empty State Component - simplified
 function EmptyState({ 
   icon: Icon, 
   title, 
@@ -481,24 +546,23 @@ function EmptyState({
   action?: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-center px-4">
-      <div className="flex items-center justify-center w-12 h-12 rounded-full bg-muted mb-4">
-        <Icon className="h-6 w-6 text-muted-foreground" />
+    <div className="flex flex-col items-center justify-center py-10 text-center px-4">
+      <div className="flex items-center justify-center w-10 h-10 rounded-full bg-muted mb-3">
+        <Icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
       </div>
       <h3 className="font-medium text-sm mb-1">{title}</h3>
-      <p className="text-xs text-muted-foreground mb-4 max-w-[240px]">{description}</p>
+      <p className="text-xs text-muted-foreground mb-3 max-w-[200px]">{description}</p>
       {action}
     </div>
   )
 }
 
-// Paper Card Component
+// Paper Card Component - simplified, no loading spinners
 interface PaperCardProps {
   paper: SearchResult
   onAdd: () => void
   onSaveToLibrary?: () => void
   onSelectForProject?: () => void
-  isProcessing: boolean
   isAdded: boolean
   isSavedToLibrary: boolean
   isSelectedForProject: boolean
@@ -509,15 +573,11 @@ interface PaperCardProps {
   onToggleExpand: () => void
 }
 
-/**
- * PaperCard - Memoized to prevent re-renders during search/filter operations
- */
 const PaperCard = memo(function PaperCard({ 
   paper, 
   onAdd,
   onSaveToLibrary,
   onSelectForProject,
-  isProcessing, 
   isAdded,
   isSavedToLibrary,
   isSelectedForProject,
@@ -533,76 +593,64 @@ const PaperCard = memo(function PaperCard({
     return `${paper.authors[0]} et al.`
   }, [paper.authors])
 
+  // Handle keyboard activation for title
+  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onToggleExpand()
+    }
+  }, [onToggleExpand])
+
   return (
     <div className={cn(
-      "group rounded-lg border bg-card p-4 transition-all hover:shadow-sm",
-      isAdded && "border-primary/30 bg-primary/5"
+      "rounded-lg border bg-card p-4 transition-colors",
+      isAdded && "border-primary/40 bg-primary/5"
     )}>
       {/* Header Row */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          {/* Title */}
+          {/* Title - clickable to expand */}
           <h3 
-            className="font-medium text-sm leading-snug line-clamp-2 cursor-pointer hover:text-primary transition-colors"
+            className="font-medium text-sm leading-snug line-clamp-2 cursor-pointer hover:text-primary transition-colors focus-visible:outline-none focus-visible:text-primary"
             onClick={onToggleExpand}
+            onKeyDown={handleTitleKeyDown}
+            tabIndex={0}
+            role="button"
+            aria-expanded={isExpanded}
           >
             {paper.title}
           </h3>
           
           {/* Meta Row */}
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+          <div className="flex items-center gap-2 mt-2 text-muted-foreground">
             {authorDisplay && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                <Users className="h-3 w-3" />
+              <span className="text-xs flex items-center gap-1 truncate max-w-[140px]">
+                <Users className="h-3 w-3 shrink-0" aria-hidden="true" />
                 {authorDisplay}
               </span>
             )}
             {paper.year && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                <Calendar className="h-3 w-3" />
+              <span className="text-xs flex items-center gap-1">
+                <Calendar className="h-3 w-3" aria-hidden="true" />
                 {paper.year}
               </span>
             )}
             {paper.citationCount !== undefined && paper.citationCount > 0 && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                <Quote className="h-3 w-3" />
+              <span className="text-xs flex items-center gap-1">
+                <Quote className="h-3 w-3" aria-hidden="true" />
                 {paper.citationCount.toLocaleString()}
               </span>
             )}
           </div>
-
-          {/* Journal */}
-          {paper.journal && (
-            <p className="text-xs text-muted-foreground mt-1 truncate">
-              {paper.journal}
-            </p>
-          )}
         </div>
 
-        {/* Badges */}
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <Badge 
-            variant={paper.type === 'library' ? 'default' : 'secondary'}
-            className="text-[10px] px-1.5 py-0"
-          >
-            {paper.type === 'library' ? 'Library' : paper.source}
-          </Badge>
-          {/* Relevance indicator for search results */}
-          {paper.type === 'search' && paper.relevanceScore !== undefined && (
-            <div className="flex items-center gap-1" title={`Relevance: ${Math.round(paper.relevanceScore * 100)}%`}>
-              <div className="w-12 h-1.5 bg-muted rounded-full overflow-hidden">
-                <div 
-                  className={cn(
-                    "h-full rounded-full transition-all",
-                    paper.relevanceScore >= 0.5 ? "bg-green-500" :
-                    paper.relevanceScore >= 0.35 ? "bg-yellow-500" : "bg-orange-500"
-                  )}
-                  style={{ width: `${Math.min(100, paper.relevanceScore * 100)}%` }}
-                />
-              </div>
-            </div>
-          )}
-        </div>
+        {/* Source Badge */}
+        <Badge 
+          variant={paper.type === 'library' ? 'secondary' : 'outline'}
+          className="text-[10px] px-1.5 py-0 shrink-0"
+        >
+          {paper.type === 'library' ? 'Saved' : paper.source}
+        </Badge>
       </div>
 
       {/* Expandable Abstract */}
@@ -623,12 +671,13 @@ const PaperCard = memo(function PaperCard({
               size="sm" 
               onClick={onToggleExpand}
               className="h-7 px-2 text-xs text-muted-foreground"
+              aria-expanded={isExpanded}
             >
               <ChevronDown className={cn(
                 "h-3 w-3 mr-1 transition-transform",
                 isExpanded && "rotate-180"
-              )} />
-              {isExpanded ? 'Less' : 'Abstract'}
+              )} aria-hidden="true" />
+              {isExpanded ? 'Less' : 'More'}
             </Button>
           )}
           {paper.url && (
@@ -638,92 +687,59 @@ const PaperCard = memo(function PaperCard({
               onClick={() => window.open(paper.url, '_blank')}
               className="h-7 px-2 text-xs text-muted-foreground"
             >
-              <ExternalLink className="h-3 w-3 mr-1" />
-              View
+              <ExternalLink className="h-3 w-3 mr-1" aria-hidden="true" />
+              Open
             </Button>
           )}
         </div>
         
-        {/* Add to Project button (editor context) */}
+        {/* Add to Project button */}
         {showAddButton && (
           <Button
             size="sm"
             variant={isAdded ? "secondary" : "default"}
             onClick={onAdd}
-            disabled={isProcessing || isAdded}
+            disabled={isAdded}
             className="h-7 px-3 text-xs"
           >
-            {isProcessing ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                Adding...
-              </>
-            ) : isAdded ? (
-              <>
-                <Check className="h-3 w-3 mr-1" />
-                Added
-              </>
+            {isAdded ? (
+              <><Check className="h-3 w-3 mr-1" aria-hidden="true" /> Added</>
             ) : (
-              <>
-                <Plus className="h-3 w-3 mr-1" />
-                Add to Project
-              </>
+              <><Plus className="h-3 w-3 mr-1" aria-hidden="true" /> Add</>
             )}
           </Button>
         )}
         
-        {/* Save to Library button (library-only mode, only for search results not in library) */}
+        {/* Save to Library button */}
         {showSaveToLibraryButton && paper.type === 'search' && (
           <Button
             size="sm"
             variant={isSavedToLibrary ? "secondary" : "default"}
             onClick={onSaveToLibrary}
-            disabled={isProcessing || isSavedToLibrary}
+            disabled={isSavedToLibrary}
             className="h-7 px-3 text-xs"
           >
-            {isProcessing ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                Saving...
-              </>
-            ) : isSavedToLibrary ? (
-              <>
-                <Check className="h-3 w-3 mr-1" />
-                In Library
-              </>
+            {isSavedToLibrary ? (
+              <><Check className="h-3 w-3 mr-1" aria-hidden="true" /> Saved</>
             ) : (
-              <>
-                <Plus className="h-3 w-3 mr-1" />
-                Save to Library
-              </>
+              <><Plus className="h-3 w-3 mr-1" aria-hidden="true" /> Save</>
             )}
           </Button>
         )}
         
-        {/* Select for Project button (new project creation flow) */}
+        {/* Select for Project button */}
         {showSelectForProjectButton && (
           <Button
             size="sm"
             variant={isSelectedForProject ? "secondary" : "default"}
             onClick={onSelectForProject}
-            disabled={isProcessing || isSelectedForProject}
+            disabled={isSelectedForProject}
             className="h-7 px-3 text-xs"
           >
-            {isProcessing ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                Adding...
-              </>
-            ) : isSelectedForProject ? (
-              <>
-                <Check className="h-3 w-3 mr-1" />
-                Selected
-              </>
+            {isSelectedForProject ? (
+              <><Check className="h-3 w-3 mr-1" aria-hidden="true" /> Selected</>
             ) : (
-              <>
-                <Plus className="h-3 w-3 mr-1" />
-                Use in Project
-              </>
+              <><Plus className="h-3 w-3 mr-1" aria-hidden="true" /> Select</>
             )}
           </Button>
         )}

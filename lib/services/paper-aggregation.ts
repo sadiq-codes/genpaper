@@ -286,7 +286,7 @@ export async function parallelSearch(
     // Per-source limit increased from 25 to 50 to support higher search volumes for literature reviews
     const perSourceLimit = Math.min(limit, 50)
     const searchOptions = { ...options, limit: perSourceLimit, fastMode, discipline }
-    const sourceTimeout = fastMode ? 6000 : 15000 // 6s vs 15s timeout
+    const sourceTimeout = fastMode ? 10000 : 15000 // 10s vs 15s timeout
 
     // Circuit breaker check - skip unhealthy sources
     if (!isSourceAvailable(source)) {

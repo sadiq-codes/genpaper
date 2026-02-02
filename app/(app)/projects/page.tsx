@@ -18,7 +18,6 @@ function ProjectsGridSkeleton() {
           <Skeleton className="h-4 w-1/2" />
           <div className="flex gap-4">
             <Skeleton className="h-4 w-20" />
-            <Skeleton className="h-4 w-20" />
           </div>
         </div>
       ))}
@@ -37,7 +36,6 @@ async function ProjectsGrid() {
     redirect("/login")
   }
 
-  // Fetch projects first to get IDs for parallel queries
   const projects = await getUserResearchProjects(user.id, 20, 0)
 
   if (projects.length === 0) {
@@ -46,8 +44,7 @@ async function ProjectsGrid() {
 
   const projectIds = projects.map((p) => p.id)
 
-  // PARALLEL FETCH: Citations and all paper IDs in one query
-  // Then claims will be fetched in parallel with processing
+  // Fetch paper counts per project
   const { data: citations, error: citationError } = await supabase
     .from("project_citations")
     .select("project_id, paper_id")
@@ -57,9 +54,8 @@ async function ProjectsGrid() {
     console.error("Failed to fetch citation counts:", citationError)
   }
 
-  // Build paper count map and collect all paper IDs
+  // Build paper count map
   const paperCountMap = new Map<string, Set<string>>()
-  const allPaperIds = new Set<string>()
   
   for (const row of citations || []) {
     if (!row.project_id || !row.paper_id) continue
@@ -68,51 +64,20 @@ async function ProjectsGrid() {
       paperCountMap.set(row.project_id, new Set())
     }
     paperCountMap.get(row.project_id)!.add(row.paper_id)
-    allPaperIds.add(row.paper_id)
-  }
-
-  // Fetch claims in parallel - don't await separately, let it run while we process
-  const claimsPromise = allPaperIds.size > 0
-    ? supabase
-        .from("paper_claims")
-        .select("paper_id")
-        .in("paper_id", Array.from(allPaperIds))
-    : Promise.resolve({ data: null, error: null })
-
-  // Await claims result
-  const { data: claims, error: claimError } = await claimsPromise
-
-  if (claimError) {
-    console.error("Failed to fetch claim counts:", claimError)
-  }
-
-  // Build claims map
-  const claimsPerPaper = new Map<string, number>()
-  for (const claim of claims || []) {
-    const count = claimsPerPaper.get(claim.paper_id) || 0
-    claimsPerPaper.set(claim.paper_id, count + 1)
   }
 
   const projectsWithCounts = projects.map((project) => {
     const projectPapers = paperCountMap.get(project.id) || new Set()
-    const paperCount = projectPapers.size
-
-    let claimCount = 0
-    for (const paperId of projectPapers) {
-      claimCount += claimsPerPaper.get(paperId) || 0
-    }
-
     return {
       project,
-      paperCount,
-      claimCount,
+      paperCount: projectPapers.size,
     }
   })
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {projectsWithCounts.map(({ project, paperCount, claimCount }) => (
-        <ProjectCard key={project.id} project={project} paperCount={paperCount} claimCount={claimCount} />
+      {projectsWithCounts.map(({ project, paperCount }) => (
+        <ProjectCard key={project.id} project={project} paperCount={paperCount} />
       ))}
     </div>
   )

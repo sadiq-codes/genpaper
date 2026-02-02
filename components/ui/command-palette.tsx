@@ -1,17 +1,26 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Search, BookOpen, FileText, Command as CommandIcon } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { 
+  Search, 
+  BookOpen, 
+  FolderPlus, 
+  Upload, 
+  Settings, 
+  Command as CommandIcon,
+  FolderOpen
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Badge } from '@/components/ui/badge'
 
 interface CommandPaletteProps {
   isOpen: boolean
   onClose: () => void
   onLibrarySearch: (query: string) => void
   onProjectSearch?: (query: string) => void
+  onUploadPdf?: () => void
 }
 
 interface CommandItem {
@@ -20,65 +29,95 @@ interface CommandItem {
   description?: string
   icon: React.ReactNode
   action: () => void
-  category: 'library' | 'projects' | 'actions'
-  shortcut?: string
+  keywords?: string[] // Additional search keywords
 }
 
 export default function CommandPalette({ 
   isOpen, 
   onClose, 
   onLibrarySearch,
-  onProjectSearch 
+  onUploadPdf
 }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
 
-  // Command items
+  // Command items - clean, non-repetitive list
   const commands: CommandItem[] = [
     {
-      id: 'search-library',
-      title: 'Search Library',
-      description: 'Search your research papers',
+      id: 'library',
+      title: 'Library',
+      description: 'Search and browse your research papers',
       icon: <BookOpen className="h-4 w-4" />,
       action: () => {
         onLibrarySearch(query)
         onClose()
       },
-      category: 'library',
-      shortcut: '↵'
+      keywords: ['papers', 'search', 'research', 'browse']
     },
     {
-      id: 'open-library',
-      title: 'Open Library Drawer',
-      description: 'Browse your complete library',
-      icon: <BookOpen className="h-4 w-4" />,
+      id: 'projects',
+      title: 'Projects',
+      description: 'View your research projects',
+      icon: <FolderOpen className="h-4 w-4" />,
       action: () => {
-        onLibrarySearch('')
+        router.push('/projects')
         onClose()
       },
-      category: 'library'
+      keywords: ['research', 'documents', 'papers']
     },
     {
-      id: 'search-projects',
-      title: 'Search Projects',
-      description: 'Find your research projects',
-      icon: <FileText className="h-4 w-4" />,
+      id: 'new-project',
+      title: 'New Project',
+      description: 'Start a new research paper',
+      icon: <FolderPlus className="h-4 w-4" />,
       action: () => {
-        onProjectSearch?.(query)
+        router.push('/projects?new=true')
         onClose()
       },
-      category: 'projects'
+      keywords: ['create', 'start', 'write', 'paper']
+    },
+    {
+      id: 'upload-pdf',
+      title: 'Upload PDF',
+      description: 'Add a PDF to your library',
+      icon: <Upload className="h-4 w-4" />,
+      action: () => {
+        if (onUploadPdf) {
+          onUploadPdf()
+        } else {
+          // Fallback: navigate to library page
+          router.push('/library')
+        }
+        onClose()
+      },
+      keywords: ['import', 'add', 'paper', 'document']
+    },
+    {
+      id: 'settings',
+      title: 'Settings',
+      description: 'Configure your preferences',
+      icon: <Settings className="h-4 w-4" />,
+      action: () => {
+        router.push('/settings')
+        onClose()
+      },
+      keywords: ['preferences', 'options', 'config']
     }
   ]
 
-  // Filter commands based on query
+  // Filter commands based on query (search title, description, and keywords)
   const filteredCommands = query
-    ? commands.filter(cmd => 
-        cmd.title.toLowerCase().includes(query.toLowerCase()) ||
-        cmd.description?.toLowerCase().includes(query.toLowerCase())
-      )
+    ? commands.filter(cmd => {
+        const searchText = query.toLowerCase()
+        return (
+          cmd.title.toLowerCase().includes(searchText) ||
+          cmd.description?.toLowerCase().includes(searchText) ||
+          cmd.keywords?.some(kw => kw.toLowerCase().includes(searchText))
+        )
+      })
     : commands
 
   // Handle keyboard navigation
@@ -157,19 +196,18 @@ export default function CommandPalette({
       ref={overlayRef}
       className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm animate-in fade-in-0 duration-200"
     >
-      <div className="fixed left-1/2 top-1/4 -translate-x-1/2 w-full max-w-lg mx-auto">
-        <div className="bg-card border border-border rounded-lg shadow-sm animate-in zoom-in-95 duration-200">
+      <div className="fixed left-1/2 top-1/4 -translate-x-1/2 w-full max-w-lg mx-auto px-4">
+        <div className="bg-card border border-border rounded-lg shadow-lg animate-in zoom-in-95 duration-200">
           {/* Header */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
             <div className="flex items-center gap-2 text-muted-foreground">
               <CommandIcon className="h-4 w-4" />
-              <span className="text-sm font-medium">Command Palette</span>
+              <span className="text-sm font-medium">Quick Actions</span>
             </div>
             <div className="flex items-center gap-1 ml-auto">
               <kbd className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs font-mono text-muted-foreground">
                 esc
               </kbd>
-              <span className="text-xs text-muted-foreground">to close</span>
             </div>
           </div>
 
@@ -178,7 +216,7 @@ export default function CommandPalette({
             <Search className="absolute left-7 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               ref={inputRef}
-              placeholder="Search library, projects, or run commands..."
+              placeholder="Type a command or search..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="pl-10 border-none shadow-none focus-visible:ring-0 text-base"
@@ -186,9 +224,9 @@ export default function CommandPalette({
           </div>
 
           {/* Commands */}
-          <ScrollArea className="max-h-96">
+          <ScrollArea className="max-h-80">
             <div className="px-2 pb-2">
-                {filteredCommands.length > 0 ? (
+              {filteredCommands.length > 0 ? (
                 <div className="space-y-1">
                   {filteredCommands.map((command, index) => (
                     <Button
@@ -202,7 +240,7 @@ export default function CommandPalette({
                       onClick={command.action}
                     >
                       <div className="flex items-center gap-3 w-full">
-                        <div className="flex-shrink-0">
+                        <div className="flex-shrink-0 text-muted-foreground">
                           {command.icon}
                         </div>
                         <div className="flex-1 text-left">
@@ -215,16 +253,11 @@ export default function CommandPalette({
                             </div>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary" className="text-xs">
-                            {command.category}
-                          </Badge>
-                          {command.shortcut && (
-                            <kbd className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs font-mono text-muted-foreground">
-                              {command.shortcut}
-                            </kbd>
-                          )}
-                        </div>
+                        {index === selectedIndex && (
+                          <kbd className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs font-mono text-muted-foreground">
+                            ↵
+                          </kbd>
+                        )}
                       </div>
                     </Button>
                   ))}
@@ -234,7 +267,7 @@ export default function CommandPalette({
                   <Search className="h-8 w-8 text-muted-foreground/50 mx-auto mb-3" />
                   <p className="text-sm text-muted-foreground">No commands found</p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Try searching for &quot;library&quot; or &quot;projects&quot;
+                    Try &quot;library&quot;, &quot;new project&quot;, or &quot;upload&quot;
                   </p>
                 </div>
               )}
@@ -242,7 +275,7 @@ export default function CommandPalette({
           </ScrollArea>
 
           {/* Footer */}
-          <div className="px-4 py-2 border-t border-border bg-muted/50 rounded-b-lg">
+          <div className="px-4 py-2 border-t border-border bg-muted/30 rounded-b-lg">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-1">
@@ -258,11 +291,11 @@ export default function CommandPalette({
                   <span>select</span>
                 </div>
               </div>
-              <span>GenPaper Command Palette</span>
+              <span className="text-muted-foreground/70">⌘K</span>
             </div>
           </div>
         </div>
       </div>
     </div>
   )
-} 
+}

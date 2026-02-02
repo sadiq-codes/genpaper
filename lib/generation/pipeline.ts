@@ -1,5 +1,5 @@
 import 'server-only'
-import { updateProjectContent, updateResearchProjectStatus, updateProjectVoiceProfile } from '@/lib/db/research'
+import { updateProjectContent, updateResearchProjectStatus, updateProjectVoiceProfile, savePartialContent } from '@/lib/db/research'
 import { collectPapers } from '@/lib/generation/discovery'
 import { generateOutline, type OriginalResearchInput } from '@/lib/prompts/generators'
 import { generateMultipleSectionsUnified } from '@/lib/generation/unified-generator'
@@ -787,6 +787,16 @@ export async function generatePaper(
         wasRewritten,
         rewriteReason
       })
+      
+      // INCREMENTAL SAVE: Checkpoint after each section completes
+      // This allows partial recovery if generation is interrupted (network drop, tab closed)
+      // Note: This saves raw content without citation processing - final save handles that
+      try {
+        await savePartialContent(projectId, fullContent.trim(), completedSections)
+      } catch (saveErr) {
+        // Non-fatal - log and continue
+        warn({ section: sectionContext.title, error: saveErr }, 'Partial save failed')
+      }
     }
     
     // Finalize overlap stats

@@ -30,11 +30,18 @@ interface LibrarySearchResponse {
   }>
   count: number
   searchTimeMs?: number
+  partial?: boolean
   error?: string
 }
 
+// Shared state for tracking search completion
+let searchCompleted = false
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
+  
+  // Reset state for new search
+  searchCompleted = false
   
   try {
     const body = await request.json()
@@ -69,19 +76,70 @@ export async function POST(request: NextRequest) {
       sources: options.sources,
       fromYear: options.fromYear,
       fastMode: true // Enable fast mode for quicker API timeouts
+    }).then(results => {
+      searchCompleted = true
+      return results
     })
 
-    // **TIMEOUT CONTROL**: 20 seconds for library search
-    // parallelSearch with fastMode uses 6s individual API timeouts
-    // Total time: ~6-8s for API calls + ranking
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Search timeout after 20 seconds')), 20000)
+    // **TIMEOUT CONTROL**: 10 seconds for library search (reduced from 20s)
+    // With BM25 pre-filter in semantic-rerank, this should be achievable
+    // If timeout occurs, we still try to return whatever partial results we have
+    const SEARCH_TIMEOUT_MS = 10000
+    
+    const timeoutPromise = new Promise<'timeout'>((resolve) => {
+      setTimeout(() => resolve('timeout'), SEARCH_TIMEOUT_MS)
     })
 
-    const rankedPapers = await Promise.race([searchPromise, timeoutPromise])
-
+    const result = await Promise.race([searchPromise, timeoutPromise])
     const searchTimeMs = Date.now() - startTime
 
+    // Handle timeout case
+    if (result === 'timeout') {
+      console.warn(`⏱️ Library search timeout after ${SEARCH_TIMEOUT_MS}ms`)
+      
+      // Wait a tiny bit more to see if we can get partial results
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // If the search completed during our brief wait, use those results
+      if (searchCompleted) {
+        const finalResults = await searchPromise
+        const response: LibrarySearchResponse = {
+          success: true,
+          query,
+          papers: finalResults.map(paper => ({
+            canonical_id: paper.canonical_id || paper.doi || paper.title,
+            title: paper.title,
+            abstract: paper.abstract?.substring(0, 250),
+            year: paper.year,
+            venue: paper.venue,
+            doi: paper.doi,
+            url: paper.url,
+            citationCount: paper.citationCount || 0,
+            relevanceScore: paper.relevanceScore,
+            source: paper.source || 'mixed'
+          })),
+          count: finalResults.length,
+          searchTimeMs: Date.now() - startTime,
+          partial: true
+        }
+        console.log(`📚 Search completed just after timeout: ${response.count} papers`)
+        return NextResponse.json(response)
+      }
+      
+      // Return empty results with timeout error
+      return NextResponse.json({
+        success: false,
+        error: `Search timed out after ${SEARCH_TIMEOUT_MS / 1000} seconds. Try a more specific query.`,
+        query,
+        papers: [],
+        count: 0,
+        searchTimeMs,
+        partial: true
+      }, { status: 408 }) // 408 Request Timeout
+    }
+
+    // Normal success case
+    const rankedPapers = result
     const response: LibrarySearchResponse = {
       success: true,
       query,
@@ -121,4 +179,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

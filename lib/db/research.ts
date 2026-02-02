@@ -108,11 +108,46 @@ function extractCitationPaperIds(content: string): string[] {
 }
 
 /**
- * Update a project's content and automatically create citation records
+ * Save partial content during generation (incremental checkpoint).
+ * This allows recovery if generation is interrupted.
+ * 
+ * Unlike updateProjectContent, this:
+ * - Keeps status as 'generating' (not 'complete')
+ * - Does NOT process citations (raw content only)
+ * - Is optimized for frequent calls during generation
+ * 
+ * @param projectId - Project to update
+ * @param content - Partial content generated so far
+ * @param completedSections - Number of sections completed (for progress tracking)
+ */
+export async function savePartialContent(
+  projectId: string,
+  content: string,
+  completedSections: number
+): Promise<void> {
+  const supabase = await getSB()
+  
+  // Use a lightweight update - just content
+  // Status remains 'generating' so we know it's incomplete
+  const { error } = await supabase
+    .from('research_projects')
+    .update({ content })
+    .eq('id', projectId)
+
+  if (error) {
+    // Don't throw - incremental saves are best-effort
+    console.warn(`⚠️ Failed to save partial content (section ${completedSections}):`, error.message)
+  } else {
+    console.log(`💾 Checkpoint saved: ${completedSections} sections (${content.length} chars)`)
+  }
+}
+
+/**
+ * Update project content with proper citation handling.
  * 
  * This function:
- * 1. Saves the content to research_projects
- * 2. Extracts [CITE: uuid] markers from content
+ * 1. Saves generated content to the project
+ * 2. Extracts citation markers from content
  * 3. Validates paper IDs exist in papers table
  * 4. Creates/updates project_citations records
  * 

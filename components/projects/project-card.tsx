@@ -18,7 +18,6 @@ import {
 import {
   MoreHorizontal,
   FileText,
-  MessageSquare,
   PenLine,
   Trash2,
   ExternalLink,
@@ -28,7 +27,6 @@ import {
   GraduationCap,
   ScrollText,
   Briefcase,
-  Loader2,
   type LucideIcon,
 } from "lucide-react"
 import { deleteProjectAction } from "@/components/dashboard/actions"
@@ -66,10 +64,9 @@ const paperTypeConfig: Record<PaperTypeKey, { icon: LucideIcon; label: string; c
 interface ProjectCardProps {
   project: ResearchProjectWithLatestVersion
   paperCount?: number
-  claimCount?: number
 }
 
-export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: ProjectCardProps) {
+export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
   const router = useRouter()
   const [_isPending, startTransition] = useTransition()
   const [isDeleting, setIsDeleting] = useState(false)
@@ -234,12 +231,8 @@ export function ProjectCard({ project, paperCount = 0, claimCount = 0 }: Project
         {/* Stats */}
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
-            <FileText className="h-3.5 w-3.5" />
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
             {paperCount} {paperCount === 1 ? "paper" : "papers"}
-          </span>
-          <span className="flex items-center gap-1">
-            <MessageSquare className="h-3.5 w-3.5" />
-            {claimCount} {claimCount === 1 ? "claim" : "claims"}
           </span>
         </div>
 

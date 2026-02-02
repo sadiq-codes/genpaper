@@ -22,9 +22,9 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { Sparkles } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useEffect, useCallback, useState } from 'react'
+import Image from 'next/image'
 
 const navigation = [
   {
@@ -90,7 +90,13 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <Link href="/projects" className="flex items-center gap-2 px-2 py-1 hover:opacity-80 transition-opacity">
-          <Sparkles className="h-6 w-6 text-primary" />
+          <Image 
+            src="/favicon-32x32.png" 
+            alt="GenPaper" 
+            width={24} 
+            height={24} 
+            className="h-6 w-6"
+          />
           {state === "expanded" && (
             <span className="font-semibold text-lg">GenPaper</span>
           )}

@@ -780,13 +780,15 @@ async function fetchJSON<T>(
 ): Promise<T> {
   const { timeout = 12_000, fastMode, ...rest } = opts
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), fastMode ? 8_000 : timeout)
+  // fastMode: 10s timeout (was 8s), normal: use provided timeout (default 12s)
+  const timeoutId = setTimeout(() => controller.abort(), fastMode ? 10_000 : timeout)
   
   try {
     const response = await fetch(url, { ...rest, signal: controller.signal })
     
     if (response.status === 429) {
-      const retryAfter = Number(response.headers.get('retry-after') ?? 0) * 1_000 || (fastMode ? 1_000 : 5_000)
+      // Normalize retry delay to 2s for all modes (was 1s fast, 5s normal)
+      const retryAfter = Number(response.headers.get('retry-after') ?? 0) * 1_000 || 2_000
       throw new Error(`429-${retryAfter}`)
     }
     
@@ -1134,7 +1136,7 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
     const url = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=0&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`
     
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), fastMode ? 8_000 : 12_000)
+    const timeoutId = setTimeout(() => controller.abort(), fastMode ? 10_000 : 12_000)
     
     try {
       const response = await fetch(url, { signal: controller.signal })

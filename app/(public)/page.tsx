@@ -5,7 +5,6 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
-  Sparkles,
   BookOpen,
   Zap,
   Users,
@@ -19,6 +18,7 @@ import {
   Menu,
   X,
 } from "lucide-react"
+import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 
@@ -43,8 +43,14 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <Link href="/" className="flex items-center space-x-2 group">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                <Sparkles className="h-5 w-5 text-primary-foreground" />
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center p-1.5">
+                <Image 
+                  src="/favicon-32x32.png" 
+                  alt="GenPaper" 
+                  width={20} 
+                  height={20} 
+                  className="w-full h-full"
+                />
               </div>
               <span className="text-xl font-bold text-foreground">GenPaper</span>
             </Link>
@@ -450,8 +456,14 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center space-x-3 mb-4 md:mb-0">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                <Sparkles className="h-5 w-5 text-primary-foreground" />
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center p-1.5">
+                <Image 
+                  src="/favicon-32x32.png" 
+                  alt="GenPaper" 
+                  width={20} 
+                  height={20} 
+                  className="w-full h-full"
+                />
               </div>
               <div>
                 <span className="text-lg font-bold text-foreground block">GenPaper</span>

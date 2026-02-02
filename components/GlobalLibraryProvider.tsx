@@ -112,10 +112,7 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
       })
 
       if (projectResponse.ok) {
-        console.log(`✅ Paper "${title}" added to current project`)
-        
-        // Optional: Show success feedback
-        // You could add a toast notification here
+        console.log(`Paper "${title}" added to current project`)
         
         // Close library drawer after successful addition
         closeLibraryDrawer()
@@ -125,7 +122,6 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
 
     } catch (error) {
       console.error('Error adding paper to project:', error)
-      // You could show an error toast here
     }
   }, [currentProjectId, closeLibraryDrawer])
 
@@ -134,12 +130,10 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
     openLibraryDrawer(query)
   }, [openLibraryDrawer])
 
-  // Handle project search from command palette
-  const handleProjectSearch = useCallback((query: string) => {
-    // Use Next.js router for SPA navigation instead of window.location
-    // Note: This would require importing useRouter and passing it down
-    // For now, we'll use window.location for simplicity
-    window.location.href = `/projects?search=${encodeURIComponent(query)}`
+  // Handle upload PDF from command palette - navigate to library page
+  // The library page has the full upload UI
+  const handleUploadPdf = useCallback(() => {
+    window.location.href = '/library'
   }, [])
 
   const contextValue: GlobalLibraryContextType = {
@@ -160,7 +154,7 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
           isOpen={showCommandPalette}
           onClose={() => setShowCommandPalette(false)}
           onLibrarySearch={handleLibrarySearch}
-          onProjectSearch={handleProjectSearch}
+          onUploadPdf={handleUploadPdf}
         />
       )}
       
@@ -189,4 +183,4 @@ export function useGlobalLibrary() {
     throw new Error('useGlobalLibrary must be used within a GlobalLibraryProvider')
   }
   return context
-} 
+}

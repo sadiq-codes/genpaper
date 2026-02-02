@@ -41,36 +41,66 @@ export async function GET(
       return NextResponse.json({ error: 'No PDF available for this paper' }, { status: 404 })
     }
 
-    // Extract storage path from pdf_url
-    // The pdf_url format is typically the full public URL from Supabase Storage
-    // We need to extract just the path portion
-    const storagePathMatch = paper.pdf_url.match(/\/papers\/(.+)$/)
+    // Check if it's an external URL (not from our Supabase storage)
+    // Supabase storage URLs contain 'supabase' in the domain
+    const isSupabaseUrl = paper.pdf_url.includes('supabase')
     
-    if (!storagePathMatch) {
-      // If it's an external URL (not from our storage), just return it directly
+    if (!isSupabaseUrl) {
+      // External URL (e.g., arxiv, publisher site) - return directly
       return NextResponse.json({ url: paper.pdf_url, isExternal: true })
     }
 
-    const storagePath = storagePathMatch[1]
+    // Extract storage path from pdf_url
+    // URL formats:
+    // - Public: https://[project].supabase.co/storage/v1/object/public/papers/[path]
+    // - Signed: https://[project].supabase.co/storage/v1/object/sign/papers/[path]
+    const storagePathMatch = paper.pdf_url.match(/\/papers\/(.+?)(?:\?|$)/)
+    
+    if (!storagePathMatch) {
+      // Can't parse URL, return as-is (it might still work as a public URL)
+      console.warn('Could not parse storage path from pdf_url:', paper.pdf_url)
+      return NextResponse.json({ url: paper.pdf_url, isExternal: false, fallback: true })
+    }
+
+    const storagePath = decodeURIComponent(storagePathMatch[1])
 
     // Use service client to generate signed URL (bypasses RLS)
     const serviceClient = createServiceClient()
     
+    // First try to create a signed URL (works for both public and private buckets)
     const { data: signedUrlData, error: signedUrlError } = await serviceClient.storage
       .from('papers')
       .createSignedUrl(storagePath, 60 * 60) // 1 hour expiry
 
-    if (signedUrlError || !signedUrlData?.signedUrl) {
-      console.error('Failed to create signed URL:', signedUrlError)
-      // Fallback to public URL
-      return NextResponse.json({ url: paper.pdf_url, isExternal: false })
+    if (signedUrlData?.signedUrl) {
+      return NextResponse.json({ 
+        url: signedUrlData.signedUrl, 
+        isExternal: false,
+        expiresIn: 60 * 60 // seconds
+      })
     }
 
-    return NextResponse.json({ 
-      url: signedUrlData.signedUrl, 
-      isExternal: false,
-      expiresIn: 60 * 60 // seconds
-    })
+    // If signed URL failed, log the error and try public URL
+    if (signedUrlError) {
+      console.warn('Failed to create signed URL, falling back to public URL:', signedUrlError.message)
+    }
+
+    // Fallback: Try to get public URL
+    const { data: publicUrlData } = serviceClient.storage
+      .from('papers')
+      .getPublicUrl(storagePath)
+
+    if (publicUrlData?.publicUrl) {
+      return NextResponse.json({ 
+        url: publicUrlData.publicUrl, 
+        isExternal: false,
+        fallback: true 
+      })
+    }
+
+    // Last resort: return the original URL
+    console.warn('All URL generation methods failed, returning original pdf_url')
+    return NextResponse.json({ url: paper.pdf_url, isExternal: false, fallback: true })
 
   } catch (error) {
     console.error('Error in papers/[id]/pdf-url GET API:', error)

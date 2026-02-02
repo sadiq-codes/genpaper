@@ -265,10 +265,21 @@ export function PaperDetailContent({
     setIsLoadingPdf(true)
     try {
       const signedUrl = await getSignedPdfUrl(paper.id)
-      window.open(signedUrl, '_blank')
-    } catch {
+      const newWindow = window.open(signedUrl, '_blank')
+      
+      // Check if popup was blocked
+      if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+        toast.error('Popup blocked. Please allow popups for this site.')
+      }
+    } catch (error) {
       // Fallback to direct URL
-      window.open(paper.pdf_url, '_blank')
+      console.warn('Failed to get signed URL, falling back to direct URL:', error)
+      toast.info('Opening PDF directly...')
+      const newWindow = window.open(paper.pdf_url, '_blank')
+      
+      if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+        toast.error('Popup blocked. Please allow popups for this site.')
+      }
     } finally {
       setIsLoadingPdf(false)
     }
@@ -289,8 +300,22 @@ export function PaperDetailContent({
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-    } catch {
-      toast.error('Failed to download PDF')
+      toast.success('Download started')
+    } catch (error) {
+      console.warn('Failed to download PDF:', error)
+      // Try fallback download
+      try {
+        const link = document.createElement('a')
+        link.href = paper.pdf_url
+        link.download = `${paper.title.slice(0, 50)}.pdf`
+        link.target = '_blank'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        toast.info('Opening PDF in new tab for download...')
+      } catch {
+        toast.error('Failed to download PDF. Try right-clicking "View PDF" and selecting "Save As".')
+      }
     } finally {
       setIsLoadingPdf(false)
     }
