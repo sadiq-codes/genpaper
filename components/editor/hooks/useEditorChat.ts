@@ -54,6 +54,34 @@ function generateSafeToolId(messageId: string, toolName: string, args: Record<st
   return `${messageId}-${toolName}-${hashHex}`
 }
 
+/**
+ * Generate a brief summary of what a tool did/would do.
+ * Used for AI follow-up responses.
+ */
+function getToolSummary(toolName: string, args: Record<string, unknown>, accepted: boolean): string {
+  const action = accepted ? 'Applied' : 'Rejected'
+  
+  switch (toolName) {
+    case 'insertContent':
+      return `${action} insertion after "${String(args.targetText || '').slice(0, 30)}..."`
+    case 'replaceBlock':
+    case 'replaceInSection':
+      return `${action} replacement of "${String(args.targetText || '').slice(0, 30)}..."`
+    case 'rewriteSection':
+      return `${action} rewrite of section "${String(args.sectionHeading || args.targetText || '').slice(0, 30)}..."`
+    case 'deleteContent':
+      return `${action} deletion of "${String(args.targetText || '').slice(0, 30)}..."`
+    case 'addCitation':
+      return `${action} citation addition`
+    case 'highlightText':
+      return `${action} highlight`
+    case 'addComment':
+      return `${action} comment`
+    default:
+      return `${action} ${toolName} operation`
+  }
+}
+
 // =============================================================================
 // API FUNCTIONS
 // =============================================================================
@@ -168,6 +196,15 @@ export function useEditorChat({
   
   // Track which tools have been executed to prevent double-execution
   const executedTools = useRef<Set<string>>(new Set())
+  
+  // Track tool results for AI follow-up response
+  // Maps messageId -> array of { toolName, accepted, summary }
+  const toolResultsRef = useRef<Map<string, Array<{ 
+    toolName: string
+    toolId: string
+    accepted: boolean 
+    summary: string 
+  }>>>(new Map())
   
   // Refs for confirm/reject functions to avoid stale closures in inline callbacks
   const confirmToolRef = useRef<((toolId: string) => void) | null>(null)
@@ -426,6 +463,77 @@ export function useEditorChat({
 
   const { messages, setMessages, sendMessage: chatSendMessage, status, error } = chat
   const isLoading = status === 'streaming' || status === 'submitted'
+
+  /**
+   * Send tool results back to AI for a follow-up response.
+   * Called when all pending tools for a message have been processed.
+   */
+  const sendToolResultsToAI = useCallback((messageId: string) => {
+    const results = toolResultsRef.current.get(messageId)
+    if (!results || results.length === 0) return
+    
+    // Clear the results after sending
+    toolResultsRef.current.delete(messageId)
+    
+    // Build a summary of what happened
+    const accepted = results.filter(r => r.accepted)
+    const rejected = results.filter(r => !r.accepted)
+    
+    // Create a system-style message for AI to respond to
+    // Prefix with special marker so we can filter it from chat display
+    let resultSummary = ''
+    
+    if (accepted.length > 0 && rejected.length === 0) {
+      // All accepted
+      resultSummary = `[TOOL_RESULT] User accepted ${accepted.length === 1 ? 'the edit' : `all ${accepted.length} edits`}. ${accepted.map(r => r.summary).join(' ')} Please acknowledge briefly.`
+    } else if (rejected.length > 0 && accepted.length === 0) {
+      // All rejected
+      resultSummary = `[TOOL_RESULT] User rejected ${rejected.length === 1 ? 'the edit' : `all ${rejected.length} edits`}. Ask if they'd like a different approach.`
+    } else {
+      // Mixed
+      resultSummary = `[TOOL_RESULT] User accepted ${accepted.length} edit(s), rejected ${rejected.length}. ${accepted.map(r => r.summary).join(' ')} Acknowledge and ask about rejected edits.`
+    }
+    
+    // Send to AI - this triggers a new response
+    const context = getEditorContext()
+    chatSendMessage({
+      text: resultSummary,
+    }, {
+      body: {
+        projectId,
+        ...context,
+        isToolResultMessage: true, // Flag for the API to handle specially
+      },
+    })
+  }, [chatSendMessage, getEditorContext, projectId])
+
+  /**
+   * Record a tool result and check if all tools for the message are resolved.
+   */
+  const recordToolResult = useCallback((
+    messageId: string, 
+    toolId: string,
+    toolName: string, 
+    accepted: boolean,
+    summary: string
+  ) => {
+    // Add to results map
+    const existing = toolResultsRef.current.get(messageId) || []
+    existing.push({ toolName, toolId, accepted, summary })
+    toolResultsRef.current.set(messageId, existing)
+    
+    // Check if all tools for this message are now resolved
+    const pendingForMessage = pendingToolsRef.current.filter(t => t.messageId === messageId)
+    const resolvedCount = existing.length
+    
+    // If all tools are resolved, send results to AI
+    if (pendingForMessage.length === 0 && resolvedCount > 0) {
+      // Small delay to let UI settle
+      setTimeout(() => {
+        sendToolResultsToAI(messageId)
+      }, 500)
+    }
+  }, [sendToolResultsToAI])
 
   /**
    * Execute a tool call on the editor.
@@ -709,6 +817,10 @@ export function useEditorChat({
       executeToolCall(tool.toolName, tool.args, toolId)
       executedTools.current.add(toolId)
       
+      // Record tool result for AI follow-up
+      const summary = getToolSummary(tool.toolName, tool.args, true)
+      recordToolResult(tool.messageId, toolId, tool.toolName, true, summary)
+      
       // Clear ghost edit for accepted tool
       ed.commands.clearGhostEdit(toolId)
       
@@ -768,7 +880,7 @@ export function useEditorChat({
       
       processNextAction()
     }, 300)
-  }, [executeToolCall, recalculateRemainingEdits, showGhostPreviews, processNextAction])
+  }, [executeToolCall, recalculateRemainingEdits, showGhostPreviews, processNextAction, recordToolResult])
 
   /**
    * Internal reject implementation (called by queue processor)
@@ -777,7 +889,8 @@ export function useEditorChat({
     const ed = editorRef.current
     
     // Check if tool still exists in pending
-    if (!pendingToolsRef.current.find(t => t.id === toolId)) {
+    const tool = pendingToolsRef.current.find(t => t.id === toolId)
+    if (!tool) {
       processNextAction()
       return
     }
@@ -792,6 +905,11 @@ export function useEditorChat({
     // Delay removal to let animation play
     setTimeout(() => {
       executedTools.current.add(toolId) // Mark as handled (rejected)
+      
+      // Record tool result for AI follow-up
+      const summary = getToolSummary(tool.toolName, tool.args, false)
+      recordToolResult(tool.messageId, toolId, tool.toolName, false, summary)
+      
       setPendingTools(prev => prev.filter(t => t.id !== toolId))
       
       // Clear ghost edit for this tool
@@ -809,7 +927,7 @@ export function useEditorChat({
       
       processNextAction()
     }, 250)
-  }, [processNextAction])
+  }, [processNextAction, recordToolResult])
 
   /**
    * Confirm a pending tool call (public API - queues the action)
@@ -1060,8 +1178,18 @@ export function useEditorChat({
   // Get current active edit index from editor state
   const activeEditIndex = editor ? getActiveEditIndex(editor) : 0
 
+  // Filter out tool result messages from display (they start with [TOOL_RESULT])
+  const displayMessages = useMemo(() => {
+    return messages.filter(msg => {
+      if (msg.role !== 'user') return true
+      // Check if message text starts with [TOOL_RESULT]
+      const text = msg.parts?.find((p: { type: string }) => p.type === 'text') as { type: 'text'; text: string } | undefined
+      return !text?.text?.startsWith('[TOOL_RESULT]')
+    })
+  }, [messages])
+
   return {
-    messages,
+    messages: displayMessages,
     input,
     handleInputChange,
     handleSubmit,

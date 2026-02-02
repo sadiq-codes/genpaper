@@ -31,6 +31,8 @@ interface ChatRequest {
   mentionedPaperIds?: string[]
   // New: attached images
   attachedImages?: string[]
+  // Tool result follow-up: when true, AI should respond without tools
+  isToolResultMessage?: boolean
 }
 
 // =============================================================================
@@ -255,6 +257,7 @@ export async function POST(request: NextRequest) {
       documentStructure,
       mentionedPaperIds = [],
       attachedImages = [],
+      isToolResultMessage = false,
     } = body
 
     if (!projectId || !messages || messages.length === 0) {
@@ -473,19 +476,24 @@ export async function POST(request: NextRequest) {
     const modelMessages = await convertToModelMessages(filteredMessages)
 
     // Stream the response with tools
+    // When this is a tool result follow-up, disable tools so AI just responds with text
     const result = streamText({
       model: getLanguageModel(),
-      system: systemPrompt,
+      system: isToolResultMessage 
+        ? `${systemPrompt}\n\n[IMPORTANT: This is a follow-up to tool results. Respond briefly acknowledging what was done. Do NOT use any tools - just provide a short, natural confirmation message.]`
+        : systemPrompt,
       messages: modelMessages,
-      tools: documentTools,
+      // Disable tools for tool result messages - AI should just confirm/acknowledge
+      tools: isToolResultMessage ? undefined : documentTools,
       // IMPORTANT: tools execute on the client (browser). Stop after emitting tool calls
       // so the provider never expects tool outputs from the server.
       // stopWhen defaults to stepCountIs(1), which is what we want - no auto-continuation.
-      maxOutputTokens: 4096,
+      maxOutputTokens: isToolResultMessage ? 500 : 4096, // Shorter for confirmations
       abortSignal: request.signal,
       onFinish: async ({ text, toolCalls }) => {
         // Save messages to Supabase after completion
-        if (ragQuery) {
+        // Don't save tool result messages to avoid polluting history
+        if (ragQuery && !isToolResultMessage) {
           await saveMessages(projectId, ragQuery, {
             content: text,
             toolInvocations: toolCalls?.map(tc => ({
