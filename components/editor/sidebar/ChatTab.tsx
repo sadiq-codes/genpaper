@@ -14,15 +14,100 @@ import { cn } from '@/lib/utils'
 import { useChatImageUpload } from '../hooks/useChatImageUpload'
 
 // =============================================================================
+// CITATION FORMATTING FOR CHAT
+// =============================================================================
+
+/**
+ * Format a paper citation for display in chat.
+ * Uses simple (Author, Year) format - no need for full CSL processing in chat.
+ */
+function formatChatCitation(paper: ProjectPaper): string {
+  const authors = paper.authors || []
+  const year = paper.year || 'n.d.'
+  
+  if (authors.length === 0) {
+    // Fallback to title snippet if no authors
+    const titleSnippet = paper.title?.split(' ').slice(0, 3).join(' ') || 'Unknown'
+    return `(${titleSnippet}..., ${year})`
+  }
+  
+  // Extract last name from first author
+  const firstAuthor = authors[0]
+  const lastName = firstAuthor.includes(',')
+    ? firstAuthor.split(',')[0].trim()
+    : firstAuthor.split(' ').pop() || firstAuthor
+  
+  if (authors.length === 1) {
+    return `(${lastName}, ${year})`
+  } else if (authors.length === 2) {
+    const secondAuthor = authors[1]
+    const lastName2 = secondAuthor.includes(',')
+      ? secondAuthor.split(',')[0].trim()
+      : secondAuthor.split(' ').pop() || secondAuthor
+    return `(${lastName} & ${lastName2}, ${year})`
+  }
+  
+  return `(${lastName} et al., ${year})`
+}
+
+/**
+ * Process content to replace citation markers with formatted citations.
+ * Handles multiple formats:
+ * - [@paperId#instanceId] - new format with instance tracking
+ * - [@paperId] - pandoc style
+ * - [CITE: paperId] - legacy format
+ */
+function processChatCitations(content: string, papers: ProjectPaper[]): string {
+  if (!content || papers.length === 0) return content
+  
+  // Create a lookup map for quick paper access
+  const paperMap = new Map(papers.map(p => [p.id, p]))
+  
+  let result = content
+  
+  // Pattern 1: [@paperId#instanceId] - new format
+  result = result.replace(/\[@([a-f0-9-]+)#[a-f0-9-]+\]/gi, (match, paperId) => {
+    const paper = paperMap.get(paperId)
+    return paper ? formatChatCitation(paper) : match
+  })
+  
+  // Pattern 2: [@paperId] - pandoc style (without instance)
+  result = result.replace(/\[@([a-f0-9-]+)\](?!#)/gi, (match, paperId) => {
+    const paper = paperMap.get(paperId)
+    return paper ? formatChatCitation(paper) : match
+  })
+  
+  // Pattern 3: [CITE: paperId] - legacy format
+  result = result.replace(/\[CITE:\s*([a-f0-9-]+)\]/gi, (match, paperId) => {
+    const paper = paperMap.get(paperId)
+    return paper ? formatChatCitation(paper) : match
+  })
+  
+  return result
+}
+
+// =============================================================================
 // STREAMING OPTIMIZATION
 // =============================================================================
 
 /**
  * Memoized markdown renderer that only re-renders when content changes.
  * During streaming, this prevents expensive markdown parsing on every character.
+ * Now also processes citation markers into formatted citations.
  */
-const MemoizedMarkdown = memo(function MemoizedMarkdown({ content }: { content: string }) {
-  return <ReactMarkdown>{content}</ReactMarkdown>
+const MemoizedMarkdown = memo(function MemoizedMarkdown({ 
+  content, 
+  papers = [] 
+}: { 
+  content: string
+  papers?: ProjectPaper[]
+}) {
+  // Process citations before rendering markdown
+  const processedContent = useMemo(
+    () => processChatCitations(content, papers),
+    [content, papers]
+  )
+  return <ReactMarkdown>{processedContent}</ReactMarkdown>
 })
 
 // =============================================================================
@@ -145,9 +230,11 @@ function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
  * Only re-renders when message content actually changes.
  */
 const MessageBubble = memo(function MessageBubble({ 
-  message, 
+  message,
+  papers = [],
 }: { 
   message: UIMessage
+  papers?: ProjectPaper[]
 }) {
   const isAssistant = message.role === 'assistant'
   
@@ -194,7 +281,7 @@ const MessageBubble = memo(function MessageBubble({
         
         {(content || toolInvocations.length > 0) && (
           <div className="text-[13px] leading-relaxed text-foreground/80 prose prose-sm prose-neutral dark:prose-invert max-w-none chat-message-content [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_p]:my-3 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium [&_h1]:mt-4 [&_h2]:mt-4 [&_h3]:mt-3 [&_code]:text-xs [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-muted">
-            {content ? <MemoizedMarkdown content={content} /> : <span className="text-muted-foreground italic">Applying suggested edits…</span>}
+            {content ? <MemoizedMarkdown content={content} papers={papers} /> : <span className="text-muted-foreground italic">Applying suggested edits…</span>}
           </div>
         )}
 
@@ -415,6 +502,7 @@ export function ChatTab({
                 <MessageBubble 
                   key={message.id} 
                   message={message}
+                  papers={papers}
                 />
               ))}
               {isLoading && <LoadingBubble />}
