@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useCallback, useRef, useReducer } from "react"
+import { useEffect, useCallback, useRef, useReducer, useState } from "react"
 import { Loader2, Search, FileText, Sparkles, CheckCircle2, FileStack } from "lucide-react"
 import { GenerationLoadingUI, type ProgressStage, type CompletedSection } from "./GenerationLoadingUI"
 
@@ -11,6 +11,29 @@ interface GenerationProgressProps {
   onComplete: (content: string) => void
   onError: (error: string) => void
   onCancel?: () => void
+}
+
+// =============================================================================
+// CONNECTION MANAGEMENT
+// =============================================================================
+
+interface ConnectionState {
+  isConnected: boolean
+  reconnectAttempts: number
+  wasDisconnectedWhileHidden: boolean
+}
+
+const MAX_RECONNECT_ATTEMPTS = 5
+const BASE_RECONNECT_DELAY = 1000 // 1 second
+const MAX_RECONNECT_DELAY = 30000 // 30 seconds
+
+/**
+ * Calculate exponential backoff delay
+ */
+function getReconnectDelay(attempt: number): number {
+  const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, attempt), MAX_RECONNECT_DELAY)
+  // Add jitter (±20%) to prevent thundering herd
+  return delay * (0.8 + Math.random() * 0.4)
 }
 
 // Stage configuration - maps pipeline stage IDs to display labels and icons
@@ -182,6 +205,15 @@ export function GenerationProgress({
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasCompletedRef = useRef(false)
   const connectionIdRef = useRef<string | null>(null)
+  
+  // Connection state for reconnection handling
+  const [connectionState, setConnectionState] = useState<ConnectionState>({
+    isConnected: false,
+    reconnectAttempts: 0,
+    wasDisconnectedWhileHidden: false,
+  })
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isPageVisibleRef = useRef(true)
 
   useEffect(() => {
     if (hasCompletedRef.current) return
@@ -278,10 +310,51 @@ export function GenerationProgress({
       }
     }
 
+    eventSource.onopen = () => {
+      console.log('[Generation] EventSource connected')
+      setConnectionState(prev => ({ 
+        ...prev, 
+        isConnected: true, 
+        reconnectAttempts: 0 
+      }))
+    }
+
     eventSource.onerror = () => {
+      console.log('[Generation] EventSource error, hasCompleted:', hasCompletedRef.current)
+      setConnectionState(prev => ({ ...prev, isConnected: false }))
+      
       if (!hasCompletedRef.current) {
-        dispatch({ type: 'ERROR', payload: { error: "Connection lost. Please refresh and try again." } })
-        onError("Connection lost")
+        // If page is hidden, mark for reconnect when visible
+        if (!isPageVisibleRef.current) {
+          console.log('[Generation] Page hidden during disconnect, will reconnect on visibility')
+          setConnectionState(prev => ({ ...prev, wasDisconnectedWhileHidden: true }))
+          eventSource.close()
+          return
+        }
+        
+        // Attempt reconnection with exponential backoff
+        setConnectionState(prev => {
+          if (prev.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            dispatch({ type: 'ERROR', payload: { error: "Connection lost. Please refresh and try again." } })
+            onError("Connection lost after multiple retries")
+            return prev
+          }
+          
+          const delay = getReconnectDelay(prev.reconnectAttempts)
+          console.log(`[Generation] Scheduling reconnect attempt ${prev.reconnectAttempts + 1} in ${Math.round(delay)}ms`)
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            if (!hasCompletedRef.current && isPageVisibleRef.current) {
+              console.log('[Generation] Attempting reconnect...')
+              // Reset connection ID to force reconnect
+              connectionIdRef.current = null
+              // Trigger re-render to create new EventSource
+              setConnectionState(p => ({ ...p, reconnectAttempts: p.reconnectAttempts + 1 }))
+            }
+          }, delay)
+          
+          return { ...prev, reconnectAttempts: prev.reconnectAttempts + 1 }
+        })
       }
       eventSource.close()
     }
@@ -290,12 +363,80 @@ export function GenerationProgress({
       eventSource.close()
       eventSourceRef.current = null
       connectionIdRef.current = null
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+      }
     }
-  }, [projectId, topic, paperType, onComplete, onError])
+  }, [projectId, topic, paperType, onComplete, onError, connectionState.reconnectAttempts])
+
+  // Handle page visibility changes - reconnect when page becomes visible
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      const isVisible = !document.hidden
+      isPageVisibleRef.current = isVisible
+      console.log('[Generation] Visibility changed:', isVisible ? 'visible' : 'hidden')
+      
+      if (isVisible && !hasCompletedRef.current) {
+        // Page became visible - check if we need to reconnect or fetch status
+        if (connectionState.wasDisconnectedWhileHidden || !connectionState.isConnected) {
+          console.log('[Generation] Page visible after disconnect, checking status...')
+          
+          try {
+            // Check if generation is still running server-side
+            const response = await fetch(`/api/generate/status?projectId=${projectId}`)
+            if (response.ok) {
+              const status = await response.json()
+              console.log('[Generation] Server status:', status)
+              
+              if (!status.isGenerating && status.hasContent) {
+                // Generation completed while we were away - fetch content
+                console.log('[Generation] Generation completed while hidden, fetching content...')
+                hasCompletedRef.current = true
+                dispatch({ type: 'COMPLETE' })
+                
+                // Fetch the actual content from the project
+                const projectResponse = await fetch(`/api/projects/${projectId}`)
+                if (projectResponse.ok) {
+                  const project = await projectResponse.json()
+                  if (project.content) {
+                    onComplete(project.content)
+                    return
+                  }
+                }
+              } else if (status.isGenerating) {
+                // Still generating - reconnect EventSource
+                console.log('[Generation] Generation still running, reconnecting...')
+                setConnectionState(prev => ({
+                  ...prev,
+                  wasDisconnectedWhileHidden: false,
+                  reconnectAttempts: 0,
+                }))
+                connectionIdRef.current = null // Force reconnect
+              }
+            }
+          } catch (err) {
+            console.warn('[Generation] Failed to check status:', err)
+            // Try to reconnect anyway
+            setConnectionState(prev => ({
+              ...prev,
+              wasDisconnectedWhileHidden: false,
+            }))
+            connectionIdRef.current = null
+          }
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [projectId, connectionState.wasDisconnectedWhileHidden, connectionState.isConnected, onComplete])
 
   const handleCancel = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
+    }
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current)
     }
     onCancel?.()
   }, [onCancel])
