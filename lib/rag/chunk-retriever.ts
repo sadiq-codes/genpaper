@@ -47,8 +47,6 @@ export interface RetrievalConfig {
   rerankTopK: number
   /** Maximum tokens for evidence - the primary limit (replaces chunk count limits) */
   maxEvidenceTokens: number
-  /** Minimum chunks to return even if below minScore (fallback guarantee) */
-  minChunksFallback: number
 }
 
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
@@ -67,9 +65,7 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   // Token budget for evidence - this is the primary limit
   // 25000 tokens ≈ 50-100 chunks depending on size
   // Leaves room for system prompt, output, and section context
-  maxEvidenceTokens: 25000,
-  // Fallback: if no chunks pass minScore, return top N anyway
-  minChunksFallback: 10
+  maxEvidenceTokens: 25000
 }
 
 export interface RetrievalRequest {
@@ -172,15 +168,10 @@ export class ChunkRetriever {
     const { selected, totalTokens } = this.selectByTokenBudget(chunks, config)
     chunks = selected
     
-    // Fallback: if minScore filtered out everything, return top N regardless
+    // No fallback - if minScore filtered out everything, return empty
+    // This prevents irrelevant chunks from being used as "evidence"
     if (chunks.length === 0 && rawChunks.length > 0) {
-      console.warn(`⚠️ No chunks passed minScore threshold. Using fallback: top ${config.minChunksFallback} chunks.`)
-      const sortedRaw = deduplicateChunks(rawChunks).sort((a, b) => b.score - a.score)
-      const fallbackResult = this.selectByTokenBudget(
-        sortedRaw.slice(0, config.minChunksFallback), 
-        config
-      )
-      chunks = fallbackResult.selected
+      console.warn(`⚠️ No chunks passed minScore threshold (${config.minScore}). Returning empty - content may be off-topic.`)
     }
     
     // Calculate metrics

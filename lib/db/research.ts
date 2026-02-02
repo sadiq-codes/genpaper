@@ -1,4 +1,5 @@
 import { getSB } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { createClient as createBrowserSupabaseClient } from '@/lib/supabase/client'
 import type { 
   ResearchProject, 
@@ -230,8 +231,11 @@ export async function updateProjectContent(
   }
   
   if (citationInserts.length > 0) {
-    // Use upsert to handle cases where citation already exists
-    const { error: citationError } = await supabase
+    // Use service client to bypass RLS for citation inserts
+    // This is needed when running in background jobs (Inngest) where no user session exists
+    const serviceClient = createServiceClient()
+    
+    const { error: citationError } = await serviceClient
       .from('project_citations')
       .upsert(citationInserts, {
         onConflict: 'project_id,paper_id',

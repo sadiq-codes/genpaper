@@ -257,8 +257,8 @@ export async function createChunksForPaper(
           // Note: metadata field removed - was computing section_type, has_citations, etc.
           // but these were never used for filtering or retrieval
         }, {
-          onConflict: 'id',
-          ignoreDuplicates: true
+          onConflict: 'paper_id,chunk_index',  // Match the actual unique constraint
+          ignoreDuplicates: false  // Update if exists (content may have changed)
         })
 
       if (error) {
@@ -319,8 +319,8 @@ export async function createChunksForPaper(
     let { error } = await serviceClient
       .from('paper_chunks')
       .upsert(chunkData, {
-        onConflict: 'id',
-        ignoreDuplicates: true
+        onConflict: 'paper_id,chunk_index',  // Match the actual unique constraint
+        ignoreDuplicates: false  // Update if exists (content may have changed)
       })
     
     if (error) {

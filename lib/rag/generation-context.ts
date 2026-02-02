@@ -154,9 +154,7 @@ function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
     // Rerank more candidates for better selection
     rerankTopK: params.rerankTopK || 100,
     // Token budget for evidence - replaces arbitrary chunk limits
-    maxEvidenceTokens: params.maxEvidenceTokens || 25000,
-    // Fallback if nothing passes minScore
-    minChunksFallback: 10
+    maxEvidenceTokens: params.maxEvidenceTokens || 25000
   }
   
   if (!retrieverInstance) {
@@ -448,7 +446,7 @@ export class GenerationContextService {
           paper_id: p.id,
           content: `Title: ${p.title}\n\nAbstract: ${p.abstract}`,
           metadata: { source: 'abstract-fallback' },
-          score: 0.5,
+          score: 0.2, // Low score - abstract only, not full-text verified
           paper: p,
           // Mark as abstract-only evidence - LLM should not make strong claims from abstracts
           evidence_strength: 'abstract' as EvidenceStrength
@@ -570,7 +568,7 @@ export class GenerationContextService {
             paper_id: p.id,
             content: `Title: ${p.title}\n\nAbstract: ${p.abstract}`,
             metadata: { source: 'abstract-fallback-section' },
-            score: 0.4,
+            score: 0.2, // Low score - abstract only, not full-text verified
             paper: p,
             // Mark as abstract-only evidence
             evidence_strength: 'abstract' as EvidenceStrength

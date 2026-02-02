@@ -163,9 +163,9 @@ export async function hybridSearchPapers(
     if (fallbackResults && fallbackResults.length > 0) {
       const transformedResults = fallbackResults.map((paper) => ({
         ...transformDatabasePaper(paper as DatabasePaper),
-        relevance_score: 0.5, // Default relevance score for fallback
+        relevance_score: 0.1, // Low score - text match only, no semantic verification
         semantic_score: 0.0,
-        keyword_score: 0.5
+        keyword_score: 0.1
       }))
       
       return transformedResults
@@ -208,82 +208,10 @@ export async function hybridSearchPapers(
 
   // 4. Get full paper details for the top results
   if (filteredResults.length === 0) {
-    debug('No papers passed relevance threshold, trying relaxed approach')
-    
-    // Try again with a slightly relaxed threshold (0.15 instead of 0.3)
-    // This catches papers that may be relevant but have lower embedding similarity
-    // Important: We don't fall back to ANY positive score as that returns irrelevant papers
-    const RELAXED_RELEVANCE_SCORE = 0.15
-    
-    const relaxedResults = (searchResults || []).filter(
-      (result: HybridSearchResult) => 
-        !excludePaperIds.includes(result.id) &&
-        result.combined_score >= RELAXED_RELEVANCE_SCORE
-    )
-    
-    debug({ count: relaxedResults.length, threshold: RELAXED_RELEVANCE_SCORE }, 'Relaxed filtering results')
-    
-    if (relaxedResults.length === 0) {
-      debug('No papers found even with relaxed threshold - query may have no relevant papers in database')
-      return []
-    }
-    
-    // Use the relaxed results instead
-    const topPermissiveResults = relaxedResults.slice(0, limit)
-
-    const permissiveIds = topPermissiveResults.map((r: HybridSearchResult) => r.id).filter(isValidUuid)
-    if (permissiveIds.length === 0) {
-      debug('No valid UUIDs in permissive results')
-      return []
-    }
-
-    let papersQuery = supabase
-      .from('papers')
-      .select(`
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      `)
-      .in('id', permissiveIds)
-
-    // Apply source filter if provided
-    if (sources && sources.length > 0) {
-      papersQuery = papersQuery.in('source', sources)
-    }
-
-    const { data: papers, error: papersError } = await papersQuery
-
-    if (papersError) {
-      logError({ error: papersError }, 'Failed to fetch paper details')
-      throw papersError
-    }
-
-    // Transform and sort by hybrid score
-    const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
-    
-    const finalResults = topPermissiveResults
-      .map((result: HybridSearchResult) => {
-        const paper = paperMap.get(result.id)
-        if (!paper) {
-          debug({ paperId: result.id }, 'Paper not found in detailed results')
-          return null
-        }
-        
-        const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
-        
-        return {
-          ...transformedPaper,
-          relevance_score: result.combined_score,
-          semantic_score: result.semantic_score,
-          keyword_score: result.keyword_score
-        }
-      })
-      .filter(Boolean) as PaperWithAuthors[]
-
-    info({ count: finalResults.length }, 'Hybrid search completed (permissive)')
-    return finalResults
+    // No fallback to relaxed threshold - return empty instead of low-quality results
+    // This ensures only genuinely relevant papers are returned
+    debug('No papers passed relevance threshold (0.3) - returning empty results')
+    return []
   }
 
   // 5. Get full paper details for the top results

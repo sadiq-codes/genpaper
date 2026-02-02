@@ -280,13 +280,10 @@ export async function semanticRerank<T extends RerankableItem>(
     return results
 
   } catch (error) {
-    console.error('Semantic re-ranking failed, returning original order:', error)
-    // Return original items with default scores on failure
-    return items.map((item, index) => ({
-      ...item,
-      semanticScore: 0.5, // Neutral score
-      originalRank: index
-    }))
+    console.error('Semantic re-ranking failed:', error)
+    // Don't return fabricated scores - let the error propagate
+    // Caller should handle this by falling back to BM25 or failing gracefully
+    throw error
   }
 }
 
@@ -335,10 +332,9 @@ export function quickRelevanceCheck(query: string, title: string, abstract?: str
   const matchCount = [...queryStemsSet].filter(stem => textStemsSet.has(stem)).length
   const matchRatio = queryStemsSet.size > 0 ? matchCount / queryStemsSet.size : 0
   
-  // LENIENT threshold: Only 15% of query word stems need to match, OR at least 1 stem matches
-  // For a 10-word query, this means 2+ stemmed words must match
-  // For a 5-word query, this means 1+ stemmed word must match
-  // This is intentionally low - semantic reranking will filter out truly irrelevant papers
-  // The goal here is just to eliminate papers with ZERO topical overlap
-  return matchRatio >= 0.15 || matchCount >= 1
+  // TIGHTER threshold: Require at least 2 meaningful stems AND 25% ratio
+  // This prevents single-word matches (e.g., "cancer" alone) from passing
+  // Papers must have genuine topical overlap, not just one common term
+  // For a 5-word query like "hormone therapy on cancer", need 2+ stems (e.g., "hormone" + "cancer")
+  return matchRatio >= 0.25 && matchCount >= 2
 }

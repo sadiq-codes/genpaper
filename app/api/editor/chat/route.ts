@@ -126,8 +126,7 @@ async function getRAGContext(
   try {
     const retriever = new ChunkRetriever({
       // For chat, use a smaller token budget (faster responses)
-      maxEvidenceTokens: 8000,
-      minChunksFallback: 5,
+      maxEvidenceTokens: 8000
     })
 
     console.log('[Chat API] RAG query:', query?.slice(0, 100))

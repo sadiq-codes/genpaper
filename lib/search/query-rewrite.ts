@@ -2,6 +2,7 @@
  * Query Rewrite Service
  * 
  * Uses centralized AI model configuration for query enhancement.
+ * Includes spell correction integrated into the rewrite prompt (single LLM call).
  */
 
 import { generateText } from 'ai'
@@ -17,15 +18,16 @@ export interface OriginalResearchContext {
 
 /**
  * Generate up to k alternative keyword search queries that are semantically
- * similar to the input query. Falls back to returning the original query if
- * no LLM key is present or API fails.
+ * similar to the input query. Also corrects spelling errors in the same LLM call.
+ * Falls back to returning the original query if no LLM key is present or API fails.
  * 
- * @param query - The original search query
+ * @param query - The original search query (may contain typos)
  * @param k - Number of alternative queries to generate (default: 3)
  * @param discipline - Optional academic discipline to focus the queries (e.g., "American Literature")
  */
 export async function generateQueryRewrites(query: string, k = 3, discipline?: string): Promise<string[]> {
-  const rewrites: string[] = [query.trim()]
+  const trimmedQuery = query.trim()
+  const rewrites: string[] = [trimmedQuery]
 
   if (!process.env.OPENAI_API_KEY) return rewrites
 
@@ -44,11 +46,19 @@ The topic is in the discipline of "${discipline}".
     const { text } = await generateText({
       model: getLanguageModel(),
       system: 'You are an academic search assistant specializing in finding scholarly papers in specific disciplines.',
-      prompt: `Generate ${k} alternative keyword-style academic search queries that would find papers similar to: "${query}".${disciplineContext}
+      prompt: `First, correct any spelling errors in this query: "${trimmedQuery}"
 
-Return the list as a JSON array of plain strings. Do not add any explanation.`,
+Then generate ${k} alternative keyword-style academic search queries that would find papers similar to the CORRECTED query.${disciplineContext}
+
+Return a JSON array where:
+- The FIRST element is the spell-corrected version of the original query
+- The remaining ${k} elements are alternative search queries
+
+Example format: ["corrected original query", "alternative 1", "alternative 2", "alternative 3"]
+
+Do not add any explanation, only return the JSON array.`,
       temperature: 0.7,
-      maxOutputTokens: 200
+      maxOutputTokens: 250
     })
 
     let arr: string[] = []
@@ -59,7 +69,16 @@ Return the list as a JSON array of plain strings. Do not add any explanation.`,
       arr = text.split(/\n|\r|-/).map((s: string) => s.trim()).filter(Boolean)
     }
 
-    rewrites.push(...arr.slice(0, k))
+    // First element is the corrected query, rest are alternatives
+    if (arr.length > 0) {
+      const correctedQuery = arr[0]
+      if (correctedQuery && correctedQuery !== trimmedQuery) {
+        console.log(`🔤 Spell correction: "${trimmedQuery}" → "${correctedQuery}"`)
+      }
+      // Replace the original with corrected, then add alternatives
+      rewrites[0] = correctedQuery || trimmedQuery
+      rewrites.push(...arr.slice(1, k + 1))
+    }
   } catch (err) {
     console.warn('query-rewrite failed', err)
   }

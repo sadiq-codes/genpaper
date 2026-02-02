@@ -399,15 +399,13 @@ export async function parallelSearch(
   )
   console.log(`🔍 After quick relevance filter: ${preFiltered.length} papers`)
   
-  // MINIMUM PAPER GUARANTEE: If filtering was too aggressive, fall back to deduplicated list
-  // This ensures we don't lose all papers due to overly strict filtering
-  const MIN_PAPERS_GUARANTEE = Math.min(20, Math.ceil(deduplicated.length * 0.1)) // At least 10% or 20 papers
-  const papersToRank = preFiltered.length >= MIN_PAPERS_GUARANTEE 
-    ? preFiltered 
-    : deduplicated
+  // Trust the filter - don't fall back to unfiltered papers
+  // If filter is too aggressive, it's better to return fewer relevant papers
+  // than many irrelevant ones
+  const papersToRank = preFiltered
   
-  if (preFiltered.length < MIN_PAPERS_GUARANTEE && deduplicated.length > 0) {
-    console.log(`⚠️ Quick filter too aggressive (${preFiltered.length} < ${MIN_PAPERS_GUARANTEE}), using all ${deduplicated.length} deduplicated papers`)
+  if (preFiltered.length === 0 && deduplicated.length > 0) {
+    console.log(`⚠️ Quick filter removed all ${deduplicated.length} papers - query may be too specific or results are off-topic`)
   }
   
   // If we have enough papers after pre-filtering, use semantic re-ranking
@@ -423,7 +421,7 @@ export async function parallelSearch(
       
       // Re-rank using embeddings
       const reranked = await semanticRerank(primaryQuery, papersForRerank, {
-        minScore: 0.20, // Minimum semantic similarity threshold
+        minScore: 0.35, // Minimum semantic similarity threshold (raised from 0.20 to filter weak matches)
         titleWeight: 0.65, // Slightly favor title matches
         maxResults: maxResults,
         boostExactMatch: true
@@ -461,12 +459,18 @@ export async function parallelSearch(
     console.log(`⚡ Fast mode: Skipping semantic re-ranking`)
   }
   
-  // Fallback: BM25 ranking (for when semantic fails or too few papers)
-  const ranked = rankPapers(papersToRank.length > 0 ? papersToRank : deduplicated, primaryQuery, options)
+  // BM25 ranking on filtered papers only - no fallback to unfiltered
+  // If papersToRank is empty, return empty (don't bypass the relevance filter)
+  if (papersToRank.length === 0) {
+    console.log(`🎯 Final results: 0 papers (all filtered out as irrelevant)`)
+    return []
+  }
+  
+  const ranked = rankPapers(papersToRank, primaryQuery, options)
   
   // Return top results
   const topResults = ranked.slice(0, maxResults)
-  console.log(`🎯 Final results (BM25 fallback): ${topResults.length} papers`)
+  console.log(`🎯 Final results: ${topResults.length} papers`)
   
   return topResults
 }
