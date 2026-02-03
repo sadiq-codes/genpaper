@@ -115,15 +115,17 @@ export {
 // =============================================================================
 // Pipeline Integration (Server-only)
 // =============================================================================
-// Note: These are exported from a separate file to avoid 'server-only' 
-// contaminating the main exports which are used in test scripts
+// Note: Pipeline integration functions are exported from a separate file
+// to avoid 'server-only' contaminating the main exports.
+// Import directly from './pipeline-integration' for server components
+// or from this file for test scripts (which don't need those functions)
+
+// Types are safe to re-export
 export type {
   HybridThemeExtractionResult,
   HybridGenerationResult
 } from './pipeline-integration'
 
-export {
-  extractThemesHybrid,
-  generateSectionsHybrid,
-  canUseHybridSynthesis
-} from './pipeline-integration'
+// DO NOT re-export server-only functions here
+// They are available via: import { ... } from '@/lib/synthesis-engine/pipeline-integration'
+// Functions: extractThemesHybrid, generateSectionsHybrid, canUseHybridSynthesis
