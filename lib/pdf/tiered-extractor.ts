@@ -388,7 +388,66 @@ async function isScannedPDF(pdfBuffer: Buffer): Promise<boolean> {
 }
 
 /**
+ * Convert PDF pages to images using Ghostscript directly
+ * This bypasses pdf2pic which has issues with some PDFs
+ */
+async function convertPdfToImages(pdfBuffer: Buffer, maxPages: number = 5): Promise<Buffer[]> {
+  const { execSync } = await import('child_process')
+  const { writeFile, readFile, unlink, mkdir } = await import('fs/promises')
+  const { randomUUID } = await import('crypto')
+  
+  const tempId = randomUUID().slice(0, 8)
+  const tempDir = `/tmp/genpaper-ocr-${tempId}`
+  const tempPdfPath = `${tempDir}/input.pdf`
+  const pageImages: Buffer[] = []
+  
+  try {
+    // Create temp directory
+    await mkdir(tempDir, { recursive: true })
+    
+    // Write PDF to temp file
+    await writeFile(tempPdfPath, pdfBuffer)
+    
+    // Convert each page using Ghostscript
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      const outputPath = `${tempDir}/page-${pageNum}.png`
+      
+      try {
+        // Use Ghostscript to convert PDF page to PNG
+        const gsCmd = `gs -dNOPAUSE -dBATCH -dQUIET -sDEVICE=png16m -r150 -dFirstPage=${pageNum} -dLastPage=${pageNum} -sOutputFile="${outputPath}" "${tempPdfPath}"`
+        execSync(gsCmd, { timeout: 30000, stdio: 'pipe' })
+        
+        // Read the generated image
+        const imageBuffer = await readFile(outputPath)
+        if (imageBuffer.length > 1000) { // Valid image should be > 1KB
+          pageImages.push(imageBuffer)
+        }
+        
+        // Clean up page image
+        await unlink(outputPath).catch(() => {})
+      } catch (pageError) {
+        // Page might not exist or conversion failed - that's OK
+        info(`Page ${pageNum} conversion stopped (likely end of document)`)
+        break
+      }
+    }
+    
+    return pageImages
+  } finally {
+    // Clean up temp files
+    try {
+      await unlink(tempPdfPath).catch(() => {})
+      const { rmdir } = await import('fs/promises')
+      await rmdir(tempDir).catch(() => {})
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
+/**
  * OCR extraction (Tier 3) - Using Tesseract.js for text recognition
+ * Uses Ghostscript directly for PDF-to-image conversion (more reliable than pdf2pic)
  */
 async function ocrParse(
   pdfBuffer: Buffer, 
@@ -401,39 +460,22 @@ async function ocrParse(
       return null
     }
 
-    // Dynamic imports for OCR dependencies
-    const { createWorker } = await import('tesseract.js')
-    const pdf2picModule = await import('pdf2pic')
-    const pdf2pic = pdf2picModule.default || pdf2picModule
-    
-    info('Starting OCR extraction process')
-    
-    // Convert PDF to images (first 10 pages to avoid timeout)
-    const convert = pdf2pic.fromBuffer(pdfBuffer, {
-      density: 200,           // Higher DPI for better OCR
-      saveFilename: "page",
-      savePath: "/tmp",
-      format: "png",
-      width: 2000,
-      height: 2000
-    })
-    
-    const maxPages = 5 // Limit to 5 pages to prevent timeout and improve reliability
-    const pageImages = []
-    
-    // Convert first few pages to images with resilience
-    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-      try {
-        const pageResult = await convert(pageNum, { responseType: 'buffer' })
-        if (pageResult.buffer) {
-          pageImages.push(pageResult.buffer)
-        }
-      } catch (pageError) {
-        warn(`Failed to convert page ${pageNum} to image:`, pageError)
-        // Continue with other pages instead of breaking - one failed page shouldn't stop OCR
-        continue
-      }
+    // Check if Ghostscript is available
+    try {
+      const { execSync } = await import('child_process')
+      execSync('gs --version', { stdio: 'pipe' })
+    } catch {
+      warn('Ghostscript not available, skipping OCR')
+      return null
     }
+
+    // Dynamic import for Tesseract
+    const { createWorker } = await import('tesseract.js')
+    
+    info('Starting OCR extraction process with Ghostscript')
+    
+    const maxPages = 5 // Limit to 5 pages to prevent timeout
+    const pageImages = await convertPdfToImages(pdfBuffer, maxPages)
     
     if (pageImages.length === 0) {
       warn('No images could be extracted from PDF for OCR')
