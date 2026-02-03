@@ -6,7 +6,7 @@
  * 
  * PERFORMANCE OPTIMIZATION:
  * To avoid slow embedding generation for large result sets, we use a 2-stage approach:
- * 1. BM25 pre-filter: Quickly rank all papers using keyword matching
+ * 1. BM25 pre-filter: Quickly rank all papers using MiniSearch (keyword matching)
  * 2. Semantic re-rank: Only embed the top N papers (default 50)
  * 
  * This reduces embedding calls from 2N+1 to 2*50+1 = 101 (87% reduction for 400 papers)
@@ -15,6 +15,7 @@
 import { generateEmbeddings } from '@/lib/utils/embedding'
 import { cosineSimilarity } from '@/lib/rag/base-retrieval'
 import { stemWords } from '@/lib/utils/stemmer'
+import MiniSearch from 'minisearch'
 
 export interface RerankableItem {
   id: string
@@ -32,95 +33,8 @@ export type RerankedItem<T extends RerankableItem> = T & {
 const MAX_PAPERS_TO_EMBED = 50
 
 /**
- * BM25 parameters for quick ranking
- */
-interface BM25Params {
-  k1: number
-  b: number
-  avgDocLen: number
-  idf: Map<string, number>
-  queryTerms: string[]
-}
-
-/**
- * Build BM25 environment for quick ranking
- */
-function buildBM25Params(query: string, items: RerankableItem[]): BM25Params {
-  const k1 = 1.2
-  const b = 0.75
-  const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2)
-  const N = items.length
-
-  // Compute document frequencies
-  const dfCounts = new Map<string, number>()
-  for (const term of queryTerms) {
-    dfCounts.set(term, 0)
-  }
-
-  let totalDocLength = 0
-  for (const item of items) {
-    const text = `${item.title} ${item.abstract || ''}`.toLowerCase()
-    const tokens = text.split(/\s+/)
-    totalDocLength += tokens.length
-    
-    const seenTerms = new Set<string>()
-    for (const token of tokens) {
-      for (const term of queryTerms) {
-        if (token.includes(term) && !seenTerms.has(term)) {
-          dfCounts.set(term, (dfCounts.get(term) || 0) + 1)
-          seenTerms.add(term)
-        }
-      }
-    }
-  }
-
-  const idf = new Map<string, number>()
-  for (const term of queryTerms) {
-    const df = dfCounts.get(term) || 0
-    const idfVal = df === 0 ? 0 : Math.log((N - df + 0.5) / (df + 0.5))
-    idf.set(term, idfVal)
-  }
-
-  return {
-    k1,
-    b,
-    avgDocLen: totalDocLength / Math.max(1, N),
-    idf,
-    queryTerms
-  }
-}
-
-/**
- * Calculate BM25 score for a single item
- */
-function calculateBM25Score(params: BM25Params, title: string, abstract: string): number {
-  const { idf, avgDocLen, k1, b, queryTerms } = params
-
-  const titleTerms = title.toLowerCase().split(/\s+/)
-  const abstractTerms = abstract.toLowerCase().split(/\s+/)
-  const docLength = titleTerms.length + abstractTerms.length
-
-  let score = 0
-  for (const term of queryTerms) {
-    const idfVal = idf.get(term) || 0
-    if (idfVal === 0) continue
-
-    // Title terms weighted 2x
-    const tf = titleTerms.filter(t => t.includes(term)).length * 2 +
-               abstractTerms.filter(t => t.includes(term)).length
-
-    if (tf === 0) continue
-
-    const numerator = tf * (k1 + 1)
-    const denominator = tf + k1 * (1 - b + b * (docLength / avgDocLen))
-    score += idfVal * (numerator / denominator)
-  }
-
-  return score
-}
-
-/**
- * Quick BM25 pre-filter to select top candidates before expensive embedding
+ * Quick BM25 pre-filter using MiniSearch
+ * Uses proper BM25 implementation with field boosting (title 2x weight)
  */
 function bm25PreFilter<T extends RerankableItem>(
   query: string, 
@@ -131,19 +45,49 @@ function bm25PreFilter<T extends RerankableItem>(
     return items
   }
 
-  const params = buildBM25Params(query, items)
+  // Create MiniSearch index with BM25-like scoring
+  const miniSearch = new MiniSearch<T>({
+    fields: ['title', 'abstract'],
+    storeFields: ['id', 'title', 'abstract'],
+    // Use default tokenizer (splits on whitespace and punctuation)
+    searchOptions: {
+      // Prefix matching for partial words
+      prefix: true,
+      // Fuzzy matching with edit distance 0.2 (20% of term length)
+      fuzzy: 0.2,
+      // Boost title matches 2x over abstract
+      boost: { title: 2, abstract: 1 },
+      // Combine field scores using OR (union of matches)
+      combineWith: 'OR' as const
+    }
+  })
+
+  // Index all items
+  miniSearch.addAll(items)
+
+  // Search and get ranked results
+  const results = miniSearch.search(query)
+
+  // Map results back to original items, preserving MiniSearch order
+  const resultIds = new Set(results.slice(0, maxItems).map(r => r.id))
+  const rankedItems: T[] = []
   
-  const scored = items.map((item, index) => ({
-    item,
-    score: calculateBM25Score(params, item.title, item.abstract || ''),
-    originalIndex: index
-  }))
+  // First add items that matched (in MiniSearch ranked order)
+  for (const result of results.slice(0, maxItems)) {
+    const item = items.find(i => i.id === result.id)
+    if (item) rankedItems.push(item)
+  }
+  
+  // If we don't have enough matches, add remaining items
+  if (rankedItems.length < maxItems) {
+    for (const item of items) {
+      if (!resultIds.has(item.id) && rankedItems.length < maxItems) {
+        rankedItems.push(item)
+      }
+    }
+  }
 
-  // Sort by BM25 score descending
-  scored.sort((a, b) => b.score - a.score)
-
-  // Return top items
-  return scored.slice(0, maxItems).map(s => s.item)
+  return rankedItems
 }
 
 /**

@@ -21,6 +21,9 @@ export interface PaperMetadata {
   [key: string]: unknown
 }
 
+// Content source types - how full-text was obtained
+export type ContentSource = 'pdf' | 'html' | 'abstract-only'
+
 // Review settings for literature reviews
 export interface ReviewSettingsConfig {
   review_focus?: string
@@ -72,6 +75,7 @@ export interface Paper {
   created_at: string
   csl_json?: CSLItem // CSL-JSON formatted citation data
   authors?: Author[] // Joined from paper_authors table
+  content_source?: ContentSource // How full-text was obtained: 'pdf', 'html', or 'abstract-only'
 }
 
 export interface PaperAuthor {

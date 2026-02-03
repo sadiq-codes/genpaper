@@ -44,6 +44,9 @@ function estimateTokenCount(text: string): number {
 /**
  * Get precise token count using tiktoken (reliable implementation)
  * Falls back to estimation if tiktoken is unavailable (e.g., WASM loading issues)
+ * 
+ * Note: For batch operations, use createTokenCounter() instead to avoid
+ * repeated encoder instantiation overhead.
  */
 export async function getTokenCount(text: string): Promise<number> {
   let encoder: any = null
@@ -69,6 +72,86 @@ export async function getTokenCount(text: string): Promise<number> {
 }
 
 /**
+ * Token counter with cached encoder and memoization
+ * 
+ * PERFORMANCE: Creates encoder once and reuses it for all count() calls.
+ * Also memoizes results to avoid re-encoding identical strings (common with overlap content).
+ * 
+ * Usage:
+ * ```
+ * const counter = await createTokenCounter()
+ * try {
+ *   const count1 = counter.count("some text")
+ *   const count2 = counter.count("other text")
+ * } finally {
+ *   counter.free()
+ * }
+ * ```
+ */
+export interface TokenCounter {
+  /** Count tokens in text (memoized) */
+  count: (text: string) => number
+  /** Free the encoder - MUST be called when done */
+  free: () => void
+  /** Whether using real tiktoken or estimation fallback */
+  isEstimating: boolean
+}
+
+export async function createTokenCounter(): Promise<TokenCounter> {
+  const cache = new Map<string, number>()
+  let encoder: any = null
+  let isEstimating = false
+  
+  try {
+    const { encoding_for_model } = await import('@dqbd/tiktoken')
+    encoder = encoding_for_model('text-embedding-3-small')
+  } catch (error) {
+    console.warn(`tiktoken unavailable for batch counting, using estimation: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    isEstimating = true
+  }
+  
+  return {
+    count: (text: string): number => {
+      // Check cache first
+      const cached = cache.get(text)
+      if (cached !== undefined) {
+        return cached
+      }
+      
+      // Calculate token count
+      let count: number
+      if (encoder) {
+        const tokens = encoder.encode(text)
+        count = tokens.length
+      } else {
+        count = estimateTokenCount(text)
+      }
+      
+      // Cache result (limit cache size to prevent memory issues)
+      if (cache.size < 10000) {
+        cache.set(text, count)
+      }
+      
+      return count
+    },
+    
+    free: () => {
+      if (encoder) {
+        try {
+          encoder.free()
+        } catch (e) {
+          console.warn('Failed to free tiktoken encoder:', e)
+        }
+        encoder = null
+      }
+      cache.clear()
+    },
+    
+    isEstimating
+  }
+}
+
+/**
  * Token-aware chunking with smart boundaries
  * Improves retrieval quality by respecting token boundaries and preserving semantic continuity
  */
@@ -77,6 +160,7 @@ export interface TokenChunkOptions {
   overlapTokens?: number  // Token overlap between chunks (default: 80)
   preserveParagraphs?: boolean  // Try to keep paragraphs intact (default: true)
   minChunkTokens?: number // Minimum tokens per chunk (default: 50)
+  minSentenceLength?: number // Minimum sentence length to keep (default: 5, filters fragments)
 }
 
 export async function chunkByTokens(
@@ -88,76 +172,127 @@ export async function chunkByTokens(
     maxTokens = 500,
     overlapTokens = 80,
     preserveParagraphs = true,
-    minChunkTokens = 50
+    minChunkTokens = 50,
+    minSentenceLength = 5
   } = options
 
   if (!text || text.trim().length < 50) {
     return []
   }
 
-  const chunks: TextChunk[] = []
-  let position = 0
+  // Create cached token counter for performance (reuses encoder, memoizes results)
+  const tokenCounter = await createTokenCounter()
+  
+  try {
+    const chunks: TextChunk[] = []
+    let position = 0
 
-  // Split by paragraphs first if preserveParagraphs is true
-  const segments = preserveParagraphs 
-    ? text.split(/\n\s*\n/).filter(seg => seg.trim().length > 0)
-    : [text]
+    // Split by paragraphs first if preserveParagraphs is true
+    const segments = preserveParagraphs 
+      ? text.split(/\n\s*\n/).filter(seg => seg.trim().length > 0)
+      : [text]
 
-  let overlapContent = ''
+    let overlapContent = ''
 
-  for (const segment of segments) {
-    // Check if segment fits in one chunk
-    const segmentTokens = await getTokenCount(segment)
-    
-    if (segmentTokens <= maxTokens) {
-      // FIX #2: Only add overlap if it fits within maxTokens budget
-      let chunkContent = segment
-      let totalTokens = segmentTokens
-      let overlapLen = 0
+    for (const segment of segments) {
+      // Check if segment fits in one chunk
+      const segmentTokens = tokenCounter.count(segment)
       
-      if (overlapContent) {
-        const withOverlap = overlapContent + ' ' + segment
-        const withOverlapTokens = await getTokenCount(withOverlap)
+      if (segmentTokens <= maxTokens) {
+        // Only add overlap if it fits within maxTokens budget
+        let chunkContent = segment
+        let totalTokens = segmentTokens
+        let overlapLen = 0
         
-        if (withOverlapTokens <= maxTokens) {
-          // Overlap fits within budget
-          chunkContent = withOverlap
-          totalTokens = withOverlapTokens
-          overlapLen = overlapContent.length + 1 // +1 for the space
+        if (overlapContent) {
+          const withOverlap = overlapContent + ' ' + segment
+          const withOverlapTokens = tokenCounter.count(withOverlap)
+          
+          if (withOverlapTokens <= maxTokens) {
+            // Overlap fits within budget
+            chunkContent = withOverlap
+            totalTokens = withOverlapTokens
+            overlapLen = overlapContent.length + 1 // +1 for the space
+          }
+          // else: skip overlap for this chunk to stay within budget
         }
-        // else: skip overlap for this chunk to stay within budget
-      }
-      
-      const chunkId = createDeterministicChunkId(paperId, chunkContent.trim(), position)
-      chunks.push({
-        id: chunkId,
-        content: chunkContent.trim(),
-        position,
-        metadata: {
-          wordCount: chunkContent.trim().split(/\s+/).length,
-          charCount: chunkContent.length,
-          tokenCount: totalTokens,
-          isOverlap: overlapLen > 0,
-          overlapLength: overlapLen // FIX #3: Track overlap length for metadata extraction
-        }
-      })
-      position += segment.length
-      overlapContent = await createTokenOverlap(chunkContent, overlapTokens)
-    } else {
-      // Split segment into sentences and pack by token budget
-      const sentences = splitIntoSentences(segment)
-      
-      let currentChunk = overlapContent
-      let currentTokens = overlapContent ? await getTokenCount(overlapContent) : 0
-      let currentOverlapLen = overlapContent ? overlapContent.length : 0
-      
-      for (const sentence of sentences) {
-        const sentenceTokens = await getTokenCount(sentence)
         
-        // Check if adding this sentence would exceed token limit
-        if (currentTokens + sentenceTokens > maxTokens && currentChunk.trim()) {
-          // Save current chunk if it meets minimum size
+        const chunkId = createDeterministicChunkId(paperId, chunkContent.trim(), position)
+        chunks.push({
+          id: chunkId,
+          content: chunkContent.trim(),
+          position,
+          metadata: {
+            wordCount: chunkContent.trim().split(/\s+/).length,
+            charCount: chunkContent.length,
+            tokenCount: totalTokens,
+            isOverlap: overlapLen > 0,
+            overlapLength: overlapLen
+          }
+        })
+        position += segment.length
+        overlapContent = createTokenOverlapSync(chunkContent, overlapTokens, tokenCounter, minSentenceLength)
+      } else {
+        // Split segment into sentences and pack by token budget
+        const sentences = splitIntoSentences(segment, minSentenceLength)
+        
+        let currentChunk = overlapContent
+        let currentTokens = overlapContent ? tokenCounter.count(overlapContent) : 0
+        let currentOverlapLen = overlapContent ? overlapContent.length : 0
+        
+        for (const sentence of sentences) {
+          const sentenceTokens = tokenCounter.count(sentence)
+          
+          // Check if adding this sentence would exceed token limit
+          if (currentTokens + sentenceTokens > maxTokens && currentChunk.trim()) {
+            // Save current chunk if it meets minimum size
+            if (currentTokens >= minChunkTokens) {
+              const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
+              chunks.push({
+                id: chunkId,
+                content: currentChunk.trim(),
+                position,
+                metadata: {
+                  wordCount: currentChunk.trim().split(/\s+/).length,
+                  charCount: currentChunk.length,
+                  tokenCount: currentTokens,
+                  isOverlap: currentOverlapLen > 0,
+                  overlapLength: currentOverlapLen
+                }
+              })
+              position += currentChunk.length
+              
+              // Prepare overlap for next chunk
+              overlapContent = createTokenOverlapSync(currentChunk, overlapTokens, tokenCounter, minSentenceLength)
+              
+              // Only add overlap if it fits within budget
+              const newOverlapTokens = overlapContent ? tokenCounter.count(overlapContent) : 0
+              if (newOverlapTokens + sentenceTokens <= maxTokens && overlapContent) {
+                currentChunk = overlapContent + ' ' + sentence
+                currentTokens = tokenCounter.count(currentChunk)
+                currentOverlapLen = overlapContent.length + 1
+              } else {
+                // Skip overlap to stay within budget
+                currentChunk = sentence
+                currentTokens = sentenceTokens
+                currentOverlapLen = 0
+              }
+            } else {
+              // Current chunk too small, just add the sentence
+              currentChunk += (currentChunk ? ' ' : '') + sentence
+              currentTokens += sentenceTokens
+            }
+          } else {
+            // Add sentence to current chunk
+            currentChunk += (currentChunk ? ' ' : '') + sentence
+            currentTokens += sentenceTokens
+          }
+        }
+        
+        // Handle final chunk - don't drop content below minChunkTokens
+        if (currentChunk.trim()) {
           if (currentTokens >= minChunkTokens) {
+            // Normal case: chunk meets minimum size
             const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
             chunks.push({
               id: chunkId,
@@ -171,102 +306,64 @@ export async function chunkByTokens(
                 overlapLength: currentOverlapLen
               }
             })
-            position += currentChunk.length
             
-            // Prepare overlap for next chunk
-            overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
+            // Prepare overlap for next segment
+            overlapContent = createTokenOverlapSync(currentChunk, overlapTokens, tokenCounter, minSentenceLength)
+          } else if (chunks.length > 0) {
+            // Merge small tail with previous chunk instead of dropping
+            const prevChunk = chunks[chunks.length - 1]
+            const mergedContent = prevChunk.content + ' ' + currentChunk.trim()
+            const mergedTokens = tokenCounter.count(mergedContent)
             
-            // FIX #2: Only add overlap if it fits within budget
-            const newOverlapTokens = overlapContent ? await getTokenCount(overlapContent) : 0
-            if (newOverlapTokens + sentenceTokens <= maxTokens && overlapContent) {
-              currentChunk = overlapContent + ' ' + sentence
-              currentTokens = await getTokenCount(currentChunk)
-              currentOverlapLen = overlapContent.length + 1
-            } else {
-              // Skip overlap to stay within budget
-              currentChunk = sentence
-              currentTokens = sentenceTokens
-              currentOverlapLen = 0
+            // Update previous chunk with merged content
+            prevChunk.content = mergedContent
+            prevChunk.metadata = {
+              ...prevChunk.metadata,
+              wordCount: mergedContent.split(/\s+/).length,
+              charCount: mergedContent.length,
+              tokenCount: mergedTokens
             }
+            
+            // Prepare overlap from merged content
+            overlapContent = createTokenOverlapSync(mergedContent, overlapTokens, tokenCounter, minSentenceLength)
           } else {
-            // Current chunk too small, just add the sentence
-            currentChunk += (currentChunk ? ' ' : '') + sentence
-            currentTokens += sentenceTokens
+            // First chunk is small - keep it anyway (don't lose content)
+            const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
+            chunks.push({
+              id: chunkId,
+              content: currentChunk.trim(),
+              position,
+              metadata: {
+                wordCount: currentChunk.trim().split(/\s+/).length,
+                charCount: currentChunk.length,
+                tokenCount: currentTokens,
+                isOverlap: currentOverlapLen > 0,
+                overlapLength: currentOverlapLen
+              }
+            })
+            
+            overlapContent = createTokenOverlapSync(currentChunk, overlapTokens, tokenCounter, minSentenceLength)
           }
-        } else {
-          // Add sentence to current chunk
-          currentChunk += (currentChunk ? ' ' : '') + sentence
-          currentTokens += sentenceTokens
-        }
-      }
-      
-      // FIX #1: Handle final chunk - don't drop content below minChunkTokens
-      if (currentChunk.trim()) {
-        if (currentTokens >= minChunkTokens) {
-          // Normal case: chunk meets minimum size
-          const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
-          chunks.push({
-            id: chunkId,
-            content: currentChunk.trim(),
-            position,
-            metadata: {
-              wordCount: currentChunk.trim().split(/\s+/).length,
-              charCount: currentChunk.length,
-              tokenCount: currentTokens,
-              isOverlap: currentOverlapLen > 0,
-              overlapLength: currentOverlapLen
-            }
-          })
-          
-          // Prepare overlap for next segment
-          overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
-        } else if (chunks.length > 0) {
-          // FIX #1: Merge small tail with previous chunk instead of dropping
-          const prevChunk = chunks[chunks.length - 1]
-          const mergedContent = prevChunk.content + ' ' + currentChunk.trim()
-          const mergedTokens = await getTokenCount(mergedContent)
-          
-          // Update previous chunk with merged content
-          prevChunk.content = mergedContent
-          prevChunk.metadata = {
-            ...prevChunk.metadata,
-            wordCount: mergedContent.split(/\s+/).length,
-            charCount: mergedContent.length,
-            tokenCount: mergedTokens
-          }
-          
-          // Prepare overlap from merged content
-          overlapContent = await createTokenOverlap(mergedContent, overlapTokens)
-        } else {
-          // FIX #1: First chunk is small - keep it anyway (don't lose content)
-          const chunkId = createDeterministicChunkId(paperId, currentChunk.trim(), position)
-          chunks.push({
-            id: chunkId,
-            content: currentChunk.trim(),
-            position,
-            metadata: {
-              wordCount: currentChunk.trim().split(/\s+/).length,
-              charCount: currentChunk.length,
-              tokenCount: currentTokens,
-              isOverlap: currentOverlapLen > 0,
-              overlapLength: currentOverlapLen
-            }
-          })
-          
-          overlapContent = await createTokenOverlap(currentChunk, overlapTokens)
         }
       }
     }
-  }
 
-  return chunks
+    return chunks
+  } finally {
+    // Always free the encoder to prevent memory leaks
+    tokenCounter.free()
+  }
 }
 
 /**
  * Split text into sentences with smart boundary detection
  * Avoids cutting numbered lists, equations, and citations
+ * 
+ * @param text - Text to split
+ * @param minLength - Minimum sentence length to keep (default: 5). 
+ *                    Lower values preserve more content but may include fragments.
  */
-function splitIntoSentences(text: string): string[] {
+function splitIntoSentences(text: string, minLength: number = 5): string[] {
   const sentences: string[] = []
   let current = ''
   let i = 0
@@ -303,14 +400,30 @@ function splitIntoSentences(text: string): string[] {
     sentences.push(current.trim())
   }
   
-  return sentences.filter(s => s.length > 10) // Filter out very short fragments
+  // Filter out very short fragments (configurable threshold)
+  return sentences.filter(s => s.length > minLength)
 }
 
 /**
  * Check if we're inside a special context that shouldn't be split
+ * Extended abbreviation list for academic text
  */
 function isInsideSpecialContext(prevContext: string, _current: string): boolean {
-  const abbreviations = ['et al', 'e.g', 'i.e', 'cf', 'vs', 'Fig', 'Eq', 'etc']
+  // Extended list of academic abbreviations
+  const abbreviations = [
+    // Latin abbreviations
+    'et al', 'e.g', 'i.e', 'cf', 'vs', 'etc', 'ca', 'viz',
+    // Figure/equation/table references
+    'fig', 'figs', 'eq', 'eqs', 'tab', 'sec', 'ch', 'app',
+    // Titles and honorifics
+    'dr', 'prof', 'mr', 'mrs', 'ms', 'jr', 'sr',
+    // Academic/publishing terms
+    'vol', 'no', 'pp', 'ed', 'eds', 'rev', 'trans',
+    // Measurement units often abbreviated
+    'approx', 'est', 'avg', 'min', 'max',
+    // Common in references
+    'inc', 'ltd', 'co', 'corp'
+  ]
   const contextLower = prevContext.toLowerCase()
   
   // Check for abbreviations
@@ -330,11 +443,17 @@ function isInsideSpecialContext(prevContext: string, _current: string): boolean 
     return true
   }
   
+  // Check for figure/table references
+  if (/(figure|table|section)\s+\d+\.?\d*$/i.test(prevContext)) {
+    return true
+  }
+  
   return false
 }
 
 /**
- * Create token-based overlap from the end of a chunk
+ * Create token-based overlap from the end of a chunk (async version)
+ * @deprecated Use createTokenOverlapSync with a TokenCounter for better performance
  */
 async function createTokenOverlap(text: string, targetOverlapTokens: number): Promise<string> {
   if (targetOverlapTokens <= 0 || !text.trim()) {
@@ -350,6 +469,41 @@ async function createTokenOverlap(text: string, targetOverlapTokens: number): Pr
   for (let i = sentences.length - 1; i >= 0 && tokens < targetOverlapTokens; i--) {
     const sentence = sentences[i]
     const sentenceTokens = await getTokenCount(sentence)
+    
+    if (tokens + sentenceTokens <= targetOverlapTokens) {
+      overlap = sentence + (overlap ? ' ' + overlap : '')
+      tokens += sentenceTokens
+    } else {
+      break
+    }
+  }
+  
+  return overlap
+}
+
+/**
+ * Create token-based overlap from the end of a chunk (sync version with cached counter)
+ * Uses a pre-created TokenCounter for efficient batch processing
+ */
+function createTokenOverlapSync(
+  text: string, 
+  targetOverlapTokens: number, 
+  tokenCounter: TokenCounter,
+  minSentenceLength: number = 5
+): string {
+  if (targetOverlapTokens <= 0 || !text.trim()) {
+    return ''
+  }
+  
+  // Split into sentences and take from the end
+  const sentences = splitIntoSentences(text, minSentenceLength)
+  let overlap = ''
+  let tokens = 0
+  
+  // Build overlap from last sentences working backwards
+  for (let i = sentences.length - 1; i >= 0 && tokens < targetOverlapTokens; i--) {
+    const sentence = sentences[i]
+    const sentenceTokens = tokenCounter.count(sentence)
     
     if (tokens + sentenceTokens <= targetOverlapTokens) {
       overlap = sentence + (overlap ? ' ' + overlap : '')

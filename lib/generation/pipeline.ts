@@ -660,11 +660,11 @@ export async function generatePaper(
         }
       }
       
-      // Track evidence usage for cross-section memory (centralized here to avoid duplication)
-      // Use async tracking with DB persistence for cross-session deduplication
-      if (sectionContext.contextChunks && sectionContext.contextChunks.length > 0) {
-        await EvidenceTracker.trackBulkUsage(sectionContext.contextChunks, sectionContext.title, projectId)
-      }
+      // NOTE: Evidence tracking removed to allow all sections access to all chunks
+      // Previously, trackBulkUsage() marked chunks as "used" after each section,
+      // which caused later sections to have 0 available chunks.
+      // Now all sections can cite from the full evidence pool.
+      // Overlap detection (fourGramOverlapRatio) still guards against repetition.
       
       // Log citation feedback for RAG improvement (non-blocking)
       // This tracks which chunks were actually cited to improve future retrieval

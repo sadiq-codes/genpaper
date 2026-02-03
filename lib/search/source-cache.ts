@@ -2,15 +2,20 @@
  * In-Memory LRU Cache for Academic API Responses
  * 
  * Caches search results per-source with configurable TTLs.
- * Uses LRU eviction to bound memory usage.
+ * Uses lru-cache library for battle-tested LRU eviction.
  * 
  * This is distinct from the Supabase papers_api_cache which stores
  * aggregated results - this caches individual source API responses
  * to avoid redundant calls within the same search session.
  */
 
+import { LRUCache } from 'lru-cache'
 import type { PaperSource } from '@/types/simplified'
 import { createHash } from 'crypto'
+
+// =============================================================================
+// CONFIGURATION
+// =============================================================================
 
 export interface CacheConfig {
   /** Maximum number of entries in cache (default: 500) */
@@ -19,13 +24,6 @@ export interface CacheConfig {
   defaultTtlMs: number
   /** Per-source TTL overrides */
   sourceTtls?: Partial<Record<PaperSource, number>>
-}
-
-interface CacheEntry<T> {
-  value: T
-  expiresAt: number
-  source: string
-  key: string
 }
 
 const DEFAULT_CONFIG: CacheConfig = {
@@ -40,136 +38,61 @@ const DEFAULT_CONFIG: CacheConfig = {
   },
 }
 
-// LRU Cache implementation
-class LRUCache<T> {
-  private cache = new Map<string, CacheEntry<T>>()
-  private config: CacheConfig
-  
-  constructor(config: Partial<CacheConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config }
+// =============================================================================
+// TYPES
+// =============================================================================
+
+interface CacheEntry<T> {
+  value: T
+  source: string
+}
+
+// =============================================================================
+// CACHE IMPLEMENTATION
+// =============================================================================
+
+// Singleton cache instance
+let cache: LRUCache<string, CacheEntry<unknown>> | null = null
+let config: CacheConfig = DEFAULT_CONFIG
+
+/**
+ * Get or create the singleton cache instance
+ */
+function getCache(): LRUCache<string, CacheEntry<unknown>> {
+  if (!cache) {
+    cache = new LRUCache<string, CacheEntry<unknown>>({
+      max: config.maxSize,
+      ttl: config.defaultTtlMs,
+      // Update age on access (standard LRU behavior)
+      updateAgeOnGet: true,
+      // Allow stale entries while fetching new ones
+      allowStale: false,
+    })
   }
-  
-  /**
-   * Generate a cache key from source, query, and options
-   */
-  static generateKey(source: string, query: string, options?: Record<string, unknown>): string {
-    const normalized = {
-      source,
-      query: query.toLowerCase().trim(),
-      options: options ? JSON.stringify(sortObject(options)) : '',
-    }
-    const hash = createHash('sha256')
-      .update(JSON.stringify(normalized))
-      .digest('hex')
-      .slice(0, 16)
-    return `${source}:${hash}`
+  return cache
+}
+
+/**
+ * Generate a cache key from source, query, and options
+ */
+export function generateKey(source: string, query: string, options?: Record<string, unknown>): string {
+  const normalized = {
+    source,
+    query: query.toLowerCase().trim(),
+    options: options ? JSON.stringify(sortObject(options)) : '',
   }
-  
-  /**
-   * Get TTL for a specific source
-   */
-  private getTtl(source: string): number {
-    const sourceTtl = this.config.sourceTtls?.[source as PaperSource]
-    return sourceTtl ?? this.config.defaultTtlMs
-  }
-  
-  /**
-   * Get a value from cache if not expired
-   */
-  get(key: string): T | undefined {
-    const entry = this.cache.get(key)
-    
-    if (!entry) {
-      return undefined
-    }
-    
-    // Check expiration
-    if (Date.now() > entry.expiresAt) {
-      this.cache.delete(key)
-      return undefined
-    }
-    
-    // Move to end for LRU (delete and re-add)
-    this.cache.delete(key)
-    this.cache.set(key, entry)
-    
-    return entry.value
-  }
-  
-  /**
-   * Set a value in cache with source-specific TTL
-   */
-  set(key: string, value: T, source: string): void {
-    // Evict oldest entries if at capacity
-    while (this.cache.size >= this.config.maxSize) {
-      const firstKey = this.cache.keys().next().value
-      if (firstKey) {
-        this.cache.delete(firstKey)
-      } else {
-        break
-      }
-    }
-    
-    const ttl = this.getTtl(source)
-    const entry: CacheEntry<T> = {
-      value,
-      expiresAt: Date.now() + ttl,
-      source,
-      key,
-    }
-    
-    this.cache.set(key, entry)
-  }
-  
-  /**
-   * Check if a key exists and is not expired
-   */
-  has(key: string): boolean {
-    return this.get(key) !== undefined
-  }
-  
-  /**
-   * Remove a specific entry
-   */
-  delete(key: string): boolean {
-    return this.cache.delete(key)
-  }
-  
-  /**
-   * Clear all entries for a specific source
-   */
-  clearSource(source: string): number {
-    let cleared = 0
-    for (const [key, entry] of this.cache) {
-      if (entry.source === source) {
-        this.cache.delete(key)
-        cleared++
-      }
-    }
-    return cleared
-  }
-  
-  /**
-   * Clear all entries
-   */
-  clear(): void {
-    this.cache.clear()
-  }
-  
-  /**
-   * Get cache statistics
-   */
-  stats(): { size: number; maxSize: number; sources: Record<string, number> } {
-    const sources: Record<string, number> = {}
-    for (const entry of this.cache.values()) {
-      sources[entry.source] = (sources[entry.source] || 0) + 1
-    }
-    return {
-      size: this.cache.size,
-      maxSize: this.config.maxSize,
-      sources,
-    }
-  }
+  const hash = createHash('sha256')
+    .update(JSON.stringify(normalized))
+    .digest('hex')
+    .slice(0, 16)
+  return `${source}:${hash}`
+}
+
+/**
+ * Get TTL for a specific source
+ */
+function getTtl(source: string): number {
+  return config.sourceTtls?.[source as PaperSource] ?? config.defaultTtlMs
 }
 
 // Sort object keys for consistent hashing
@@ -186,17 +109,16 @@ function sortObject(obj: Record<string, unknown>): Record<string, unknown> {
   return sorted
 }
 
-// Singleton cache instance
-let cache: LRUCache<unknown> | null = null
+// =============================================================================
+// PUBLIC API
+// =============================================================================
 
 /**
- * Get or create the singleton cache instance
+ * Initialize cache with custom config (optional)
  */
-export function getCache(config?: Partial<CacheConfig>): LRUCache<unknown> {
-  if (!cache) {
-    cache = new LRUCache(config)
-  }
-  return cache
+export function initCache(customConfig?: Partial<CacheConfig>): void {
+  config = { ...DEFAULT_CONFIG, ...customConfig }
+  cache = null // Reset to recreate with new config
 }
 
 /**
@@ -207,8 +129,9 @@ export function getCached<T>(
   query: string,
   options?: Record<string, unknown>
 ): T | undefined {
-  const key = LRUCache.generateKey(source, query, options)
-  return getCache().get(key) as T | undefined
+  const key = generateKey(source, query, options)
+  const entry = getCache().get(key)
+  return entry?.value as T | undefined
 }
 
 /**
@@ -220,8 +143,10 @@ export function setCached<T>(
   result: T,
   options?: Record<string, unknown>
 ): void {
-  const key = LRUCache.generateKey(source, query, options)
-  getCache().set(key, result, source)
+  const key = generateKey(source, query, options)
+  const ttl = getTtl(source)
+  
+  getCache().set(key, { value: result, source }, { ttl })
 }
 
 /**
@@ -232,7 +157,7 @@ export function isCached(
   query: string,
   options?: Record<string, unknown>
 ): boolean {
-  const key = LRUCache.generateKey(source, query, options)
+  const key = generateKey(source, query, options)
   return getCache().has(key)
 }
 
@@ -240,7 +165,19 @@ export function isCached(
  * Clear cache for a specific source
  */
 export function clearSourceCache(source: PaperSource | string): number {
-  return getCache().clearSource(source)
+  const c = getCache()
+  let cleared = 0
+  
+  // Iterate through all entries and delete matching source
+  for (const key of c.keys()) {
+    const entry = c.peek(key) // peek doesn't update LRU order
+    if (entry?.source === source) {
+      c.delete(key)
+      cleared++
+    }
+  }
+  
+  return cleared
 }
 
 /**
@@ -254,7 +191,21 @@ export function clearAllCache(): void {
  * Get cache statistics
  */
 export function getCacheStats(): { size: number; maxSize: number; sources: Record<string, number> } {
-  return getCache().stats()
+  const c = getCache()
+  const sources: Record<string, number> = {}
+  
+  for (const key of c.keys()) {
+    const entry = c.peek(key)
+    if (entry) {
+      sources[entry.source] = (sources[entry.source] || 0) + 1
+    }
+  }
+  
+  return {
+    size: c.size,
+    maxSize: config.maxSize,
+    sources,
+  }
 }
 
 /**

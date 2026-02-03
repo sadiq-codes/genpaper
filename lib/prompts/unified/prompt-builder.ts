@@ -172,15 +172,17 @@ async function generatePromptData(
   const sourceDiversityTarget = calculateSourceDiversityTarget(currentPaperType, distinctPapers)
   console.log(`📊 Source diversity target: ${sourceDiversityTarget.minPapers} papers (${sourceDiversityTarget.percentage}% of ${distinctPapers})`)
 
-  // Filter out already-used evidence from cross-section memory
-  const { EvidenceTracker } = await import('@/lib/services/evidence-tracker')
-  const freshChunks = EvidenceTracker.filterUnusedEvidence(workingChunks)
+  // NOTE: Evidence filtering removed - all sections now have access to all chunks
+  // Previously, filterUnusedEvidence() would remove chunks used in earlier sections,
+  // causing later sections to have 0 available evidence.
+  // Now the full chunk pool is available to all sections.
+  // Overlap detection in pipeline.ts still guards against content repetition.
   
-  console.log(`📊 Evidence filtering: ${workingChunks.length} total → ${freshChunks.length} unused chunks`)
+  console.log(`📊 Evidence available: ${workingChunks.length} chunks (no filtering)`)
 
-  // Use all fresh chunks - token budget is already enforced upstream by ChunkRetriever
+  // Use all chunks - token budget is already enforced upstream by ChunkRetriever
   // Chunks are sorted by relevance, so the most relevant evidence is first
-  const distinctChunks = freshChunks
+  const distinctChunks = workingChunks
   
   const uniquePapersInContext = new Set(distinctChunks.map(c => c.paper_id)).size
   console.log(`📊 Evidence: ${distinctChunks.length} chunks from ${uniquePapersInContext} papers`)

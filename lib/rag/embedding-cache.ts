@@ -9,16 +9,19 @@
  * - TTL-based expiration (30 minutes)
  * - LRU eviction when cache is full
  * - Cache hit/miss metrics logging
+ * 
+ * Uses lru-cache library for battle-tested LRU implementation.
  */
 
+import { LRUCache } from 'lru-cache'
 import { generateEmbeddings } from '@/lib/utils/embedding'
 
 // =============================================================================
 // CONFIGURATION
 // =============================================================================
 
-const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000  // 30 minutes (longer than before since embeddings don't change)
-const EMBEDDING_CACHE_MAX_SIZE = 1000           // Increased from 500
+const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000  // 30 minutes
+const EMBEDDING_CACHE_MAX_SIZE = 1000
 const CACHE_HIT_LOG_INTERVAL = 100              // Log stats every N requests
 
 // =============================================================================
@@ -27,22 +30,38 @@ const CACHE_HIT_LOG_INTERVAL = 100              // Log stats every N requests
 
 interface EmbeddingCacheEntry {
   embedding: number[]
-  timestamp: number
-  originalQuery: string  // For debugging
+  originalQuery: string  // For debugging (truncated)
 }
 
 interface CacheStats {
   hits: number
   misses: number
-  evictions: number
 }
 
 // =============================================================================
 // CACHE STATE
 // =============================================================================
 
-const embeddingCache = new Map<string, EmbeddingCacheEntry>()
-const cacheStats: CacheStats = { hits: 0, misses: 0, evictions: 0 }
+// Stats tracked separately since lru-cache doesn't expose hit/miss counts
+const cacheStats: CacheStats = { hits: 0, misses: 0 }
+
+// Singleton cache instance
+let cache: LRUCache<string, EmbeddingCacheEntry> | null = null
+
+/**
+ * Get or create the singleton cache instance
+ */
+function getCache(): LRUCache<string, EmbeddingCacheEntry> {
+  if (!cache) {
+    cache = new LRUCache<string, EmbeddingCacheEntry>({
+      max: EMBEDDING_CACHE_MAX_SIZE,
+      ttl: EMBEDDING_CACHE_TTL_MS,
+      updateAgeOnGet: true,  // Standard LRU behavior
+      allowStale: false,
+    })
+  }
+  return cache
+}
 
 // =============================================================================
 // QUERY NORMALIZATION
@@ -93,78 +112,8 @@ function getCacheKey(normalizedQuery: string): string {
 }
 
 // =============================================================================
-// CACHE OPERATIONS
+// LOGGING
 // =============================================================================
-
-/**
- * Get a cached embedding if available and not expired.
- */
-function getCachedEmbedding(normalizedQuery: string): number[] | null {
-  const key = getCacheKey(normalizedQuery)
-  const entry = embeddingCache.get(key)
-  
-  if (!entry) {
-    return null
-  }
-  
-  // Check TTL
-  if (Date.now() - entry.timestamp > EMBEDDING_CACHE_TTL_MS) {
-    embeddingCache.delete(key)
-    return null
-  }
-  
-  return entry.embedding
-}
-
-/**
- * Store an embedding in the cache.
- */
-function setCachedEmbedding(normalizedQuery: string, embedding: number[], originalQuery: string): void {
-  const key = getCacheKey(normalizedQuery)
-  
-  // Evict old entries if cache is full
-  if (embeddingCache.size >= EMBEDDING_CACHE_MAX_SIZE) {
-    evictOldEntries()
-  }
-  
-  embeddingCache.set(key, {
-    embedding,
-    timestamp: Date.now(),
-    originalQuery: originalQuery.slice(0, 100),  // Store truncated for debugging
-  })
-}
-
-/**
- * Evict expired and oldest entries when cache is full.
- */
-function evictOldEntries(): void {
-  const now = Date.now()
-  const toDelete: string[] = []
-  
-  // First pass: delete expired entries
-  for (const [key, entry] of embeddingCache) {
-    if (now - entry.timestamp > EMBEDDING_CACHE_TTL_MS) {
-      toDelete.push(key)
-    }
-  }
-  
-  for (const key of toDelete) {
-    embeddingCache.delete(key)
-    cacheStats.evictions++
-  }
-  
-  // If still full, delete oldest 20%
-  if (embeddingCache.size >= EMBEDDING_CACHE_MAX_SIZE) {
-    const entries = Array.from(embeddingCache.entries())
-      .sort((a, b) => a[1].timestamp - b[1].timestamp)
-    
-    const deleteCount = Math.ceil(EMBEDDING_CACHE_MAX_SIZE * 0.2)
-    for (let i = 0; i < deleteCount && i < entries.length; i++) {
-      embeddingCache.delete(entries[i][0])
-      cacheStats.evictions++
-    }
-  }
-}
 
 /**
  * Log cache statistics periodically.
@@ -173,7 +122,8 @@ function maybeLogStats(): void {
   const total = cacheStats.hits + cacheStats.misses
   if (total > 0 && total % CACHE_HIT_LOG_INTERVAL === 0) {
     const hitRate = ((cacheStats.hits / total) * 100).toFixed(1)
-    console.log(`[EmbeddingCache] Stats: ${cacheStats.hits} hits, ${cacheStats.misses} misses (${hitRate}% hit rate), ${cacheStats.evictions} evictions, ${embeddingCache.size} cached`)
+    const c = getCache()
+    console.log(`[EmbeddingCache] Stats: ${cacheStats.hits} hits, ${cacheStats.misses} misses (${hitRate}% hit rate), ${c.size} cached`)
   }
 }
 
@@ -189,13 +139,15 @@ function maybeLogStats(): void {
  */
 export async function getCachedQueryEmbedding(query: string): Promise<number[]> {
   const normalized = normalizeQueryForCache(query)
+  const key = getCacheKey(normalized)
+  const c = getCache()
   
   // Check cache first
-  const cached = getCachedEmbedding(normalized)
+  const cached = c.get(key)
   if (cached) {
     cacheStats.hits++
     maybeLogStats()
-    return cached
+    return cached.embedding
   }
   
   // Generate new embedding
@@ -210,7 +162,10 @@ export async function getCachedQueryEmbedding(query: string): Promise<number[]> 
   }
   
   // Cache it
-  setCachedEmbedding(normalized, embedding, query)
+  c.set(key, {
+    embedding,
+    originalQuery: query.slice(0, 100),  // Store truncated for debugging
+  })
   maybeLogStats()
   
   return embedding
@@ -224,6 +179,7 @@ export async function getCachedQueryEmbedding(query: string): Promise<number[]> 
  * @returns Array of embedding vectors
  */
 export async function getEmbeddingsWithCache(texts: string[]): Promise<number[][]> {
+  const c = getCache()
   const results: (number[] | null)[] = []
   const uncachedIndices: number[] = []
   const uncachedTexts: string[] = []
@@ -231,10 +187,11 @@ export async function getEmbeddingsWithCache(texts: string[]): Promise<number[][
   // Check cache for each text
   for (let i = 0; i < texts.length; i++) {
     const normalized = normalizeQueryForCache(texts[i])
-    const cached = getCachedEmbedding(normalized)
+    const key = getCacheKey(normalized)
+    const cached = c.get(key)
     
     if (cached) {
-      results[i] = cached
+      results[i] = cached.embedding
       cacheStats.hits++
     } else {
       results[i] = null
@@ -261,7 +218,13 @@ export async function getEmbeddingsWithCache(texts: string[]): Promise<number[][
       const embedding = newEmbeddings[i]
       
       results[idx] = embedding
-      setCachedEmbedding(normalizeQueryForCache(text), embedding, text)
+      
+      const normalized = normalizeQueryForCache(text)
+      const key = getCacheKey(normalized)
+      c.set(key, {
+        embedding,
+        originalQuery: text.slice(0, 100),
+      })
     }
   }
   
@@ -274,10 +237,9 @@ export async function getEmbeddingsWithCache(texts: string[]): Promise<number[][
  * Useful for testing or when embeddings need to be regenerated.
  */
 export function clearEmbeddingCache(): void {
-  embeddingCache.clear()
+  getCache().clear()
   cacheStats.hits = 0
   cacheStats.misses = 0
-  cacheStats.evictions = 0
   console.log('[EmbeddingCache] Cache cleared')
 }
 
@@ -287,7 +249,7 @@ export function clearEmbeddingCache(): void {
 export function getEmbeddingCacheStats(): { size: number; hits: number; misses: number; hitRate: number } {
   const total = cacheStats.hits + cacheStats.misses
   return {
-    size: embeddingCache.size,
+    size: getCache().size,
     hits: cacheStats.hits,
     misses: cacheStats.misses,
     hitRate: total > 0 ? cacheStats.hits / total : 0,
