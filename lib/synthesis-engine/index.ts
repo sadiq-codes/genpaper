@@ -111,3 +111,19 @@ export {
   formatAllGaps,
   mergeSynthesisIntoPromptData
 } from './formatters'
+
+// =============================================================================
+// Pipeline Integration (Server-only)
+// =============================================================================
+// Note: These are exported from a separate file to avoid 'server-only' 
+// contaminating the main exports which are used in test scripts
+export type {
+  HybridThemeExtractionResult,
+  HybridGenerationResult
+} from './pipeline-integration'
+
+export {
+  extractThemesHybrid,
+  generateSectionsHybrid,
+  canUseHybridSynthesis
+} from './pipeline-integration'

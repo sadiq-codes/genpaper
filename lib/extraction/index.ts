@@ -30,7 +30,7 @@
 // Main extraction function
 export { extractPaper } from './extractor'
 
-// Database functions
+// Database functions (server component version - requires cookies)
 export {
   saveExtraction,
   getExtraction,
@@ -43,6 +43,15 @@ export {
   getQuantitativeFindings,
   getAggregateStats
 } from './db'
+
+// Database functions (service version - for background processing)
+export {
+  saveExtractionService,
+  getExtractionService,
+  getExtractionsService,
+  hasExtractionService,
+  getPapersNeedingExtractionService
+} from './db-service'
 
 // Types
 export type {

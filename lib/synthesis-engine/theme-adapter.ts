@@ -97,8 +97,11 @@ function patternToEmergentTheme(pattern: Pattern, papers: PaperInfo[]): Emergent
   // Get paper IDs that support this pattern
   const paperIds = pattern.support.papers.map(p => p.paperId)
   
-  // Build description with actual statistics
-  const description = `${pattern.summary}. This pattern is supported by ${pattern.support.count} of ${pattern.support.total} papers (${Math.round(pattern.support.count / pattern.support.total * 100)}%).`
+  // Build description with actual statistics (guard against division by zero)
+  const percentage = pattern.support.total > 0
+    ? Math.round(pattern.support.count / pattern.support.total * 100)
+    : 0
+  const description = `${pattern.summary}. This pattern is supported by ${pattern.support.count} of ${pattern.support.total} papers (${percentage}%).`
   
   // Determine strength based on consistency and confidence
   let strength: 'dominant' | 'moderate' | 'emerging'

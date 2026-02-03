@@ -84,10 +84,14 @@ export async function retrieveChunksForPattern(
     }).filter(Boolean) as string[]
   )
   
-  // If no papers found by title matching, try all papers
+  // If no papers found by title matching, fall back to all papers with warning
   const targetPaperIds = paperIdSet.size > 0 
     ? [...paperIdSet]
     : papers.map(p => p.id)
+  
+  if (paperIdSet.size === 0 && papers.length > 0) {
+    console.warn(`⚠️ No papers matched for pattern "${pattern.claim.slice(0, 50)}...", falling back to all ${papers.length} papers`)
+  }
   
   if (targetPaperIds.length === 0) {
     return {
@@ -199,7 +203,7 @@ export async function retrieveChunksForContradiction(
       const embedding = await getCachedQueryEmbedding(query)
       
       const supabase = createServiceClient()
-      const { data: chunks } = await supabase.rpc('hybrid_search_chunks', {
+      const { data: chunks, error } = await supabase.rpc('hybrid_search_chunks', {
         query_embedding: embedding,
         search_query: query,
         match_count: Math.ceil(cfg.maxChunksPerPattern / 2),
@@ -207,6 +211,11 @@ export async function retrieveChunksForContradiction(
         paper_ids: paperIds,
         vector_weight: 0.7
       })
+      
+      if (error) {
+        console.error(`Error retrieving chunks for contradiction side ${index + 1}: ${error.message}`)
+        return []
+      }
       
       const paperMap = new Map(papers.map(p => [p.id, p.title]))
       

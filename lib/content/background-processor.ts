@@ -5,12 +5,15 @@
  * - Downloads PDF from storage
  * - Extracts text content
  * - Creates chunks with embeddings
+ * - Extracts structured findings (for synthesis engine)
  * - Updates processing status
  */
 
 import { createServiceClient } from '@/lib/supabase/service'
 import { createChunksForPaper } from './ingestion'
 import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
+import { extractPaper } from '@/lib/extraction'
+import { saveExtractionService, hasExtractionService } from '@/lib/extraction/db-service'
 
 // Processing status types
 export type ProcessingStatus = 'pending' | 'processing' | 'processed' | 'failed'
@@ -195,6 +198,10 @@ async function createChunksFromContent(paperId: string, content: string): Promis
     console.log(`[BackgroundProcessor] Creating chunks for paper ${paperId}`)
     const chunksCreated = await createChunksForPaper(paperId, content)
     
+    // Run structured extraction for synthesis engine (non-blocking)
+    // This extracts findings, claims, methodology for cross-document analysis
+    await runStructuredExtraction(paperId, content)
+    
     // Update status to processed
     await supabase
       .from('papers')
@@ -217,6 +224,45 @@ async function createChunksFromContent(paperId: string, content: string): Promis
       status: 'failed', 
       error: error instanceof Error ? error.message : 'Chunk creation failed' 
     }
+  }
+}
+
+/**
+ * Run structured extraction for synthesis engine
+ * This extracts findings, claims, methodology for cross-document analysis
+ * Non-critical - if it fails, chunking still succeeds
+ */
+async function runStructuredExtraction(paperId: string, content: string): Promise<void> {
+  try {
+    // Skip if already extracted
+    const alreadyExtracted = await hasExtractionService(paperId)
+    if (alreadyExtracted) {
+      console.log(`[BackgroundProcessor] Paper ${paperId} already has extraction, skipping`)
+      return
+    }
+    
+    // Skip if content is too short
+    if (content.length < 500) {
+      console.log(`[BackgroundProcessor] Paper ${paperId} content too short for extraction (${content.length} chars)`)
+      return
+    }
+    
+    console.log(`[BackgroundProcessor] Running structured extraction for ${paperId}`)
+    
+    const result = await extractPaper({
+      paperId,
+      text: content
+    })
+    
+    if (result.success && result.extraction) {
+      await saveExtractionService(result.extraction)
+      console.log(`[BackgroundProcessor] Extracted ${result.extraction.findings.length} findings for ${paperId}`)
+    } else {
+      console.warn(`[BackgroundProcessor] Extraction failed for ${paperId}: ${result.error}`)
+    }
+  } catch (error) {
+    // Non-critical failure - log but don't fail the processing
+    console.warn(`[BackgroundProcessor] Extraction error for ${paperId}:`, error)
   }
 }
 

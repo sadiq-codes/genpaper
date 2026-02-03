@@ -120,7 +120,7 @@ CRITICAL INSTRUCTIONS:
 function buildPrompt(findings: FindingWithPaper[], topic?: string): string {
   const findingsText = findings.map((f, i) => {
     let text = `[Paper: ${f.paperTitle} (${f.paperId})]
-  Finding ID: ${f.findingId || f.id}
+  Finding ID: ${f.id}
   Claim: ${f.claim}
   Evidence: "${f.evidence}"`
     

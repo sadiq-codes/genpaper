@@ -112,8 +112,9 @@ export async function buildHybridSectionContext(
   const structuredDataTokens = estimateStructuredDataTokens(synthesisData)
   console.log(`   📊 Structured data: ~${structuredDataTokens} tokens`)
   
-  // Step 2: Retrieve targeted chunks for patterns and contradictions
-  const chunkBudget = Math.max(
+  // Step 2: Calculate available chunk budget (ensuring we don't exceed total)
+  // If structured data already exceeds budget, allow minimum chunks
+  const availableForChunks = Math.max(
     cfg.minChunkTokens,
     cfg.maxTotalTokens - structuredDataTokens
   )
@@ -123,13 +124,13 @@ export async function buildHybridSectionContext(
       synthesisData.synthesisPatterns || [],
       synthesisData.synthesisContradictions || [],
       papers,
-      { maxTokensPerPattern: Math.floor(chunkBudget / Math.max(1, (synthesisData.synthesisPatterns?.length || 1))) }
+      { maxTokensPerPattern: Math.floor(availableForChunks / Math.max(1, (synthesisData.synthesisPatterns?.length || 1))) }
     )
   
   console.log(`   📚 Retrieved ${totalChunks} targeted chunks in ${totalTimeMs}ms`)
   
   // Step 3: Flatten chunks for the "all" list
-  const allChunks: TargetedChunk[] = []
+  let allChunks: TargetedChunk[] = []
   const seenChunkIds = new Set<string>()
   
   // Add pattern chunks
@@ -152,14 +153,33 @@ export async function buildHybridSectionContext(
     }
   }
   
-  // Sort by score
+  // Sort by score (highest first)
   allChunks.sort((a, b) => b.score - a.score)
   
-  // Calculate chunk tokens
-  const chunkTokens = allChunks.reduce(
-    (sum, chunk) => sum + Math.ceil(chunk.content.length / 4),
-    0
-  )
+  // Step 4: Enforce total token budget by trimming chunks
+  // This ensures we never exceed maxTotalTokens
+  const maxChunkTokens = cfg.maxTotalTokens - structuredDataTokens
+  let chunkTokens = 0
+  const trimmedChunks: TargetedChunk[] = []
+  
+  for (const chunk of allChunks) {
+    const chunkSize = Math.ceil(chunk.content.length / 4)
+    if (chunkTokens + chunkSize <= maxChunkTokens || trimmedChunks.length === 0) {
+      // Always include at least one chunk, then check budget
+      trimmedChunks.push(chunk)
+      chunkTokens += chunkSize
+    } else {
+      // Budget exceeded, stop adding
+      break
+    }
+  }
+  
+  // Log if we had to trim
+  if (trimmedChunks.length < allChunks.length) {
+    console.log(`   ⚠️ Trimmed ${allChunks.length - trimmedChunks.length} chunks to stay within token budget`)
+  }
+  
+  allChunks = trimmedChunks
   
   const buildTimeMs = Date.now() - startTime
   console.log(`   ✅ Hybrid context built in ${buildTimeMs}ms (${structuredDataTokens + chunkTokens} total tokens)`)
