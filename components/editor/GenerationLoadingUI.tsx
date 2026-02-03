@@ -532,8 +532,8 @@ export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
     completedSections = [] 
   } = props
 
-  // Show live content when we're in generation stage and have content or are actively writing
-  const isGenerating = currentStage === 'generation' || currentStage === 'quality' || currentStage === 'saving' || currentStage === 'complete'
+  // Show live content when we're in writing/generation stage and have content or are actively writing
+  const isGenerating = currentStage === 'writing' || currentStage === 'generation' || currentStage === 'quality' || currentStage === 'saving' || currentStage === 'complete'
   const hasContent = completedSections.length > 0 || (currentSection && currentSectionContent.length > 0)
   const showLiveContent = isGenerating && (hasContent || currentSection)
 
