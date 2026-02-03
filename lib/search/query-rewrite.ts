@@ -56,7 +56,7 @@ Return a JSON array where:
 
 Example format: ["corrected original query", "alternative 1", "alternative 2", "alternative 3"]
 
-Do not add any explanation, only return the JSON array.`,
+Return ONLY the raw JSON array. Do not use markdown code blocks or any formatting.`,
       temperature: 0.7,
       maxOutputTokens: 250
     })

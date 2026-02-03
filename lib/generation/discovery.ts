@@ -165,7 +165,7 @@ export async function collectPapers(
         toYear,    // End year (usually current year, but AI can specify otherwise)
         localRegion: config?.localRegion,
         sources: (config?.sources as PaperSource[])
-                  ?? ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
+                  ?? ['europe_pmc', 'pubmed_central', 'openalex', 'core', 'arxiv', 'crossref', 'semantic_scholar'],
         semanticWeight: 0.4,
         authorityWeight,
         recencyWeight,
