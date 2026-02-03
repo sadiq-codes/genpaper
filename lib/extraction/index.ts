@@ -1,43 +1,34 @@
 /**
- * Structured Extraction System
+ * Paper Extraction System
  * 
- * This module provides structured data extraction from academic papers.
- * It extracts machine-analyzable data (claims, findings, effect sizes, themes)
- * that can be used for cross-document analysis and synthesis.
+ * Extracts structured findings from academic papers using LLM.
  * 
- * Architecture:
- * - Core + Extensions: Universal fields for all papers + type-specific data
- * - Paper Types: quantitative, qualitative, theoretical, humanities, review, etc.
- * - Extraction Pipeline: classify → core extraction → extension extraction
+ * Key principles:
+ * - No hardcoded field values - LLM describes what it finds
+ * - Findings are the core unit - works for any paper type
+ * - Flexible structure - adapts to any domain or methodology
  * 
  * @module lib/extraction
  * 
  * @example
  * ```typescript
- * import { extractPaper } from '@/lib/extraction'
+ * import { extractPaper, saveExtraction } from '@/lib/extraction'
  * 
  * const result = await extractPaper({
  *   paperId: 'abc123',
- *   title: 'Effects of...',
- *   abstract: '...',
- *   fullText: '...'
+ *   text: fullPaperText
  * })
  * 
  * if (result.success) {
- *   const { core, quantitative } = result.extraction
- *   console.log(core.mainClaims)
- *   console.log(quantitative?.statisticalFindings)
+ *   console.log(result.extraction.metadata.title)
+ *   console.log(result.extraction.findings)
+ *   await saveExtraction(result.extraction)
  * }
  * ```
  */
 
-// Main extraction functions
-export {
-  extractPaper,
-  extractPapersBatch,
-  extractFromDatabasePaper,
-  type BatchExtractionProgress
-} from './extractor'
+// Main extraction function
+export { extractPaper } from './extractor'
 
 // Database functions
 export {
@@ -46,89 +37,18 @@ export {
   getExtractions,
   hasExtraction,
   getPapersNeedingExtraction,
-  getStatisticalFindings,
+  getFindings,
+  getMainFindings,
   getFindingsByDirection,
-  getThematicFindings,
+  getQuantitativeFindings,
   getAggregateStats
 } from './db'
 
-// Classification
-export {
-  classifyPaperType,
-  quickClassifyPaperType,
-  type ClassificationOptions
-} from './paper-classifier'
-
-// Core extraction
-export {
-  extractCore,
-  extractCoreBatch,
-  type CoreExtractionInput,
-  type CoreExtractionOptions
-} from './core-extractor'
-
-// Extension extractors
-export { extractQuantitative } from './extensions/quantitative'
-export { extractQualitative } from './extensions/qualitative'
-export { extractTheoretical } from './extensions/theoretical'
-export { extractHumanities } from './extensions/humanities'
-export { extractReview } from './extensions/review'
-
 // Types
 export type {
-  // Paper classification
-  PaperType,
-  PaperTypeClassification,
-  ConfidenceLevel,
-  
-  // Core extraction
-  CoreExtraction,
-  Claim,
-  ClaimType,
-  PaperSection,
-  ResearchContext,
-  ExtractionMetadata,
-  
-  // Quantitative extension
-  QuantitativeExtension,
-  StatisticalFinding,
-  VariableInfo,
-  StudyDesign,
-  EffectSizeType,
-  RelationshipType,
-  
-  // Qualitative extension
-  QualitativeExtension,
-  QualitativeTheme,
-  QualitativeMethodology,
-  QualitativeDataSource,
-  ParticipantQuote,
-  
-  // Theoretical extension
-  TheoreticalExtension,
-  TheoreticalConcept,
-  Proposition,
-  TheoreticalContributionType,
-  
-  // Humanities extension
-  HumanitiesExtension,
-  InterpretiveClaim,
-  HumanitiesApproach,
-  
-  // Review extension
-  ReviewExtension,
-  ReviewType,
-  
-  // Complete extraction
+  Finding,
+  PaperMetadata,
   PaperExtraction,
-  ExtensionType,
-  
-  // Input/Output
   ExtractionInput,
-  ExtractionOptions,
-  ExtractionResult,
-  
-  // Database types
-  PaperExtractionRow,
-  PaperFindingRow
+  ExtractionResult
 } from './types'

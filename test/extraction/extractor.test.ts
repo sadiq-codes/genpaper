@@ -1,466 +1,222 @@
 /**
- * Integration Tests for Paper Extraction System
- * 
- * Tests the full extraction pipeline:
- * 1. Classification → Core Extraction → Extension Extraction
- * 2. Data structure validation
- * 3. Error handling
- * 
- * Note: LLM calls are mocked to avoid costs and flakiness.
+ * Tests for Paper Extractor
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { extractPaper } from '@/lib/extraction/extractor'
 
-// Mock server-only
-vi.mock('server-only', () => ({}))
-
-// Mock the AI SDK's generateObject
+// Mock the AI module
 const mockGenerateObject = vi.fn()
 vi.mock('ai', () => ({
   generateObject: (...args: unknown[]) => mockGenerateObject(...args)
 }))
 
-// Mock the vercel client
+// Mock the language model
 vi.mock('@/lib/ai/vercel-client', () => ({
-  getLanguageModel: vi.fn(() => ({
-    doGenerate: vi.fn()
-  })),
-  getModel: vi.fn(() => 'gpt-4o')
+  getLanguageModel: () => ({ modelId: 'test-model' })
 }))
-
-// Mock the extension extractors to simplify testing
-const mockExtractQuantitative = vi.fn()
-const mockExtractQualitative = vi.fn()
-
-vi.mock('@/lib/extraction/extensions/quantitative', () => ({
-  extractQuantitative: (...args: unknown[]) => mockExtractQuantitative(...args)
-}))
-
-vi.mock('@/lib/extraction/extensions/qualitative', () => ({
-  extractQualitative: (...args: unknown[]) => mockExtractQualitative(...args)
-}))
-
-import { extractPaper } from '@/lib/extraction/extractor'
-import type { ExtractionInput, ExtractionResult, QuantitativeExtension, StatisticalFinding, VariableInfo } from '@/lib/extraction/types'
-
-// Helper to create mock LLM responses
-const createMockClassification = () => ({
-  primaryType: 'quantitative',
-  secondaryType: undefined,
-  confidence: 0.85,
-  reasoning: 'Paper uses statistical analysis and hypothesis testing',
-  indicators: ['regression', 'p-value', 'sample size']
-})
-
-const createMockCoreExtraction = () => ({
-  researchQuestion: 'What is the relationship between leadership and performance?',
-  objectives: ['Test the effect of transformational leadership', 'Examine moderating role of trust'],
-  mainClaims: [
-    {
-      text: 'Transformational leadership positively affects employee performance',
-      type: 'finding',
-      evidenceQuote: 'Results show a significant positive relationship (β=0.34, p<0.001)',
-      section: 'results',
-      confidence: 0.9
-    },
-    {
-      text: 'Trust moderates the leadership-performance relationship',
-      type: 'finding',
-      section: 'results',
-      confidence: 0.85
-    }
-  ],
-  keyContributions: [
-    'First study to examine trust as moderator in this context',
-    'Large sample from multiple industries'
-  ],
-  methodologySummary: 'Survey-based quantitative study with 500 participants',
-  dataSource: 'Survey data from employees in 50 organizations',
-  context: {
-    domain: 'organizational behavior',
-    subDomain: 'leadership',
-    geographic: 'United States',
-    population: 'Full-time employees',
-    setting: 'Multiple industries'
-  },
-  limitations: [
-    'Cross-sectional design limits causal inference',
-    'Self-report measures may have common method bias'
-  ],
-  futureWork: [
-    'Longitudinal studies to establish causality',
-    'Examination in non-Western contexts'
-  ],
-  peerReviewed: true,
-  overallConfidence: 0.85
-})
-
-const createMockQuantitativeExtension = (): Partial<QuantitativeExtension> => ({
-  paperId: 'test-paper-123',
-  studyDesign: 'cross_sectional',
-  sampleSize: 500,
-  sampleDescription: 'Full-time employees from 50 organizations',
-  variables: {
-    independent: [{ name: 'Transformational Leadership', measurementType: 'continuous' }],
-    dependent: [{ name: 'Employee Performance', measurementType: 'continuous' }],
-    moderator: [{ name: 'Trust', measurementType: 'continuous' }]
-  },
-  analysisMethod: ['hierarchical regression'],
-  statisticalFindings: [
-    {
-      id: 'finding-1',
-      independentVariable: 'Transformational Leadership',
-      dependentVariable: 'Employee Performance',
-      relationship: 'positive',
-      description: 'Main effect of transformational leadership on performance',
-      statisticalTest: 'regression',
-      effectSize: 0.34,
-      effectSizeType: 'beta',
-      pValue: 0.001,
-      sampleSize: 500,
-      isSignificant: true,
-      rawQuote: 'β=0.34, p<0.001',
-      confidence: 0.9
-    }
-  ],
-  effectSizeReported: true,
-  confidenceIntervalsReported: false,
-  extractionConfidence: 0.85
-})
-
-// Helper to setup all mocks for a successful extraction
-function setupSuccessfulExtractionMocks() {
-  // Mock classification
-  mockGenerateObject.mockResolvedValueOnce({
-    object: createMockClassification()
-  })
-  
-  // Mock core extraction
-  mockGenerateObject.mockResolvedValueOnce({
-    object: createMockCoreExtraction()
-  })
-  
-  // Mock quantitative extension
-  mockExtractQuantitative.mockResolvedValueOnce(createMockQuantitativeExtension())
-}
 
 describe('Paper Extractor', () => {
-  
   beforeEach(() => {
     vi.clearAllMocks()
   })
-  
+
   describe('extractPaper', () => {
-    
-    it('successfully extracts from a quantitative paper', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-paper-123',
-        title: 'The Effect of Transformational Leadership on Employee Performance',
-        abstract: 'Using hierarchical regression analysis on a sample of 500 employees, we tested our hypotheses. Results show a significant positive relationship (β=0.34, p<0.001).',
-        fullText: 'Introduction... Methods... Results show significance (p<0.001)... Discussion...'
-      }
-      
-      const result = await extractPaper(input)
-      
+    it('extracts findings from paper text', async () => {
+      mockGenerateObject.mockResolvedValue({
+        object: {
+          metadata: {
+            title: 'Test Paper Title',
+            authors: ['Author One', 'Author Two'],
+            year: 2024,
+            domain: 'Computer Science',
+            paperType: 'Empirical Study',
+            methodology: 'Survey-based research'
+          },
+          findings: [
+            {
+              claim: 'Finding one about X',
+              evidence: 'Quote from paper supporting finding one',
+              value: '75%',
+              valueType: 'percentage',
+              direction: 'positive',
+              comparedTo: 'baseline',
+              context: 'in enterprise settings',
+              isMainFinding: true,
+              confidence: 0.95
+            },
+            {
+              claim: 'Finding two about Y',
+              evidence: 'Quote from paper supporting finding two',
+              value: null,
+              valueType: null,
+              direction: 'descriptive',
+              comparedTo: null,
+              context: null,
+              isMainFinding: false,
+              confidence: 0.8
+            }
+          ],
+          researchQuestion: 'What is the effect of X on Y?',
+          contributions: ['Contribution one', 'Contribution two'],
+          limitations: ['Limitation one'],
+          extractionNotes: ['Note about extraction']
+        }
+      })
+
+      const result = await extractPaper({
+        paperId: 'test-123',
+        text: 'Full paper text here...'
+      })
+
       expect(result.success).toBe(true)
       expect(result.extraction).toBeDefined()
-      expect(result.extraction?.core).toBeDefined()
-      expect(result.extraction?.core.paperId).toBe('test-paper-123')
-      expect(result.extraction?.core.mainClaims.length).toBeGreaterThan(0)
-      expect(result.extraction?.extensions).toContain('quantitative')
+      
+      const ext = result.extraction!
+      
+      // Metadata
+      expect(ext.metadata.title).toBe('Test Paper Title')
+      expect(ext.metadata.authors).toEqual(['Author One', 'Author Two'])
+      expect(ext.metadata.year).toBe(2024)
+      expect(ext.metadata.domain).toBe('Computer Science')
+      expect(ext.metadata.paperType).toBe('Empirical Study')
+      
+      // Findings
+      expect(ext.findings).toHaveLength(2)
+      expect(ext.findings[0].claim).toBe('Finding one about X')
+      expect(ext.findings[0].value).toBe('75%')
+      expect(ext.findings[0].valueType).toBe('percentage')
+      expect(ext.findings[0].direction).toBe('positive')
+      expect(ext.findings[0].isMainFinding).toBe(true)
+      expect(ext.findings[0].id).toBeDefined() // UUID generated
+      
+      expect(ext.findings[1].claim).toBe('Finding two about Y')
+      expect(ext.findings[1].value).toBeUndefined()
+      expect(ext.findings[1].isMainFinding).toBe(false)
+      
+      // Summary
+      expect(ext.researchQuestion).toBe('What is the effect of X on Y?')
+      expect(ext.contributions).toEqual(['Contribution one', 'Contribution two'])
+      expect(ext.limitations).toEqual(['Limitation one'])
+      expect(ext.extractionNotes).toEqual(['Note about extraction'])
+      
+      // Confidence
+      expect(ext.extractionConfidence).toBeCloseTo(0.875) // (0.95 + 0.8) / 2
     })
-    
-    it('extracts core fields correctly', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-paper-456',
-        title: 'Leadership Study',
-        abstract: 'A quantitative study using regression analysis with n=500.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      expect(result.success).toBe(true)
-      
-      const core = result.extraction?.core
-      expect(core?.researchQuestion).toBeDefined()
-      expect(core?.objectives).toBeInstanceOf(Array)
-      expect(core?.mainClaims).toBeInstanceOf(Array)
-      expect(core?.keyContributions).toBeInstanceOf(Array)
-      expect(core?.methodologySummary).toBeDefined()
-      expect(core?.context.domain).toBeDefined()
-      expect(core?.limitations).toBeInstanceOf(Array)
-      expect(core?.futureWork).toBeInstanceOf(Array)
-    })
-    
-    it('includes extraction metadata', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-paper-789',
-        title: 'Test Paper',
-        abstract: 'Using regression with p<0.05 and n=200 participants.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      expect(result.success).toBe(true)
-      expect(result.totalTimeMs).toBeGreaterThanOrEqual(0)
-      expect(result.classificationTimeMs).toBeGreaterThanOrEqual(0)
-      expect(result.coreExtractionTimeMs).toBeGreaterThanOrEqual(0)
-      
-      const metadata = result.extraction?.core.extractionMetadata
-      expect(metadata?.extractionVersion).toBe('1.0.0')
-      expect(metadata?.extractedAt).toBeInstanceOf(Date)
-      expect(metadata?.modelUsed).toBeDefined()
-    })
-    
-    it('handles classification failure gracefully', async () => {
-      // Mock classification failure
-      mockGenerateObject.mockRejectedValueOnce(new Error('API rate limit exceeded'))
-      
-      const input: ExtractionInput = {
-        paperId: 'test-paper-fail',
-        title: 'Statistical Analysis Paper',
-        abstract: 'Using regression analysis with p<0.05 we found significance.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      // Should fallback to rule-based classification and continue
-      expect(result).toBeDefined()
-      expect(result.totalTimeMs).toBeGreaterThanOrEqual(0)
-    })
-    
-    it('handles core extraction failure gracefully', async () => {
-      // Mock classification success
-      mockGenerateObject.mockResolvedValueOnce({
-        object: createMockClassification()
+
+    it('handles extraction with no findings', async () => {
+      mockGenerateObject.mockResolvedValue({
+        object: {
+          metadata: {
+            title: 'Empty Paper',
+            authors: [],
+            year: null,
+            domain: 'Unknown',
+            paperType: 'Unknown',
+            methodology: 'Unknown'
+          },
+          findings: [],
+          researchQuestion: null,
+          contributions: [],
+          limitations: [],
+          extractionNotes: ['No findings could be extracted']
+        }
       })
-      
-      // Mock core extraction failure
-      mockGenerateObject.mockRejectedValueOnce(new Error('API error'))
-      
-      const input: ExtractionInput = {
-        paperId: 'test-paper-fail-core',
-        title: 'Test Paper',
-        abstract: 'Some abstract with regression analysis.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      // Should return a result (even if not fully successful)
-      expect(result).toBeDefined()
-      // Extraction continues with minimal core when LLM fails
-      expect(result.totalTimeMs).toBeGreaterThanOrEqual(0)
-      // The extractor may return success with minimal extraction or failure
-      // depending on implementation - we just verify it doesn't throw
-    })
-    
-    it('skips core extraction when skipCore option is set', async () => {
-      // Mock classification
-      mockGenerateObject.mockResolvedValueOnce({
-        object: createMockClassification()
+
+      const result = await extractPaper({
+        paperId: 'test-empty',
+        text: 'Minimal text'
       })
-      
-      // Mock extension
-      mockExtractQuantitative.mockResolvedValueOnce(createMockQuantitativeExtension())
-      
-      const input: ExtractionInput = {
-        paperId: 'test-skip-core',
-        title: 'Test Paper',
-        abstract: 'Regression analysis with p<0.001 and n=500.'
-      }
-      
-      const result = await extractPaper(input, { skipCore: true })
-      
+
       expect(result.success).toBe(true)
-      // Core should be minimal when skipped
-      expect(result.extraction?.core.mainClaims).toHaveLength(0)
+      expect(result.extraction!.findings).toHaveLength(0)
+      expect(result.extraction!.extractionConfidence).toBe(0)
     })
-    
-    it('forces specific paper type when specified', async () => {
-      // Mock core extraction (no classification needed when type is forced)
-      mockGenerateObject.mockResolvedValueOnce({
-        object: createMockCoreExtraction()
+
+    it('handles LLM errors gracefully', async () => {
+      mockGenerateObject.mockRejectedValue(new Error('LLM API error'))
+
+      const result = await extractPaper({
+        paperId: 'test-error',
+        text: 'Some text'
       })
-      
-      // Mock qualitative extension
-      mockExtractQualitative.mockResolvedValueOnce({
-        paperId: 'test-force-type',
-        methodology: { approach: 'thematic_analysis' },
-        themes: [],
-        extractionConfidence: 0.8
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe('LLM API error')
+      expect(result.extraction).toBeUndefined()
+    })
+
+    it('truncates very long text', async () => {
+      mockGenerateObject.mockResolvedValue({
+        object: {
+          metadata: {
+            title: 'Long Paper',
+            authors: ['Author'],
+            year: 2024,
+            domain: 'Test',
+            paperType: 'Test',
+            methodology: 'Test'
+          },
+          findings: [],
+          researchQuestion: null,
+          contributions: [],
+          limitations: [],
+          extractionNotes: []
+        }
       })
-      
-      const input: ExtractionInput = {
-        paperId: 'test-force-type',
-        title: 'Interview Study',
-        abstract: 'We conducted semi-structured interviews with 25 participants.'
-      }
-      
-      const result = await extractPaper(input, { forcePaperType: 'qualitative' })
-      
-      expect(result.success).toBe(true)
-      expect(result.extraction?.core.paperType.primaryType).toBe('qualitative')
-      expect(result.extraction?.extensions).toContain('qualitative')
+
+      // Create text longer than 100k chars
+      const longText = 'a'.repeat(150000)
+
+      await extractPaper({
+        paperId: 'test-long',
+        text: longText
+      })
+
+      // Check that the prompt was truncated
+      const callArgs = mockGenerateObject.mock.calls[0][0]
+      expect(callArgs.prompt.length).toBeLessThan(110000) // 100k + some buffer for prompt text
+      expect(callArgs.prompt).toContain('[Text truncated...]')
     })
-  })
-  
-  describe('claims extraction', () => {
-    it('extracts claims with proper structure', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-claims',
-        title: 'Test Paper',
-        abstract: 'Regression analysis with statistical significance.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      expect(result.success).toBe(true)
-      
-      const claims = result.extraction?.core.mainClaims || []
-      expect(claims.length).toBeGreaterThan(0)
-      
-      // Each claim should have required fields
-      for (const claim of claims) {
-        expect(claim.id).toBeDefined() // UUID generated
-        expect(claim.text).toBeDefined()
-        expect(claim.type).toBeDefined()
-        expect(claim.section).toBeDefined()
-        expect(claim.confidence).toBeGreaterThanOrEqual(0)
-        expect(claim.confidence).toBeLessThanOrEqual(1)
-      }
-    })
-    
-    it('includes evidence quotes when available', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-evidence',
-        title: 'Test Paper',
-        abstract: 'Results show significance with regression.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      const claims = result.extraction?.core.mainClaims || []
-      const claimWithEvidence = claims.find(c => c.evidenceQuote)
-      
-      expect(claimWithEvidence).toBeDefined()
-      expect(claimWithEvidence?.evidenceQuote).toContain('β=0.34')
-    })
-  })
-  
-  describe('quantitative extension', () => {
-    it('extracts statistical findings', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-stats',
-        title: 'Statistical Study',
-        abstract: 'Regression analysis with p<0.001 and n=500.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      expect(result.success).toBe(true)
-      expect(result.extraction?.quantitative).toBeDefined()
-      
-      const quant = result.extraction?.quantitative
-      expect(quant?.statisticalFindings).toBeInstanceOf(Array)
-      expect(quant?.statisticalFindings.length).toBeGreaterThan(0)
-      
-      const finding = quant?.statisticalFindings[0]
-      expect(finding?.effectSize).toBe(0.34)
-      expect(finding?.pValue).toBe(0.001)
-      expect(finding?.isSignificant).toBe(true)
-      expect(finding?.relationship).toBe('positive')
-    })
-    
-    it('extracts sample information', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-sample',
-        title: 'Survey Study',
-        abstract: 'Sample of n=500 participants using regression.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      expect(result.extraction?.quantitative?.sampleSize).toBeDefined()
-      expect(result.extraction?.quantitative?.sampleSize).toBe(500)
-    })
-    
-    it('extracts variable information', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-vars',
-        title: 'Variable Study',
-        abstract: 'IV and DV analysis with regression.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      const vars = result.extraction?.quantitative?.variables
-      expect(vars).toBeDefined()
-      
-      // Variables are organized by type
-      const ivs = vars?.independent || []
-      const dvs = vars?.dependent || []
-      
-      expect(ivs.length).toBeGreaterThan(0)
-      expect(dvs.length).toBeGreaterThan(0)
-    })
-  })
-  
-  describe('extraction result structure', () => {
-    it('returns proper ExtractionResult structure', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-structure',
-        title: 'Test Paper',
-        abstract: 'Regression analysis study.'
-      }
-      
-      const result: ExtractionResult = await extractPaper(input)
-      
-      // Check all expected fields
-      expect(result).toHaveProperty('success')
-      expect(result).toHaveProperty('totalTimeMs')
-      expect(result).toHaveProperty('classificationTimeMs')
-      expect(result).toHaveProperty('coreExtractionTimeMs')
-      expect(result).toHaveProperty('extensionExtractionTimeMs')
-      
-      if (result.success) {
-        expect(result).toHaveProperty('extraction')
-        expect(result.extraction).toHaveProperty('core')
-        expect(result.extraction).toHaveProperty('extensions')
-        expect(result.extraction).toHaveProperty('overallConfidence')
-        expect(result.extraction).toHaveProperty('validationStatus')
-      }
-    })
-    
-    it('sets validationStatus to pending for new extractions', async () => {
-      setupSuccessfulExtractionMocks()
-      
-      const input: ExtractionInput = {
-        paperId: 'test-validation-status',
-        title: 'Test Paper',
-        abstract: 'Some abstract with regression analysis.'
-      }
-      
-      const result = await extractPaper(input)
-      
-      expect(result.extraction?.validationStatus).toBe('pending')
+
+    it('converts null values to undefined in output', async () => {
+      mockGenerateObject.mockResolvedValue({
+        object: {
+          metadata: {
+            title: 'Test',
+            authors: [],
+            year: null,
+            domain: 'Test',
+            paperType: 'Test',
+            methodology: 'Test'
+          },
+          findings: [{
+            claim: 'Test claim',
+            evidence: 'Test evidence',
+            value: null,
+            valueType: null,
+            direction: null,
+            comparedTo: null,
+            context: null,
+            isMainFinding: true,
+            confidence: 0.9
+          }],
+          researchQuestion: null,
+          contributions: [],
+          limitations: [],
+          extractionNotes: []
+        }
+      })
+
+      const result = await extractPaper({
+        paperId: 'test-nulls',
+        text: 'Test text'
+      })
+
+      expect(result.extraction!.metadata.year).toBeUndefined()
+      expect(result.extraction!.researchQuestion).toBeUndefined()
+      expect(result.extraction!.findings[0].value).toBeUndefined()
+      expect(result.extraction!.findings[0].direction).toBeUndefined()
     })
   })
 })

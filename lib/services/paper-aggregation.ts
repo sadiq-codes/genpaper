@@ -817,8 +817,8 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
 /**
  * Run structured extraction asynchronously (non-blocking)
  * 
- * Extracts structured data (claims, findings, effect sizes, themes) from paper
- * for cross-document synthesis. Runs in background - failures don't block ingestion.
+ * Extracts findings from paper for cross-document synthesis.
+ * Runs in background - failures don't block ingestion.
  */
 async function runStructuredExtraction(
   paperId: string,
@@ -832,27 +832,24 @@ async function runStructuredExtraction(
     return
   }
 
-  console.log(`🔬 Starting structured extraction for: ${paper.title.slice(0, 50)}...`)
+  console.log(`🔬 Starting extraction for: ${paper.title.slice(0, 50)}...`)
 
+  // Build full text with title and abstract for better LLM context
+  const textParts = []
+  if (paper.title) textParts.push(`Title: ${paper.title}`)
+  if (paper.abstract) textParts.push(`Abstract: ${paper.abstract}`)
+  if (fullText) textParts.push(fullText)
+  
   const result = await extractPaper({
     paperId,
-    title: paper.title,
-    abstract: paper.abstract || undefined,
-    fullText,
-    metadata: {
-      authors: paper.authors || undefined,
-      year: paper.publication_date ? new Date(paper.publication_date).getFullYear() : undefined,
-      venue: paper.venue || undefined,
-      doi: paper.doi || undefined,
-      citationCount: paper.citation_count || undefined
-    }
+    text: textParts.join('\n\n')
   })
 
   if (result.success && result.extraction) {
     await saveExtraction(result.extraction)
-    console.log(`✅ Structured extraction saved for: ${paper.title.slice(0, 50)}...`)
+    console.log(`✅ Extraction saved for: ${paper.title.slice(0, 50)}...`)
   } else {
-    console.warn(`⚠️ Extraction incomplete for ${paperId}: ${result.error || 'unknown error'}`)
+    console.warn(`⚠️ Extraction failed for ${paperId}: ${result.error || 'unknown error'}`)
   }
 }
 
