@@ -29,6 +29,7 @@ import {
 } from '@/lib/search/circuit-breaker'
 import { getCached, setCached } from '@/lib/search/source-cache'
 import { getServiceClient } from '@/lib/supabase/service'
+import { extractPaper, saveExtraction, hasExtraction } from '@/lib/extraction'
 
 // Enhanced paper type with ranking metadata
 export interface RankedPaper extends AcademicPaper {
@@ -759,6 +760,14 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
     const finalChunkCount = await createChunksForPaper(paperId, contentParts.join('\n\n'))
     console.log(`📚 Ingested paper with ${finalChunkCount} chunks: ${paperDTO.title}`)
 
+    // Step 5b: Run structured extraction (non-blocking, best-effort)
+    // This extracts claims, findings, effect sizes, themes for cross-document synthesis
+    if (finalChunkCount > 0) {
+      runStructuredExtraction(paperId, paperDTO, contentParts.join('\n\n')).catch(err => {
+        console.warn(`⚠️ Structured extraction failed for ${paperId}:`, err instanceof Error ? err.message : err)
+      })
+    }
+
     // Step 6: Update processing_status to 'processed' since chunks are created
     // This ensures the UI shows "Ready" instead of "Pending" for papers
     if (finalChunkCount > 0) {
@@ -803,6 +812,48 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
     await fetchAndStoreReferencesForPaper(paper, paperId)
     
     return { paperId, paper: ingestedPaper }
+}
+
+/**
+ * Run structured extraction asynchronously (non-blocking)
+ * 
+ * Extracts structured data (claims, findings, effect sizes, themes) from paper
+ * for cross-document synthesis. Runs in background - failures don't block ingestion.
+ */
+async function runStructuredExtraction(
+  paperId: string,
+  paper: PaperDTO,
+  fullText: string
+): Promise<void> {
+  // Skip if extraction already exists
+  const alreadyExtracted = await hasExtraction(paperId)
+  if (alreadyExtracted) {
+    console.log(`📄 Extraction already exists for: ${paper.title.slice(0, 50)}...`)
+    return
+  }
+
+  console.log(`🔬 Starting structured extraction for: ${paper.title.slice(0, 50)}...`)
+
+  const result = await extractPaper({
+    paperId,
+    title: paper.title,
+    abstract: paper.abstract || undefined,
+    fullText,
+    metadata: {
+      authors: paper.authors || undefined,
+      year: paper.publication_date ? new Date(paper.publication_date).getFullYear() : undefined,
+      venue: paper.venue || undefined,
+      doi: paper.doi || undefined,
+      citationCount: paper.citation_count || undefined
+    }
+  })
+
+  if (result.success && result.extraction) {
+    await saveExtraction(result.extraction)
+    console.log(`✅ Structured extraction saved for: ${paper.title.slice(0, 50)}...`)
+  } else {
+    console.warn(`⚠️ Extraction incomplete for ${paperId}: ${result.error || 'unknown error'}`)
+  }
 }
 
 // Smart batch delay with exponential backoff
