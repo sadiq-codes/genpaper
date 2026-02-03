@@ -101,6 +101,58 @@ export interface PromptData {
     dateRange: { earliest: number; latest: number } | null
     hasSubstantialBase: boolean
   }
+  
+  // =============================================================================
+  // Synthesis Engine Data (Phase 4)
+  // Pre-analyzed patterns, contradictions, and gaps for data-driven writing
+  // All fields are strings - LLM decides values, no hardcoded enums
+  // =============================================================================
+  
+  // Pre-analyzed patterns from cross-document analysis
+  synthesisPatterns?: Array<{
+    claim: string                    // The pattern statement
+    supportStatement: string         // "6 of 8 studies (75%) found..."
+    valuesSummary?: string           // "ranging from 24% to 34%"
+    presentationApproach: string     // LLM-decided, e.g., "Lead with statistics"
+    importance: string               // LLM-decided, e.g., "central", "supporting"
+    supportingPapers: string[]       // Paper titles/IDs for citation
+  }>
+  
+  // Pre-analyzed contradictions
+  synthesisContradictions?: Array<{
+    description: string              // What the contradiction is
+    presentationApproach: string     // How to present fairly
+    resolutionStrategy?: string      // How to explain/resolve
+    sides: Array<{
+      position: string               // One side's position
+      papers: string[]               // Papers supporting this side
+    }>
+  }>
+  
+  // Pre-analyzed gaps
+  synthesisGaps?: Array<{
+    description: string              // What's missing
+    importance: string               // Why it matters
+    suggestedFutureWork?: string     // Potential research to address it
+  }>
+  
+  // Writing guidance from synthesis plan
+  sectionWritingGuidance?: {
+    approach: string                 // How to write this section
+    tone: string                     // Tone to use
+    keyPointsToMake: string[]        // Main takeaways
+    transitionFrom?: string          // How to connect from previous
+    transitionTo?: string            // How to lead into next
+  }
+  
+  // Summary stats for the synthesis
+  synthesisSummary?: {
+    totalPapersAnalyzed: number
+    patternsIdentified: number
+    contradictionsFound: number
+    gapsIdentified: number
+    overallNarrative: string         // Brief summary of the literature
+  }
 }
 
 export interface PromptTemplate {

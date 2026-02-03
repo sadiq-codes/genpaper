@@ -319,6 +319,91 @@ system: |-
   
   {{/literatureStats}}
   
+  {{#synthesisPatterns}}
+  ═══════════════════════════════════════════════════════════════════════════════
+  PRE-ANALYZED SYNTHESIS DATA (USE THIS DATA DIRECTLY)
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  The following patterns, contradictions, and gaps have been identified through
+  SYSTEMATIC CROSS-DOCUMENT ANALYSIS. This data is PRE-COMPUTED and ACCURATE.
+  
+  CRITICAL: Use the EXACT support statements provided (e.g., "6 of 8 studies").
+  Do NOT fabricate or modify these statistics - they are pre-verified.
+  
+  ───────────────────────────────────────────────────────────────────────────────
+  PATTERNS TO DISCUSS IN THIS SECTION
+  ───────────────────────────────────────────────────────────────────────────────
+  {{#synthesisPatterns}}
+  
+  **Pattern:** {{claim}}
+  - Support: {{supportStatement}}
+  {{#valuesSummary}}- Values: {{valuesSummary}}{{/valuesSummary}}
+  - Importance: {{importance}}
+  - How to present: {{presentationApproach}}
+  - Supporting papers: {{#supportingPapers}}{{.}}; {{/supportingPapers}}
+  
+  {{/synthesisPatterns}}
+  {{/synthesisPatterns}}
+  
+  {{#synthesisContradictions}}
+  ───────────────────────────────────────────────────────────────────────────────
+  CONTRADICTIONS TO ADDRESS
+  ───────────────────────────────────────────────────────────────────────────────
+  {{#synthesisContradictions}}
+  
+  **Contradiction:** {{description}}
+  - How to present: {{presentationApproach}}
+  {{#resolutionStrategy}}- Resolution strategy: {{resolutionStrategy}}{{/resolutionStrategy}}
+  - Sides:
+  {{#sides}}
+    • {{position}}: {{#papers}}{{.}}; {{/papers}}
+  {{/sides}}
+  
+  {{/synthesisContradictions}}
+  {{/synthesisContradictions}}
+  
+  {{#synthesisGaps}}
+  ───────────────────────────────────────────────────────────────────────────────
+  GAPS TO DISCUSS
+  ───────────────────────────────────────────────────────────────────────────────
+  {{#synthesisGaps}}
+  
+  **Gap:** {{description}}
+  - Why it matters: {{importance}}
+  {{#suggestedFutureWork}}- Future work: {{suggestedFutureWork}}{{/suggestedFutureWork}}
+  
+  {{/synthesisGaps}}
+  {{/synthesisGaps}}
+  
+  {{#sectionWritingGuidance}}
+  ───────────────────────────────────────────────────────────────────────────────
+  WRITING GUIDANCE FOR THIS SECTION
+  ───────────────────────────────────────────────────────────────────────────────
+  
+  **Approach:** {{approach}}
+  **Tone:** {{tone}}
+  {{#transitionFrom}}**Transition from previous:** {{transitionFrom}}{{/transitionFrom}}
+  {{#transitionTo}}**Lead into next section:** {{transitionTo}}{{/transitionTo}}
+  
+  **Key points to make:**
+  {{#keyPointsToMake}}
+  - {{.}}
+  {{/keyPointsToMake}}
+  {{/sectionWritingGuidance}}
+  
+  {{#synthesisSummary}}
+  ───────────────────────────────────────────────────────────────────────────────
+  LITERATURE SYNTHESIS SUMMARY
+  ───────────────────────────────────────────────────────────────────────────────
+  
+  Analysis of {{totalPapersAnalyzed}} papers identified:
+  - {{patternsIdentified}} patterns
+  - {{contradictionsFound}} contradictions  
+  - {{gapsIdentified}} gaps
+  
+  **Overall narrative:** {{overallNarrative}}
+  {{/synthesisSummary}}
+  
   ═══════════════════════════════════════════════════════════════════════════════
   WRITING VARIETY (AVOID REPETITIVE PATTERNS)
   ═══════════════════════════════════════════════════════════════════════════════
