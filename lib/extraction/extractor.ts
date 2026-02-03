@@ -66,53 +66,79 @@ const ExtractionSchema = z.object({
 // The Prompt - Simple, Open-Ended, No Assumptions
 // =============================================================================
 
-const SYSTEM_PROMPT = `You are an expert academic reader. Your task is to extract findings and information from a research paper.
+const SYSTEM_PROMPT = `You are an expert academic reader extracting findings from research papers for literature synthesis.
 
-CRITICAL INSTRUCTIONS:
+YOUR GOAL: Extract EVERY piece of evidence that could be cited in a literature review.
 
-1. READ THE ACTUAL TEXT - Don't assume or infer. Extract what's explicitly stated.
+FINDINGS - BE EXHAUSTIVE:
+Extract AT LEAST 8-15 findings per paper. A typical paper contains many extractable findings:
 
-2. FINDINGS: Extract ALL findings, results, and claims the paper makes. For each:
-   - State the finding clearly
-   - Include a direct quote as evidence
-   - If there's a number/statistic, capture it exactly as written
-   - Note what type of value it is (percentage, effect size, count, etc.)
-   - Indicate if the relationship is positive, negative, null, or just descriptive
+For EMPIRICAL papers, extract:
+- Each statistical result (with exact numbers)
+- Sample size and characteristics
+- Each variable/factor studied
+- Each comparison between groups
+- Each correlation or relationship found
+- Methodology details (instruments, measures used)
+- Each species/entity/category identified (if applicable)
+- Geographic/temporal scope
+- Any null results (no significant effect)
 
-3. METADATA: 
-   - Title: Find the ACTUAL paper title, not the journal name
-   - Authors: List the actual author names
-   - Domain: What field is this? (be specific)
-   - Methodology: How did they do the research?
+For THEORETICAL papers, extract:
+- Each proposition or argument made
+- Each concept defined or introduced
+- Each relationship proposed between concepts
+- Each critique of existing theories
+- Historical context provided
+- Each example or case used as evidence
 
-4. BE SPECIFIC: 
-   - Don't write generic academic phrases
-   - Use actual details from the paper
-   - Quote specific numbers, names, places
+For REVIEW papers, extract:
+- Key synthesis claims
+- Statistics about the literature (X of Y studies found...)
+- Identified gaps
+- Methodological observations
 
-5. HANDLE UNCERTAINTY:
-   - If something isn't clear, say so in extractionNotes
-   - Don't invent information
-   - Use null for fields you can't determine
+WHAT COUNTS AS A FINDING:
+- "The sample consisted of 200 participants" → Finding (sample size)
+- "Bacillus subtilis (24%), E. coli (18%), S. aureus (12%)" → 3 separate findings
+- "No significant difference was found between groups" → Finding (null result)
+- "Data was collected from 2010-2015" → Finding (temporal scope)
+- "The authors argue that X leads to Y" → Finding (theoretical claim)
 
-6. INCLUDE EVERYTHING:
-   - Main findings AND secondary findings
-   - Mark which are main (isMainFinding: true) vs secondary (false)
-   - Sample sizes, methods, populations - these are findings too`
+REQUIREMENTS FOR EACH FINDING:
+1. claim: Clear statement of what was found
+2. evidence: EXACT quote from paper (copy-paste, not paraphrase)
+3. value: Any number/statistic exactly as written (null if qualitative)
+4. valueType: What the number represents
+5. isMainFinding: true = key result, false = supporting data
+6. confidence: How certain you are (0.7-1.0)
+
+DO NOT:
+- Summarize multiple findings into one
+- Skip "minor" findings - they matter for synthesis
+- Paraphrase evidence - use exact quotes
+- Invent findings not in the text`
 
 function buildPrompt(text: string): string {
-  return `Extract all findings and information from this paper:
+  return `Extract ALL findings from this paper. Aim for 8-15+ findings.
 
 ---
 ${text}
 ---
 
-Remember:
-- Extract the ACTUAL title (not journal name)
-- Include ALL findings with direct quote evidence
-- Capture exact values/statistics as written
-- Be specific about context and methodology
-- Mark main findings vs secondary findings`
+CHECKLIST - Have you extracted:
+□ Sample size/characteristics?
+□ Each quantitative result with exact numbers?
+□ Each entity/category identified (species, factors, variables)?
+□ Comparisons between groups/conditions?
+□ Geographic and temporal scope?
+□ Null results (no effect found)?
+□ Methodology details?
+□ Each theoretical claim/proposition?
+
+Remember: If a paper mentions "A (24%), B (18%), C (12%)" - that's 3 separate findings, not 1.
+
+Extract the ACTUAL title (not journal name), all authors, and be exhaustive with findings.`
 }
 
 // =============================================================================
