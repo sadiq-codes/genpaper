@@ -16,6 +16,7 @@ import { warn, error as logError, info } from '@/lib/utils/logger'
 import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
 import { logSectionCitations } from '@/lib/rag/relevance-feedback'
 import { extractThemes, mergeThemeAnalysisIntoProfile, buildThemeGuidanceForOutline } from '@/lib/generation/theme-extraction'
+import { extractThemesHybrid, generateSectionsHybrid, type HybridThemeExtractionResult } from '@/lib/synthesis-engine/pipeline-integration'
 import { getServiceClient } from '@/lib/supabase/service'
 import type { PaperProfile, ThemeAnalysis } from '@/lib/generation/paper-profile-types'
 import type { PaperStatus, OriginalResearchConfig, PaperTypeKey as SimplifiedPaperTypeKey } from '@/types/simplified'
@@ -403,15 +404,27 @@ export async function generatePaper(
     })
 
     // Step 3: Planning (Theme Extraction + Outline Generation)
-    // Analyze collected papers to identify emergent themes, then create outline
+    // Use hybrid extraction: structured findings + cross-document analysis
     const themeStartTime = Date.now()
-    onProgress?.('planning', 25, 'Analyzing themes in the literature...')
+    onProgress?.('planning', 25, 'Extracting findings from papers...')
     
     let themeAnalysis: ThemeAnalysis | undefined
+    let hybridResult: HybridThemeExtractionResult | undefined
     let enhancedProfile = paperProfile
     
     try {
-      themeAnalysis = await extractThemes(allPapers, sanitizedTopic, paperProfile)
+      // Use new hybrid extraction: extracts structured findings then analyzes patterns
+      hybridResult = await extractThemesHybrid(
+        allPapers,
+        sanitizedTopic,
+        paperProfile,
+        (message, details) => {
+          // Forward progress updates
+          onProgress?.('planning', 27, message, details)
+        }
+      )
+      
+      themeAnalysis = hybridResult.themeAnalysis
       
       // Merge emergent themes into the profile
       enhancedProfile = mergeThemeAnalysisIntoProfile(paperProfile, themeAnalysis)
@@ -422,26 +435,56 @@ export async function generatePaper(
         gaps: themeAnalysis.gaps.length,
         pivotalPapers: themeAnalysis.pivotalPapers.length,
         suggestedOrganization: themeAnalysis.organizationSuggestion.approach,
-        confidence: themeAnalysis.confidence
-      }, 'Theme extraction completed')
+        confidence: themeAnalysis.confidence,
+        // Hybrid-specific stats
+        papersExtracted: hybridResult.extractionStats.papersExtracted,
+        papersFromCache: hybridResult.extractionStats.papersFromCache,
+        totalFindings: hybridResult.extractionStats.totalFindings
+      }, 'Hybrid theme extraction completed')
       
       metrics.themeExtractionDuration = Date.now() - themeStartTime
       
-      onProgress?.('planning', 30, `Found ${themeAnalysis.emergentThemes.length} themes, creating outline...`, {
+      onProgress?.('planning', 30, `Found ${themeAnalysis.emergentThemes.length} themes from ${hybridResult.extractionStats.totalFindings} findings`, {
         themesFound: themeAnalysis.emergentThemes.length,
         debatesFound: themeAnalysis.debates.length,
         gapsFound: themeAnalysis.gaps.length,
+        findingsExtracted: hybridResult.extractionStats.totalFindings,
         suggestedOrganization: themeAnalysis.organizationSuggestion.approach,
         durationMs: metrics.themeExtractionDuration,
         phase: 'themes_complete'
       })
-    } catch (themeError) {
-      metrics.themeExtractionDuration = Date.now() - themeStartTime
-      // Theme extraction is an enhancement - don't fail the pipeline if it fails
-      warn({ error: themeError }, 'Theme extraction failed, continuing with original profile')
-      onProgress?.('planning', 30, 'Creating paper outline...', {
-        phase: 'outline_start'
-      })
+    } catch (hybridError) {
+      // Hybrid extraction failed - fall back to legacy extraction
+      warn({ error: hybridError }, 'Hybrid extraction failed, falling back to legacy extractThemes')
+      
+      try {
+        themeAnalysis = await extractThemes(allPapers, sanitizedTopic, paperProfile)
+        enhancedProfile = mergeThemeAnalysisIntoProfile(paperProfile, themeAnalysis)
+        
+        info({
+          emergentThemes: themeAnalysis.emergentThemes.length,
+          debates: themeAnalysis.debates.length,
+          gaps: themeAnalysis.gaps.length,
+          fallback: true
+        }, 'Legacy theme extraction completed (fallback)')
+        
+        metrics.themeExtractionDuration = Date.now() - themeStartTime
+        
+        onProgress?.('planning', 30, `Found ${themeAnalysis.emergentThemes.length} themes (legacy mode)`, {
+          themesFound: themeAnalysis.emergentThemes.length,
+          debatesFound: themeAnalysis.debates.length,
+          gapsFound: themeAnalysis.gaps.length,
+          fallback: true,
+          phase: 'themes_complete'
+        })
+      } catch (legacyError) {
+        metrics.themeExtractionDuration = Date.now() - themeStartTime
+        // Both methods failed - continue without themes
+        warn({ error: legacyError }, 'All theme extraction methods failed, continuing with original profile')
+        onProgress?.('planning', 30, 'Creating paper outline...', {
+          phase: 'outline_start'
+        })
+      }
     }
 
     // Check cancellation after theme extraction
