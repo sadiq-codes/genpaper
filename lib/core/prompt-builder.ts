@@ -266,8 +266,33 @@ Provide specific, actionable feedback on:
     title?: string
     evidence_strength?: 'full_text' | 'abstract' | 'title_only'
   }>): string {
+    // Ensure paper diversity: select at least one chunk per unique paper first,
+    // then fill remaining slots with highest-relevance chunks
+    const MAX_CHUNKS = 50
+    const seenPapers = new Set<string>()
+    const diverseChunks: typeof chunks = []
+    const remainingChunks: typeof chunks = []
+    
+    // First pass: pick one chunk per unique paper
+    for (const chunk of chunks) {
+      if (!seenPapers.has(chunk.paper_id)) {
+        seenPapers.add(chunk.paper_id)
+        diverseChunks.push(chunk)
+      } else {
+        remainingChunks.push(chunk)
+      }
+    }
+    
+    // Second pass: fill remaining slots with additional chunks (already sorted by relevance)
+    const slotsRemaining = MAX_CHUNKS - diverseChunks.length
+    if (slotsRemaining > 0) {
+      diverseChunks.push(...remainingChunks.slice(0, slotsRemaining))
+    }
+    
+    const selectedChunks = diverseChunks.slice(0, MAX_CHUNKS)
+    
     return JSON.stringify(
-      chunks.slice(0, 10).map((chunk) => ({
+      selectedChunks.map((chunk) => ({
         // Note: Removed numeric "id" field to prevent AI from confusing snippet numbers with paper_id
         // The paper_id is the ONLY identifier that should be used in [CITE: paper_id] markers
         paper_id: chunk.paper_id,
