@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import type { Editor } from "@tiptap/react"
 import { EditorTopNav } from "./EditorTopNav"
 import { EditorSidebar } from "./sidebar/EditorSidebar"
@@ -81,6 +82,7 @@ export function ResearchEditor({
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
+  const router = useRouter()
   
   // Resizable sidebar
   const { width: sidebarWidth, isDragging, handleProps } = useResizablePanel({
@@ -408,8 +410,11 @@ export function ResearchEditor({
       const url = new URL(window.location.href)
       url.searchParams.delete("created")
       window.history.replaceState({}, "", url.toString())
+
+      // Refresh server data to load new papers/citations
+      router.refresh()
     },
-    [editor, papers, setContentSilent, markAsEdited]
+    [editor, papers, setContentSilent, markAsEdited, router]
   )
 
   // Handle generation error

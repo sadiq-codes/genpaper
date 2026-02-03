@@ -300,7 +300,7 @@ export async function generatePaper(
       config: {
         temperature: config.temperature || 0.2,
         max_tokens: config.maxTokens || 16000,
-        sources: config.sources || ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
+        sources: config.sources || ['europe_pmc', 'pubmed_central', 'openalex', 'core', 'arxiv', 'crossref', 'semantic_scholar'],
         // Dynamic search limit based on paper type
         // Different paper types need different search volumes to account for filtering losses
         limit: (() => {

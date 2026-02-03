@@ -235,6 +235,11 @@ export function GenerationProgress({
   const hasCompletedRef = useRef(false)
   const isStartingRef = useRef(false)
   
+  // Use refs for values needed in callbacks to avoid recreating callbacks
+  // This prevents the EventSource from being constantly reconnected
+  const lastEventIdRef = useRef(0)
+  const processedEventIdsRef = useRef<Set<number>>(new Set())
+  
   // Connection state for reconnection handling
   const [connectionState, setConnectionState] = useState<ConnectionState>({
     isConnected: false,
@@ -322,13 +327,21 @@ export function GenerationProgress({
           const parsedId = parseInt(event.lastEventId, 10)
           if (!isNaN(parsedId)) {
             eventId = parsedId
+            // Update ref (doesn't cause re-render/reconnect)
+            lastEventIdRef.current = parsedId
+            // Also update state for UI purposes, but this won't cause reconnect
             setConnectionState(prev => ({ ...prev, lastEventId: parsedId }))
           }
         }
 
         // Skip already-processed events (idempotency on reconnect)
-        if (eventId !== undefined && state.processedEventIds.has(eventId)) {
+        // Use ref to avoid stale closure issues
+        if (eventId !== undefined && processedEventIdsRef.current.has(eventId)) {
           return
+        }
+        // Mark as processed in ref immediately
+        if (eventId !== undefined) {
+          processedEventIdsRef.current.add(eventId)
         }
 
         const data = JSON.parse(event.data)
@@ -440,9 +453,9 @@ export function GenerationProgress({
         // Auto-reconnect after a short delay
         // The event stream supports Last-Event-ID, so we'll get missed events
         setTimeout(() => {
-          if (!hasCompletedRef.current && isPageVisibleRef.current && connectionState.runId) {
-            console.log('[Generation] Attempting reconnect...')
-            connectToEvents(connectionState.runId, connectionState.lastEventId)
+          if (!hasCompletedRef.current && isPageVisibleRef.current && runId) {
+            console.log('[Generation] Attempting reconnect with lastEventId:', lastEventIdRef.current)
+            connectToEvents(runId, lastEventIdRef.current)
           }
         }, 2000)
       }
@@ -452,7 +465,8 @@ export function GenerationProgress({
     return () => {
       eventSource.close()
     }
-  }, [connectionState.runId, connectionState.lastEventId, onComplete, onError, state.processedEventIds])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Use refs for lastEventId/processedEventIds to avoid reconnection loops
+  }, [onComplete, onError])
 
   // Start generation on mount
   useEffect(() => {
@@ -468,10 +482,12 @@ export function GenerationProgress({
   // Connect to events when we have a runId
   useEffect(() => {
     if (connectionState.runId && !hasCompletedRef.current) {
-      const cleanup = connectToEvents(connectionState.runId, connectionState.lastEventId)
+      // Use ref for lastEventId to get current value without causing reconnects
+      const cleanup = connectToEvents(connectionState.runId, lastEventIdRef.current)
       return cleanup
     }
-  }, [connectionState.runId, connectToEvents])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- connectToEvents is stable, only reconnect on runId change
+  }, [connectionState.runId])
 
   // Handle page visibility changes - reconnect when page becomes visible
   useEffect(() => {
