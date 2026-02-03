@@ -532,14 +532,14 @@ export function GenerationProgress({
                   ...prev,
                   wasDisconnectedWhileHidden: false,
                 }))
-                connectToEvents(connectionState.runId!, connectionState.lastEventId)
+                connectToEvents(connectionState.runId!, lastEventIdRef.current)
               }
             }
           } catch (err) {
             console.warn('[Generation] Failed to check status:', err)
             // Try to reconnect anyway
             if (connectionState.runId) {
-              connectToEvents(connectionState.runId, connectionState.lastEventId)
+              connectToEvents(connectionState.runId, lastEventIdRef.current)
             }
           }
         }
@@ -548,7 +548,8 @@ export function GenerationProgress({
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [connectionState.runId, connectionState.wasDisconnectedWhileHidden, connectionState.isConnected, connectionState.lastEventId, onComplete, onError, connectToEvents])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Use refs for lastEventId, connectToEvents is stable
+  }, [connectionState.runId, connectionState.wasDisconnectedWhileHidden, connectionState.isConnected, onComplete, onError])
 
   const handleCancel = useCallback(async () => {
     if (eventSourceRef.current) {
