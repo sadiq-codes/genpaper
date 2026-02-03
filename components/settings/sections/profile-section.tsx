@@ -51,11 +51,11 @@ export function ProfileSection({ user }: ProfileSectionProps) {
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+    return new Intl.DateTimeFormat(undefined, {
       year: 'numeric',
       month: 'long',
       day: 'numeric'
-    })
+    }).format(new Date(dateString))
   }
 
   return (
@@ -74,7 +74,7 @@ export function ProfileSection({ user }: ProfileSectionProps) {
             Update your profile details
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 sm:space-y-6">
           {/* Full Name */}
           <div className="space-y-2">
             <Label htmlFor="fullName" className="flex items-center gap-2">
@@ -83,10 +83,12 @@ export function ProfileSection({ user }: ProfileSectionProps) {
             </Label>
             <Input
               id="fullName"
+              name="fullName"
+              autoComplete="name"
               value={fullName}
               onChange={(e) => handleNameChange(e.target.value)}
-              placeholder="Enter your name"
-              className="max-w-md"
+              placeholder="Enter your name…"
+              className="w-full sm:max-w-md"
             />
           </div>
 
@@ -99,7 +101,7 @@ export function ProfileSection({ user }: ProfileSectionProps) {
             <Input
               value={user.email}
               disabled
-              className="max-w-md bg-muted"
+              className="w-full sm:max-w-md bg-muted"
             />
             <p className="text-xs text-muted-foreground">
               Contact support to change your email address

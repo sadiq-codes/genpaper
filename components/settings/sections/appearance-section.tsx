@@ -90,7 +90,7 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-3 max-w-md">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full sm:max-w-md">
             {THEMES.map((themeOption) => {
               const Icon = themeOption.icon
               const isActive = mounted && theme === themeOption.value
@@ -98,17 +98,23 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
                 <button
                   key={themeOption.value}
                   onClick={() => setTheme(themeOption.value)}
+                  aria-label={`Set theme to ${themeOption.label}`}
+                  aria-pressed={isActive}
                   className={cn(
-                    'flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all',
+                    'flex flex-col items-center gap-1.5 sm:gap-2 p-3 sm:p-4 rounded-lg border-2 transition-colors',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                     isActive
                       ? 'border-primary bg-primary/5'
                       : 'border-border hover:border-primary/50 hover:bg-muted/50'
                   )}
                 >
-                  <Icon className={cn(
-                    'h-5 w-5',
-                    isActive ? 'text-primary' : 'text-muted-foreground'
-                  )} />
+                  <Icon 
+                    className={cn(
+                      'h-5 w-5',
+                      isActive ? 'text-primary' : 'text-muted-foreground'
+                    )} 
+                    aria-hidden="true"
+                  />
                   <span className={cn(
                     'text-sm font-medium',
                     isActive ? 'text-primary' : 'text-foreground'
@@ -133,15 +139,15 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
             Adjust the text size in the editor
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 sm:space-y-6">
           <div className="space-y-2">
             <Label htmlFor="font-size" className="flex items-center gap-2">
               <Type className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               Font Size
             </Label>
             <Select value={fontSize} onValueChange={handleFontSizeChange}>
-              <SelectTrigger className="max-w-xs">
-                <SelectValue placeholder="Select size" />
+              <SelectTrigger className="w-full sm:max-w-xs">
+                <SelectValue placeholder="Select size…" />
               </SelectTrigger>
               <SelectContent>
                 {FONT_SIZES.map((size) => (
@@ -157,7 +163,7 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
           </div>
 
           {/* Preview */}
-          <div className="rounded-lg bg-muted p-4 max-w-md">
+          <div className="rounded-lg bg-muted p-3 sm:p-4 w-full sm:max-w-md">
             <p className="text-muted-foreground text-xs mb-2 font-medium">Preview:</p>
             <p 
               className="text-foreground"

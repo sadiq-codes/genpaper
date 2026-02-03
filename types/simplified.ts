@@ -262,5 +262,5 @@ export interface PaperWithAuthors extends Paper {
 }
 
 // Paper source types
-export type PaperSource = 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core' | 'google_scholar'
+export type PaperSource = 'openalex' | 'crossref' | 'semantic_scholar' | 'arxiv' | 'core' | 'google_scholar' | 'pubmed_central' | 'europe_pmc'
 export type PaperSources = PaperSource[]

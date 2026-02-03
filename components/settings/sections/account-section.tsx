@@ -105,17 +105,17 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="space-y-0.5 min-w-0">
               <Label className="flex items-center gap-2">
-                <KeyRound className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                <KeyRound className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
                 Password
               </Label>
               <p className="text-xs text-muted-foreground">
                 Change your account password
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={handleChangePassword}>
+            <Button variant="outline" size="sm" onClick={handleChangePassword} className="w-full sm:w-auto">
               Change Password
             </Button>
           </div>
@@ -131,10 +131,10 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="space-y-0.5 min-w-0">
               <Label className="flex items-center gap-2">
-                <Download className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                <Download className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
                 Download Your Data
               </Label>
               <p className="text-xs text-muted-foreground">
@@ -146,6 +146,7 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
               size="sm"
               onClick={handleExportData}
               disabled={isExporting}
+              className="w-full sm:w-auto"
             >
               {isExporting ? (
                 <>
@@ -175,10 +176,10 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="space-y-0.5 min-w-0">
               <Label className="flex items-center gap-2 text-destructive">
-                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                <Trash2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 Delete Account
               </Label>
               <p className="text-xs text-muted-foreground">
@@ -187,7 +188,7 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
             </div>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm">
+                <Button variant="destructive" size="sm" className="w-full sm:w-auto">
                   Delete Account
                 </Button>
               </AlertDialogTrigger>

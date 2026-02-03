@@ -90,12 +90,12 @@ export function SettingsPage({ user, preferences }: SettingsPageProps) {
   }
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 min-h-0">
-      {/* Mobile Section Selector */}
-      <div className="lg:hidden">
+    <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 lg:gap-8 min-h-0">
+      {/* Mobile Section Selector - sticky for easy navigation */}
+      <div className="lg:hidden sticky top-0 z-10 bg-background/95 backdrop-blur-sm py-3 -mx-4 px-4 sm:-mx-6 sm:px-6 border-b border-border/50">
         <Select value={activeSection} onValueChange={(v) => handleSectionChange(v as SettingsSection)}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select section" />
+            <SelectValue placeholder="Select section…" />
           </SelectTrigger>
           <SelectContent>
             {SETTINGS_SECTIONS.map((section) => {
@@ -103,7 +103,7 @@ export function SettingsPage({ user, preferences }: SettingsPageProps) {
               return (
                 <SelectItem key={section.id} value={section.id}>
                   <span className="flex items-center gap-2">
-                    <Icon className="h-4 w-4" />
+                    <Icon className="h-4 w-4" aria-hidden="true" />
                     {section.label}
                   </span>
                 </SelectItem>
@@ -125,8 +125,8 @@ export function SettingsPage({ user, preferences }: SettingsPageProps) {
 
       {/* Main Content */}
       <main className="flex-1 min-w-0">
-        <ScrollArea className="h-full">
-          <div className="max-w-2xl pb-8">
+        <ScrollArea className="h-full overscroll-contain touch-manipulation">
+          <div className="max-w-2xl pb-8 sm:pb-12">
             {renderSection()}
           </div>
         </ScrollArea>

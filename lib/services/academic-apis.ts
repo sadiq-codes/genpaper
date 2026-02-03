@@ -890,6 +890,11 @@ function buildOpenAlexFilter(options: SearchOptions): string {
     parts.push('is_oa:true')
   }
   
+  // PRIORITIZE papers with full-text availability
+  // This significantly improves content coverage by preferring accessible papers
+  // has_fulltext:true filters for papers where OpenAlex has indexed full-text content
+  parts.push('has_fulltext:true')
+  
   // Discipline-based concept filtering
   // This is the most effective way to ensure papers are from the right academic field
   if (options.discipline) {
@@ -1187,6 +1192,171 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
          source: 'arxiv' as const
        }
      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  })
+}
+
+// PubMed Central (PMC) API - 8M+ free full-text biomedical papers
+// All papers in PMC are open access with direct PDF availability
+export async function searchPubMedCentral(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
+  const { limit = 50, fromYear, toYear, fastMode = false } = options
+  
+  return simpleRetry(async () => {
+    // Build date filter for PMC
+    let dateFilter = ''
+    if (fromYear || toYear) {
+      const from = fromYear || 1900
+      const to = toYear || new Date().getFullYear()
+      dateFilter = `+AND+${from}:${to}[pdat]`
+    }
+    
+    // PMC E-utilities search
+    // First get IDs, then fetch details
+    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term=${encodeURIComponent(query)}${dateFilter}&retmax=${limit}&retmode=json&sort=relevance`
+    
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), fastMode ? 10_000 : 15_000)
+    
+    try {
+      const searchResponse = await fetch(searchUrl, { signal: controller.signal })
+      
+      if (!searchResponse.ok) {
+        throw new Error(`PMC search error: ${searchResponse.status}`)
+      }
+      
+      const searchData = await searchResponse.json()
+      const pmcIds: string[] = searchData.esearchresult?.idlist || []
+      
+      if (pmcIds.length === 0) {
+        console.log(`📚 PMC returned 0 results for "${query.slice(0, 50)}..."`)
+        return []
+      }
+      
+      // Fetch details for the PMC IDs
+      const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id=${pmcIds.join(',')}&retmode=json`
+      const fetchResponse = await fetch(fetchUrl, { signal: controller.signal })
+      
+      if (!fetchResponse.ok) {
+        throw new Error(`PMC fetch error: ${fetchResponse.status}`)
+      }
+      
+      const data = await fetchResponse.json()
+      const results = data.result || {}
+      
+      const papers: AcademicPaper[] = []
+      
+      for (const pmcId of pmcIds) {
+        const article = results[pmcId]
+        if (!article || !article.title) continue
+        
+        const title = article.title?.replace(/<[^>]*>/g, '').trim() || ''
+        const year = article.pubdate ? parseInt(article.pubdate.split(' ')[0]) || 0 : 0
+        const authors = article.authors?.map((a: { name: string }) => a.name) || []
+        const doi = article.articleids?.find((id: { idtype: string; value: string }) => id.idtype === 'doi')?.value
+        
+        papers.push({
+          canonical_id: createCanonicalId(title, year, doi, 'pubmed_central'),
+          title,
+          abstract: '', // PMC esummary doesn't include abstracts - would need efetch
+          year,
+          venue: article.source || article.fulljournalname || 'PubMed Central',
+          doi,
+          url: `https://www.ncbi.nlm.nih.gov/pmc/articles/PMC${pmcId}/`,
+          pdf_url: `https://www.ncbi.nlm.nih.gov/pmc/articles/PMC${pmcId}/pdf/`,
+          citationCount: 0,
+          authors,
+          source: 'pubmed_central' as const
+        })
+      }
+      
+      console.log(`📚 PMC returned ${papers.length} results`)
+      return papers
+      
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  })
+}
+
+// Europe PMC API - 40M+ open access papers, excellent for biomedical research
+// Returns papers with full-text availability indicators
+export async function searchEuropePMC(query: string, options: SearchOptions = {}): Promise<AcademicPaper[]> {
+  const { limit = 50, fromYear, toYear, fastMode = false } = options
+  
+  return simpleRetry(async () => {
+    // Build the query with date filters
+    let searchQuery = query
+    if (fromYear || toYear) {
+      const from = fromYear || 1900
+      const to = toYear || new Date().getFullYear()
+      searchQuery += ` PUB_YEAR:[${from} TO ${to}]`
+    }
+    
+    // Filter for open access papers with full text
+    searchQuery += ' OPEN_ACCESS:y HAS_PDF:y'
+    
+    const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(searchQuery)}&resultType=core&pageSize=${limit}&format=json&sort=RELEVANCE`
+    
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), fastMode ? 10_000 : 15_000)
+    
+    try {
+      const response = await fetch(url, { signal: controller.signal })
+      
+      if (!response.ok) {
+        throw new Error(`Europe PMC error: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      const results = data.resultList?.result || []
+      
+      console.log(`📚 Europe PMC returned ${results.length} results`)
+      
+      return results.map((article: {
+        title: string
+        abstractText?: string
+        pubYear?: string
+        journalTitle?: string
+        doi?: string
+        pmcid?: string
+        pmid?: string
+        authorString?: string
+        citedByCount?: number
+        isOpenAccess?: string
+      }): AcademicPaper => {
+        const title = article.title?.replace(/<[^>]*>/g, '').trim() || ''
+        const year = article.pubYear ? parseInt(article.pubYear) || 0 : 0
+        
+        // Parse authors from authorString (format: "Author1 A, Author2 B, Author3 C")
+        const authors = article.authorString?.split(', ').slice(0, 10) || []
+        
+        // Build PDF URL - prioritize PMC PDF, fallback to Europe PMC
+        let pdfUrl = ''
+        if (article.pmcid) {
+          pdfUrl = `https://europepmc.org/backend/ptpmcrender.fcgi?accid=${article.pmcid}&blobtype=pdf`
+        }
+        
+        return {
+          canonical_id: createCanonicalId(title, year, article.doi, 'europe_pmc'),
+          title,
+          abstract: article.abstractText?.replace(/<[^>]*>/g, '').trim() || '',
+          year,
+          venue: article.journalTitle || 'Europe PMC',
+          doi: article.doi,
+          url: article.pmcid 
+            ? `https://europepmc.org/article/PMC/${article.pmcid}` 
+            : article.pmid 
+              ? `https://europepmc.org/article/MED/${article.pmid}`
+              : undefined,
+          pdf_url: pdfUrl,
+          citationCount: article.citedByCount || 0,
+          authors,
+          source: 'europe_pmc' as const
+        }
+      })
+      
     } finally {
       clearTimeout(timeoutId)
     }

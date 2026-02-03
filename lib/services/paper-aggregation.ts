@@ -6,6 +6,8 @@ import {
   searchSemanticScholar,
   searchArxiv,
   searchCore,
+  searchPubMedCentral,
+  searchEuropePMC,
   enhancePdfUrls,
   getPaperReferences
 } from './academic-apis'
@@ -239,7 +241,8 @@ export async function parallelSearch(
     limit = 50,
     maxResults = 25,
     includePreprints = true,
-    sources = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'], // All sources by default
+    // All sources active by default, prioritized by OA/full-text availability
+    sources = ['europe_pmc', 'pubmed_central', 'openalex', 'core', 'arxiv', 'crossref', 'semantic_scholar'],
     fastMode = false,
     discipline,
     skipQueryRewrites = false,
@@ -247,7 +250,8 @@ export async function parallelSearch(
   } = options
   
   // Filter to only supported sources to prevent pubmed config mismatch
-  const SUPPORTED_SOURCES = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core'] as const
+  // Added pubmed_central and europe_pmc for better open access coverage
+  const SUPPORTED_SOURCES = ['openalex', 'crossref', 'semantic_scholar', 'arxiv', 'core', 'pubmed_central', 'europe_pmc'] as const
   type SupportedSource = typeof SUPPORTED_SOURCES[number]
   const requestedSources = sources.filter((s): s is SupportedSource => SUPPORTED_SOURCES.includes(s as SupportedSource))
   
@@ -258,9 +262,9 @@ export async function parallelSearch(
   }
   
   // **SMART PRIORITIZATION**: Order sources by speed/reliability and PDF coverage
-  // CORE moved up because it has 200M+ open access papers with direct PDF URLs
+  // Preprint servers (arxiv) and open access (europe_pmc, pubmed_central, core) prioritized for full-text access
   const sourcesByPriority: SupportedSource[] = []
-  const priorityOrder: SupportedSource[] = ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv']
+  const priorityOrder: SupportedSource[] = ['europe_pmc', 'pubmed_central', 'openalex', 'core', 'arxiv', 'crossref', 'semantic_scholar']
   
   // Add requested sources in priority order
   for (const source of priorityOrder) {
@@ -330,6 +334,10 @@ export async function parallelSearch(
             return includePreprints ? await searchArxiv(searchQuery, searchOptions) : []
           case 'core':
             return await searchCore(searchQuery, searchOptions)
+          case 'pubmed_central':
+            return await searchPubMedCentral(searchQuery, searchOptions)
+          case 'europe_pmc':
+            return await searchEuropePMC(searchQuery, searchOptions)
           default:
             return []
         }
@@ -714,14 +722,36 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
         
         if (text && text.length > 100) {
           contentParts.push(text)
-          console.log(`✅ Added full-text content (${text.length} chars) [PDF processing: ${pdfProcessingMs}ms]`)
+          console.log(`✅ PDF success: ${text.length} chars from ${paperDTO.pdf_url} [${pdfProcessingMs}ms]`)
         } else {
-          console.warn(`PDF extraction returned no usable text content [${pdfProcessingMs}ms]`)
+          console.warn(`⚠️ PDF empty: ${paperDTO.pdf_url} returned ${text?.length || 0} chars [${pdfProcessingMs}ms]`)
         }
       } catch (pdfErr) {
         pdfProcessingMs = Date.now() - pdfStartTime
-        console.warn(`PDF extraction failed after ${pdfProcessingMs}ms, continuing with abstract only`, pdfErr)
+        const errorMessage = pdfErr instanceof Error ? pdfErr.message : String(pdfErr)
+        
+        // Categorize the failure for easier debugging
+        let failureType = 'unknown'
+        if (errorMessage.includes('HTML page') || errorMessage.includes('landing page')) {
+          failureType = 'paywall/landing-page'
+        } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+          failureType = 'timeout'
+        } else if (errorMessage.includes('HTTP 4')) {
+          failureType = 'http-4xx'
+        } else if (errorMessage.includes('HTTP 5')) {
+          failureType = 'http-5xx'
+        } else if (errorMessage.includes('Invalid PDF')) {
+          failureType = 'invalid-pdf'
+        } else if (errorMessage.includes('too large')) {
+          failureType = 'too-large'
+        }
+        
+        console.warn(`❌ PDF failed [${failureType}]: ${paperDTO.pdf_url}`)
+        console.warn(`   Reason: ${errorMessage.slice(0, 200)}`)
+        console.warn(`   Duration: ${pdfProcessingMs}ms | Paper: "${paperDTO.title.slice(0, 50)}..."`)
       }
+    } else {
+      console.log(`📄 No PDF URL for: "${paperDTO.title.slice(0, 50)}..."`)
     }
     
     // Step 5: Create chunks using unified chunker (same settings for all content types)

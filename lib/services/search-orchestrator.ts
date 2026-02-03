@@ -122,7 +122,8 @@ export async function unifiedSearch(
     fromYear = 2000,
     toYear = new Date().getFullYear(),
     localRegion,
-    sources = ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
+    // All sources active by default, prioritized by OA/full-text availability
+    sources = ['europe_pmc', 'pubmed_central', 'openalex', 'core', 'arxiv', 'crossref', 'semantic_scholar'],
     semanticWeight = DEFAULT_WEIGHTS.semanticWeight,
     authorityWeight = DEFAULT_WEIGHTS.authorityWeight,
     recencyWeight = DEFAULT_WEIGHTS.recencyWeight,

@@ -103,10 +103,10 @@ export function WritingSection({
             Your default citation format for new projects and autocomplete
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 sm:space-y-6">
           <div className="space-y-2">
             <Label htmlFor="citation-style">Default Style</Label>
-            <div className="max-w-md">
+            <div className="w-full sm:max-w-md">
               <CitationStyleSelector
                 value={citationStyle}
                 onValueChange={handleStyleChange}
@@ -116,7 +116,7 @@ export function WritingSection({
 
           {/* Preview */}
           {selectedStyle && (
-            <div className="rounded-lg bg-muted p-4 text-sm max-w-md">
+            <div className="rounded-lg bg-muted p-3 sm:p-4 text-sm w-full sm:max-w-md">
               <p className="text-muted-foreground text-xs mb-2 font-medium">Example:</p>
               <p className="text-foreground">
                 Research shows significant findings{' '}
@@ -143,8 +143,8 @@ export function WritingSection({
           <div className="space-y-2">
             <Label htmlFor="paper-type">Paper Type</Label>
             <Select value={defaultPaperType} onValueChange={handlePaperTypeChange}>
-              <SelectTrigger className="max-w-md">
-                <SelectValue placeholder="Select paper type" />
+              <SelectTrigger className="w-full sm:max-w-md">
+                <SelectValue placeholder="Select paper type…" />
               </SelectTrigger>
               <SelectContent>
                 {PAPER_TYPES.map((type) => (

@@ -103,13 +103,13 @@ export function EditorSection({
             Control how AI suggestions appear while you write
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-5 sm:space-y-6">
           {/* Auto Suggestions Toggle */}
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5 min-w-0">
               <Label htmlFor="auto-suggestions" className="flex items-center gap-2">
-                <Sparkles className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                Enable Auto Suggestions
+                <Sparkles className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
+                <span>Enable Auto Suggestions</span>
               </Label>
               <p className="text-xs text-muted-foreground">
                 Show AI completions as you type
@@ -123,11 +123,11 @@ export function EditorSection({
           </div>
 
           {/* Include Citations Toggle */}
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5 min-w-0">
               <Label htmlFor="include-citations" className="flex items-center gap-2">
-                <BookOpen className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                Include Citations
+                <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
+                <span>Include Citations</span>
               </Label>
               <p className="text-xs text-muted-foreground">
                 AI suggestions include relevant citations from your library
@@ -147,12 +147,12 @@ export function EditorSection({
               Accept Suggestion Key
             </Label>
             <Select value={acceptKey} onValueChange={handleAcceptKeyChange}>
-              <SelectTrigger className="max-w-xs">
-                <SelectValue placeholder="Select key" />
+              <SelectTrigger className="w-full sm:max-w-xs">
+                <SelectValue placeholder="Select key…" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="tab">Tab</SelectItem>
-                <SelectItem value="ctrlEnter">Ctrl + Enter</SelectItem>
+                <SelectItem value="ctrlEnter">Ctrl&nbsp;+&nbsp;Enter</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
