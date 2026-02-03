@@ -633,9 +633,6 @@ export interface ExtractionInput {
     doi?: string
     citationCount?: number
   }
-  
-  // Options
-  options?: ExtractionOptions
 }
 
 /**

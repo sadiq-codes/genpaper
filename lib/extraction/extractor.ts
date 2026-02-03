@@ -61,8 +61,8 @@ export async function extractPaper(
           input.title,
           input.abstract || '',
           {
-            fullText: input.fullText,
-            forceLLM: true // Use LLM for better accuracy
+            fullText: input.fullText
+            // Let classifier decide: uses rule-based when confident, LLM otherwise
           }
         )
     classificationTimeMs = Date.now() - classificationStart

@@ -14,7 +14,7 @@
 
 import { generateObject } from 'ai'
 import { z } from 'zod'
-import { getLanguageModel } from '@/lib/ai/vercel-client'
+import { getLanguageModel, getModel } from '@/lib/ai/vercel-client'
 import { v4 as uuidv4 } from 'uuid'
 import type {
   CoreExtraction,
@@ -166,7 +166,7 @@ export async function extractCore(
     const metadata: ExtractionMetadata = {
       extractionVersion: '1.0.0',
       extractedAt: new Date(),
-      modelUsed: options.model || 'gpt-4o',
+      modelUsed: options.model || getModel(),
       extractionTimeMs: extractionTime,
       overallConfidence: object.overallConfidence,
       warnings: generateWarnings(object, input)

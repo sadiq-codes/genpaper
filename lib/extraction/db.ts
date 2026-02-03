@@ -318,11 +318,13 @@ export async function getFindingsByDirection(
 }> {
   const findings = await getStatisticalFindings(paperIds)
   
+  // Note: DB stores 'mixed' for curvilinear, interaction, mediation, comparison
+  // (see mapRelationshipDirection). Query by the stored value, not source types.
   return {
     positive: findings.filter(f => f.relationship === 'positive'),
     negative: findings.filter(f => f.relationship === 'negative'),
     null: findings.filter(f => f.relationship === 'null'),
-    mixed: findings.filter(f => f.relationship === 'curvilinear' || f.relationship === 'interaction')
+    mixed: findings.filter(f => (f.relationship as string) === 'mixed')
   }
 }
 
