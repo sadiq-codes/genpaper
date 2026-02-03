@@ -1,5 +1,5 @@
 import 'server-only'
-import { getSB } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { getCachedQueryEmbedding } from './embedding-cache'
 import { 
   normalizeScore, 
@@ -290,7 +290,8 @@ export class ChunkRetriever {
     paperIds: string[], 
     config: RetrievalConfig
   ): Promise<RetrievedChunk[]> {
-    const supabase = await getSB()
+    // Use service client to bypass RLS - this runs in Inngest background jobs
+    const supabase = createServiceClient()
     
     switch (config.mode) {
       case 'hybrid':
@@ -310,7 +311,7 @@ export class ChunkRetriever {
     query: string,
     paperIds: string[],
     config: RetrievalConfig,
-    supabase: Awaited<ReturnType<typeof getSB>>
+    supabase: ReturnType<typeof createServiceClient>
   ): Promise<RetrievedChunk[]> {
     const queryEmbedding = await getCachedQueryEmbedding(query)
     
@@ -359,7 +360,7 @@ export class ChunkRetriever {
     query: string,
     paperIds: string[],
     config: RetrievalConfig,
-    supabase: Awaited<ReturnType<typeof getSB>>,
+    supabase: ReturnType<typeof createServiceClient>,
     embedding?: number[]
   ): Promise<RetrievedChunk[]> {
     const queryEmbedding = embedding || await getCachedQueryEmbedding(query)
@@ -395,7 +396,7 @@ export class ChunkRetriever {
     query: string,
     paperIds: string[],
     config: RetrievalConfig,
-    supabase: Awaited<ReturnType<typeof getSB>>
+    supabase: ReturnType<typeof createServiceClient>
   ): Promise<RetrievedChunk[]> {
     const { data, error } = await supabase.rpc('keyword_search_chunks', {
       search_query: query,

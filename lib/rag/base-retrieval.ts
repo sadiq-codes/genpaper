@@ -1,5 +1,5 @@
 import 'server-only'
-import { getSB } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
@@ -180,7 +180,8 @@ export async function fetchPaperMetadata(
   
   if (paperIds.length === 0) return papers
   
-  const sb = supabase || await getSB()
+  // Use service client to bypass RLS - this runs in Inngest background jobs
+  const sb = supabase || createServiceClient()
   
   const { data, error } = await sb
     .from('papers')

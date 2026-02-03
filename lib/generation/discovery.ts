@@ -1,4 +1,4 @@
-import { getSB } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { getPapersByIds as getLibraryPapersByIds } from '@/lib/db/library'
 import type { EnhancedGenerationOptions } from './types'
 
@@ -285,7 +285,8 @@ export async function collectPapers(
 /** Count full-text chunks for a paper (excluding abstracts) */
 async function getChunkCount(paperId: string): Promise<number> {
   try {
-    const sb = await getSB()
+    // Use service client to bypass RLS - this runs in Inngest background jobs
+    const sb = createServiceClient()
     
     // First check if the paper exists in the database at all
     const { data: paperExists, error: paperError } = await sb
@@ -317,7 +318,7 @@ async function getChunkCount(paperId: string): Promise<number> {
     }
 
     // Filter chunks by content length (>= 500 chars for substantial content)
-    const fullTextChunks = (chunks || []).filter(chunk => 
+    const fullTextChunks = (chunks || []).filter((chunk: { content: string | null }) => 
       chunk.content && chunk.content.length >= 500
     ).length
     

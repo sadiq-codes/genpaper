@@ -15,7 +15,7 @@
 import 'server-only'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { info, warn, error as logError } from '@/lib/utils/logger'
-import { getSB } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import type { 
   ThemeAnalysis,
   ThemeExtractionInput,
@@ -180,7 +180,8 @@ async function getFullTextExcerpts(
   }
   
   try {
-    const supabase = await getSB()
+    // Use service client to bypass RLS - this runs in Inngest background jobs
+    const supabase = createServiceClient()
     
     // Get chunks for these papers, filtering for substantial content
     const { data: chunks, error } = await supabase

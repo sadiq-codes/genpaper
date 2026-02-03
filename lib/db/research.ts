@@ -126,7 +126,8 @@ export async function savePartialContent(
   content: string,
   completedSections: number
 ): Promise<void> {
-  const supabase = await getSB()
+  // Use service client to bypass RLS - this runs in Inngest background jobs
+  const supabase = createServiceClient()
   
   // Use a lightweight update - just content
   // Status remains 'generating' so we know it's incomplete
@@ -161,11 +162,13 @@ export async function updateProjectContent(
   content: string,
   citations?: Record<string, { paperId: string; citationText: string }>
 ): Promise<void> {
-  const supabase = await getSB()
+  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // where there's no user session context
+  const serviceClient = createServiceClient()
   
   console.log(`💾 Saving generated content to project ${projectId} (${content.length} chars)`)
   
-  const { error } = await supabase
+  const { error } = await serviceClient
     .from('research_projects')
     .update({
       content: content,
@@ -196,7 +199,7 @@ export async function updateProjectContent(
   }
   
   // Validate paper IDs exist in the papers table
-  const { data: validPapers, error: validationError } = await supabase
+  const { data: validPapers, error: validationError } = await serviceClient
     .from('papers')
     .select('id')
     .in('id', allPaperIds)
@@ -205,7 +208,7 @@ export async function updateProjectContent(
     console.warn('⚠️ Failed to validate paper IDs:', validationError)
   }
   
-  const validPaperIds = new Set(validPapers?.map(p => p.id) || [])
+  const validPaperIds = new Set(validPapers?.map((p: { id: string }) => p.id) || [])
   const invalidPaperIds = allPaperIds.filter(id => !validPaperIds.has(id))
   
   if (invalidPaperIds.length > 0) {
@@ -319,11 +322,13 @@ export async function updateResearchProjectStatus(
   status: PaperStatus,
   completedAt?: string
 ): Promise<void> {
-  const supabase = await getSB()
+  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // where there's no user session context
+  const serviceClient = createServiceClient()
   const updateData: { status: PaperStatus; completed_at?: string } = { status }
   if (completedAt) updateData.completed_at = completedAt
 
-  const { error } = await supabase
+  const { error } = await serviceClient
     .from('research_projects')
     .update(updateData)
     .eq('id', projectId)
@@ -342,7 +347,8 @@ export async function updateProjectVoiceProfile(
   projectId: string,
   voiceProfileId: string
 ): Promise<void> {
-  const supabase = await getSB()
+  // Use service client to bypass RLS - this runs in Inngest background jobs
+  const supabase = createServiceClient()
   
   // First get existing generation_config to merge
   const { data: project, error: fetchError } = await supabase

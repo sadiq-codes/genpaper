@@ -1,5 +1,6 @@
 import { LibraryPaper, LibraryFilters, PaperWithAuthors } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { 
   PaperRow,
   LibraryPaperRow, 
@@ -216,7 +217,9 @@ export async function isInLibrary(
 // ============================================================================
 
 export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaperWithAuthors[]> {
-  const supabase = await getSB()
+  // Use service client to bypass RLS - this is called from Inngest background jobs
+  // where there's no user session context
+  const supabase = createServiceClient()
   
   if (!paperIds || paperIds.length === 0) {
     return []

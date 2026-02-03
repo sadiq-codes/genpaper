@@ -5,7 +5,6 @@
  * to avoid duplication across the codebase.
  */
 
-import { getSB } from '@/lib/supabase/server'
 import { getServiceClient } from '@/lib/supabase/service'
 import { chunkByTokens, normalizeText, type TokenChunkOptions } from '@/lib/utils/text'
 import { collisionResistantHash } from '@/lib/utils/hash'
@@ -52,7 +51,8 @@ export async function getContentStatus(paperIds: string[]): Promise<Map<string, 
   }
 
   try {
-    const supabase = await getSB()
+    // Use service client to bypass RLS - this is called from Inngest background jobs
+    const supabase = getServiceClient()
     
     // Get papers with their content info
     const { data: papers, error } = await supabase
@@ -135,7 +135,8 @@ export async function ensurePapersExist(papers: PaperWithAuthors[]): Promise<str
   }
 
   try {
-    const supabase = await getSB()
+    // Use service client to bypass RLS - this is called from Inngest background jobs
+    const supabase = getServiceClient()
     const existingIds: string[] = []
 
     // Check which papers already exist
@@ -198,13 +199,12 @@ export async function createChunksForPaper(
   }
 
   try {
-    const supabase = await getSB()
-    // Use service client for paper_chunks writes to bypass RLS
-    // (RLS requires service_role for INSERT/UPDATE/DELETE on paper_chunks)
+    // Use service client to bypass RLS - this is called from Inngest background jobs
+    // paper_chunks requires authenticated users for SELECT and service_role for writes
     const serviceClient = getServiceClient()
 
     // Fetch existing chunks to detect content changes via hash
-    const { data: existingChunks, error: checkError } = await supabase
+    const { data: existingChunks, error: checkError } = await serviceClient
       .from('paper_chunks')
       .select('content, chunk_index')
       .eq('paper_id', paperId)
@@ -266,7 +266,7 @@ export async function createChunksForPaper(
         console.warn(`Chunk insertion warning for paper ${paperId}:`, error.message)
         
         // Verify chunk exists - if not, this is a real error
-        const { data: verifyChunk } = await supabase
+        const { data: verifyChunk } = await serviceClient
           .from('paper_chunks')
           .select('id')
           .eq('paper_id', paperId)
@@ -328,7 +328,7 @@ export async function createChunksForPaper(
       console.warn(`Chunk insertion warning for paper ${paperId}:`, error.message)
       
       // Verify at least some chunks exist - if not, this is a real error
-      const { data: verifyChunks } = await supabase
+      const { data: verifyChunks } = await serviceClient
         .from('paper_chunks')
         .select('id')
         .eq('paper_id', paperId)
@@ -342,7 +342,7 @@ export async function createChunksForPaper(
     }
 
     // Verify actual chunk count in database
-    const { count: actualCount } = await supabase
+    const { count: actualCount } = await serviceClient
       .from('paper_chunks')
       .select('*', { count: 'exact', head: true })
       .eq('paper_id', paperId)
