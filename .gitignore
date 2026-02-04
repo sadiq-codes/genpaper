@@ -46,3 +46,6 @@ next-env.d.ts
 .codex/skills
 .cursor/skills
 .opencode/
+
+# Test PDFs
+*.pdf

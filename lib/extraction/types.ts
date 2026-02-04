@@ -17,25 +17,44 @@
 // =============================================================================
 
 /**
+ * Statistical precision details for quantitative findings.
+ * Captures confidence intervals, p-values, and effect size interpretation.
+ */
+export interface StatisticalPrecision {
+  confidenceInterval?: string      // "95% CI [1.5-3.4]"
+  pValue?: string                  // "p<0.001" or "p=0.034"
+  effectSizeInterpretation?: 'small' | 'medium' | 'large' | 'not_applicable'
+}
+
+/**
+ * Evidence type classification for discipline-aware synthesis.
+ */
+export type EvidenceType = 
+  | 'empirical_quantitative'       // Stats, experiments, surveys with numbers
+  | 'empirical_qualitative'        // Interviews, observations, themes
+  | 'theoretical'                  // Arguments, frameworks, propositions
+  | 'methodological'               // Methods, techniques, procedures
+  | 'descriptive'                  // Facts, definitions, descriptions
+
+/**
  * A finding extracted from a paper.
- * This is intentionally flexible - the LLM describes what it found
- * rather than filling predetermined fields.
+ * Designed for MAXIMUM SPECIFICITY to enable high-quality synthesis.
  */
 export interface Finding {
   id: string
   
-  // What was found (required)
-  claim: string                    // The finding statement
+  // What was found (required) - MUST be specific
+  claim: string                    // SPECIFIC statement: WHO/WHAT, FINDING, MAGNITUDE, CONTEXT
   
   // Evidence (required) 
-  evidence: string                 // Direct quote from paper supporting this
+  evidence: string                 // EXACT quote from paper (not paraphrased)
   
-  // Quantitative value if present (LLM extracts in natural format)
-  value?: string                   // "24%", "β=0.34", "n=847", "r=0.52, p<.001"
-  valueType?: string               // LLM describes: "prevalence", "correlation", "sample size"
+  // Quantitative value - MUST be numeric when available
+  value?: string                   // "24%", "r=0.67", "β=0.34", "d=0.8", "N=500", "3 themes"
+  valueType?: string               // Specific: "percentage", "correlation_r", "effect_size_d", "sample_size", "theme_count"
   
-  // Nature of the finding (LLM interprets)
-  direction?: string               // "positive", "negative", "no effect", "descriptive", "mixed"
+  // Nature of the finding
+  direction?: string               // "positive", "negative", "no_effect", "mixed", "descriptive"
   
   // Comparison context
   comparedTo?: string              // What this was compared against
@@ -47,7 +66,14 @@ export interface Finding {
   isMainFinding: boolean           // Primary result vs background/secondary
   
   // Extraction quality
-  confidence: number               // 0-1
+  confidence: number               // 0.7-1.0
+  
+  // NEW: Enhanced statistical precision
+  statisticalPrecision?: StatisticalPrecision
+  
+  // NEW: Evidence type for discipline-aware synthesis
+  // Optional for backward compatibility with existing DB records
+  evidenceType?: EvidenceType
 }
 
 // =============================================================================

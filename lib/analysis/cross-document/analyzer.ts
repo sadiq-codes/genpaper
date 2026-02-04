@@ -43,82 +43,196 @@ const PaperSupportSchema = z.object({
 })
 
 const PatternSchema = z.object({
-  claim: z.string().describe('The pattern statement - what multiple papers found'),
-  summary: z.string().describe('Brief explanation of this pattern'),
+  claim: z.string().describe('SPECIFIC pattern statement - what multiple papers found, including magnitude and context'),
+  summary: z.string().describe('Brief explanation of this pattern and its significance'),
   supportingPaperIds: z.array(z.string()).describe('Paper IDs that support this pattern'),
   supportingFindingIds: z.array(z.string()).describe('Finding IDs that support this pattern'),
-  direction: z.string().nullable().describe('Nature: "positive", "negative", "descriptive", etc.'),
-  consistency: z.string().describe('How consistent: "consistent", "mostly consistent", "mixed"'),
-  valuesSummary: z.string().nullable().describe('Summary of values if quantitative, e.g., "ranging from 24% to 34%"'),
+  direction: z.string().nullable().describe('Nature: "positive", "negative", "descriptive", "no_effect", etc.'),
+  consistency: z.string().describe('How consistent: "consistent" (all agree), "mostly_consistent" (75%+), "mixed" (<75%)'),
+  valuesSummary: z.string().nullable().describe('SPECIFIC value summary: "effect sizes ranged from d=0.3 to d=0.9 (median d=0.55)" or "3 of 5 qualitative studies identified this as primary theme"'),
+  valueRange: z.object({
+    min: z.string().nullable(),
+    max: z.string().nullable(),
+    median: z.string().nullable(),
+    heterogeneity: z.enum(['low', 'moderate', 'high']).nullable()
+  }).nullable().describe('Structured value range when quantitative data available'),
+  strength: z.enum(['strong', 'moderate', 'emerging']).describe('Pattern strength: strong (≥50% or ≥4 papers), moderate (3 papers or 30-49%), emerging (2 papers)'),
   confidence: z.number().min(0).max(1),
-  limitations: z.string().nullable().describe('Any caveats about this pattern')
+  limitations: z.string().nullable().describe('Specific caveats about this pattern')
 })
 
 const ContradictionSchema = z.object({
-  description: z.string().describe('What is contradictory'),
+  description: z.string().describe('SPECIFIC description of what is contradictory'),
+  contradictionType: z.enum([
+    'direct',        // Opposite conclusions: X causes Y vs X does not cause Y
+    'magnitude',     // Same direction, different strength: large effect vs small effect
+    'conditional',   // Works in some contexts: effect in population A, no effect in population B
+    'methodological' // Different methods yield different conclusions
+  ]).describe('Type of contradiction'),
   sides: z.array(z.object({
-    position: z.string().describe('One side of the disagreement'),
+    position: z.string().describe('One side of the disagreement with specific claim'),
     paperIds: z.array(z.string()).describe('Papers supporting this position'),
-    findingIds: z.array(z.string()).describe('Finding IDs for this position')
+    findingIds: z.array(z.string()).describe('Finding IDs for this position'),
+    evidenceStrength: z.enum(['strong', 'moderate', 'weak']).describe('Quality of evidence for this position')
   })),
-  possibleExplanation: z.string().nullable().describe('Why might papers disagree?'),
-  severity: z.string().describe('How significant: "minor", "moderate", "significant"'),
+  possibleExplanation: z.string().nullable().describe('SPECIFIC explanation: methodology difference, population difference, temporal context, etc.'),
+  severity: z.enum(['minor', 'moderate', 'major']).describe('minor (nuance), moderate (significant but reconcilable), major (fundamental disagreement)'),
+  resolutionSuggestion: z.string().nullable().describe('How might this contradiction be resolved?'),
   confidence: z.number().min(0).max(1)
 })
 
 const GapSchema = z.object({
-  description: z.string().describe('What is missing from the research'),
-  type: z.string().describe('Type of gap: "methodological", "population", "temporal", etc.'),
-  relevance: z.string().describe('Why this gap matters'),
+  description: z.string().describe('SPECIFIC description of what is missing'),
+  type: z.enum([
+    'population',      // Who is not studied: certain demographics, regions, contexts
+    'methodological',  // How: study designs, measures, durations not used
+    'temporal',        // When: time periods, longitudinal tracking not covered
+    'geographic',      // Where: regions or settings not examined
+    'theoretical',     // What: mechanisms, frameworks, explanations not explored
+    'replication'      // Whether: findings not replicated or confirmed
+  ]).describe('Type of gap'),
+  relevance: z.string().describe('WHY this gap matters for understanding the topic'),
+  suggestedResearchQuestion: z.string().describe('CONCRETE research question that would address this gap. Example: "How does [factor] affect [outcome] in [underrepresented population]?"'),
   suggestedByPaperIds: z.array(z.string()).describe('Papers that mention or imply this gap'),
+  priority: z.enum(['high', 'medium', 'low']).describe('How important is filling this gap?'),
   confidence: z.number().min(0).max(1)
 })
 
 const AnalysisSchema = z.object({
-  patterns: z.array(PatternSchema).describe('Patterns found across papers'),
-  contradictions: z.array(ContradictionSchema).describe('Contradictions between papers'),
-  gaps: z.array(GapSchema).describe('Gaps in the literature'),
-  summary: z.string().describe('Overall summary of the literature'),
-  keyInsights: z.array(z.string()).describe('Top 3-5 key takeaways')
+  patterns: z.array(PatternSchema).describe('Patterns found across papers - aim for 5-15 patterns'),
+  contradictions: z.array(ContradictionSchema).describe('Contradictions between papers - identify all disagreements'),
+  gaps: z.array(GapSchema).describe('Gaps in the literature - at least one per gap type if applicable'),
+  summary: z.string().describe('Overall synthesis narrative of what the literature shows'),
+  keyInsights: z.array(z.string()).describe('Top 5-7 key takeaways with specific evidence'),
+  
+  // NEW: Synthesis quality metadata
+  synthesisStrength: z.object({
+    overallConfidence: z.enum(['high', 'moderate', 'low']).describe('Overall confidence in synthesis'),
+    evidenceBase: z.string().describe('Description: "8 empirical studies, 3 theoretical papers"'),
+    methodologicalDiversity: z.enum(['high', 'moderate', 'low']).describe('Variety in study designs'),
+    geographicDiversity: z.enum(['high', 'moderate', 'low']).describe('Variety in study locations'),
+    temporalSpread: z.string().nullable().describe('Time range: "2015-2023"')
+  }).describe('Assessment of evidence base quality'),
+  
+  fieldMaturity: z.enum([
+    'emerging',     // Few studies, many gaps, fundamental questions open
+    'developing',   // Growing body, some consensus, significant gaps remain
+    'established',  // Strong consensus, well-replicated, incremental questions
+    'contested'     // Many studies but fundamental disagreements persist
+  ]).describe('Maturity level of this research area')
 })
 
 // =============================================================================
 // Prompt
 // =============================================================================
 
-const SYSTEM_PROMPT = `You are an expert research analyst. Your task is to analyze findings across multiple academic papers to identify patterns, contradictions, and gaps.
+const SYSTEM_PROMPT = `You are an expert research analyst performing cross-document synthesis. Your task is to analyze findings across multiple academic papers to identify patterns, contradictions, and gaps with MAXIMUM SPECIFICITY.
 
-CRITICAL INSTRUCTIONS:
+═══════════════════════════════════════════════════════════════════════════════
+1. PATTERNS - Findings that appear across multiple papers
+═══════════════════════════════════════════════════════════════════════════════
 
-1. PATTERNS: Look for findings that appear in multiple papers
-   - Group similar findings together
-   - Note how many papers support each pattern
-   - Summarize any quantitative values reported
-   - Assess consistency across papers
+PATTERN STRENGTH THRESHOLDS:
+- STRONG: ≥50% of papers OR ≥4 papers support it
+- MODERATE: 3 papers OR 30-49% support it
+- EMERGING: 2 papers support it
 
-2. CONTRADICTIONS: Identify where papers disagree
-   - Clearly state what the disagreement is about
-   - List which papers are on each side
-   - Try to explain WHY they might disagree (methodology, population, time period, etc.)
+FOR QUANTITATIVE PATTERNS:
+- Report the RANGE of values: "Effect sizes ranged from d=0.3 to d=0.9"
+- Report MEDIAN if ≥3 values available: "median d=0.55"
+- Note HETEROGENEITY: if range exceeds 2x, mark as "high"
+- Report CONSISTENCY: "All 5 studies found positive effects" vs "3 positive, 2 null"
 
-3. GAPS: What's missing from the research?
-   - Methodological gaps (how studies are done)
-   - Population gaps (who is studied)
-   - Temporal gaps (when/how long)
-   - Geographic gaps (where)
-   - Topical gaps (what questions aren't addressed)
+FOR QUALITATIVE PATTERNS:
+- Count how many studies identified similar themes: "4 of 6 studies identified this as primary theme"
+- Note variations in how themes manifested across contexts
 
-4. BE SPECIFIC:
-   - Use paper IDs and finding IDs in your references
-   - Quote specific values when available
-   - Don't make generic statements
+PATTERN CLAIM FORMAT:
+✅ GOOD: "6 of 8 studies (75%) found positive correlation between X and Y, with effect sizes ranging from r=0.45 to r=0.72 (median r=0.58)"
+❌ BAD: "Multiple studies found a relationship between X and Y"
 
-5. SUMMARY:
-   - Provide an overall narrative of what the literature shows
-   - Highlight the most important insights`
+═══════════════════════════════════════════════════════════════════════════════
+2. CONTRADICTIONS - Where papers disagree
+═══════════════════════════════════════════════════════════════════════════════
+
+CLASSIFY EACH CONTRADICTION BY TYPE:
+
+DIRECT: Opposite conclusions
+- Paper A: "X causes Y" vs Paper B: "X does not cause Y"
+
+MAGNITUDE: Same direction, different strength
+- Paper A: "Strong effect (d=0.8)" vs Paper B: "Weak effect (d=0.2)"
+
+CONDITIONAL: Works in some contexts, not others
+- Paper A: "Effect in population X" vs Paper B: "No effect in population Y"
+
+METHODOLOGICAL: Different methods, different conclusions
+- Quantitative studies find X, qualitative studies find Y
+
+FOR EACH CONTRADICTION:
+- State the SPECIFIC disagreement with values
+- Classify the type
+- List papers on each side with their evidence strength
+- Propose SPECIFIC explanation: "This may be due to differences in sample age (18-25 vs 40-60)"
+- Assess severity: minor (nuance), moderate (reconcilable), major (fundamental)
+- Suggest how it might be resolved
+
+═══════════════════════════════════════════════════════════════════════════════
+3. GAPS - What's CONSPICUOUSLY ABSENT given what was found
+═══════════════════════════════════════════════════════════════════════════════
+
+IDENTIFY GAPS BY ASKING:
+- Given these findings, what SHOULD have been studied but wasn't?
+- What populations/contexts/methods are missing?
+
+GAP TYPES (identify at least one of each type if applicable):
+- POPULATION: "All studies focused on Western samples; non-Western contexts unexplored"
+- METHODOLOGICAL: "Predominantly cross-sectional; longitudinal studies needed"
+- TEMPORAL: "No studies post-2020; effects of recent changes unknown"
+- GEOGRAPHIC: "No studies from developing countries"
+- THEORETICAL: "Mechanism linking X to Y remains unspecified"
+- REPLICATION: "Key findings have not been replicated in independent samples"
+
+FOR EACH GAP - MUST INCLUDE:
+- Description: What specifically is missing?
+- Why it matters: How does this limit understanding?
+- CONCRETE research question: "How does [factor] affect [outcome] in [underrepresented population]?"
+- Priority: How important is filling this gap?
+
+✅ GOOD: "No studies examined effects in adolescent populations (ages 12-17). Given that [related finding], understanding this age group is critical. Research question: How do X interventions affect Y outcomes in adolescents?"
+❌ BAD: "More research is needed on different populations"
+
+═══════════════════════════════════════════════════════════════════════════════
+4. SYNTHESIS QUALITY ASSESSMENT
+═══════════════════════════════════════════════════════════════════════════════
+
+Assess the overall evidence base:
+- Overall confidence: Based on study quality, consistency, replication
+- Evidence base: Count by type (empirical, theoretical, review)
+- Methodological diversity: Variety in study designs used
+- Geographic diversity: Variety in study locations
+- Temporal spread: Range of publication years
+
+Field maturity:
+- EMERGING: Few studies, many gaps, fundamental questions open
+- DEVELOPING: Growing body, some consensus, significant gaps remain
+- ESTABLISHED: Strong consensus, well-replicated findings
+- CONTESTED: Many studies but fundamental disagreements persist
+
+═══════════════════════════════════════════════════════════════════════════════
+5. SPECIFICITY REQUIREMENTS
+═══════════════════════════════════════════════════════════════════════════════
+
+- Use paper IDs and finding IDs in ALL references
+- Include SPECIFIC values: "r=0.67" not "significant correlation"
+- Quantify support: "6 of 8 studies" not "most studies"
+- Name specific populations, methods, contexts
+- NO generic statements like "further research is needed"`
 
 function buildPrompt(findings: FindingWithPaper[], topic?: string): string {
-  const findingsText = findings.map((f, i) => {
+  const uniquePapers = new Set(findings.map(f => f.paperId)).size
+  
+  const findingsText = findings.map((f) => {
     let text = `[Paper: ${f.paperTitle} (${f.paperId})]
   Finding ID: ${f.id}
   Claim: ${f.claim}
@@ -133,24 +247,67 @@ function buildPrompt(findings: FindingWithPaper[], topic?: string): string {
     if (f.context) {
       text += `\n  Context: ${f.context}`
     }
+    // Include evidence type if available
+    if ((f as { evidenceType?: string }).evidenceType) {
+      text += `\n  Evidence Type: ${(f as { evidenceType?: string }).evidenceType}`
+    }
     
     return text
   }).join('\n\n')
 
   const topicLine = topic ? `\nTopic/Focus: ${topic}\n` : ''
 
-  return `Analyze the following ${findings.length} findings from ${new Set(findings.map(f => f.paperId)).size} papers:
+  return `Analyze the following ${findings.length} findings from ${uniquePapers} papers:
 ${topicLine}
 ---
 ${findingsText}
 ---
 
-Identify:
-1. PATTERNS - What findings appear across multiple papers?
-2. CONTRADICTIONS - Where do papers disagree?
-3. GAPS - What's missing from this research?
-4. SUMMARY - Overall narrative of the literature
-5. KEY INSIGHTS - Top takeaways`
+═══════════════════════════════════════════════════════════════════════════════
+ANALYSIS TASKS (be SPECIFIC and EXHAUSTIVE)
+═══════════════════════════════════════════════════════════════════════════════
+
+1. PATTERNS (aim for 5-15 patterns)
+   - What findings appear across multiple papers?
+   - For each: How many papers support it? What are the specific values?
+   - Use pattern strength: strong (≥50% or ≥4), moderate (3 or 30-49%), emerging (2)
+
+2. CONTRADICTIONS (identify ALL disagreements)
+   - Where do papers disagree?
+   - Classify each: direct, magnitude, conditional, or methodological
+   - Explain WHY they might disagree with specific factors
+
+3. GAPS (at least one per type if applicable)
+   - Population gaps: Who is not studied?
+   - Methodological gaps: What designs are missing?
+   - Temporal gaps: What time periods are not covered?
+   - Geographic gaps: Where hasn't been studied?
+   - Theoretical gaps: What mechanisms are unexplained?
+   - Replication gaps: What hasn't been confirmed?
+   - Each gap MUST include a concrete research question
+
+4. SUMMARY
+   - Overall synthesis narrative (not just listing)
+   - What does the literature collectively show?
+
+5. KEY INSIGHTS (5-7 specific takeaways)
+   - Include specific values/counts where available
+   - "6 of 8 studies found..." not "most studies found..."
+
+6. SYNTHESIS QUALITY
+   - Assess overall confidence, evidence base, diversity
+   - Determine field maturity: emerging, developing, established, contested
+
+═══════════════════════════════════════════════════════════════════════════════
+SPECIFICITY CHECK
+═══════════════════════════════════════════════════════════════════════════════
+
+Before submitting, verify:
+□ Every pattern includes paper count AND percentage: "6 of 8 (75%)"
+□ Quantitative patterns include value ranges and medians where possible
+□ Every contradiction has a specific explanation
+□ Every gap has a concrete research question
+□ No generic statements like "more research is needed"`
 }
 
 // =============================================================================
@@ -255,9 +412,16 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
         },
         direction: p.direction || undefined,
         consistency: p.consistency,
+        strength: p.strength,
         values: p.valuesSummary ? {
           summary: p.valuesSummary,
-          individual: papers.map(ps => ps.value).filter((v): v is string => v !== undefined)
+          individual: papers.map(ps => ps.value).filter((v): v is string => v !== undefined),
+          range: p.valueRange ? {
+            min: p.valueRange.min || undefined,
+            max: p.valueRange.max || undefined,
+            median: p.valueRange.median || undefined,
+            heterogeneity: p.valueRange.heterogeneity || undefined
+          } : undefined
         } : undefined,
         confidence: p.confidence,
         limitations: p.limitations || undefined
@@ -268,6 +432,7 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
     const contradictions: Contradiction[] = object.contradictions.map(c => ({
       id: uuidv4(),
       description: c.description,
+      contradictionType: c.contradictionType,
       sides: c.sides.map(s => ({
         position: s.position,
         papers: s.findingIds
@@ -282,9 +447,11 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
             valueType: f.valueType,
             evidence: f.evidence,
             confidence: f.confidence
-          }))
+          })),
+        evidenceStrength: s.evidenceStrength
       })),
       possibleExplanation: c.possibleExplanation || undefined,
+      resolutionSuggestion: c.resolutionSuggestion || undefined,
       severity: c.severity,
       confidence: c.confidence
     }))
@@ -295,7 +462,9 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
       description: g.description,
       type: g.type,
       relevance: g.relevance,
+      suggestedResearchQuestion: g.suggestedResearchQuestion,
       suggestedBy: g.suggestedByPaperIds,
+      priority: g.priority,
       confidence: g.confidence
     }))
     
@@ -316,6 +485,14 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
       gaps,
       summary: object.summary,
       keyInsights: object.keyInsights,
+      synthesisStrength: object.synthesisStrength ? {
+        overallConfidence: object.synthesisStrength.overallConfidence,
+        evidenceBase: object.synthesisStrength.evidenceBase,
+        methodologicalDiversity: object.synthesisStrength.methodologicalDiversity,
+        geographicDiversity: object.synthesisStrength.geographicDiversity,
+        temporalSpread: object.synthesisStrength.temporalSpread || undefined
+      } : undefined,
+      fieldMaturity: object.fieldMaturity,
       analyzedAt: new Date(),
       analysisTimeMs,
       modelUsed: 'gpt-4o',
@@ -453,9 +630,16 @@ async function analyzeFindingsBatched(
           },
           direction: p.direction || undefined,
           consistency: p.consistency,
+          strength: p.strength,
           values: p.valuesSummary ? {
             summary: p.valuesSummary,
-            individual: papers.map(ps => ps.value).filter((v): v is string => v !== undefined)
+            individual: papers.map(ps => ps.value).filter((v): v is string => v !== undefined),
+            range: p.valueRange ? {
+              min: p.valueRange.min || undefined,
+              max: p.valueRange.max || undefined,
+              median: p.valueRange.median || undefined,
+              heterogeneity: p.valueRange.heterogeneity || undefined
+            } : undefined
           } : undefined,
           confidence: p.confidence,
           limitations: p.limitations || undefined
@@ -466,6 +650,7 @@ async function analyzeFindingsBatched(
       const contradictions: Contradiction[] = object.contradictions.map(c => ({
         id: uuidv4(),
         description: c.description,
+        contradictionType: c.contradictionType,
         sides: c.sides.map(s => ({
           position: s.position,
           papers: s.findingIds
@@ -480,9 +665,11 @@ async function analyzeFindingsBatched(
               valueType: f.valueType,
               evidence: f.evidence,
               confidence: f.confidence
-            }))
+            })),
+          evidenceStrength: s.evidenceStrength
         })),
         possibleExplanation: c.possibleExplanation || undefined,
+        resolutionSuggestion: c.resolutionSuggestion || undefined,
         severity: c.severity,
         confidence: c.confidence
       }))
@@ -493,7 +680,9 @@ async function analyzeFindingsBatched(
         description: g.description,
         type: g.type,
         relevance: g.relevance,
+        suggestedResearchQuestion: g.suggestedResearchQuestion,
         suggestedBy: g.suggestedByPaperIds,
+        priority: g.priority,
         confidence: g.confidence
       }))
       

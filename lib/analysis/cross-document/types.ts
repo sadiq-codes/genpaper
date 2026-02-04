@@ -28,15 +28,30 @@ export interface PaperSupport {
 }
 
 /**
+ * Pattern strength classification
+ */
+export type PatternStrength = 'strong' | 'moderate' | 'emerging'
+
+/**
+ * Value range for quantitative patterns
+ */
+export interface PatternValueRange {
+  min?: string
+  max?: string
+  median?: string
+  heterogeneity?: 'low' | 'moderate' | 'high'
+}
+
+/**
  * A pattern detected across multiple papers.
- * No hardcoded enums - LLM describes what it finds.
+ * Enhanced with strength classification and value ranges.
  */
 export interface Pattern {
   id: string
   
-  // What the pattern is (LLM synthesizes)
-  claim: string                    // "Bacillus subtilis is prevalent in spoiled tomatoes"
-  summary: string                  // Brief explanation of the pattern
+  // What the pattern is - SPECIFIC claim
+  claim: string                    // "6 of 8 studies (75%) found positive correlation between X and Y, with effect sizes ranging from r=0.45 to r=0.72"
+  summary: string                  // Brief explanation of the pattern and its significance
   
   // Support from papers
   support: {
@@ -45,19 +60,23 @@ export interface Pattern {
     total: number                  // Total papers analyzed
   }
   
-  // Nature of the pattern (LLM describes, not enum)
-  direction?: string               // "positive", "negative", "descriptive", etc.
-  consistency: string              // "consistent", "mostly consistent", "conflicting"
+  // Nature of the pattern
+  direction?: string               // "positive", "negative", "no_effect", "descriptive", etc.
+  consistency: string              // "consistent" (all agree), "mostly_consistent" (75%+), "mixed" (<75%)
+  
+  // Pattern strength classification
+  strength: PatternStrength        // strong (≥50% or ≥4), moderate (3 or 30-49%), emerging (2)
   
   // Aggregated values (if quantitative)
   values?: {
-    summary: string                // "ranging from 24% to 34%"
-    individual: string[]           // ["24%", "28%", "34%"]
+    summary: string                // "effect sizes ranged from d=0.3 to d=0.9 (median d=0.55)"
+    individual: string[]           // ["d=0.3", "d=0.5", "d=0.9"]
+    range?: PatternValueRange      // Structured range data
   }
   
   // Quality assessment
   confidence: number               // 0-1
-  limitations?: string             // Any caveats about this pattern
+  limitations?: string             // Specific caveats about this pattern
 }
 
 // =============================================================================
@@ -65,21 +84,40 @@ export interface Pattern {
 // =============================================================================
 
 /**
+ * Contradiction type classification
+ */
+export type ContradictionType = 
+  | 'direct'        // Opposite conclusions: X causes Y vs X does not cause Y
+  | 'magnitude'     // Same direction, different strength
+  | 'conditional'   // Works in some contexts, not others
+  | 'methodological' // Different methods yield different conclusions
+
+/**
+ * Evidence strength for contradiction positions
+ */
+export type EvidenceStrength = 'strong' | 'moderate' | 'weak'
+
+/**
  * A contradiction or disagreement between papers
  */
 export interface Contradiction {
   id: string
-  description: string              // What's contradictory
+  description: string              // SPECIFIC description of what's contradictory
+  
+  // Type of contradiction
+  contradictionType?: ContradictionType
   
   // The different positions
   sides: {
     position: string               // "X increases Y" vs "X has no effect"
     papers: PaperSupport[]         // Papers supporting this position
+    evidenceStrength?: EvidenceStrength // Quality of evidence for this position
   }[]
   
   // Analysis
-  possibleExplanation?: string     // LLM-generated explanation for disagreement
-  severity: string                 // "minor", "significant", "fundamental"
+  possibleExplanation?: string     // SPECIFIC explanation: methodology, population, temporal context
+  resolutionSuggestion?: string    // How might this contradiction be resolved?
+  severity: 'minor' | 'moderate' | 'major' // minor (nuance), moderate (reconcilable), major (fundamental)
   confidence: number
 }
 
@@ -88,20 +126,58 @@ export interface Contradiction {
 // =============================================================================
 
 /**
+ * Gap type classification
+ */
+export type GapType = 
+  | 'population'      // Who is not studied
+  | 'methodological'  // What designs/measures are missing
+  | 'temporal'        // What time periods are not covered
+  | 'geographic'      // Where hasn't been studied
+  | 'theoretical'     // What mechanisms are unexplained
+  | 'replication'     // What hasn't been confirmed
+
+/**
+ * Gap priority level
+ */
+export type GapPriority = 'high' | 'medium' | 'low'
+
+/**
  * A gap in the literature
  */
 export interface Gap {
   id: string
-  description: string              // What's missing
-  type: string                     // LLM describes: "methodological", "population", "temporal", etc.
-  relevance: string                // Why it matters
+  description: string              // SPECIFIC description of what's missing
+  type: GapType                    // Type of gap
+  relevance: string                // WHY this gap matters
+  suggestedResearchQuestion?: string // CONCRETE research question to address this gap
   suggestedBy: string[]            // Paper IDs that mention this gap
+  priority?: GapPriority           // How important is filling this gap?
   confidence: number
 }
 
 // =============================================================================
 // Complete Analysis Result
 // =============================================================================
+
+/**
+ * Synthesis strength assessment
+ */
+export interface SynthesisStrength {
+  overallConfidence: 'high' | 'moderate' | 'low'
+  evidenceBase: string              // "8 empirical studies, 3 theoretical papers"
+  methodologicalDiversity: 'high' | 'moderate' | 'low'
+  geographicDiversity: 'high' | 'moderate' | 'low'
+  temporalSpread?: string           // "2015-2023"
+}
+
+/**
+ * Field maturity assessment
+ */
+export type FieldMaturity = 
+  | 'emerging'     // Few studies, many gaps, fundamental questions open
+  | 'developing'   // Growing body, some consensus, significant gaps remain
+  | 'established'  // Strong consensus, well-replicated findings
+  | 'contested'    // Many studies but fundamental disagreements persist
 
 /**
  * Complete cross-document analysis result
@@ -120,8 +196,12 @@ export interface AnalysisResult {
   gaps: Gap[]
   
   // High-level summary
-  summary: string                  // LLM-generated overview of the literature
-  keyInsights: string[]            // Top takeaways
+  summary: string                  // LLM-generated synthesis narrative
+  keyInsights: string[]            // Top 5-7 specific takeaways
+  
+  // NEW: Synthesis quality assessment
+  synthesisStrength?: SynthesisStrength
+  fieldMaturity?: FieldMaturity
   
   // Metadata
   analyzedAt: Date
