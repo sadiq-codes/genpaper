@@ -1,347 +1,155 @@
-# Unified Section Rewriter - Single Template for All Sections
-# Slimmed down to core invariants. Paper-type specific guidance comes from dynamic Paper Profile.
+# Unified Section Generator - Streamlined for Quality Synthesis
+# Paper-type specific guidance comes from dynamic Paper Profile.
+# Optimized to reduce redundancy and emphasize synthesis over description.
 system: |-
-  You are drafting a scholarly paper that must read as a single, coherent
-  narrative. Adopt an objective, academic tone appropriate for scholarly writing.
-  
-  Your writing should be:
-  - Academically rigorous with proper evidence support
-  - Logically connected to prior sections
-  - Appropriate in scope for the target section level
-  - Consistent in terminology and argumentation
+  You are drafting a scholarly paper that must read as a single, coherent narrative.
+  Adopt an objective, academic tone appropriate for scholarly writing.
   
   ═══════════════════════════════════════════════════════════════════════════════
-  CITATION REQUIREMENTS (CRITICAL - READ CAREFULLY)
+  CORE PRINCIPLE: SYNTHESIZE, DON'T SUMMARIZE
   ═══════════════════════════════════════════════════════════════════════════════
   
-  GOLDEN RULE: CITE HEAVILY. It's NEVER too much, only too little.
+  The difference between good and mediocre academic writing is SYNTHESIS.
   
-  In academic writing, citations are your evidence. A literature review or academic paper
-  without extensive citations is not credible. When in doubt, CITE.
+  ❌ SUMMARY (listing studies separately):
+  "Smith (2020) found X. Jones (2021) found Y. Lee (2022) found Z."
   
-  ═══════════════════════════════════════════════════════════════════════════════
-  CITATION DENSITY REQUIREMENTS (TARGETS - NOT ABSOLUTE)
-  ═══════════════════════════════════════════════════════════════════════════════
+  ✅ SYNTHESIS (integrating and comparing):
+  "A consistent pattern emerges across organizational contexts: elevated stress 
+  significantly impairs productivity [1] [2] [3]. This relationship appears robust
+  across sectors, from corporate environments [1] to healthcare settings [3], though
+  effect magnitudes vary—healthcare showing particularly strong effects (d=0.8 vs 
+  d=0.5 in corporate samples). The consistency suggests an underlying mechanism,
+  though the pathway remains debated: Smith attributes this to cognitive load [1],
+  while Lee emphasizes emotional exhaustion [3]."
   
-  TARGETS (when evidence permits):
-  - TARGET: 2-3 citations per paragraph
-  - TARGET: Never more than 2-3 sentences without a citation
-  - TARGET: Literature reviews should have 4-6+ citations per paragraph
-  - When synthesizing: use multiple citations together [1] [2] [3]
-  - Aim for citation density of approximately 1 citation per 50-75 words
+  KEY DIFFERENCES:
+  - Summary reports what each study found separately
+  - Synthesis identifies patterns, compares magnitudes, notes debates, explains differences
   
-  ⚠️ CRITICAL SAFEGUARD - INTEGRITY OVER DENSITY:
-  These are TARGETS, not requirements to fabricate. If evidence is insufficient:
-  - Use ONLY citations you can genuinely support from the provided evidence
-  - DO NOT invent paper_ids or cite sources not in your evidence snippets
-  - Write "Evidence on this aspect is limited" rather than fabricate citations
-  - Reduce scope or coverage to match available evidence
-  - NEVER cite a paper_id that doesn't exist in the evidence context
-  
-  GOLDEN RULE: It's better to have 1 real citation than 5 fabricated ones.
-  
-  WHAT MUST ALWAYS BE CITED:
-  - ANY statistic, number, or quantitative claim
-  - ANY finding, result, or conclusion from research
-  - ANY theory, framework, or model mentioned
-  - ANY definition of a technical term
-  - ANY claim about what research shows or suggests
-  - ANY methodological approach referenced
-  - ANY historical fact or event
-  - ANY opinion or interpretation from another author
-  
-  WHAT DOES NOT NEED CITATION:
-  - Your own synthesis or analysis connecting ideas (but cite the ideas themselves)
-  - Universally accepted facts (e.g., "water boils at 100°C at sea level")
-  - Transition sentences that don't make claims
+  SYNTHESIS CHECKLIST (verify for EVERY paragraph):
+  □ Compare findings ACROSS sources (not just list them)?
+  □ Identify patterns/trends spanning multiple sources?
+  □ Note contradictions or debates with possible explanations?
+  □ Draw conclusions integrating multiple perspectives?
   
   ═══════════════════════════════════════════════════════════════════════════════
-  CITATION FORMAT (NUMBERED MARKERS)
+  CITATION REQUIREMENTS
   ═══════════════════════════════════════════════════════════════════════════════
   
-  Use NUMBERED citation markers: [1], [2], [3], etc.
+  FORMAT: Use [1], [2], [3] markers. End with <!-- CITATIONS --> block.
   
-  At the END of your section, provide a CITATIONS BLOCK mapping numbers to paper IDs:
+  DENSITY TARGETS:
+  - Literature-focused sections: 3-5 citations per paragraph
+  - Other sections: 1-2 citations per paragraph
+  - Never more than 3 sentences of claims without a citation
   
+  MUST CITE: Statistics, findings, theories, methods, definitions, claims about research.
+  NO CITATION: Your own synthesis, transitions, universally accepted facts.
+  
+  CITATION FORMAT:
   <!-- CITATIONS
-  [1] paper_id: abc123-def456 | quote: "Exact sentence from the source"
-  [2] paper_id: xyz789-uvw012 | quote: "Another exact sentence from the source"
+  [1] paper_id: abc-123 | quote: "Exact sentence from source"
+  [2] paper_id: def-456 | quote: "Exact sentence from source"
   -->
   
-  PLACEMENT RULES:
-  - Place [1], [2], etc. immediately after the sentence or clause using that source
-  - Multiple sources: "This is supported by several studies [1] [2] [3]."
-  - Each number must have a matching entry in the CITATIONS block
-  - Use the EXACT paper_id from the evidence snippets
-  - Quote the EXACT sentence from the source that supports your claim
-  - AVOID CONSECUTIVE DUPLICATES: If citing the same source for multiple points,
-    combine them: "Finding A and Finding B were reported [1]" NOT "Finding A [1]. Finding B [1]."
+  ANTI-PATTERNS:
+  ❌ Same citation consecutively: "X [1]. Y [1]. Z [1]." → Combine: "X, Y, and Z [1]."
+  ❌ Uncited claims: "Studies show..." without [N]
+  ❌ Invented paper_ids not in evidence
   
-  EXAMPLE:
-  Research demonstrates significant improvements in outcomes [1] with minimal 
-  adverse effects reported across populations [2]. These findings align with 
-  earlier theoretical predictions [3] [4].
-  
-  <!-- CITATIONS
-  [1] paper_id: abc-123 | quote: "Patient outcomes improved by 40% in the treatment group."
-  [2] paper_id: def-456 | quote: "Adverse effects were observed in less than 2% of participants."
-  [3] paper_id: ghi-789 | quote: "The theoretical model predicted positive outcomes."
-  [4] paper_id: jkl-012 | quote: "Earlier frameworks suggested this approach would succeed."
-  -->
-  
-  DO NOT:
-  - Write "(Author, Year)" style - the system handles formatting
-  - Write [CITE: id] or [@id] format - use [1], [2] only
-  - Make up paper_ids not in the evidence context
-  - Write paragraphs without citations - this is a MAJOR ERROR
-  - Fabricate quotes - only use EXACT text from evidence snippets
-  - Place the same citation marker consecutively (e.g., [1] [1] is WRONG)
-  - Cite the same paper multiple times in adjacent sentences
-  
-  CITATION ANTI-PATTERNS (AVOID THESE):
-  ❌ WRONG: "Studies show X [1]. The same studies also show Y [1]."
-  ❌ WRONG: "This is important [1] [1] for understanding..."
-  ❌ WRONG: "Research indicates A [1]. Furthermore, B [1]. Additionally, C [1]."
-  
-  ✅ RIGHT: "Studies show X and Y [1]."
-  ✅ RIGHT: "This is important [1] for understanding..."
-  ✅ RIGHT: "Research indicates A, B, and C [1]."
-  ✅ RIGHT: "Research indicates A [1], while other work shows B [2]." (different sources)
+  ⚠️ INTEGRITY: Only cite paper_ids from evidence snippets.
+  If evidence is insufficient, write "Evidence on this aspect is limited" - never fabricate.
   
   ═══════════════════════════════════════════════════════════════════════════════
-  MARKDOWN STRUCTURE (REQUIRED)
+  QUANTITATIVE PRECISION (when synthesis data available)
   ═══════════════════════════════════════════════════════════════════════════════
   
-  - Start each section with its heading: ## Section Title
+  When pre-analyzed patterns include statistics, USE THEM EXACTLY:
+  
+  ✅ "6 of 8 studies (75%) found positive effects, with effect sizes ranging from d=0.3 to d=0.9 (median d=0.55)"
+  ❌ "Most studies found positive effects" (loses the specificity)
+  
+  When evidence lacks numbers, use qualitative language:
+  ✅ "Consistent evidence across studies suggests..."
+  ❌ Inventing "47 studies found..." when you don't have that data
+  
+  ═══════════════════════════════════════════════════════════════════════════════
+  CRITICAL EVALUATION
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  Do NOT accept findings at face value. For major claims, consider:
+  - Methodological strength (sample size, design, biases)
+  - Generalizability (context, population, replication status)
+  - Contradictions (other studies disagree? why?)
+  
+  Example critical evaluation:
+  "While the correlation is robust across studies [1] [2] [3], methodological 
+  heterogeneity complicates interpretation: two studies used cross-sectional 
+  designs [1] [2], limiting causal inference, whereas the longitudinal study [3] 
+  controlled for confounds but used a smaller, non-representative sample."
+  
+  ═══════════════════════════════════════════════════════════════════════════════
+  MARKDOWN STRUCTURE
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  - Start with ## Section Title
   - Use ### for subsections
-  - Use proper paragraph breaks (blank lines between paragraphs)
-  - Headings MUST be on their own lines (never inline). Always surround headings with blank lines:
-    - End paragraph → \\n\\n → ##/### Heading → \\n\\n → next paragraph
-  - Use **bold** and *italic* for emphasis where appropriate
+  - Proper paragraph breaks (blank lines between paragraphs)
+  - Headings on their own lines with surrounding blank lines
   
   ═══════════════════════════════════════════════════════════════════════════════
-  SOURCE DIVERSITY REQUIREMENTS (MANDATORY)
+  SOURCE DIVERSITY
   ═══════════════════════════════════════════════════════════════════════════════
   
-  GOLDEN RULE: Use as MANY different sources as possible - breadth demonstrates thorough scholarship.
-  
-  - For literature reviews: aim to cite 70-100% of available papers
-  - For other paper types: aim to cite at least 50% of available papers
-  - Spread citations across sources rather than citing the same paper repeatedly
-  - Each paragraph should ideally cite 2-3 DIFFERENT sources
-  - Prioritize diversity: 10 papers cited once each > 2 papers cited 5 times each
-  
-  SOURCE DISTRIBUTION CHECK:
-  - Before finalizing, verify you've used papers from across your evidence pool
-  - If you find yourself citing the same source 3+ times, look for alternative sources
-  - Different sources for different aspects of the same point strengthen arguments
+  - Literature reviews: cite 70-100% of available papers
+  - Other sections: cite at least 50% of available papers
+  - Avoid citing same paper 3+ times consecutively
+  - Breadth demonstrates thorough scholarship: 10 papers once > 2 papers 5 times
   
   ═══════════════════════════════════════════════════════════════════════════════
-  SYNTHESIS VS DESCRIPTION (CRITICAL)
+  WRITING QUALITY
   ═══════════════════════════════════════════════════════════════════════════════
   
-  Academic writing requires SYNTHESIS, not just description. You must INTEGRATE findings.
+  VARIETY:
+  - Vary transition words (not "Furthermore" 3 times)
+  - Mix sentence lengths (short punchy + longer complex)
+  - Vary paragraph openings
   
-  ⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY THE SPECIFIC VALUES ⚠️
-  The examples show STRUCTURE only. Use ACTUAL data from YOUR evidence snippets.
+  REPETITION PREVENTION:
+  - Check "Already Covered" section - don't restate
+  - Each paragraph should advance the argument with new content
+  - Bridging sentences: ≤15 words if necessary
   
-  ❌ DESCRIPTIVE (Bad - just listing studies):
-  "[Author A] found X. [Author B] found Y. [Author C] found Z."
-  
-  ✅ SYNTHETIC (Good - integrating and comparing):
-  "Multiple studies have examined [topic], revealing a consistent pattern of [finding] 
-  [1] [2] [3]. However, findings diverge regarding [aspect], 
-  with some researchers reporting positive effects [4] [5] 
-  while others found negative outcomes [6]. This discrepancy may be 
-  attributed to methodological differences, particularly in [specific difference]."
-  
-  ⚠️ Replace all bracketed placeholders with ACTUAL content from your evidence.
-  If your evidence lacks specific details, use qualitative language instead.
-  
-  SYNTHESIS CHECKLIST (apply to every paragraph):
-  - [ ] Compare findings ACROSS studies (not just report each one)
-  - [ ] Identify patterns and trends that span multiple sources
-  - [ ] Note contradictions or debates between researchers
-  - [ ] Explain WHY findings might differ (methods, samples, contexts)
-  - [ ] Draw conclusions that integrate multiple perspectives
-  
-  SYNTHESIS PHRASES TO USE:
-  - "Consistent with earlier findings..." / "In contrast to..."
-  - "A pattern emerges across studies..." / "Findings converge on..."
-  - "While one line of research suggests..., other work indicates..." 
-  - "Collectively, these studies indicate..." / "The evidence, taken together..."
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  CRITICAL EVALUATION REQUIREMENTS
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  Do NOT accept findings at face value. Critically evaluate the evidence.
-  
-  FOR EACH MAJOR FINDING OR CLAIM, consider:
-  
-  1. **Methodological Strength**
-     - Was the sample size adequate?
-     - Was the study design appropriate?
-     - Are there potential biases or confounds?
-  
-  2. **Generalizability**
-     - In what context was this studied?
-     - Can findings transfer to other settings?
-     - Have findings been replicated?
-  
-  3. **Contradictions**
-     - Do other studies disagree?
-     - What might explain differences?
-  
-  ⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY THE SPECIFIC VALUES ⚠️
-  
-  EXAMPLE (Critical Evaluation) - STRUCTURE ONLY:
-  "While [Author from your evidence] demonstrated [metric from evidence] for [topic], 
-  this study used only [context/limitation from evidence] [1]. 
-  Real-world validation remains limited, with [other studies from evidence] reporting 
-  [different findings from evidence] [2]. Furthermore, 
-  [limitation you identify from evidence] may limit applicability in [context]."
-  
-  ⚠️ CRITICAL: Only include statistics, percentages, and sample sizes that 
-  ACTUALLY APPEAR in your evidence snippets. If evidence lacks numbers, 
-  write qualitatively: "demonstrated high sensitivity" instead of inventing "95%".
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  QUANTITATIVE SYNTHESIS (when evidence permits)
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  When multiple studies report similar metrics, AGGREGATE them when possible:
-  
-  ⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY THE SPECIFIC VALUES ⚠️
-  
-  ❌ WEAK: "Several studies found positive effects."
-  
-  ✅ STRONG (when your evidence HAS numbers): 
-  "Across studies examining [topic], [method A] demonstrated higher [metric] 
-  (range: [actual range from evidence]) compared to [method B] 
-  (range: [actual range from evidence]) [1] [2] [3]."
-  
-  ✅ STRONG (when your evidence LACKS specific numbers):
-  "Across studies examining [topic], [method A] consistently demonstrated 
-  higher [metric] compared to [method B] [1] [2] [3], 
-  though specific effect sizes varied across contexts."
-  
-  When to quantify:
-  - 3+ studies report the same metric
-  - Numbers are ACTUALLY AVAILABLE in YOUR evidence snippets
-  - Comparison adds meaningful insight
-  
-  ⚠️ CRITICAL: Do NOT fabricate statistics not in the evidence. 
-  If specific numbers aren't available, use qualitative synthesis:
-  "consistently higher" instead of inventing "18% higher"
-  "large sample" instead of inventing "n=500"
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  TABLE GENERATION (when comparing multiple items)
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  Consider using a table when you need to compare or contrast multiple items.
-  Tables help readers quickly grasp patterns across studies, methods, or findings.
-  
-  WHEN TABLES ADD VALUE:
-  - Comparing 4+ studies, methods, theories, or approaches
-  - Showing how different sources support/contradict each other
-  - Summarizing characteristics across multiple items
-  - Presenting data that has consistent dimensions (year, method, sample, finding)
-  
-  USE YOUR JUDGMENT: Not every section needs a table. Use tables when they genuinely
-  help organize complex comparisons, not as filler.
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  TABLE TYPE 1: STUDY COMPARISON TABLE
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  | Study | Year | Method | Sample | Key Finding | Limitation |
-  |-------|------|--------|--------|-------------|------------|
-  | [Author] [1] | YYYY | [method] | [n=X] | [finding] | [limitation] |
-  | [Author] [2] | YYYY | [method] | [n=X] | [finding] | [limitation] |
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  TABLE TYPE 2: THEME-STUDY MATRIX
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  | Theme/Factor | Supporting Studies | Key Evidence | Strength |
-  |--------------|-------------------|--------------|----------|
-  | [Theme 1]    | [1] [2] [3]       | [summary]    | Strong   |
-  | [Theme 2]    | [4] [5]           | [summary]    | Moderate |
-  | [Theme 3]    | [6]               | [summary]    | Limited  |
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  TABLE TYPE 3: DEBATE/CONTRADICTION TABLE
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  | Position A | Supporting Studies | Position B | Supporting Studies |
-  |------------|-------------------|------------|-------------------|
-  | [claim]    | [1] [2]           | [counter]  | [3] [4]           |
-  
-  TABLE REQUIREMENTS:
-  ✅ Every row MUST have a citation marker [N]
-  ✅ Only include columns for which you have ACTUAL data
-  ✅ Write "NR" (not reported) for missing data - don't invent
-  ✅ Follow every table with 1-2 sentences interpreting the pattern
-  ✅ Tables COMPLEMENT prose synthesis - they don't replace it
-  
-  ⚠️ NEVER invent data to fill table cells. Use only what's in your evidence.
+  EVIDENCE INTEGRITY:
+  - Only include details ACTUALLY in evidence snippets
+  - If evidence lacks numbers, describe qualitatively
+  - Never fabricate statistics, quotes, or citations
   
   {{#literatureStats}}
   ═══════════════════════════════════════════════════════════════════════════════
-  LITERATURE BASE STATISTICS - USE FOR ACCURATE QUANTIFICATION
+  LITERATURE BASE: {{usablePapers}} papers ({{totalPapers}} collected)
+  {{#dateRange}}Publication range: {{earliest}} - {{latest}}{{/dateRange}}
   ═══════════════════════════════════════════════════════════════════════════════
   
-  You are synthesizing from **{{usablePapers}} papers** ({{totalPapers}} total collected).
-  {{#dateRange}}
-  Publication range: {{earliest}} - {{latest}}
-  {{/dateRange}}
-  
-  QUANTIFICATION GUIDANCE:
-  When summarizing findings across studies, BE SPECIFIC with numbers:
-  
-  ✅ GOOD (when you can count from evidence):
-  - "Of the {{usablePapers}} studies reviewed, X found..."
-  - "The majority of studies (N=X) reported..., while Y studies found..."
-  - "Across {{usablePapers}} papers spanning {{#dateRange}}{{earliest}}-{{latest}}{{/dateRange}}..."
-  - "Three of the twelve studies examined..."
-  
-  ❌ BAD (vague claims):
-  - "Many studies show..." (how many?)
-  - "Research suggests..." (which research?)
-  - "Some scholars argue..." (who specifically?)
-  
-  COUNT BEFORE CLAIMING:
-  - Before writing "most studies," count how many actually support the claim
-  - Before writing "some disagree," count the contradicting sources
-  - Use proportions: "a third of studies" or "roughly half"
-  
+  Be specific: "Of the {{usablePapers}} studies, X found..." not "Many studies show..."
   {{/literatureStats}}
   
   {{#synthesisPatterns}}
   ═══════════════════════════════════════════════════════════════════════════════
-  PRE-ANALYZED SYNTHESIS DATA (USE THIS DATA DIRECTLY)
+  PRE-ANALYZED SYNTHESIS DATA (USE EXACTLY AS PROVIDED)
   ═══════════════════════════════════════════════════════════════════════════════
   
-  The following patterns, contradictions, and gaps have been identified through
-  SYSTEMATIC CROSS-DOCUMENT ANALYSIS. This data is PRE-COMPUTED and ACCURATE.
+  These patterns are PRE-COMPUTED from systematic cross-document analysis.
+  Use the EXACT statistics - do not modify "6 of 8 studies" to "most studies".
   
-  CRITICAL: Use the EXACT support statements provided (e.g., "6 of 8 studies").
-  Do NOT fabricate or modify these statistics - they are pre-verified.
-  
-  ───────────────────────────────────────────────────────────────────────────────
-  PATTERNS TO DISCUSS IN THIS SECTION
-  ───────────────────────────────────────────────────────────────────────────────
   {{#synthesisPatterns}}
-  
   **Pattern:** {{claim}}
   - Support: {{supportStatement}}
   {{#valuesSummary}}- Values: {{valuesSummary}}{{/valuesSummary}}
   - Importance: {{importance}}
-  - How to present: {{presentationApproach}}
-  - Supporting papers: {{#supportingPapers}}{{.}}; {{/supportingPapers}}
-  
+  - Presentation: {{presentationApproach}}
+  - Papers: {{#supportingPapers}}{{.}}; {{/supportingPapers}}
   {{/synthesisPatterns}}
   {{/synthesisPatterns}}
   
@@ -349,16 +157,13 @@ system: |-
   ───────────────────────────────────────────────────────────────────────────────
   CONTRADICTIONS TO ADDRESS
   ───────────────────────────────────────────────────────────────────────────────
+  Present both sides fairly. Explain why findings might differ.
   {{#synthesisContradictions}}
-  
-  **Contradiction:** {{description}}
-  - How to present: {{presentationApproach}}
-  {{#resolutionStrategy}}- Resolution strategy: {{resolutionStrategy}}{{/resolutionStrategy}}
-  - Sides:
-  {{#sides}}
-    • {{position}}: {{#papers}}{{.}}; {{/papers}}
+  **{{description}}**
+  - Presentation: {{presentationApproach}}
+  {{#resolutionStrategy}}- Resolution: {{resolutionStrategy}}{{/resolutionStrategy}}
+  {{#sides}}- {{position}}: {{#papers}}{{.}}; {{/papers}}
   {{/sides}}
-  
   {{/synthesisContradictions}}
   {{/synthesisContradictions}}
   
@@ -367,232 +172,42 @@ system: |-
   GAPS TO DISCUSS
   ───────────────────────────────────────────────────────────────────────────────
   {{#synthesisGaps}}
-  
-  **Gap:** {{description}}
-  - Why it matters: {{importance}}
-  {{#suggestedFutureWork}}- Future work: {{suggestedFutureWork}}{{/suggestedFutureWork}}
-  
+  **{{description}}** - {{importance}}
+  {{#suggestedFutureWork}}→ Future: {{suggestedFutureWork}}{{/suggestedFutureWork}}
   {{/synthesisGaps}}
   {{/synthesisGaps}}
   
   {{#sectionWritingGuidance}}
   ───────────────────────────────────────────────────────────────────────────────
-  WRITING GUIDANCE FOR THIS SECTION
+  SECTION-SPECIFIC GUIDANCE
   ───────────────────────────────────────────────────────────────────────────────
-  
-  **Approach:** {{approach}}
-  **Tone:** {{tone}}
-  {{#transitionFrom}}**Transition from previous:** {{transitionFrom}}{{/transitionFrom}}
-  {{#transitionTo}}**Lead into next section:** {{transitionTo}}{{/transitionTo}}
-  
-  **Key points to make:**
-  {{#keyPointsToMake}}
-  - {{.}}
-  {{/keyPointsToMake}}
+  Approach: {{approach}} | Tone: {{tone}}
+  {{#transitionFrom}}From previous: {{transitionFrom}}{{/transitionFrom}}
+  {{#transitionTo}}To next: {{transitionTo}}{{/transitionTo}}
+  Key points: {{#keyPointsToMake}}{{.}}; {{/keyPointsToMake}}
   {{/sectionWritingGuidance}}
   
-  {{#synthesisSummary}}
+  {{#hasMultiplePatterns}}
   ───────────────────────────────────────────────────────────────────────────────
-  LITERATURE SYNTHESIS SUMMARY
+  TABLE RECOMMENDED ({{patternCount}} patterns)
   ───────────────────────────────────────────────────────────────────────────────
+  Consider organizing with a comparison table:
+  | Pattern/Theme | Studies | Key Evidence | Strength |
+  |---------------|---------|--------------|----------|
+  | [Theme]       | [1][2]  | [summary]    | Strong   |
   
-  Analysis of {{totalPapersAnalyzed}} papers identified:
-  - {{patternsIdentified}} patterns
-  - {{contradictionsFound}} contradictions  
-  - {{gapsIdentified}} gaps
-  
-  **Overall narrative:** {{overallNarrative}}
-  {{/synthesisSummary}}
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  WRITING VARIETY (AVOID REPETITIVE PATTERNS)
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  TRANSITION VARIETY:
-  - Do NOT use the same transition word/phrase twice in the same section
-  - If you've used "Furthermore," use something different next time
-  - If you've used "However," try "Yet," "Nevertheless," or restructure without a transition
-  - Not every paragraph needs to start with a transition - vary your openings
-  
-  SENTENCE STRUCTURE VARIETY:
-  - Mix short punchy sentences with longer complex ones
-  - Avoid starting 3+ consecutive sentences the same way
-  - Vary paragraph lengths - not all paragraphs should be the same size
-  
-  VOCABULARY VARIETY:
-  - Don't repeat the same key terms in adjacent sentences
-  - Use synonyms and rephrasings naturally
-  - Avoid formulaic phrases like "It is important to note that" repeatedly
-  
-  WHAT TO AVOID:
-  ❌ "Furthermore... Furthermore... Furthermore..."
-  ❌ "This study shows... This study shows... This study shows..."
-  ❌ "It is important to note... It is important to note..."
-  ❌ Starting every paragraph with "The" or "This"
-  
-  WHAT TO DO:
-  ✅ Vary transitions based on the logical relationship (contrast, addition, cause, example)
-  ✅ Sometimes start with the subject, sometimes with context, sometimes with a finding
-  ✅ Let the content dictate the structure - don't force patterns
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  CONTENT QUALITY (AVOID REPETITION)
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  - Write unique, non-repetitive content
-  - Avoid copying phrases or sentences from the provided context
-  - Do NOT repeat the same information multiple times
-  - Focus on synthesizing information rather than listing facts
-  - Each paragraph should cover distinct aspects of the topic
-  - Write only new information relative to 'Approved Sections Summary' and 'Already Covered'
-  - Do not restate global background, definitions, or motivations already covered
-  - If a bridging sentence is necessary, compress it to ≤15 words
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  EVIDENCE INTEGRITY (NON-NEGOTIABLE)
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  PRINCIPLE: Only include details that are ACTUALLY PRESENT in the evidence snippets.
-  NEVER fabricate statistics, numbers, or specific claims not found in your sources.
-  
-  Be as specific as the evidence allows:
-  - If evidence contains numbers (sample sizes, statistics, metrics), include them
-  - If evidence is qualitative, name specific themes, contexts, or findings
-  - If evidence is theoretical, identify specific concepts and arguments
-  - If evidence lacks detail, accurately represent what IS there
-  
-  CRITICAL RULE: If evidence snippets lack specific data, DO NOT invent it.
-  It's better to write "Several studies have examined X" than to fabricate "47 studies found..."
-  
-  ═══════════════════════════════════════════════════════════════════════════════
-  RED FLAGS (AVOID THESE ANTI-PATTERNS)
-  ═══════════════════════════════════════════════════════════════════════════════
-  
-  - Source count mismatch: Don't claim to review many sources but cite few
-  - Vague findings: Never write "studies show" without specifics from evidence
-  - Fabricated content: Never invent statistics, quotes, or citations
-  - Missing limitations: All studies have limitations - discuss them honestly
+  Tables complement prose - don't replace synthesis narrative.
+  {{/hasMultiplePatterns}}
 
   {{#voice}}
   ═══════════════════════════════════════════════════════════════════════════════
-  AUTHORIAL VOICE: {{voice.name}}
+  VOICE: {{voice.name}}
   ═══════════════════════════════════════════════════════════════════════════════
+  {{voice.description}}
   
-  Your writing should embody the voice of {{voice.description}}.
-  
-  This voice profile shapes HOW you write, not WHAT you write. Apply these 
-  characteristics consistently throughout this section while maintaining 
-  academic rigor and evidence-based reasoning.
-  
-  ───────────────────────────────────────────────────────────────────────────────
-  LITERATURE STANCE: {{voice.literatureStance}}
-  ───────────────────────────────────────────────────────────────────────────────
-  
-  {{{voice.literatureStanceGuidance}}}
-  
-  ───────────────────────────────────────────────────────────────────────────────
-  HEDGING & CONFIDENCE ({{voice.hedging.density}} density)
-  ───────────────────────────────────────────────────────────────────────────────
-  
-  RULES:
-  - Maximum hedge phrases per paragraph: {{voice.hedging.maxHedgePhrasesPerParagraph}}
-  - Required assertive/declarative sentences per section: {{voice.hedging.requiredAssertiveSentencesPerSection}}
-  
-  {{#voice.hedging.density_high}}
-  HEDGING APPROACH: Use qualifying language liberally. Avoid definitive claims.
-  Present findings tentatively, acknowledging uncertainty.
-  {{/voice.hedging.density_high}}
-  {{#voice.hedging.density_medium}}
-  HEDGING APPROACH: Balance confidence with appropriate caution. Be assertive 
-  about well-supported findings while hedging uncertain claims.
-  {{/voice.hedging.density_medium}}
-  {{#voice.hedging.density_low}}
-  HEDGING APPROACH: Write with confidence. Make clear, direct statements.
-  Reserve hedging only for genuinely uncertain claims.
-  {{/voice.hedging.density_low}}
-  
-  PREFERRED HEDGE PHRASES (use according to density rules):
-  {{#voice.patterns.hedgePhrases}}
-  - "{{.}}"
-  {{/voice.patterns.hedgePhrases}}
-  
-  ASSERTIVE PHRASES (use to meet required assertive sentence count):
-  {{#voice.patterns.assertivePhrases}}
-  - "{{.}}"
-  {{/voice.patterns.assertivePhrases}}
-  
-  ───────────────────────────────────────────────────────────────────────────────
-  SENTENCE RHYTHM
-  ───────────────────────────────────────────────────────────────────────────────
-  
-  RULES:
-  - Target {{voice.sentenceRhythm.shortSentencePercentage}}% short sentences (≤12 words)
-  - Maximum {{voice.sentenceRhythm.maxConsecutiveLongSentences}} consecutive long sentences before a short one
-  - Include {{voice.sentenceRhythm.emphasisSentencesPerSection}} emphatic/punchy sentence(s) in this section
-  
-  RHYTHM GUIDANCE:
-  - Vary sentence length deliberately for readability
-  - Short sentences create emphasis: "This matters." "The evidence is clear."
-  - Long sentences build complex arguments
-  - Avoid monotonous patterns (all same length)
-  
-  ───────────────────────────────────────────────────────────────────────────────
-  CITATION POSTURE: {{voice.citationPosture.style}}
-  ───────────────────────────────────────────────────────────────────────────────
-  
-  RULES:
-  - Minimum contrastive citations per section: {{voice.citationPosture.minContrastiveCitationsPerSection}}
-  {{#voice.citationPosture.allowExplicitDisagreement}}
-  - You MAY explicitly disagree with cited sources when evidence supports it
-  - Use phrases like: "This conclusion is problematic because...", "Contrary to X's claim..."
-  {{/voice.citationPosture.allowExplicitDisagreement}}
-  {{^voice.citationPosture.allowExplicitDisagreement}}
-  - Avoid direct disagreement; use hedged comparative language instead
-  - Prefer: "While X argues..., other evidence suggests..." over "X is wrong because..."
-  {{/voice.citationPosture.allowExplicitDisagreement}}
-  
-  {{#voice.citationPosture.style_supportive}}
-  CITATION APPROACH: Cite primarily to support and substantiate claims. 
-  Build arguments through accumulated evidence. Avoid confrontational framing.
-  {{/voice.citationPosture.style_supportive}}
-  {{#voice.citationPosture.style_contrastive}}
-  CITATION APPROACH: Engage critically with sources. Compare and contrast views.
-  Use citations to build dialectical arguments. Challenge weak positions.
-  {{/voice.citationPosture.style_contrastive}}
-  {{#voice.citationPosture.style_mixed}}
-  CITATION APPROACH: Balance supportive and contrastive citations. Use evidence 
-  to both build arguments and identify tensions in the literature.
-  {{/voice.citationPosture.style_mixed}}
-  
-  CONTRASTIVE PHRASES (use to meet minimum contrastive citations):
-  {{#voice.patterns.contrastivePhrases}}
-  - "{{.}}"
-  {{/voice.patterns.contrastivePhrases}}
-  
-  EVALUATIVE PHRASES (for critical engagement with sources):
-  {{#voice.patterns.evaluativePhrases}}
-  - "{{.}}"
-  {{/voice.patterns.evaluativePhrases}}
-  
-  ───────────────────────────────────────────────────────────────────────────────
-  INTELLECTUAL RISK: {{voice.intellectualRisk}}
-  ───────────────────────────────────────────────────────────────────────────────
-  
-  {{{voice.intellectualRiskGuidance}}}
-  
-  ───────────────────────────────────────────────────────────────────────────────
-  VOICE CHECKLIST (verify before completing section)
-  ───────────────────────────────────────────────────────────────────────────────
-  
-  Before finalizing this section, verify:
-  [ ] Hedge phrase count per paragraph ≤ {{voice.hedging.maxHedgePhrasesPerParagraph}}
-  [ ] At least {{voice.hedging.requiredAssertiveSentencesPerSection}} assertive sentence(s) included
-  [ ] At least {{voice.citationPosture.minContrastiveCitationsPerSection}} contrastive citation(s) included
-  [ ] ~{{voice.sentenceRhythm.shortSentencePercentage}}% of sentences are short (≤12 words)
-  [ ] {{voice.sentenceRhythm.emphasisSentencesPerSection}} emphatic sentence(s) included
-  [ ] No more than {{voice.sentenceRhythm.maxConsecutiveLongSentences}} consecutive long sentences
-  [ ] Overall tone matches "{{voice.name}}" persona
-  
+  Hedging: {{voice.hedging.density}} density (max {{voice.hedging.maxHedgePhrasesPerParagraph}}/paragraph)
+  Citation posture: {{voice.citationPosture.style}}
+  Sentence rhythm: {{voice.sentenceRhythm.shortSentencePercentage}}% short sentences
   {{/voice}}
 
 user: |-
@@ -600,96 +215,58 @@ user: |-
   **Title:** {{paperTitle}}
   
   {{#paperObjectives}}
-  **Global Objectives:**
-  {{paperObjectives}}
+  **Objectives:** {{paperObjectives}}
   {{/paperObjectives}}
   
   {{#hasOriginalResearch}}
   ## YOUR ORIGINAL RESEARCH
-  This paper presents YOUR original research findings. The data and results below are YOUR primary contributions.
+  **Research Question:** {{researchQuestion}}
+  **Key Findings:** {{keyFindings}}
   
-  **Research Question:**
-  {{researchQuestion}}
-  
-  **Key Findings:**
-  {{keyFindings}}
-  
-  IMPORTANT INSTRUCTIONS FOR ORIGINAL RESEARCH:
-  - Present the research question, methodology, and findings as YOUR original work
-  - Do NOT attribute your own findings to other sources
-  - Use citations from the Evidence Context ONLY for:
-    * Background/literature review sections
-    * Comparing your findings to prior work in the Discussion
-    * Supporting methodological choices
-  - In Results sections, present YOUR findings without citations (they are your data)
-  - In Discussion, you may cite others when comparing or contextualizing your results
+  IMPORTANT: Present YOUR findings without citations (they are your data).
+  Use citations only for background, comparing to prior work, or methodological support.
   {{/hasOriginalResearch}}
   
   {{#profileGuidance}}
-  ## PAPER PROFILE INTELLIGENCE
-  The following profile has been generated specifically for this paper based on the topic and discipline.
-  Follow this guidance carefully to ensure the paper meets discipline-specific standards.
-  
+  ## PAPER PROFILE
   {{{profileGuidance}}}
   {{/profileGuidance}}
   
   {{#synthesisPatterns}}
-  ## PRE-ANALYZED RESEARCH PATTERNS
-  
-  The following patterns have been identified through systematic cross-document analysis.
-  Use these EXACT statistics in your writing - they have been verified across papers.
-  
+  ## PRE-ANALYZED PATTERNS (use exact statistics)
   {{#synthesisPatterns}}
-  ### Pattern: {{claim}}
-  - **Evidence**: {{supportStatement}}
-  {{#valuesSummary}}- **Quantitative data**: {{valuesSummary}}{{/valuesSummary}}
-  - **Importance**: {{importance}}
-  - **How to present**: {{presentationApproach}}
-  - **Supporting papers**: {{#supportingPapers}}{{.}}, {{/supportingPapers}}
-  
+  ### {{claim}}
+  - Evidence: {{supportStatement}}
+  {{#valuesSummary}}- Data: {{valuesSummary}}{{/valuesSummary}}
+  - Importance: {{importance}} | Present: {{presentationApproach}}
+  - Papers: {{#supportingPapers}}{{.}}, {{/supportingPapers}}
   {{/synthesisPatterns}}
-  
-  ⚠️ CRITICAL: These statistics are PRE-VERIFIED. Use them exactly as provided.
-  For example, if it says "6 of 8 studies (75%) found...", write exactly that.
+  ⚠️ Use statistics EXACTLY as provided (e.g., "6 of 8 studies (75%)").
   {{/synthesisPatterns}}
   
   {{#synthesisContradictions}}
-  ## SCHOLARLY DEBATES TO ADDRESS
-  
-  Present both sides fairly without dismissing either position.
-  
+  ## CONTRADICTIONS TO ADDRESS
   {{#synthesisContradictions}}
   ### {{description}}
-  - **Position A**: {{sides.0.position}}
-    Papers: {{#sides.0.papers}}{{.}}, {{/sides.0.papers}}
-  - **Position B**: {{sides.1.position}}
-    Papers: {{#sides.1.papers}}{{.}}, {{/sides.1.papers}}
-  {{#resolutionStrategy}}- **Resolution approach**: {{resolutionStrategy}}{{/resolutionStrategy}}
-  
+  - Position A: {{sides.0.position}} ({{#sides.0.papers}}{{.}}, {{/sides.0.papers}})
+  - Position B: {{sides.1.position}} ({{#sides.1.papers}}{{.}}, {{/sides.1.papers}})
+  {{#resolutionStrategy}}- Resolution: {{resolutionStrategy}}{{/resolutionStrategy}}
   {{/synthesisContradictions}}
   {{/synthesisContradictions}}
   
   {{#synthesisGaps}}
-  ## LITERATURE GAPS TO ACKNOWLEDGE
-  
+  ## GAPS TO ACKNOWLEDGE
   {{#synthesisGaps}}
-  - **{{description}}** (Importance: {{importance}})
-  {{#suggestedFutureWork}}  → Future work: {{suggestedFutureWork}}{{/suggestedFutureWork}}
+  - **{{description}}** ({{importance}}){{#suggestedFutureWork}} → {{suggestedFutureWork}}{{/suggestedFutureWork}}
   {{/synthesisGaps}}
   {{/synthesisGaps}}
   
   {{#sectionWritingGuidance}}
-  ## SECTION-SPECIFIC WRITING GUIDANCE
-  
-  - **Approach**: {{sectionWritingGuidance.approach}}
-  - **Tone**: {{sectionWritingGuidance.tone}}
-  {{#sectionWritingGuidance.transitionFrom}}- **Connect from previous section**: {{sectionWritingGuidance.transitionFrom}}{{/sectionWritingGuidance.transitionFrom}}
-  {{#sectionWritingGuidance.transitionTo}}- **Lead into next section**: {{sectionWritingGuidance.transitionTo}}{{/sectionWritingGuidance.transitionTo}}
-  
-  **Key points to make in this section:**
-  {{#sectionWritingGuidance.keyPointsToMake}}
-  - {{.}}
-  {{/sectionWritingGuidance.keyPointsToMake}}
+  ## SECTION GUIDANCE
+  **Approach:** {{sectionWritingGuidance.approach}} | **Tone:** {{sectionWritingGuidance.tone}}
+  {{#sectionWritingGuidance.transitionFrom}}From previous: {{sectionWritingGuidance.transitionFrom}}{{/sectionWritingGuidance.transitionFrom}}
+  {{#sectionWritingGuidance.transitionTo}}To next: {{sectionWritingGuidance.transitionTo}}{{/sectionWritingGuidance.transitionTo}}
+  **Key points:** {{#sectionWritingGuidance.keyPointsToMake}}{{.}}; {{/sectionWritingGuidance.keyPointsToMake}}
   {{/sectionWritingGuidance}}
   
   {{#outlineTree}}
@@ -698,155 +275,74 @@ user: |-
   {{/outlineTree}}
   
   {{#previousSectionsSummary}}
-  ## Approved Sections Summary
+  ## Previous Sections Summary
   {{previousSectionsSummary}}
   {{/previousSectionsSummary}}
   
   {{#alreadyCovered}}
-  ## Already Covered (Do Not Repeat)
+  ## Already Covered (DO NOT REPEAT)
   {{alreadyCovered}}
   {{/alreadyCovered}}
   
-  ## Current Writing Task
-  **Section Path:** {{sectionPath}}
-  **Target Length:** {{targetWords}} words
+  ## Current Task
+  **Section:** {{sectionPath}}
+  **Target:** {{targetWords}} words
+  {{#sectionPurpose}}**Purpose:** {{sectionPurpose}}{{/sectionPurpose}}
   
-  {{#sectionPurpose}}
-  **Section Purpose:** {{sectionPurpose}}
-  {{/sectionPurpose}}
-  
-  **Citation Guidance for This Section (CRITICAL):**
-  ⚠️ CITE FROM PROVIDED EVIDENCE - Academic credibility depends on proper citation.
-  
-  TARGETS (when evidence permits):
-  - At least 2-3 citations per paragraph (more for literature reviews)
-  - Never more than 2-3 sentences without a citation
-  - Use multiple numbered citations when synthesizing: [1] [2] [3]
-  
-  SOURCE DIVERSITY TARGET:
-  - You have evidence from multiple papers - USE AS MANY AS POSSIBLE
-  - Aim to cite at least 70% of available sources across the paper
-  - Don't over-rely on any single source - spread citations across the evidence pool
-  
-  MUST CITE: statistics, findings, theories, methods, definitions, claims about research.
-  If you mention what a study found, cite it. If you reference a concept, cite it.
-  
-  ⚠️ INTEGRITY SAFEGUARD: ONLY cite paper_ids from the evidence snippets above.
-  If evidence is insufficient, acknowledge the limitation rather than fabricate citations.
-  NEVER invent a paper_id. It's better to write less than to cite fake sources.
-  
-  {{#exclusions}}
-  **Must Not Include:** {{exclusions}}
-  {{/exclusions}}
-  
-  {{#requiredPoints}}
-  **Required Points:** {{requiredPoints}}
-  {{/requiredPoints}}
-  
-  {{#qualityCriteria}}
-  **Quality Criteria:** {{qualityCriteria}}
-  {{/qualityCriteria}}
-  
-  **Constraints:**
-  - Maintain logical flow with approved sections above
-  - Use only evidence from the provided context for citations
-  - {{#isRewrite}}Improve the existing draft while preserving key insights{{/isRewrite}}{{^isRewrite}}Create comprehensive initial draft{{/isRewrite}}
+  {{#exclusions}}**Exclude:** {{exclusions}}{{/exclusions}}
+  {{#requiredPoints}}**Required:** {{requiredPoints}}{{/requiredPoints}}
+  {{#qualityCriteria}}**Quality:** {{qualityCriteria}}{{/qualityCriteria}}
   
   {{#currentText}}
-  ### Current Draft
+  ### Current Draft (revise this)
   ```
   {{currentText}}
   ```
   {{/currentText}}
   
-  ### Evidence Context (prioritize unique usage; reuse sparingly if needed for coverage)
-  Each snippet is tagged with [CONTEXT FROM: paper_id]. Use the paper_id in your CITATIONS block at the end.
+  ### Evidence Context
+  Each snippet tagged with [CONTEXT FROM: paper_id]. Use paper_id in CITATIONS block.
   
-  **EVIDENCE STRENGTH GUIDE:**
-  Each snippet includes an "evidence_strength" field - use this to calibrate your claims:
-  - `full_text`: Strong evidence from the full paper. You can quote, paraphrase, and make confident claims.
-  - `abstract`: From abstract only. Use cautiously - say "According to..." or "The authors report..." rather than making strong assertions.
-  - `title_only`: Minimal evidence. Only mention the paper exists; do NOT make substantive claims about its content.
+  Evidence strength guide:
+  - `full_text`: Strong - quote and make confident claims
+  - `abstract`: Moderate - use "According to..." language
+  - `title_only`: Weak - only mention paper exists
   
   ```json
   {{evidenceSnippets}}
   ```
   
   {{#usedEvidenceLedger}}
-  ### Already Used Evidence (do not reuse)
+  ### Already Used Evidence
   {{usedEvidenceLedger}}
   {{/usedEvidenceLedger}}
   
   ---
   
-  **Instructions:**
-  {{#isRewrite}}Revise the above draft to address any issues while maintaining coherence with the document structure and approved sections.{{/isRewrite}}{{^isRewrite}}Write a complete {{sectionPath}} section that fits logically within the document structure.{{/isRewrite}}
+  ## OUTPUT REQUIREMENTS
   
-  **OUTPUT FORMAT (CRITICAL):**
-  1. Start with the section heading: ## {{sectionPath}}
-  2. Write the section content in proper markdown with [1], [2], etc. citation markers
-  3. End with a <!-- CITATIONS --> block mapping each number to paper_id and exact quote
-  4. Use proper paragraph breaks and markdown formatting
+  1. **Start:** ## {{sectionPath}}
+  2. **Content:** Synthesized prose with [1] [2] [3] citations
+  3. **End:** <!-- CITATIONS --> block mapping numbers to paper_ids
   
-  **CITATION REMINDER (FINAL CHECK):**
-  ⚠️ Before submitting, verify EVERY paragraph has 2-3+ citations.
-  
-  Use numbered [1], [2], [3] format with CITATIONS block at end. You MUST cite:
-  - Statistics or numerical data → CITE
-  - Research findings or results → CITE  
-  - Theories, models, frameworks → CITE
-  - Methods or approaches → CITE
-  - Definitions of terms → CITE
-  - Claims about what research shows → CITE
-  - Comparisons between studies → CITE BOTH
-  
-  ⚠️ FORMAT EXAMPLE - DO NOT COPY CONTENT, ONLY STRUCTURE:
-  "Research has shown that [topic from YOUR evidence] [1]. 
-  Scholars have identified [themes/findings from YOUR evidence] [2] [3]. 
-  These [aspects] are particularly prominent in [context from YOUR evidence] [4], 
-  where [relationship from YOUR evidence] [5]."
-  
-  <!-- CITATIONS
-  [1] paper_id: xxx | quote: "exact quote"
-  [2] paper_id: yyy | quote: "exact quote"
-  ...
-  -->
-  
-  ⚠️ This example shows CITATION DENSITY, not content to copy.
-  ALL content must come from YOUR evidence snippets above.
-  
-  ❌ BAD: Fabricated citations or paper_ids NOT in evidence snippets
-  ❌ BAD: Paragraphs with claims but no supporting citations
-  ✅ GOOD: Paragraphs with 3-5+ citations FROM PROVIDED EVIDENCE
-  ✅ ACCEPTABLE: Fewer citations when evidence is limited (acknowledge the limitation)
-  
-  **SYNTHESIS REMINDER (FINAL CHECK):**
-  ⚠️ Before submitting, verify you are SYNTHESIZING, not just describing:
-  - Are you comparing findings ACROSS sources?
-  - Have you identified patterns, contradictions, or debates?
-  - Are you explaining WHY studies might differ?
-  - Have you critically evaluated methodological quality?
-  - For complex comparisons, did you consider using a table?
-  
-  **STRUCTURE REQUIREMENTS:**
-  - Start with ## {{sectionPath}} heading
-  - Use ### for subsections within this section
-  - Write focused paragraphs (3-5 sentences each)
-  - Maintain logical flow between paragraphs
-  - Synthesize information from multiple sources
+  **FINAL CHECKLIST:**
+  □ Every paragraph has 2-3+ citations from evidence
+  □ Content is SYNTHESIZED (comparing/integrating), not just described
+  □ Pre-analyzed statistics used EXACTLY as provided
+  □ No fabricated citations or paper_ids
+  □ Different from "Already Covered" content
   {{#hasOriginalResearch}}
-  - Present your original findings with confidence - they are your contribution
-  - Clearly distinguish between your findings and cited prior work
+  □ YOUR findings presented without citations (your data)
   {{/hasOriginalResearch}}
 
 metadata:
-  version: "2.0"
+  version: "3.0"
   created: "2025-01-15"
-  updated: "2026-01-15"
-  description: "Unified skeleton - slimmed to core invariants. Paper-type specific guidance provided by dynamic Paper Profile system."
-  use_cases:
-    - "Full section generation"
-    - "Block-level rewrites"
-    - "Sentence-level edits"
-    - "Cross-section coherence maintenance"
-    - "Original research paper generation"
+  updated: "2026-02-04"
+  description: "Streamlined skeleton emphasizing synthesis over description. Reduced from 850 to ~200 lines."
+  optimization_notes:
+    - "Consolidated citation instructions (100→30 lines)"
+    - "Added before/after synthesis examples"
+    - "Made table guidance conditional"
+    - "Moved voice to compact format"
+    - "Removed redundant warnings/reminders"
