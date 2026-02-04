@@ -13,6 +13,7 @@
  */
 
 import 'server-only'
+import pLimit from 'p-limit'
 import { extractPaper } from '@/lib/extraction'
 import { 
   getExtractionsService, 
@@ -101,19 +102,20 @@ export async function extractThemesHybrid(
   // Step 2: Get cached extractions
   const cachedExtractions = await getExtractionsService(cachedPaperIds)
   
-  // Step 3: Extract papers that need it (with concurrency limit)
+  // Step 3: Extract papers that need it (with continuous concurrency)
   const CONCURRENCY = 3
   const newExtractions: Map<string, any> = new Map()
   
   if (needsExtraction.length > 0) {
     onProgress?.(`Extracting findings from ${needsExtraction.length} papers...`)
     
-    // Process in batches to avoid overwhelming the API
-    for (let i = 0; i < needsExtraction.length; i += CONCURRENCY) {
-      const batch = needsExtraction.slice(i, i + CONCURRENCY)
-      
-      const results = await Promise.all(
-        batch.map(async (paperId) => {
+    // Use p-limit for continuous concurrency without batch synchronization
+    const limit = pLimit(CONCURRENCY)
+    let completedCount = 0
+    
+    const results = await Promise.all(
+      needsExtraction.map(paperId => 
+        limit(async () => {
           const paper = papers.find(p => p.id === paperId)
           if (!paper) return null
           
@@ -121,6 +123,7 @@ export async function extractThemesHybrid(
           const content = (paper as any).pdf_content || paper.abstract || ''
           if (content.length < 200) {
             console.log(`Skipping extraction for ${paperId} - content too short`)
+            completedCount++
             return null
           }
           
@@ -130,6 +133,9 @@ export async function extractThemesHybrid(
               text: content
             })
             
+            completedCount++
+            onProgress?.(`Extracted ${completedCount}/${needsExtraction.length} papers...`)
+            
             if (result.success && result.extraction) {
               // Save to database
               await saveExtractionService(result.extraction)
@@ -137,19 +143,18 @@ export async function extractThemesHybrid(
             }
           } catch (error) {
             console.warn(`Extraction failed for ${paperId}:`, error)
+            completedCount++
           }
           return null
         })
       )
-      
-      // Collect successful extractions
-      for (const result of results) {
-        if (result) {
-          newExtractions.set(result.paperId, result.extraction)
-        }
+    )
+    
+    // Collect successful extractions
+    for (const result of results) {
+      if (result) {
+        newExtractions.set(result.paperId, result.extraction)
       }
-      
-      onProgress?.(`Extracted ${i + batch.length}/${needsExtraction.length} papers...`)
     }
   }
   

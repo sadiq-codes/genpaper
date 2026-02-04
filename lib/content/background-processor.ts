@@ -14,6 +14,7 @@ import { createChunksForPaper } from './ingestion'
 import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
 import { extractPaper } from '@/lib/extraction'
 import { saveExtractionService, hasExtractionService } from '@/lib/extraction/db-service'
+import pLimit from 'p-limit'
 
 // Processing status types
 export type ProcessingStatus = 'pending' | 'processing' | 'processed' | 'failed'
@@ -310,25 +311,23 @@ async function downloadPdfFromStorage(pdfUrl: string): Promise<Buffer> {
 }
 
 /**
- * Process multiple papers in parallel
+ * Process multiple papers with continuous concurrency
+ * Uses p-limit to avoid batch synchronization (where slowest paper holds up the batch)
  */
 export async function processMultiplePapers(
   paperIds: string[],
   options: { maxConcurrent?: number } = {}
 ): Promise<ProcessingResult[]> {
   const { maxConcurrent = 3 } = options
-  const results: ProcessingResult[] = []
   
   console.log(`[BackgroundProcessor] Processing ${paperIds.length} papers (max concurrent: ${maxConcurrent})`)
   
-  // Process in batches to limit concurrency
-  for (let i = 0; i < paperIds.length; i += maxConcurrent) {
-    const batch = paperIds.slice(i, i + maxConcurrent)
-    const batchResults = await Promise.all(
-      batch.map(paperId => processPaper(paperId))
-    )
-    results.push(...batchResults)
-  }
+  // Use p-limit for continuous concurrency without batch synchronization
+  const limit = pLimit(maxConcurrent)
+  
+  const results = await Promise.all(
+    paperIds.map(paperId => limit(() => processPaper(paperId)))
+  )
   
   const successful = results.filter(r => r.status === 'processed').length
   const failed = results.filter(r => r.status === 'failed').length

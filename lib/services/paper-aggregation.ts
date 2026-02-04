@@ -11,6 +11,7 @@ import {
   enhancePdfUrls,
   getPaperReferences
 } from './academic-apis'
+import pLimit from 'p-limit'
 import { checkPaperExists, createPaperMetadata } from '@/lib/db/papers'
 import { createChunksForPaper } from '@/lib/content/ingestion'
 import { getOrExtractFullText } from '@/lib/services/pdf-processor'
@@ -561,32 +562,43 @@ export async function searchAndIngestPapers(
   
   console.log(`📊 Deduplicated ${enhancedPapers.length} papers to ${uniquePapers.length} unique papers`)
   
-  // Process PDFs in parallel batches to utilize GROBID's 10-engine pool
-  const PARALLEL_PDF_BATCH_SIZE = 8 // Use 8 out of 10 GROBID engines, keep 2 as buffer
+  // Process PDFs with continuous concurrency using p-limit
+  // This avoids batch synchronization where slowest paper in batch holds up the next batch
+  // GROBID has 10 internal engines; we use 8 concurrent slots to leave buffer
+  const PDF_CONCURRENCY = 8
+  const pdfLimit = pLimit(PDF_CONCURRENCY)
   const pdfProcessingStartTime = Date.now()
   
-  for (let i = 0; i < uniquePapers.length; i += PARALLEL_PDF_BATCH_SIZE) {
-    const batch = uniquePapers.slice(i, i + PARALLEL_PDF_BATCH_SIZE)
-    const batchNum = Math.floor(i/PARALLEL_PDF_BATCH_SIZE) + 1
-    const batchStartTime = Date.now()
-    console.log(`📄 Processing PDF batch ${batchNum}: ${batch.length} papers`)
-    
-    // Process this batch in parallel
-    const batchResults = await Promise.allSettled(
-      batch.map(paper => processPaperWithPdf(paper, query))
+  console.log(`📄 Processing ${uniquePapers.length} papers with ${PDF_CONCURRENCY} concurrent slots`)
+  
+  // Track progress for logging
+  let completedCount = 0
+  const totalCount = uniquePapers.length
+  
+  // Process all papers with continuous concurrency (no batch synchronization)
+  const allResults = await Promise.allSettled(
+    uniquePapers.map(paper => 
+      pdfLimit(async () => {
+        const result = await processPaperWithPdf(paper, query)
+        completedCount++
+        // Log progress every 5 papers or at completion
+        if (completedCount % 5 === 0 || completedCount === totalCount) {
+          const elapsed = Date.now() - pdfProcessingStartTime
+          const avgPerPaper = Math.round(elapsed / completedCount)
+          console.log(`📄 Progress: ${completedCount}/${totalCount} papers (${avgPerPaper}ms avg)`)
+        }
+        return result
+      })
     )
-    
-    const batchDuration = Date.now() - batchStartTime
-    console.log(`📄 Batch ${batchNum} completed in ${batchDuration}ms`)
-    
-    // Collect successful results
-    for (const result of batchResults) {
-      if (result.status === 'fulfilled') {
-        ingestedIds.push(result.value.paperId)
-        ingestedPapers.push(result.value.paper)
-      } else {
-        console.warn('Paper processing failed:', result.reason)
-      }
+  )
+  
+  // Collect successful results
+  for (const result of allResults) {
+    if (result.status === 'fulfilled') {
+      ingestedIds.push(result.value.paperId)
+      ingestedPapers.push(result.value.paper)
+    } else {
+      console.warn('Paper processing failed:', result.reason)
     }
   }
   
