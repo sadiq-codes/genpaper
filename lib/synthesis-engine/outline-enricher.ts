@@ -38,6 +38,10 @@ export interface SectionWritingGuidance {
   keyPointsToMake: string[]
   transitionFrom?: string
   transitionTo?: string
+  // NEW: From Phase 4 enhancements
+  paragraphStrategy?: string
+  synthesisLevel?: string
+  mustNotRepeat?: string[]  // Claims from previous sections
 }
 
 /**
@@ -196,12 +200,19 @@ export async function enrichOutlineSections(
           gaps: planSection.content.gaps
         }
         
+        // Convert structured key points to strings for template
+        const keyPointStrings = planSection.keyPointsToMake.map(kp => kp.point)
+        
         enriched.writingGuidance = {
           approach: planSection.writingGuidance.approach,
           tone: planSection.writingGuidance.tone,
-          keyPointsToMake: planSection.keyPointsToMake,
+          keyPointsToMake: keyPointStrings,
           transitionFrom: planSection.writingGuidance.transitionFrom || undefined,
-          transitionTo: planSection.writingGuidance.transitionTo || undefined
+          transitionTo: planSection.writingGuidance.transitionTo || undefined,
+          // NEW: Pass structured guidance from Phase 4
+          paragraphStrategy: planSection.writingGuidance.paragraphStrategy || undefined,
+          synthesisLevel: planSection.writingGuidance.synthesisLevel || undefined,
+          mustNotRepeat: planSection.mustNotRepeat.length > 0 ? planSection.mustNotRepeat : undefined
         }
         
         enriched.paperPriority = {

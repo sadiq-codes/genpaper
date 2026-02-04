@@ -336,6 +336,11 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
   // Add writing guidance if available
   if (enriched.writingGuidance) {
     result.sectionWritingGuidance = enriched.writingGuidance
+    
+    // Pass mustNotRepeat as alreadyCovered for template
+    if (enriched.writingGuidance.mustNotRepeat && enriched.writingGuidance.mustNotRepeat.length > 0) {
+      ;(result as Record<string, unknown>).alreadyCovered = enriched.writingGuidance.mustNotRepeat.join('\n- ')
+    }
   }
   
   return result
