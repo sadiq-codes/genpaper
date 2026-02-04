@@ -441,6 +441,29 @@ decades of research on observational learning and self-efficacy."
 - Show how your work contributes to the field
 
 ═══════════════════════════════════════════════════════════════════════════════
+📊 TABLE RECOMMENDATIONS - Organize Complex Information
+═══════════════════════════════════════════════════════════════════════════════
+
+Tables help readers quickly compare studies and grasp patterns. Consider including:
+
+**Option 1: Summary of Reviewed Studies**
+| Author (Year) | Sample/Context | Method | Key Findings |
+|---------------|----------------|--------|--------------|
+| [From evidence] [1] | [If available] | [From evidence] | [From evidence] |
+
+**Option 2: Comparison of Approaches/Methods**
+| Approach | Advantages | Limitations | Supporting Studies |
+|----------|------------|-------------|-------------------|
+| [Approach] | [Pros] | [Cons] | [1] [2] |
+
+**Option 3: Contradictory Findings**
+| Finding | Studies Supporting | Studies Contradicting | Possible Explanation |
+|---------|-------------------|----------------------|---------------------|
+| [Topic] | [1] [2] | [3] | [Your analysis] |
+
+⚠️ Populate ONLY with data from your evidence snippets. Write "not reported" if unavailable.
+Tables complement prose - use them to organize information, not replace synthesis narrative.
+═══════════════════════════════════════════════════════════════════════════════
 `
   } else if (profile.paperType === 'researchArticle') {
     typeWarning = `
@@ -534,6 +557,158 @@ WHEN TO CITE BY SECTION:
 
 NOTE: In the Limitations section, acknowledge that this is an illustrative/template study 
 if specific real data was not provided. This maintains academic honesty.
+═══════════════════════════════════════════════════════════════════════════════
+`
+  } else if (profile.paperType === 'mastersThesis') {
+    typeWarning = `
+═══════════════════════════════════════════════════════════════════════════════
+⚠️  THIS IS A MASTER'S THESIS - REQUIRES BOTH LITERATURE SYNTHESIS AND ORIGINAL WORK  ⚠️
+═══════════════════════════════════════════════════════════════════════════════
+
+A Master's thesis demonstrates your ability to:
+1. Critically review and synthesize existing literature
+2. Conduct and present original research or analysis
+3. Contribute new knowledge or insights to your field
+
+The thesis should show mastery of scholarly conventions in your discipline while
+making a meaningful contribution through original work.
+
+═══════════════════════════════════════════════════════════════════════════════
+📊 TABLE RECOMMENDATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+**For Literature Review sections:**
+
+Summary of Key Studies:
+| Author (Year) | Sample | Design | Key Finding | Limitation |
+|---------------|--------|--------|-------------|------------|
+| [From evidence] [1] | [If available] | [Design] | [Finding] | [Limitation] |
+
+Theoretical Framework Comparison:
+| Theory | Key Propositions | Supporting Evidence | Critiques |
+|--------|-----------------|---------------------|-----------|
+| [Theory] | [Propositions] | [1] [2] | [Critiques] |
+
+Methodological Comparison:
+| Method | Strengths | Weaknesses | Studies Using |
+|--------|-----------|------------|---------------|
+| [Method] | [Strengths] | [Weaknesses] | [1] [2] |
+
+**For Results/Findings sections:**
+
+Descriptive Statistics:
+| Variable | N | Mean | SD | Min | Max |
+|----------|---|------|-----|-----|-----|
+| [Variable] | [N] | [Mean] | [SD] | [Min] | [Max] |
+
+Main Analysis Results:
+| Predictor | β | SE | p | 95% CI |
+|-----------|-----|------|-------|--------------|
+| [Predictor] | [β] | [SE] | [p] | [CI] |
+
+⚠️ Use only data from evidence or your own analysis. Never invent statistics.
+Tables help organize complex information - use them to complement your narrative.
+═══════════════════════════════════════════════════════════════════════════════
+`
+  } else if (profile.paperType === 'phdDissertation') {
+    typeWarning = `
+═══════════════════════════════════════════════════════════════════════════════
+⚠️  THIS IS A DOCTORAL DISSERTATION - REQUIRES COMPREHENSIVE SCHOLARLY CONTRIBUTION  ⚠️
+═══════════════════════════════════════════════════════════════════════════════
+
+A doctoral dissertation demonstrates:
+1. Mastery of the literature and theoretical foundations in your field
+2. Methodological rigor and significant original contribution
+3. Critical analysis that advances knowledge in the discipline
+
+The dissertation should represent a substantial, original contribution to scholarship
+that demonstrates your readiness for independent research.
+
+═══════════════════════════════════════════════════════════════════════════════
+📊 TABLE RECOMMENDATIONS - Comprehensive Documentation Expected
+═══════════════════════════════════════════════════════════════════════════════
+
+**For Literature Review chapters:**
+
+Comprehensive Study Summary:
+| Author (Year) | Research Question | Design | Sample | Key Findings | Limitations | Quality |
+|---------------|-------------------|--------|--------|--------------|-------------|---------|
+| [From evidence] [1] | [RQ] | [Design] | [Sample] | [Finding] | [Limitation] | [Rating] |
+
+Theoretical Framework Comparison:
+| Theory | Key Propositions | Predictions | Supporting Evidence | Contradicting Evidence |
+|--------|-----------------|-------------|---------------------|----------------------|
+| [Theory] | [Propositions] | [Predictions] | [1] [2] | [3] |
+
+Methodological Quality Assessment:
+| Study | Sample Adequacy | Measure Validity | Design Rigor | Overall Rating |
+|-------|----------------|------------------|--------------|----------------|
+| [1] | [Assessment] | [Assessment] | [Assessment] | [Rating] |
+
+**For Results/Analysis chapters:**
+
+Participant/Sample Characteristics:
+| Characteristic | N | % or M (SD) |
+|----------------|---|-------------|
+| [Demographic] | [N] | [Value] |
+
+Main Analysis Results (with full statistics):
+| Hypothesis | Predictor | β | SE | t | p | 95% CI | Supported? |
+|------------|-----------|-----|------|------|-------|--------------|------------|
+| H1 | [Predictor] | [β] | [SE] | [t] | [p] | [CI] | Yes/No |
+
+Robustness/Sensitivity Checks:
+| Analysis | Original Result | Alternative Specification | Conclusion |
+|----------|-----------------|--------------------------|------------|
+| [Test] | [Result] | [Alt Result] | [Robust/Not Robust] |
+
+⚠️ Doctoral work requires rigorous documentation. Use tables to demonstrate thoroughness.
+Never invent data - use only evidence from sources or your own analysis.
+═══════════════════════════════════════════════════════════════════════════════
+`
+  } else if (profile.paperType === 'capstoneProject') {
+    typeWarning = `
+═══════════════════════════════════════════════════════════════════════════════
+⚠️  THIS IS A CAPSTONE PROJECT - DEMONSTRATES APPLIED SCHOLARLY COMPETENCE  ⚠️
+═══════════════════════════════════════════════════════════════════════════════
+
+A capstone project shows your ability to:
+1. Apply scholarly methods to a practical problem or question
+2. Synthesize relevant literature to inform your approach
+3. Present findings in a clear, professional manner
+
+The capstone bridges academic learning and practical application, demonstrating
+your readiness to apply knowledge in professional contexts.
+
+═══════════════════════════════════════════════════════════════════════════════
+📊 TABLE RECOMMENDATIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+**For Literature Review:**
+
+Summary of Key Studies:
+| Author (Year) | Sample | Design | Key Finding | Relevance to Project |
+|---------------|--------|--------|-------------|---------------------|
+| [From evidence] [1] | [Sample] | [Design] | [Finding] | [Your assessment] |
+
+Comparison of Approaches:
+| Approach | Advantages | Limitations | Studies Using |
+|----------|------------|-------------|---------------|
+| [Method] | [Pros] | [Cons] | [1] [2] |
+
+**For Results/Findings:**
+
+Descriptive Statistics:
+| Variable | N | Mean | SD |
+|----------|---|------|-----|
+| [Variable] | [N] | [Mean] | [SD] |
+
+Research Question/Hypothesis Summary:
+| RQ/Hypothesis | Finding | Support Level |
+|---------------|---------|---------------|
+| RQ1 | [Finding] | Supported/Partial/Not Supported |
+
+⚠️ Use only data from evidence or your analysis. Tables should complement narrative.
 ═══════════════════════════════════════════════════════════════════════════════
 `
   }
