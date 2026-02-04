@@ -173,7 +173,7 @@ FOR EACH CONTRADICTION:
 - State the SPECIFIC disagreement with values
 - Classify the type
 - List papers on each side with their evidence strength
-- Propose SPECIFIC explanation: "This may be due to differences in sample age (18-25 vs 40-60)"
+- Propose SPECIFIC explanation: "This may be due to differences in [methodology/context/scope]"
 - Assess severity: minor (nuance), moderate (reconcilable), major (fundamental)
 - Suggest how it might be resolved
 
@@ -186,12 +186,12 @@ IDENTIFY GAPS BY ASKING:
 - What populations/contexts/methods are missing?
 
 GAP TYPES (identify at least one of each type if applicable):
-- POPULATION: "All studies focused on Western samples; non-Western contexts unexplored"
-- METHODOLOGICAL: "Predominantly cross-sectional; longitudinal studies needed"
-- TEMPORAL: "No studies post-2020; effects of recent changes unknown"
-- GEOGRAPHIC: "No studies from developing countries"
+- POPULATION/SAMPLE: "Studies limited to [specific context]; [other contexts] unexplored"
+- METHODOLOGICAL: "Predominantly [method type]; [alternative methods] needed"
+- TEMPORAL: "No studies after [year]; effects of recent developments unknown"
+- GEOGRAPHIC/CONTEXTUAL: "Limited to [regions/settings]; other contexts unexplored"
 - THEORETICAL: "Mechanism linking X to Y remains unspecified"
-- REPLICATION: "Key findings have not been replicated in independent samples"
+- REPLICATION: "Key findings have not been independently replicated"
 
 FOR EACH GAP - MUST INCLUDE:
 - Description: What specifically is missing?
@@ -199,8 +199,8 @@ FOR EACH GAP - MUST INCLUDE:
 - CONCRETE research question: "How does [factor] affect [outcome] in [underrepresented population]?"
 - Priority: How important is filling this gap?
 
-✅ GOOD: "No studies examined effects in adolescent populations (ages 12-17). Given that [related finding], understanding this age group is critical. Research question: How do X interventions affect Y outcomes in adolescents?"
-❌ BAD: "More research is needed on different populations"
+✅ GOOD: "No studies examined [specific context/population]. Given [related finding], understanding this is critical. Research question: How does [factor] affect [outcome] in [underrepresented context]?"
+❌ BAD: "More research is needed" (too vague, no specific direction)
 
 ═══════════════════════════════════════════════════════════════════════════════
 4. SYNTHESIS QUALITY ASSESSMENT

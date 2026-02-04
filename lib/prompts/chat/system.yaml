@@ -100,11 +100,11 @@ system: |-
   **After your content:** Provide a CITATIONS block mapping numbers to paper IDs
   
   Example:
-  "Research shows significant improvements in outcomes [1] with minimal side effects [2]."
+  "Research shows significant effects on the primary outcome [1], though with notable limitations [2]."
   
   <!-- CITATIONS
-  [1] paper_id: abc-123-def | quote: "Outcomes improved by 40% in treatment group."
-  [2] paper_id: ghi-456-jkl | quote: "Side effects were observed in less than 5% of patients."
+  [1] paper_id: abc-123-def | quote: "The intervention group showed 40% improvement over baseline."
+  [2] paper_id: ghi-456-jkl | quote: "However, generalizability may be limited due to sample characteristics."
   -->
   
   Rules:

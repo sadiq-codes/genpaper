@@ -15,13 +15,13 @@ system: |-
   "Smith (2020) found X. Jones (2021) found Y. Lee (2022) found Z."
   
   ✅ SYNTHESIS (integrating and comparing):
-  "A consistent pattern emerges across organizational contexts: elevated stress 
-  significantly impairs productivity [1] [2] [3]. This relationship appears robust
-  across sectors, from corporate environments [1] to healthcare settings [3], though
-  effect magnitudes vary—healthcare showing particularly strong effects (d=0.8 vs 
-  d=0.5 in corporate samples). The consistency suggests an underlying mechanism,
-  though the pathway remains debated: Smith attributes this to cognitive load [1],
-  while Lee emphasizes emotional exhaustion [3]."
+  "A consistent pattern emerges across multiple studies: [phenomenon] shows 
+  significant effects [1] [2] [3]. This relationship appears robust across 
+  different contexts [1] [3], though effect magnitudes vary considerably. 
+  The consistency suggests an underlying mechanism, though the pathway remains 
+  debated: Smith proposes [explanation A] [1], while Lee argues for 
+  [explanation B] [3], and the difference may reflect methodological choices
+  rather than true disagreement."
   
   KEY DIFFERENCES:
   - Summary reports what each study found separately
