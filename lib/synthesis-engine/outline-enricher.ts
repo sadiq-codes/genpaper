@@ -229,6 +229,43 @@ export async function enrichOutlineSections(
       }
     }
     
+    // Diagnostic logging for each section
+    info({
+      stage: 'synthesis-pipeline',
+      step: 'section-enrichment',
+      sectionIndex: index,
+      section: {
+        key: outlineSection.sectionKey,
+        title: outlineSection.title,
+        isLiteratureFocused: isLitFocused
+      },
+      planMatch: {
+        found: !!planSection,
+        matchedBy: planSection 
+          ? (planSection.outlineSectionKey === outlineSection.sectionKey ? 'key' : 'title')
+          : null,
+        planSectionTitle: planSection?.title || null
+      },
+      enrichment: {
+        hasWritingGuidance: !!enriched.writingGuidance,
+        keyPointsCount: enriched.writingGuidance?.keyPointsToMake?.length || 0,
+        mustNotRepeatCount: enriched.writingGuidance?.mustNotRepeat?.length || 0,
+        hasSynthesisContent: !!enriched.synthesisContent,
+        patternsCount: enriched.synthesisContent?.patterns?.length || 0,
+        usedFallback: isLitFocused && !planSection
+      }
+    }, `Section enrichment: ${outlineSection.title}`)
+    
+    // Warn if literature-focused section is missing mustNotRepeat (except first section)
+    if (isLitFocused && index > 0 && (!enriched.writingGuidance?.mustNotRepeat || enriched.writingGuidance.mustNotRepeat.length === 0)) {
+      warn({
+        stage: 'synthesis-pipeline',
+        issue: 'missing-must-not-repeat',
+        section: outlineSection.title,
+        sectionIndex: index
+      }, `⚠️ Section "${outlineSection.title}" has no mustNotRepeat - repetition prevention disabled`)
+    }
+    
     return enriched
   })
   

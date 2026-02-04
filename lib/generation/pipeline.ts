@@ -534,8 +534,48 @@ export async function generatePaper(
     
     let sectionContexts: SectionContext[] | EnrichedSectionContext[]
     
+    // Diagnostic logging for synthesis pipeline path decision
+    const FINDINGS_THRESHOLD = 5
+    const totalFindings = hybridResult?.extractionStats.totalFindings || 0
+    const usingSynthesisEnrichment = hybridResult && totalFindings >= FINDINGS_THRESHOLD
+    
+    info({
+      stage: 'synthesis-pipeline',
+      step: 'path-decision',
+      extraction: {
+        hasHybridResult: !!hybridResult,
+        totalFindings,
+        papersProcessed: hybridResult?.extractionStats.papersProcessed || 0,
+        papersExtracted: hybridResult?.extractionStats.papersExtracted || 0,
+        threshold: FINDINGS_THRESHOLD
+      },
+      decision: {
+        usingSynthesisEnrichment,
+        reason: !hybridResult 
+          ? 'no hybrid extraction result' 
+          : totalFindings < FINDINGS_THRESHOLD 
+            ? `findings (${totalFindings}) below threshold (${FINDINGS_THRESHOLD})`
+            : `findings (${totalFindings}) meets threshold (${FINDINGS_THRESHOLD})`
+      },
+      analysisStats: hybridResult ? {
+        patterns: hybridResult.analysisResult.patterns.length,
+        contradictions: hybridResult.analysisResult.contradictions.length,
+        gaps: hybridResult.analysisResult.gaps.length
+      } : null
+    }, `Synthesis pipeline: ${usingSynthesisEnrichment ? 'USING synthesis enrichment' : 'SKIPPING to RAG-only'}`)
+    
+    if (!usingSynthesisEnrichment && hybridResult) {
+      warn({
+        stage: 'synthesis-pipeline',
+        issue: 'below-threshold',
+        totalFindings,
+        threshold: FINDINGS_THRESHOLD
+      }, `⚠️ Only ${totalFindings} findings extracted - synthesis enrichment disabled (need ${FINDINGS_THRESHOLD}+)`)
+    }
+    
     // Try hybrid enrichment if we have analysis results
-    if (hybridResult && hybridResult.extractionStats.totalFindings >= 5) {
+    // Note: usingSynthesisEnrichment is only true when hybridResult exists
+    if (usingSynthesisEnrichment && hybridResult) {
       onProgress?.('writing', 40, 'Building enriched contexts with synthesis analysis...')
       
       try {

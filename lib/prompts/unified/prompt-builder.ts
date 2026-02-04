@@ -8,6 +8,7 @@ import type {
   SectionWritingGuidance
 } from '../types'
 import { PromptService, type PromptData, type TemplateOptions, type BuiltPrompt } from '@/lib/prompts/prompt-service'
+import { info, warn } from '@/lib/utils/logger'
 import { 
   type VoiceProfileId, 
   type VoiceProfileCore,
@@ -341,6 +342,45 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
     if (enriched.writingGuidance.mustNotRepeat && enriched.writingGuidance.mustNotRepeat.length > 0) {
       ;(result as Record<string, unknown>).alreadyCovered = enriched.writingGuidance.mustNotRepeat.join('\n- ')
     }
+  }
+  
+  // Diagnostic logging for synthesis pipeline debugging
+  const alreadyCoveredValue = (result as Record<string, unknown>).alreadyCovered as string | undefined
+  const sectionName = enriched.title || String(enriched.sectionKey)
+  info({
+    stage: 'synthesis-pipeline',
+    step: 'prompt-data-built',
+    section: sectionName,
+    sectionKey: enriched.sectionKey,
+    synthesisData: {
+      hasSynthesisPatterns: !!result.synthesisPatterns,
+      patternsCount: result.synthesisPatterns?.length || 0,
+      hasContradictions: !!result.synthesisContradictions,
+      contradictionsCount: result.synthesisContradictions?.length || 0,
+      hasGaps: !!result.synthesisGaps,
+      gapsCount: result.synthesisGaps?.length || 0
+    },
+    writingGuidance: {
+      hasGuidance: !!result.sectionWritingGuidance,
+      keyPointsCount: result.sectionWritingGuidance?.keyPointsToMake?.length || 0,
+      approach: result.sectionWritingGuidance?.approach || 'none',
+      tone: result.sectionWritingGuidance?.tone || 'none'
+    },
+    alreadyCovered: {
+      isSet: !!alreadyCoveredValue,
+      length: alreadyCoveredValue?.length || 0,
+      preview: alreadyCoveredValue ? alreadyCoveredValue.slice(0, 100) + (alreadyCoveredValue.length > 100 ? '...' : '') : null
+    }
+  }, `Prompt data built for: ${sectionName}`)
+  
+  // Warn if this is not the first section and alreadyCovered is not set
+  const sectionKeyStr = String(enriched.sectionKey).toLowerCase()
+  if (!alreadyCoveredValue && sectionKeyStr !== 'introduction' && !sectionName.toLowerCase().includes('introduction')) {
+    warn({
+      stage: 'synthesis-pipeline',
+      issue: 'no-already-covered',
+      section: sectionName
+    }, `⚠️ Section "${sectionName}" has no alreadyCovered content - repetition may occur`)
   }
   
   return result

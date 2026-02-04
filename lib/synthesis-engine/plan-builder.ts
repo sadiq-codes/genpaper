@@ -513,12 +513,48 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
       }
     }
     
+    // Diagnostic logging for synthesis pipeline debugging
+    const emptyKeyPointsSections = plan.sections
+      .filter(s => s.keyPointsToMake.length === 0)
+      .map(s => s.title)
+    
+    const sectionsWithNoMustNotRepeat = plan.sections
+      .filter((s, i) => i > 0 && s.mustNotRepeat.length === 0)
+      .map(s => s.title)
+    
     info({
+      stage: 'synthesis-pipeline',
+      step: 'plan-builder-complete',
       title: plan.overview.title,
       sections: plan.sections.length,
       totalWords: plan.overview.totalWordCount,
-      timeMs
+      timeMs,
+      sectionDetails: plan.sections.map(s => ({
+        title: s.title,
+        outlineKey: s.outlineSectionKey,
+        isLitFocused: s.isLiteratureFocused,
+        keyPointsCount: s.keyPointsToMake.length,
+        mustNotRepeatCount: s.mustNotRepeat.length,
+        patternsCount: s.content.patterns.length,
+        contradictionsCount: s.content.contradictions.length,
+        gapsCount: s.content.gaps.length,
+        synthesisLevel: s.writingGuidance.synthesisLevel,
+        paragraphStrategy: s.writingGuidance.paragraphStrategy || 'none'
+      })),
+      warnings: {
+        emptyKeyPointsSections: emptyKeyPointsSections.length > 0 ? emptyKeyPointsSections : null,
+        sectionsWithNoMustNotRepeat: sectionsWithNoMustNotRepeat.length > 0 ? sectionsWithNoMustNotRepeat : null
+      }
     }, 'Synthesis plan complete')
+    
+    // Log warnings explicitly for visibility
+    if (emptyKeyPointsSections.length > 0) {
+      warn({
+        stage: 'synthesis-pipeline',
+        issue: 'empty-key-points',
+        sections: emptyKeyPointsSections
+      }, `⚠️ ${emptyKeyPointsSections.length} sections have 0 key points - mustNotRepeat will be incomplete`)
+    }
     
     return {
       success: true,
