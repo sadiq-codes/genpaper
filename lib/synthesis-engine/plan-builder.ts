@@ -170,15 +170,23 @@ PARAGRAPH STRATEGY (choose most appropriate):
 - "specific_to_general": Start with examples, build to principles
 
 ═══════════════════════════════════════════════════════════════════════════════
-KEY POINTS STRUCTURE
+KEY POINTS STRUCTURE (REQUIRED FOR EVERY SECTION)
 ═══════════════════════════════════════════════════════════════════════════════
 
-For each key point, specify:
-- point: The specific claim to make
-- supportingPatternIds: Which patterns from analysis support this
-- requiredCitations: Paper IDs that MUST be cited for this point
+EVERY section MUST have at least 2-3 key points. Do NOT leave keyPointsToMake empty.
 
-This ensures every claim has explicit evidence backing.
+For each key point, specify:
+- point: The specific claim to make (derived from your analysis of the patterns, contradictions, and gaps)
+- supportingPatternIds: Which patterns from the analysis support this (can be empty for structural points)
+- requiredCitations: Paper IDs that MUST be cited (can be empty for methodological or concluding points)
+
+Section-type guidance:
+- Introduction: State the research problem and its significance
+- Literature Review/Thematic Analysis: Present synthesized findings with specific evidence from patterns
+- Discussion: Interpret findings, explain contradictions, connect to broader implications
+- Conclusion: Summarize key contributions and propose future directions
+
+Derive all key points from the actual patterns, contradictions, and gaps provided in the analysis above.
 
 ═══════════════════════════════════════════════════════════════════════════════
 CONTENT ALLOCATION

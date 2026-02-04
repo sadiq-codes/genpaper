@@ -458,8 +458,13 @@ function displayPlan(plan: NonNullable<Awaited<ReturnType<typeof buildSynthesisP
     }
     
     console.log(`   Key Points:`)
-    section.keyPointsToMake.forEach((point, j) => {
-      console.log(`      ${j + 1}. ${point}`)
+    section.keyPointsToMake.forEach((kp, j) => {
+      // Handle both old string format and new structured format
+      const pointText = typeof kp === 'string' ? kp : kp.point
+      console.log(`      ${j + 1}. ${pointText}`)
+      if (typeof kp !== 'string' && kp.requiredCitations?.length > 0) {
+        console.log(`         [Required citations: ${kp.requiredCitations.join(', ')}]`)
+      }
     })
   })
 }
