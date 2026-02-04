@@ -55,13 +55,38 @@ export interface StructuralConstraints {
 // =============================================================================
 
 /**
+ * Paragraph structure strategy for section writing
+ */
+export type ParagraphStrategy = 
+  | 'pattern_first'       // Lead with main pattern, then supporting evidence
+  | 'chronological'       // Trace development over time
+  | 'compare_contrast'    // Juxtapose different findings/views
+  | 'problem_solution'    // Present issue, then approaches
+  | 'general_to_specific' // Start broad, narrow down
+  | 'specific_to_general' // Start with examples, build to principles
+
+/**
+ * Synthesis intensity level
+ */
+export type SynthesisLevel = 'high' | 'moderate' | 'low'
+
+/**
+ * Structured key point with supporting evidence
+ */
+export interface StructuredKeyPoint {
+  point: string
+  supportingPatternIds: string[]
+  requiredCitations: string[]
+}
+
+/**
  * A planned section of the synthesis
  * Must align with outline sections and paper type constraints
  */
 export interface SectionPlan {
   id: string
   
-  // NEW: Link to outline section (required for pipeline integration)
+  // Link to outline section (required for pipeline integration)
   outlineSectionKey: string          // Maps to GeneratedOutline section key
   isLiteratureFocused: boolean       // Should this section get synthesis enrichment?
   
@@ -89,11 +114,17 @@ export interface SectionPlan {
     tone: string                   // e.g., "analytical", "critical", "descriptive"
     transitionFrom?: string        // How to connect from previous section
     transitionTo?: string          // How to lead into next section
+    // NEW: Structured paragraph guidance
+    paragraphStrategy?: ParagraphStrategy
+    synthesisLevel: SynthesisLevel // high = heavy integration, moderate = some, low = mostly descriptive
   }
   
   // Targets
   targetWordCount: number
-  keyPointsToMake: string[]        // Main takeaways for this section
+  keyPointsToMake: StructuredKeyPoint[]  // Structured key points with supporting evidence
+  
+  // NEW: Repetition prevention
+  mustNotRepeat: string[]          // Claims already established - do not restate
 }
 
 /**

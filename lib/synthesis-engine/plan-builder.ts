@@ -62,7 +62,7 @@ const GapPlanSchema = z.object({
 })
 
 const SectionPlanSchema = z.object({
-  // NEW: Link to outline section (required for pipeline integration)
+  // Link to outline section (required for pipeline integration)
   outlineSectionKey: z.string().describe('The outline section key this maps to, e.g., "introduction", "literatureReview", "discussion"'),
   isLiteratureFocused: z.boolean().describe('True if this section discusses existing literature (should get synthesis enrichment)'),
   
@@ -79,13 +79,32 @@ const SectionPlanSchema = z.object({
     supporting: z.array(z.string()).describe('Can cite these if needed')
   }),
   writingGuidance: z.object({
-    approach: z.string().describe('How to write this section'),
-    tone: z.string().describe('Tone to use'),
+    approach: z.string().describe('How to write this section: synthesis, critical analysis, comparison, etc.'),
+    tone: z.string().describe('Tone: objective, evaluative, exploratory, etc.'),
     transitionFrom: z.string().nullable().describe('How to connect from previous section'),
-    transitionTo: z.string().nullable().describe('How to lead into next section')
+    transitionTo: z.string().nullable().describe('How to lead into next section'),
+    // NEW: Structured paragraph guidance
+    paragraphStrategy: z.enum([
+      'pattern_first',       // Lead with main pattern, then supporting evidence
+      'chronological',       // Trace development over time
+      'compare_contrast',    // Juxtapose different findings/views
+      'problem_solution',    // Present issue, then approaches
+      'general_to_specific', // Start broad, narrow down
+      'specific_to_general'  // Start with examples, build to principles
+    ]).nullable().describe('How to structure paragraphs in this section'),
+    // NEW: Synthesis vs description balance
+    synthesisLevel: z.enum(['high', 'moderate', 'low']).describe(
+      'high = heavy integration across sources, moderate = some comparison, low = mostly descriptive (for Methods/Results)'
+    )
   }),
   targetWordCount: z.number().describe('Target word count for this section'),
-  keyPointsToMake: z.array(z.string()).describe('Main takeaways for this section')
+  keyPointsToMake: z.array(z.object({
+    point: z.string().describe('The key point to make'),
+    supportingPatternIds: z.array(z.string()).describe('Pattern IDs that support this point'),
+    requiredCitations: z.array(z.string()).describe('Paper IDs that MUST be cited for this point')
+  })).describe('Structured key points with supporting evidence'),
+  // NEW: Repetition prevention
+  mustNotRepeat: z.array(z.string()).describe('Key claims/points already established in previous sections - do not restate')
 })
 
 const SynthesisPlanSchema = z.object({
@@ -111,44 +130,84 @@ const SynthesisPlanSchema = z.object({
 
 const SYSTEM_PROMPT = `You are an expert academic writer planning a literature synthesis. Your task is to create a detailed plan for writing a synthesis based on cross-document analysis results.
 
-CRITICAL INSTRUCTIONS:
+═══════════════════════════════════════════════════════════════════════════════
+CRITICAL INSTRUCTIONS
+═══════════════════════════════════════════════════════════════════════════════
 
 1. SECTION COUNT (MOST IMPORTANT)
    - You MUST create EXACTLY the same number of sections as specified in the outline
-   - Do NOT skip sections, combine sections, or add extra sections
-   - If the outline has 5 sections, your plan MUST have exactly 5 sections
+   - Do NOT skip, combine, or add extra sections
+   - If outline has 5 sections, your plan MUST have exactly 5 sections
 
 2. SECTION ALIGNMENT
-   - Each section MUST specify an outlineSectionKey matching the provided outline EXACTLY
+   - Each section MUST specify outlineSectionKey matching the outline EXACTLY
    - Each section MUST specify isLiteratureFocused (copy value from outline)
-   - Literature-focused sections get synthesis patterns/contradictions/gaps
-   - Non-literature sections (Methods, Results) should NOT include synthesis patterns
+   - Literature-focused sections: include patterns/contradictions/gaps
+   - Non-literature sections (Methods, Results): NO synthesis patterns
 
 3. PAPER TYPE CONSTRAINTS
-   - Respect the paper type rules (required sections, forbidden sections)
-   - Match your sections to the provided outline structure
+   - Respect required/forbidden sections for the paper type
+   - Match sections to the provided outline structure
    - Allocate content appropriately for the paper type
 
-4. PATTERN PRESENTATION
-   - Decide which patterns are central vs supporting
-   - Plan how to present quantitative data clearly
-   - Include support statements like "X of Y studies (Z%) found..."
-   - Only assign patterns to literature-focused sections
+═══════════════════════════════════════════════════════════════════════════════
+WRITING GUIDANCE PER SECTION
+═══════════════════════════════════════════════════════════════════════════════
 
-5. HANDLING CONTRADICTIONS
-   - Present both sides fairly
-   - Offer explanations for disagreements
-   - Don't dismiss valid conflicting findings
+For each section, specify:
 
-6. GAPS AND FUTURE WORK
-   - Integrate gaps naturally, typically in Discussion or Conclusion
-   - Connect gaps to patterns (what's known vs unknown)
-   - Suggest concrete future research directions
+SYNTHESIS LEVEL:
+- "high": Heavy integration across sources (literature review sections)
+- "moderate": Some comparison, but also descriptive (discussion sections)
+- "low": Mostly descriptive, minimal synthesis (methods, results sections)
 
-7. NARRATIVE FLOW
-   - Plan transitions between sections
-   - Maintain a clear argument throughout
-   - End with synthesis, not just summary
+PARAGRAPH STRATEGY (choose most appropriate):
+- "pattern_first": Lead with main pattern, then supporting evidence
+- "chronological": Trace development over time
+- "compare_contrast": Juxtapose different findings/views
+- "problem_solution": Present issue, then approaches
+- "general_to_specific": Start broad, narrow down
+- "specific_to_general": Start with examples, build to principles
+
+═══════════════════════════════════════════════════════════════════════════════
+KEY POINTS STRUCTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+For each key point, specify:
+- point: The specific claim to make
+- supportingPatternIds: Which patterns from analysis support this
+- requiredCitations: Paper IDs that MUST be cited for this point
+
+This ensures every claim has explicit evidence backing.
+
+═══════════════════════════════════════════════════════════════════════════════
+CONTENT ALLOCATION
+═══════════════════════════════════════════════════════════════════════════════
+
+PATTERN PRESENTATION:
+- Decide which patterns are central vs supporting
+- Include support statements: "X of Y studies (Z%) found..."
+- Only assign patterns to literature-focused sections
+- Use EXACT statistics from analysis
+
+CONTRADICTIONS:
+- Present both sides fairly
+- Offer explanations for disagreements
+- Don't dismiss valid conflicting findings
+
+GAPS:
+- Integrate naturally (typically in Discussion or Conclusion)
+- Connect to patterns (what's known vs unknown)
+- Suggest concrete future research directions
+
+═══════════════════════════════════════════════════════════════════════════════
+NARRATIVE FLOW
+═══════════════════════════════════════════════════════════════════════════════
+
+- Plan transitions between sections (transitionFrom, transitionTo)
+- Maintain a clear argument throughout
+- End with synthesis, not just summary
+- Avoid repetition: don't restate claims from earlier sections
 
 Remember: This is a PLAN for writing, not the synthesis itself. Be specific about what to write and how.`
 
@@ -364,43 +423,58 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
       }
     }
     
+    // Track claims across sections to prevent repetition
+    const claimsEstablished: string[] = []
+    
     // Transform to final plan with IDs
-    const sections: SectionPlan[] = object.sections.map((s, _i) => ({
-      id: uuidv4(),
-      // NEW: Include outline alignment fields
-      outlineSectionKey: s.outlineSectionKey,
-      isLiteratureFocused: s.isLiteratureFocused,
-      title: s.title,
-      purpose: s.purpose,
-      content: {
-        patterns: s.content.patterns.map(p => ({
-          ...p,
-          data: {
-            supportStatement: p.data.supportStatement,
-            valuesSummary: p.data.valuesSummary || undefined,
-            contextNotes: p.data.contextNotes || undefined
-          }
-        })),
-        contradictions: s.content.contradictions.map(c => ({
-          ...c,
-          resolutionStrategy: c.resolutionStrategy || undefined
-        })),
-        gaps: s.content.gaps.map(g => ({
-          ...g,
-          suggestedFutureWork: g.suggestedFutureWork || undefined
-        })),
-        additionalPoints: s.content.additionalPoints
-      },
-      papers: s.papers,
-      writingGuidance: {
-        approach: s.writingGuidance.approach,
-        tone: s.writingGuidance.tone,
-        transitionFrom: s.writingGuidance.transitionFrom || undefined,
-        transitionTo: s.writingGuidance.transitionTo || undefined
-      },
-      targetWordCount: s.targetWordCount,
-      keyPointsToMake: s.keyPointsToMake
-    }))
+    const sections: SectionPlan[] = object.sections.map((s, i) => {
+      // Collect key points as claims that shouldn't be repeated in later sections
+      const sectionClaims = s.keyPointsToMake.map(kp => kp.point)
+      
+      const sectionPlan: SectionPlan = {
+        id: uuidv4(),
+        outlineSectionKey: s.outlineSectionKey,
+        isLiteratureFocused: s.isLiteratureFocused,
+        title: s.title,
+        purpose: s.purpose,
+        content: {
+          patterns: s.content.patterns.map(p => ({
+            ...p,
+            data: {
+              supportStatement: p.data.supportStatement,
+              valuesSummary: p.data.valuesSummary || undefined,
+              contextNotes: p.data.contextNotes || undefined
+            }
+          })),
+          contradictions: s.content.contradictions.map(c => ({
+            ...c,
+            resolutionStrategy: c.resolutionStrategy || undefined
+          })),
+          gaps: s.content.gaps.map(g => ({
+            ...g,
+            suggestedFutureWork: g.suggestedFutureWork || undefined
+          })),
+          additionalPoints: s.content.additionalPoints
+        },
+        papers: s.papers,
+        writingGuidance: {
+          approach: s.writingGuidance.approach,
+          tone: s.writingGuidance.tone,
+          transitionFrom: s.writingGuidance.transitionFrom || undefined,
+          transitionTo: s.writingGuidance.transitionTo || undefined,
+          paragraphStrategy: s.writingGuidance.paragraphStrategy || undefined,
+          synthesisLevel: s.writingGuidance.synthesisLevel || 'moderate'
+        },
+        targetWordCount: s.targetWordCount,
+        keyPointsToMake: s.keyPointsToMake,
+        mustNotRepeat: i > 0 ? [...claimsEstablished] : []  // Previous sections' claims
+      }
+      
+      // Add this section's claims for future sections
+      claimsEstablished.push(...sectionClaims)
+      
+      return sectionPlan
+    })
     
     const plan: SynthesisPlan = {
       id: uuidv4(),
