@@ -121,8 +121,19 @@ export async function extractThemesHybrid(
           
           // Get paper content - prefer pdf_content, fall back to abstract
           const content = (paper as any).pdf_content || paper.abstract || ''
-          if (content.length < 200) {
-            console.log(`Skipping extraction for ${paperId} - content too short`)
+          
+          // Only extract from papers with substantial content
+          // This prevents wasting API calls on abstract-only papers
+          const MIN_CONTENT_LENGTH = 2000 // ~500 words minimum
+          const MIN_ABSTRACT_LENGTH = 500  // Allow good abstracts as fallback
+          
+          const hasFullText = content.length >= MIN_CONTENT_LENGTH
+          const hasGoodAbstract = !!(paper as any).pdf_content === false && 
+                                  paper.abstract && 
+                                  paper.abstract.length >= MIN_ABSTRACT_LENGTH
+          
+          if (!hasFullText && !hasGoodAbstract) {
+            console.log(`Skipping extraction for ${paperId} - insufficient content (${content.length} chars)`)
             completedCount++
             return null
           }
