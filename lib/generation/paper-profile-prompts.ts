@@ -175,7 +175,11 @@ Create a comprehensive paper profile by analyzing:
 
 2. STRUCTURE GUIDANCE
    - What sections are APPROPRIATE for this specific ${formatPaperType(paperType)} on this topic?
-   - For each section provide: key (camelCase), title, purpose, word range (min/max), citation expectation (none/light/moderate/heavy), and key elements that should appear
+   - For each section provide: key (camelCase), title, purpose, word range (min/max), citation expectation (none/light/moderate/heavy), key elements, and isLiteratureFocused
+   - isLiteratureFocused: Set to TRUE for sections that discuss, review, or synthesize EXISTING LITERATURE (prior work, existing theories, published findings). Set to FALSE for sections describing ORIGINAL work (your own methodology, data collection, results, analysis).
+     * For LITERATURE REVIEWS: Almost ALL sections are literature-focused (even "Methodology" describes literature search, "Findings" synthesizes what literature says)
+     * For RESEARCH ARTICLES: Introduction, Literature Review, Discussion are literature-focused. Methodology, Results are NOT (they describe original work)
+     * For THESES: Introduction, Literature Review, Discussion, Conclusion are literature-focused. Methods, Results, Analysis of original data are NOT
    - What sections would be INAPPROPRIATE for this paper type and why?
    - What elements are REQUIRED somewhere in the paper (e.g., theoretical framework, practical implications)?
 
@@ -254,7 +258,8 @@ Return a JSON object with this exact structure:
         "minWords": number,
         "maxWords": number,
         "citationExpectation": "none|light|moderate|heavy",
-        "keyElements": ["string"]
+        "keyElements": ["string"],
+        "isLiteratureFocused": boolean // TRUE if section discusses/synthesizes existing literature, FALSE if describes original methodology/data/results
       }
     ],
     "inappropriateSections": [
@@ -403,9 +408,10 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
               minWords: { type: 'number' as const },
               maxWords: { type: 'number' as const },
               citationExpectation: { type: 'string' as const, enum: ['none', 'light', 'moderate', 'heavy'] },
-              keyElements: { type: 'array' as const, items: { type: 'string' as const } }
+              keyElements: { type: 'array' as const, items: { type: 'string' as const } },
+              isLiteratureFocused: { type: 'boolean' as const }
             },
-            required: ['key', 'title', 'purpose', 'minWords', 'maxWords', 'citationExpectation', 'keyElements'],
+            required: ['key', 'title', 'purpose', 'minWords', 'maxWords', 'citationExpectation', 'keyElements', 'isLiteratureFocused'],
             additionalProperties: false
           }
         },

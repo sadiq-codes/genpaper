@@ -43,15 +43,15 @@ const LITERATURE_FOCUSED_SECTIONS = new Set([
 /**
  * Section keys that are NOT literature-focused (describe original work)
  * These should NOT receive synthesis patterns/contradictions/gaps
+ * 
+ * NOTE: For literature reviews, ONLY non-content sections are truly empirical.
+ * Sections like "methodology" (literature search) and "findings" (synthesized findings)
+ * ARE literature-focused in a literature review context.
  */
 const EMPIRICAL_SECTIONS = new Set([
-  'methodology',
-  'methods',
   'materials',
   'materialsAndMethods',
   'materials_and_methods',
-  'results',
-  'findings',
   'dataAnalysis',
   'data_analysis',
   'appendix',
@@ -60,6 +60,17 @@ const EMPIRICAL_SECTIONS = new Set([
   'acknowledgements',
   'references',
   'bibliography'
+])
+
+/**
+ * Section keys that are empirical ONLY in research articles (not literature reviews)
+ * These describe original research methodology/results
+ */
+const EMPIRICAL_IN_RESEARCH_ONLY = new Set([
+  'methodology',
+  'methods',
+  'results',
+  'findings'
 ])
 
 /**
@@ -75,17 +86,27 @@ export function isLiteratureFocusedSection(
 ): boolean {
   const normalizedKey = sectionKey.toLowerCase().replace(/[-_\s]/g, '')
   
-  // For literature reviews, almost everything is literature-focused
+  // Always exclude non-content sections (appendix, references, etc.)
+  if (EMPIRICAL_SECTIONS.has(sectionKey)) {
+    return false
+  }
+  
+  // For literature reviews, almost ALL content sections are literature-focused
+  // because even "methodology" (literature search) and "findings" (synthesized findings)
+  // are about the literature, not original research
   if (paperType === 'literatureReview') {
-    // Only exclude truly non-literature sections
-    if (EMPIRICAL_SECTIONS.has(sectionKey)) {
-      return false
-    }
+    // Only appendix/references/etc. are not literature-focused
     // Everything else in a literature review discusses literature
     return true
   }
   
-  // For other paper types, check if explicitly literature-focused
+  // For other paper types (research articles, theses, etc.):
+  // Methodology/Methods/Results/Findings are empirical (describe original work)
+  if (EMPIRICAL_IN_RESEARCH_ONLY.has(sectionKey)) {
+    return false
+  }
+  
+  // Check if explicitly literature-focused
   if (LITERATURE_FOCUSED_SECTIONS.has(sectionKey)) {
     return true
   }
@@ -125,10 +146,14 @@ export function buildConstraintsFromProfile(profile: PaperProfile): StructuralCo
   const paperType = profile.paperType as PaperTypeKey
   
   // Build required sections from profile
+  // Use AI-determined isLiteratureFocused if available, otherwise fall back to heuristic
   const requiredSections: SectionConstraint[] = profile.structure.appropriateSections.map(section => ({
     key: section.key,
     name: section.title || section.key,
-    isLiteratureFocused: isLiteratureFocusedSection(section.key, paperType),
+    // Prefer AI's determination, fall back to heuristic for backwards compatibility
+    isLiteratureFocused: section.isLiteratureFocused !== undefined 
+      ? section.isLiteratureFocused 
+      : isLiteratureFocusedSection(section.key, paperType),
     required: true, // All appropriate sections are required by default
     purpose: section.purpose,
     minWords: section.minWords,

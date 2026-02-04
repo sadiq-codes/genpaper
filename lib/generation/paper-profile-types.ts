@@ -47,6 +47,13 @@ export interface SectionProfile {
   citationExpectation: 'none' | 'light' | 'moderate' | 'heavy'
   /** Key elements that should appear in this section */
   keyElements: string[]
+  /** 
+   * Whether this section discusses/synthesizes existing literature.
+   * TRUE for sections that review, synthesize, or discuss prior work.
+   * FALSE for sections describing original methodology, data, or results.
+   * For literature reviews, most sections are literature-focused.
+   */
+  isLiteratureFocused?: boolean
   /** Optional subsections within this section */
   subsections?: SectionProfile[]
 }

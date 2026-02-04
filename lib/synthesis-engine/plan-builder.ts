@@ -102,7 +102,7 @@ const SectionPlanSchema = z.object({
     point: z.string().describe('The key point to make'),
     supportingPatternIds: z.array(z.string()).describe('Pattern IDs that support this point'),
     requiredCitations: z.array(z.string()).describe('Paper IDs that MUST be cited for this point')
-  })).describe('Structured key points with supporting evidence'),
+  })).min(2).describe('REQUIRED: At least 2-3 key points per section. Each point should be a specific claim the section will make.'),
   // NEW: Repetition prevention
   mustNotRepeat: z.array(z.string()).describe('Key claims/points already established in previous sections - do not restate')
 })

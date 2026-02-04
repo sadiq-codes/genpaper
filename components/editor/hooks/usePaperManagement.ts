@@ -13,7 +13,7 @@
  * - Remove confirmation dialog state
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { ProjectPaper } from '../types'
@@ -102,12 +102,21 @@ export function usePaperManagement({
 }: UsePaperManagementOptions): UsePaperManagementReturn {
   const queryClient = useQueryClient()
   const [papers, setPapers] = useState<ProjectPaper[]>(initialPapers)
+  const lastInitialSignatureRef = useRef<string>('')
   const [removePaperDialog, setRemovePaperDialog] = useState<RemovePaperDialogState>({
     open: false,
     paperId: '',
     paperTitle: '',
     claimCount: 0,
   })
+
+  // Sync local state when server-provided papers change (e.g., after refresh)
+  useEffect(() => {
+    const nextSignature = initialPapers.map(p => p.id).join(',')
+    if (nextSignature === lastInitialSignatureRef.current) return
+    lastInitialSignatureRef.current = nextSignature
+    setPapers(initialPapers)
+  }, [initialPapers])
 
   // Add paper mutation with optimistic update
   const addPaperMutation = useMutation({
