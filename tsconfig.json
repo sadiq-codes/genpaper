@@ -29,5 +29,5 @@
     "typeRoots": ["./node_modules/@types", "./types"]
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "types/**/*.ts"],
-  "exclude": ["node_modules", "supabase/functions", "scripts/test-*synthesis*.ts"]
+  "exclude": ["node_modules", "supabase/functions"]
 }
