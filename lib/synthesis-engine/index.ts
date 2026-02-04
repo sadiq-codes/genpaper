@@ -1,19 +1,22 @@
 /**
  * Synthesis Engine
  * 
- * Complete hybrid synthesis system combining:
+ * Paper-type-aware hybrid synthesis system combining:
  * - Structured extraction and analysis (the brain)
  * - RAG chunk retrieval (the brawn)
+ * - Paper type constraints from PaperProfile
  * 
- * Phase 3: Plan Builder - Creates structured synthesis plans
- * Phase 4: Writer - Generates prose using data-driven approach
- * Phase 5: Hybrid System - Combines structured data with RAG chunks
+ * Key components:
+ * - Plan Builder: Creates paper-type-aware synthesis plans
+ * - Constraint Builder: Extracts structural rules from PaperProfile
+ * - Outline Enricher: Maps synthesis content to outline sections
+ * - Theme Adapter: Converts analysis to ThemeAnalysis for pipeline compatibility
  * 
  * @module lib/synthesis-engine
  */
 
 // =============================================================================
-// Types - Planning (Phase 3)
+// Types - Core (Planning & Constraints)
 // =============================================================================
 export type {
   SynthesisPlan,
@@ -23,17 +26,11 @@ export type {
   PatternPlan,
   ContradictionPlan,
   GapPlan,
-  PaperInfo
+  PaperInfo,
+  StructuralConstraints,
+  SectionConstraint,
+  OutlineSectionInput
 } from './types'
-
-// =============================================================================
-// Types - Writing (Phase 4)
-// =============================================================================
-export type {
-  WriterInput,
-  WriterOutput,
-  GeneratedSection
-} from './writer'
 
 // =============================================================================
 // Types - Hybrid (Phase 5)
@@ -71,11 +68,6 @@ export type {
 // Functions - Planning (Phase 3)
 // =============================================================================
 export { buildSynthesisPlan } from './plan-builder'
-
-// =============================================================================
-// Functions - Writing (Phase 4 - Data-only, no chunks)
-// =============================================================================
-export { writeSynthesis, writeSingleSection } from './writer'
 
 // =============================================================================
 // Functions - Hybrid Writing (Phase 5 - Data + Chunks)

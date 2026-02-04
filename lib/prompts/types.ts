@@ -210,3 +210,53 @@ export interface PolishInstructions {
     requiredSections?: string[];
   };
 }
+
+// =============================================================================
+// Synthesis Enrichment Types (for hybrid generation)
+// =============================================================================
+
+/**
+ * Pattern data formatted for prompt templates
+ */
+export interface SynthesisPatternData {
+  id: string
+  claim: string
+  importance: string                 // "central", "supporting", "minor"
+  supportStatement: string           // "6 of 8 studies (75%) found..."
+  valuesSummary?: string             // "ranging from 24% to 34%"
+  presentationApproach: string       // How to present this pattern
+  paperIds: string[]                 // Supporting paper IDs
+  paperList: string                  // Formatted paper list for template
+}
+
+/**
+ * Contradiction data formatted for prompt templates
+ */
+export interface SynthesisContradictionData {
+  id: string
+  description: string
+  sideA: { position: string; papers: string }
+  sideB: { position: string; papers: string }
+  resolutionStrategy?: string
+}
+
+/**
+ * Gap data formatted for prompt templates
+ */
+export interface SynthesisGapData {
+  id: string
+  description: string
+  importance: string                 // Why this gap matters
+  suggestedFutureWork?: string
+}
+
+/**
+ * Section-specific writing guidance from synthesis plan
+ */
+export interface SectionWritingGuidance {
+  approach: string                   // How to write this section
+  tone: string                       // Tone to use
+  keyPointsToMake: string[]          // Main takeaways
+  transitionFrom?: string            // Connect from previous
+  transitionTo?: string              // Lead into next
+}

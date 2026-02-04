@@ -633,6 +633,65 @@ user: |-
   {{{profileGuidance}}}
   {{/profileGuidance}}
   
+  {{#synthesisPatterns}}
+  ## PRE-ANALYZED RESEARCH PATTERNS
+  
+  The following patterns have been identified through systematic cross-document analysis.
+  Use these EXACT statistics in your writing - they have been verified across papers.
+  
+  {{#synthesisPatterns}}
+  ### Pattern: {{claim}}
+  - **Evidence**: {{supportStatement}}
+  {{#valuesSummary}}- **Quantitative data**: {{valuesSummary}}{{/valuesSummary}}
+  - **Importance**: {{importance}}
+  - **How to present**: {{presentationApproach}}
+  - **Supporting papers**: {{#supportingPapers}}{{.}}, {{/supportingPapers}}
+  
+  {{/synthesisPatterns}}
+  
+  ⚠️ CRITICAL: These statistics are PRE-VERIFIED. Use them exactly as provided.
+  For example, if it says "6 of 8 studies (75%) found...", write exactly that.
+  {{/synthesisPatterns}}
+  
+  {{#synthesisContradictions}}
+  ## SCHOLARLY DEBATES TO ADDRESS
+  
+  Present both sides fairly without dismissing either position.
+  
+  {{#synthesisContradictions}}
+  ### {{description}}
+  - **Position A**: {{sides.0.position}}
+    Papers: {{#sides.0.papers}}{{.}}, {{/sides.0.papers}}
+  - **Position B**: {{sides.1.position}}
+    Papers: {{#sides.1.papers}}{{.}}, {{/sides.1.papers}}
+  {{#resolutionStrategy}}- **Resolution approach**: {{resolutionStrategy}}{{/resolutionStrategy}}
+  
+  {{/synthesisContradictions}}
+  {{/synthesisContradictions}}
+  
+  {{#synthesisGaps}}
+  ## LITERATURE GAPS TO ACKNOWLEDGE
+  
+  {{#synthesisGaps}}
+  - **{{description}}** (Importance: {{importance}})
+  {{#suggestedFutureWork}}  → Future work: {{suggestedFutureWork}}{{/suggestedFutureWork}}
+  {{/synthesisGaps}}
+  {{/synthesisGaps}}
+  
+  {{#sectionWritingGuidance}}
+  ## SECTION-SPECIFIC WRITING GUIDANCE
+  
+  - **Approach**: {{sectionWritingGuidance.approach}}
+  - **Tone**: {{sectionWritingGuidance.tone}}
+  {{#sectionWritingGuidance.transitionFrom}}- **Connect from previous section**: {{sectionWritingGuidance.transitionFrom}}{{/sectionWritingGuidance.transitionFrom}}
+  {{#sectionWritingGuidance.transitionTo}}- **Lead into next section**: {{sectionWritingGuidance.transitionTo}}{{/sectionWritingGuidance.transitionTo}}
+  
+  **Key points to make in this section:**
+  {{#sectionWritingGuidance.keyPointsToMake}}
+  - {{.}}
+  {{/sectionWritingGuidance.keyPointsToMake}}
+  {{/sectionWritingGuidance}}
+  
   {{#outlineTree}}
   ## Document Structure
   {{outlineTree}}

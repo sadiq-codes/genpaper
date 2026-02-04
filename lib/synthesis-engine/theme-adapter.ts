@@ -93,7 +93,7 @@ export function analysisResultToThemeAnalysis(
 /**
  * Convert a Pattern to an EmergentTheme
  */
-function patternToEmergentTheme(pattern: Pattern, papers: PaperInfo[]): EmergentTheme {
+function patternToEmergentTheme(pattern: Pattern, _papers: PaperInfo[]): EmergentTheme {
   // Get paper IDs that support this pattern
   const paperIds = pattern.support.papers.map(p => p.paperId)
   
@@ -125,7 +125,7 @@ function patternToEmergentTheme(pattern: Pattern, papers: PaperInfo[]): Emergent
 /**
  * Convert a Contradiction to a ScholarlyDebate
  */
-function contradictionToScholarlyDebate(contradiction: Contradiction, papers: PaperInfo[]): ScholarlyDebate {
+function contradictionToScholarlyDebate(contradiction: Contradiction, _papers: PaperInfo[]): ScholarlyDebate {
   // Map sides to debate positions
   const positions = contradiction.sides.map(side => ({
     stance: side.position,
@@ -233,7 +233,7 @@ function extractMethodologicalApproaches(patterns: Pattern[], papers: PaperInfo[
 /**
  * Generate organization suggestion based on analysis
  */
-function generateOrganizationSuggestion(analysis: AnalysisResult, papers: PaperInfo[]): OrganizationSuggestion {
+function generateOrganizationSuggestion(analysis: AnalysisResult, _papers: PaperInfo[]): OrganizationSuggestion {
   // Determine best approach based on what we found
   let approach: 'thematic' | 'chronological' | 'methodological' | 'theoretical' | 'hybrid'
   let rationale: string

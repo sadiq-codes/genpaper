@@ -1,5 +1,12 @@
 import 'server-only'
-import type { SectionContext, PaperTypeKey } from '../types'
+import type { 
+  SectionContext, 
+  PaperTypeKey,
+  SynthesisPatternData,
+  SynthesisContradictionData,
+  SynthesisGapData,
+  SectionWritingGuidance
+} from '../types'
 import { PromptService, type PromptData, type TemplateOptions, type BuiltPrompt } from '@/lib/prompts/prompt-service'
 import { 
   type VoiceProfileId, 
@@ -9,6 +16,7 @@ import {
   DEFAULT_VOICE_PROFILE_ID
 } from '@/lib/generation/voice-profiles'
 import type { PaperVoiceConfig } from '@/lib/generation/paper-profile-types'
+import type { EnrichedSectionContext } from '@/lib/synthesis-engine/outline-enricher'
 
 /**
  * Unified prompt builder that assembles contextual PromptData and delegates
@@ -50,9 +58,10 @@ export interface BuildPromptOptions extends TemplateOptions {
 
 /**
  * Main function: builds the unified prompt with contextual data
+ * Accepts both regular SectionContext and EnrichedSectionContext (with synthesis data)
  */
 export async function buildUnifiedPrompt(
-  context: SectionContext,
+  context: SectionContext | EnrichedSectionContext,
   options: BuildPromptOptions = {}
 ): Promise<BuiltPrompt> {
 
@@ -71,9 +80,10 @@ export async function buildUnifiedPrompt(
 
 /**
  * Generate all contextual data for the prompt
+ * Handles both regular and enriched contexts
  */
 async function generatePromptData(
-  context: SectionContext,
+  context: SectionContext | EnrichedSectionContext,
   options: BuildPromptOptions
 ): Promise<UnifiedPromptData> {
   // Project-level metadata (from options or defaults)
@@ -257,8 +267,75 @@ async function generatePromptData(
     // Voice/Authorial persona - controls hedging, confidence, citation posture
     voice: voiceWithFlags,
     // Quantification context for accurate claims about the literature base
-    literatureStats: quantificationContext
+    literatureStats: quantificationContext,
+    
+    // Synthesis enrichment (from EnrichedSectionContext if available)
+    ...buildSynthesisData(context)
   }
+}
+
+/**
+ * Build synthesis data from enriched context
+ * Returns empty object if context is not enriched
+ * Format matches PromptData.synthesisPatterns etc.
+ */
+function buildSynthesisData(context: SectionContext | EnrichedSectionContext): Partial<PromptData> {
+  // Check if this is an enriched context
+  const enriched = context as EnrichedSectionContext
+  
+  if (!enriched.hasSynthesisEnrichment || !enriched.synthesisContent) {
+    return {}
+  }
+  
+  // Format patterns to match PromptData.synthesisPatterns type
+  const synthesisPatterns = enriched.synthesisContent.patterns.map(p => ({
+    claim: p.claim,
+    supportStatement: p.data.supportStatement,
+    valuesSummary: p.data.valuesSummary,
+    presentationApproach: p.presentationApproach,
+    importance: p.importance,
+    supportingPapers: p.supportingPaperIds
+  }))
+  
+  // Format contradictions to match PromptData.synthesisContradictions type
+  const synthesisContradictions = enriched.synthesisContent.contradictions.map(c => ({
+    description: c.description,
+    presentationApproach: c.presentationApproach,
+    resolutionStrategy: c.resolutionStrategy,
+    sides: c.sides.map(side => ({
+      position: side.position,
+      papers: side.paperIds
+    }))
+  }))
+  
+  // Format gaps to match PromptData.synthesisGaps type
+  const synthesisGaps = enriched.synthesisContent.gaps.map(g => ({
+    description: g.description,
+    importance: g.importance,
+    suggestedFutureWork: g.suggestedFutureWork
+  }))
+  
+  // Build result matching PromptData shape
+  const result: Partial<PromptData> = {}
+  
+  if (synthesisPatterns.length > 0) {
+    result.synthesisPatterns = synthesisPatterns
+  }
+  
+  if (synthesisContradictions.length > 0) {
+    result.synthesisContradictions = synthesisContradictions
+  }
+  
+  if (synthesisGaps.length > 0) {
+    result.synthesisGaps = synthesisGaps
+  }
+  
+  // Add writing guidance if available
+  if (enriched.writingGuidance) {
+    result.sectionWritingGuidance = enriched.writingGuidance
+  }
+  
+  return result
 }
 
 /**

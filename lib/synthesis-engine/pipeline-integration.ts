@@ -2,13 +2,12 @@
  * Pipeline Integration for Synthesis Engine
  * 
  * Provides functions to integrate the hybrid synthesis engine with
- * the existing generation pipeline. This enables gradual migration
- * from the old system to the new one.
+ * the existing generation pipeline.
  * 
  * Key integration points:
- * 1. extractThemesHybrid() - Replaces extractThemes() with extraction + analysis
- * 2. buildHybridContextsForOutline() - Replaces buildContexts() with hybrid context
- * 3. generateSectionsHybrid() - Replaces generateMultipleSectionsUnified() with hybrid writer
+ * 1. extractThemesHybrid() - Extracts findings and analyzes patterns
+ * 2. enrichAndBuildContexts() - Enriches outline sections with synthesis data
+ * 3. generateSectionsHybrid() - Generates using hybrid writer (deprecated, use enriched contexts instead)
  * 
  * @module lib/synthesis-engine/pipeline-integration
  */
@@ -20,12 +19,17 @@ import {
   getPapersNeedingExtractionService,
   saveExtractionService 
 } from '@/lib/extraction/db-service'
-import { analyzeFindings, type FindingWithPaper } from '@/lib/analysis/cross-document'
-import { buildSynthesisPlan, type PaperInfo } from './index'
+import { analyzeFindings, type FindingWithPaper, type AnalysisResult } from '@/lib/analysis/cross-document'
+import { buildSynthesisPlan } from './plan-builder'
 import { writeHybridSynthesis } from './hybrid-writer'
 import { analysisResultToThemeAnalysis } from './theme-adapter'
+import { enrichOutlineSections, type EnrichedSectionContext } from './outline-enricher'
+import { buildConstraintsFromProfile } from './constraint-builder'
+import type { PaperInfo, StructuralConstraints } from './types'
 import type { ThemeAnalysis, PaperProfile } from '@/lib/generation/paper-profile-types'
 import type { PaperWithAuthors } from '@/types/simplified'
+import type { GeneratedOutline } from '@/lib/prompts/types'
+import { info, warn } from '@/lib/utils/logger'
 
 // =============================================================================
 // Types
@@ -33,7 +37,7 @@ import type { PaperWithAuthors } from '@/types/simplified'
 
 export interface HybridThemeExtractionResult {
   themeAnalysis: ThemeAnalysis
-  analysisResult: ReturnType<typeof analyzeFindings> extends Promise<infer T> ? T : never
+  analysisResult: AnalysisResult
   extractionStats: {
     papersProcessed: number
     papersExtracted: number
@@ -41,6 +45,8 @@ export interface HybridThemeExtractionResult {
     totalFindings: number
     extractionTimeMs: number
   }
+  // NEW: Pre-built structural constraints for plan builder
+  structuralConstraints?: StructuralConstraints
 }
 
 export interface HybridGenerationResult {
@@ -152,7 +158,6 @@ export async function extractThemesHybrid(
   
   // From cached extractions
   for (const [paperId, extraction] of cachedExtractions) {
-    const paper = papers.find(p => p.id === paperId)
     for (const finding of extraction.findings) {
       allFindings.push({
         ...finding,
@@ -197,6 +202,9 @@ export async function extractThemesHybrid(
   
   const themeAnalysis = analysisResultToThemeAnalysis(analysisResult, paperInfos)
   
+  // Build structural constraints from profile
+  const structuralConstraints = buildConstraintsFromProfile(profile)
+  
   const extractionTimeMs = Date.now() - startTime
   
   onProgress?.(`Theme analysis complete: ${themeAnalysis.emergentThemes.length} themes, ${themeAnalysis.debates.length} debates, ${themeAnalysis.gaps.length} gaps`, {
@@ -215,22 +223,78 @@ export async function extractThemesHybrid(
       papersFromCache: cachedExtractions.size,
       totalFindings: allFindings.length,
       extractionTimeMs
-    }
+    },
+    structuralConstraints
+  }
+}
+
+// =============================================================================
+// NEW: Enrichment Functions for Pipeline Integration
+// =============================================================================
+
+/**
+ * Enrich outline sections with synthesis analysis and build contexts
+ * 
+ * This is the main integration point - it takes the outline and hybrid results
+ * and produces enriched section contexts ready for the unified generator.
+ */
+export async function enrichAndBuildContexts(
+  outline: GeneratedOutline,
+  hybridResult: HybridThemeExtractionResult,
+  profile: PaperProfile,
+  papers: PaperWithAuthors[],
+  topic: string
+): Promise<EnrichedSectionContext[]> {
+  const startTime = Date.now()
+  
+  info({
+    outlineSections: outline.sections.length,
+    patterns: hybridResult.analysisResult.patterns.length,
+    contradictions: hybridResult.analysisResult.contradictions.length,
+    gaps: hybridResult.analysisResult.gaps.length
+  }, 'Starting outline enrichment')
+  
+  try {
+    const enrichedContexts = await enrichOutlineSections(
+      outline,
+      hybridResult.analysisResult,
+      profile,
+      papers,
+      topic
+    )
+    
+    const enrichedCount = enrichedContexts.filter(c => c.hasSynthesisEnrichment).length
+    
+    info({
+      totalSections: enrichedContexts.length,
+      enrichedSections: enrichedCount,
+      durationMs: Date.now() - startTime
+    }, 'Outline enrichment complete')
+    
+    return enrichedContexts
+  } catch (error) {
+    warn({ error }, 'Outline enrichment failed')
+    throw error
   }
 }
 
 /**
  * Generate sections using the hybrid approach
  * 
- * This replaces generateMultipleSectionsUnified() with:
- * 1. Build synthesis plan from analysis
- * 2. Use hybrid writer (structured data + targeted chunks)
+ * @deprecated Use enrichAndBuildContexts() + generateMultipleSectionsUnified() instead.
+ * This function is kept for backwards compatibility with test scripts.
+ * 
+ * For production use, the new approach is:
+ * 1. Call extractThemesHybrid() to get analysis results
+ * 2. Call enrichAndBuildContexts() to enrich outline sections
+ * 3. Pass enriched contexts to generateMultipleSectionsUnified()
  */
 export async function generateSectionsHybrid(
   analysisResult: HybridThemeExtractionResult['analysisResult'],
   papers: PaperWithAuthors[],
   topic: string,
   targetWordCount: number,
+  profile: PaperProfile,
   onProgress?: (message: string, sectionIndex?: number, content?: string) => void
 ): Promise<HybridGenerationResult> {
   
@@ -240,16 +304,28 @@ export async function generateSectionsHybrid(
     title: p.title,
     authors: p.author_names || [],
     year: p.publication_date ? new Date(p.publication_date).getFullYear() : undefined,
-    domain: 'general'
+    domain: profile.discipline.primary
   }))
+  
+  // Build constraints from profile
+  const constraints = buildConstraintsFromProfile(profile)
   
   onProgress?.('Building synthesis plan...')
   
-  // Step 1: Build synthesis plan
+  // Step 1: Build synthesis plan with paper type awareness
   const planResult = await buildSynthesisPlan({
     projectId: 'pipeline',
     analysis: analysisResult,
     papers: paperInfos,
+    paperType: constraints.paperType,
+    paperProfile: profile,
+    structuralConstraints: constraints,
+    outlineSections: constraints.requiredSections.map(s => ({
+      sectionKey: s.key,
+      title: s.name,
+      expectedWords: s.minWords,
+      isLiteratureFocused: s.isLiteratureFocused
+    })),
     targetWordCount,
     audienceLevel: 'academic'
   })
@@ -268,10 +344,10 @@ export async function generateSectionsHybrid(
     plan,
     analysis: analysisResult,
     papers: paperInfos,
-    onSectionStart: (title, index, total) => {
+    onSectionStart: (title, index, _total) => {
       onProgress?.(`Writing ${title}...`, index)
     },
-    onSectionComplete: (title, wordCount) => {
+    onSectionComplete: (_title, _wordCount) => {
       // Could send content here for streaming
     }
   })

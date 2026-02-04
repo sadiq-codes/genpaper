@@ -6,8 +6,9 @@
  * a detailed plan for each section.
  * 
  * Key principles:
- * - No hardcoded structure - LLM decides sections and approach
- * - Data-driven - plan based on actual analysis results
+ * - Paper-type aware: Respects structural constraints from PaperProfile
+ * - Aligns with outline sections when provided
+ * - Data-driven: Plan based on actual analysis results
  * - Single LLM call for efficiency
  * 
  * @module lib/synthesis-engine/plan-builder
@@ -17,14 +18,12 @@ import { generateObject } from 'ai'
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
+import { info, warn } from '@/lib/utils/logger'
 import type {
   SynthesisPlan,
   SynthesisPlanInput,
   SynthesisPlanResult,
-  SectionPlan,
-  PatternPlan,
-  ContradictionPlan,
-  GapPlan
+  SectionPlan
 } from './types'
 
 // =============================================================================
@@ -63,10 +62,14 @@ const GapPlanSchema = z.object({
 })
 
 const SectionPlanSchema = z.object({
+  // NEW: Link to outline section (required for pipeline integration)
+  outlineSectionKey: z.string().describe('The outline section key this maps to, e.g., "introduction", "literatureReview", "discussion"'),
+  isLiteratureFocused: z.boolean().describe('True if this section discusses existing literature (should get synthesis enrichment)'),
+  
   title: z.string().describe('Section title'),
   purpose: z.string().describe('What this section accomplishes'),
   content: z.object({
-    patterns: z.array(PatternPlanSchema).describe('Patterns to discuss in this section'),
+    patterns: z.array(PatternPlanSchema).describe('Patterns to discuss in this section (only for literature-focused sections)'),
     contradictions: z.array(ContradictionPlanSchema).describe('Contradictions to discuss'),
     gaps: z.array(GapPlanSchema).describe('Gaps to discuss'),
     additionalPoints: z.array(z.string()).describe('Other points to make')
@@ -110,24 +113,22 @@ const SYSTEM_PROMPT = `You are an expert academic writer planning a literature s
 
 CRITICAL INSTRUCTIONS:
 
-1. STRUCTURE DECISIONS
-   - Decide the optimal number of sections based on the content
-   - Group related patterns logically
-   - Ensure smooth narrative flow between sections
-   - Don't force a standard structure - let the content drive organization
+1. SECTION ALIGNMENT
+   - Each section MUST specify an outlineSectionKey matching the provided outline
+   - Each section MUST specify isLiteratureFocused (true for sections discussing existing literature)
+   - Literature-focused sections get synthesis patterns/contradictions/gaps
+   - Non-literature sections (Methods, Results) should NOT include synthesis patterns
 
-2. SECTION PLANNING
-   For each section, specify:
-   - What patterns/contradictions/gaps to cover
-   - Which papers are essential to cite
-   - How to present the information
-   - Transitions to/from adjacent sections
-   - Target word count
+2. PAPER TYPE CONSTRAINTS
+   - Respect the paper type rules (required sections, forbidden sections)
+   - Match your sections to the provided outline structure
+   - Allocate content appropriately for the paper type
 
 3. PATTERN PRESENTATION
    - Decide which patterns are central vs supporting
    - Plan how to present quantitative data clearly
    - Include support statements like "X of Y studies (Z%) found..."
+   - Only assign patterns to literature-focused sections
 
 4. HANDLING CONTRADICTIONS
    - Present both sides fairly
@@ -135,7 +136,7 @@ CRITICAL INSTRUCTIONS:
    - Don't dismiss valid conflicting findings
 
 5. GAPS AND FUTURE WORK
-   - Integrate gaps naturally, typically near the end
+   - Integrate gaps naturally, typically in Discussion or Conclusion
    - Connect gaps to patterns (what's known vs unknown)
    - Suggest concrete future research directions
 
@@ -147,7 +148,16 @@ CRITICAL INSTRUCTIONS:
 Remember: This is a PLAN for writing, not the synthesis itself. Be specific about what to write and how.`
 
 function buildPrompt(input: SynthesisPlanInput): string {
-  const { analysis, papers, targetWordCount, focusAreas, audienceLevel } = input
+  const { 
+    analysis, 
+    papers, 
+    targetWordCount, 
+    focusAreas, 
+    audienceLevel,
+    paperType,
+    structuralConstraints,
+    outlineSections
+  } = input
   
   // Format patterns
   const patternsText = analysis.patterns.map(p => {
@@ -207,6 +217,42 @@ function buildPrompt(input: SynthesisPlanInput): string {
     `- ${p.title} (${p.id}) - ${p.authors.join(', ')}${p.year ? ` (${p.year})` : ''} - ${p.domain}`
   ).join('\n')
   
+  // NEW: Build paper type constraints text
+  let paperTypeText = ''
+  if (paperType && structuralConstraints) {
+    paperTypeText = `
+PAPER TYPE CONSTRAINTS:
+Paper Type: ${paperType}
+Discipline: ${structuralConstraints.disciplineContext}
+
+Required Sections:
+${structuralConstraints.requiredSections.map(s => 
+  `- ${s.key}: "${s.name}" ${s.isLiteratureFocused ? '[LITERATURE-FOCUSED - include synthesis patterns]' : '[NOT literature-focused - no synthesis patterns]'}`
+).join('\n')}
+
+Forbidden Sections (DO NOT CREATE):
+${structuralConstraints.forbiddenSections.length > 0 
+  ? structuralConstraints.forbiddenSections.map(s => `- ${s}`).join('\n')
+  : '(none)'}
+
+Source Requirements:
+- Minimum sources: ${structuralConstraints.minSources}
+- Ideal sources: ${structuralConstraints.idealSources}
+`
+  }
+  
+  // NEW: Build outline sections text
+  let outlineText = ''
+  if (outlineSections && outlineSections.length > 0) {
+    outlineText = `
+OUTLINE SECTIONS TO ALIGN WITH:
+Each section in your plan MUST map to one of these outline sections via outlineSectionKey.
+${outlineSections.map((s, i) => 
+  `${i + 1}. ${s.sectionKey}: "${s.title}" ${s.isLiteratureFocused ? '[LITERATURE-FOCUSED]' : ''} ${s.expectedWords ? `(~${s.expectedWords} words)` : ''}`
+).join('\n')}
+`
+  }
+  
   // Build constraints
   const constraints: string[] = []
   if (targetWordCount) {
@@ -224,7 +270,8 @@ function buildPrompt(input: SynthesisPlanInput): string {
     : ''
   
   return `Create a synthesis plan based on the following analysis:
-
+${paperTypeText}
+${outlineText}
 SUMMARY:
 ${analysis.summary}
 
@@ -244,11 +291,14 @@ PAPERS (${papers.length}):
 ${papersText}
 ${constraintsText}
 Plan a coherent synthesis that:
-1. Covers all important patterns
-2. Addresses contradictions fairly
-3. Identifies gaps and future directions
-4. Flows logically from section to section
-5. Provides clear writing guidance for each section`
+1. Maps each section to an outline section via outlineSectionKey
+2. Marks isLiteratureFocused correctly for each section
+3. Only includes patterns/contradictions/gaps in literature-focused sections
+4. Covers all important patterns in appropriate sections
+5. Addresses contradictions fairly
+6. Identifies gaps and future directions (typically in Discussion/Conclusion)
+7. Flows logically from section to section
+8. Provides clear writing guidance for each section`
 }
 
 // =============================================================================
@@ -271,12 +321,15 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
     }
   }
   
-  console.log(`\n📝 Building synthesis plan...`)
-  console.log(`   Patterns: ${analysis.patterns.length}`)
-  console.log(`   Contradictions: ${analysis.contradictions.length}`)
-  console.log(`   Gaps: ${analysis.gaps.length}`)
-  console.log(`   Papers: ${papers.length}`)
-  console.log(`   Target words: ${targetWordCount}`)
+  info({
+    patterns: analysis.patterns.length,
+    contradictions: analysis.contradictions.length,
+    gaps: analysis.gaps.length,
+    papers: papers.length,
+    targetWordCount,
+    paperType: input.paperType,
+    outlineSections: input.outlineSections?.length || 0
+  }, 'Building synthesis plan')
   
   try {
     const { object } = await generateObject({
@@ -290,8 +343,11 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
     const timeMs = Date.now() - startTime
     
     // Transform to final plan with IDs
-    const sections: SectionPlan[] = object.sections.map((s, i) => ({
+    const sections: SectionPlan[] = object.sections.map((s, _i) => ({
       id: uuidv4(),
+      // NEW: Include outline alignment fields
+      outlineSectionKey: s.outlineSectionKey,
+      isLiteratureFocused: s.isLiteratureFocused,
       title: s.title,
       purpose: s.purpose,
       content: {
@@ -353,10 +409,12 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
       }
     }
     
-    console.log(`✅ Plan complete in ${timeMs}ms`)
-    console.log(`   Title: "${plan.overview.title}"`)
-    console.log(`   Sections: ${plan.sections.length}`)
-    console.log(`   Total words: ${plan.overview.totalWordCount}`)
+    info({
+      title: plan.overview.title,
+      sections: plan.sections.length,
+      totalWords: plan.overview.totalWordCount,
+      timeMs
+    }, 'Synthesis plan complete')
     
     return {
       success: true,
@@ -365,7 +423,7 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
     }
     
   } catch (error) {
-    console.error('❌ Plan generation failed:', error)
+    warn({ error }, 'Plan generation failed')
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

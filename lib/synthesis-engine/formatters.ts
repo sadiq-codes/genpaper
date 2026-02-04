@@ -11,7 +11,7 @@
 
 import type { PromptData } from '@/lib/core/prompt-builder'
 import type { SynthesisPlan, SectionPlan, PatternPlan, ContradictionPlan, GapPlan, PaperInfo } from './types'
-import type { AnalysisResult, Pattern, Contradiction, Gap } from '@/lib/analysis/cross-document'
+import type { AnalysisResult } from '@/lib/analysis/cross-document'
 
 // =============================================================================
 // Types for formatted synthesis data (matches PromptData additions)

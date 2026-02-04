@@ -2,13 +2,53 @@
  * Synthesis Engine Types
  * 
  * Types for planning and generating literature synthesis.
- * No hardcoded enums - LLM decides structure and approach.
+ * Paper-type aware with structural constraints from PaperProfile.
  * 
  * @module lib/synthesis-engine/types
  */
 
-import type { Pattern, Contradiction, Gap, AnalysisResult } from '@/lib/analysis/cross-document'
-import type { Finding } from '@/lib/extraction'
+import type { AnalysisResult } from '@/lib/analysis/cross-document'
+// Note: Pattern, Contradiction, Gap, Finding types are used via the re-exported AnalysisResult
+import type { PaperProfile } from '@/lib/generation/paper-profile-types'
+import type { PaperTypeKey } from '@/types/simplified'
+
+// =============================================================================
+// Paper Type Constraints - From PaperProfile
+// =============================================================================
+
+/**
+ * Section constraint from profile
+ */
+export interface SectionConstraint {
+  key: string                        // e.g., "introduction", "literatureReview"
+  name: string                       // Human-readable name
+  isLiteratureFocused: boolean       // Should this section get synthesis enrichment?
+  required: boolean                  // Is this section required for this paper type?
+  minWords?: number
+  maxWords?: number
+  purpose?: string                   // What this section should accomplish
+}
+
+/**
+ * Structural constraints derived from PaperProfile
+ * Determines what sections are allowed/required and which get synthesis enrichment
+ */
+export interface StructuralConstraints {
+  paperType: PaperTypeKey
+  disciplineContext: string          // e.g., "Computer Science", "Psychology"
+  
+  // Section rules
+  requiredSections: SectionConstraint[]
+  forbiddenSections: string[]        // Section names that should NOT appear
+  
+  // Overall limits
+  minSections: number
+  maxSections: number
+  
+  // Source expectations
+  minSources: number
+  idealSources: number
+}
 
 // =============================================================================
 // Synthesis Plan - LLM-Generated Structure
@@ -16,12 +56,16 @@ import type { Finding } from '@/lib/extraction'
 
 /**
  * A planned section of the synthesis
- * LLM decides structure, approach, and content allocation
+ * Must align with outline sections and paper type constraints
  */
 export interface SectionPlan {
   id: string
   
-  // What this section covers (LLM decides)
+  // NEW: Link to outline section (required for pipeline integration)
+  outlineSectionKey: string          // Maps to GeneratedOutline section key
+  isLiteratureFocused: boolean       // Should this section get synthesis enrichment?
+  
+  // What this section covers
   title: string                    // Section title
   purpose: string                  // What this section accomplishes
   
@@ -152,6 +196,7 @@ export interface SynthesisPlan {
 
 /**
  * Input for synthesis plan generation
+ * Now paper-type aware with structural constraints
  */
 export interface SynthesisPlanInput {
   projectId: string
@@ -159,14 +204,32 @@ export interface SynthesisPlanInput {
   // Analysis results
   analysis: AnalysisResult
   
-  // Optional guidance
-  targetWordCount?: number         // Default ~3000
-  targetSections?: number          // Default: LLM decides
-  focusAreas?: string[]            // Specific aspects to emphasize
-  audienceLevel?: string           // Who is this for
-  
   // Paper metadata for citation
   papers: PaperInfo[]
+  
+  // NEW: Required paper type context
+  paperType: PaperTypeKey
+  paperProfile: PaperProfile
+  structuralConstraints: StructuralConstraints
+  
+  // NEW: Outline sections to align with
+  outlineSections: OutlineSectionInput[]
+  
+  // Optional guidance
+  targetWordCount?: number         // Default ~3000
+  focusAreas?: string[]            // Specific aspects to emphasize
+  audienceLevel?: string           // Who is this for
+}
+
+/**
+ * Outline section input for plan alignment
+ */
+export interface OutlineSectionInput {
+  sectionKey: string               // e.g., "introduction", "literatureReview"
+  title: string                    // Human-readable title
+  expectedWords?: number
+  keyPoints?: string[]
+  isLiteratureFocused: boolean     // Should this section get synthesis enrichment?
 }
 
 /**

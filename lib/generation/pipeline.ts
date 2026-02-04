@@ -15,8 +15,9 @@ import { warn, error as logError, info } from '@/lib/utils/logger'
 // We only need cleanRemainingArtifacts to remove any leaked tool syntax
 import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
 import { logSectionCitations } from '@/lib/rag/relevance-feedback'
-import { extractThemes, mergeThemeAnalysisIntoProfile, buildThemeGuidanceForOutline } from '@/lib/generation/theme-extraction'
-import { extractThemesHybrid, generateSectionsHybrid, type HybridThemeExtractionResult } from '@/lib/synthesis-engine/pipeline-integration'
+import { mergeThemeAnalysisIntoProfile, buildThemeGuidanceForOutline } from '@/lib/generation/theme-extraction'
+import { extractThemesHybrid, enrichAndBuildContexts, type HybridThemeExtractionResult } from '@/lib/synthesis-engine/pipeline-integration'
+import type { EnrichedSectionContext } from '@/lib/synthesis-engine/outline-enricher'
 import { getServiceClient } from '@/lib/supabase/service'
 import type { PaperProfile, ThemeAnalysis } from '@/lib/generation/paper-profile-types'
 import type { PaperStatus, OriginalResearchConfig, PaperTypeKey as SimplifiedPaperTypeKey } from '@/types/simplified'
@@ -454,37 +455,14 @@ export async function generatePaper(
         phase: 'themes_complete'
       })
     } catch (hybridError) {
-      // Hybrid extraction failed - fall back to legacy extraction
-      warn({ error: hybridError }, 'Hybrid extraction failed, falling back to legacy extractThemes')
-      
-      try {
-        themeAnalysis = await extractThemes(allPapers, sanitizedTopic, paperProfile)
-        enhancedProfile = mergeThemeAnalysisIntoProfile(paperProfile, themeAnalysis)
-        
-        info({
-          emergentThemes: themeAnalysis.emergentThemes.length,
-          debates: themeAnalysis.debates.length,
-          gaps: themeAnalysis.gaps.length,
-          fallback: true
-        }, 'Legacy theme extraction completed (fallback)')
-        
-        metrics.themeExtractionDuration = Date.now() - themeStartTime
-        
-        onProgress?.('planning', 30, `Found ${themeAnalysis.emergentThemes.length} themes (legacy mode)`, {
-          themesFound: themeAnalysis.emergentThemes.length,
-          debatesFound: themeAnalysis.debates.length,
-          gapsFound: themeAnalysis.gaps.length,
-          fallback: true,
-          phase: 'themes_complete'
-        })
-      } catch (legacyError) {
-        metrics.themeExtractionDuration = Date.now() - themeStartTime
-        // Both methods failed - continue without themes
-        warn({ error: legacyError }, 'All theme extraction methods failed, continuing with original profile')
-        onProgress?.('planning', 30, 'Creating paper outline...', {
-          phase: 'outline_start'
-        })
-      }
+      // Hybrid extraction failed - continue without themes
+      // Legacy extractThemes has been removed in favor of hybrid approach
+      metrics.themeExtractionDuration = Date.now() - themeStartTime
+      warn({ error: hybridError }, 'Hybrid extraction failed, continuing without theme enrichment')
+      onProgress?.('planning', 30, 'Creating paper outline...', {
+        phase: 'outline_start',
+        warning: 'Theme extraction failed'
+      })
     }
 
     // Check cancellation after theme extraction
@@ -550,16 +528,61 @@ export async function generatePaper(
       phase: 'outline_complete'
     })
 
-    // Step 4: Write Paper (RAG + Generation combined)
-    // First gather evidence, then write each section
+    // Step 4: Write Paper (Hybrid Enrichment + RAG + Generation)
+    // Build enriched contexts with synthesis data + RAG chunks
     const contextStartTime = Date.now()
-    onProgress?.('writing', 40, 'Gathering evidence for each section...')
     
-    const sectionContexts = await GenerationContextService.buildContexts(
-      typedOutline,
-      sanitizedTopic,
-      allPapers
-    )
+    let sectionContexts: SectionContext[] | EnrichedSectionContext[]
+    
+    // Try hybrid enrichment if we have analysis results
+    if (hybridResult && hybridResult.extractionStats.totalFindings >= 5) {
+      onProgress?.('writing', 40, 'Building enriched contexts with synthesis analysis...')
+      
+      try {
+        sectionContexts = await enrichAndBuildContexts(
+          typedOutline,
+          hybridResult,
+          enhancedProfile,
+          allPapers,
+          sanitizedTopic
+        )
+        
+        const enrichedCount = sectionContexts.filter(
+          s => (s as EnrichedSectionContext).hasSynthesisEnrichment
+        ).length
+        
+        info({
+          totalSections: sectionContexts.length,
+          enrichedSections: enrichedCount,
+          totalPatterns: sectionContexts.reduce((sum, s) => 
+            sum + ((s as EnrichedSectionContext).synthesisContent?.patterns.length || 0), 0)
+        }, 'Hybrid enriched contexts built')
+        
+        onProgress?.('writing', 45, `Enriched ${enrichedCount}/${sectionContexts.length} sections with synthesis content`, {
+          sectionsWithContext: sectionContexts.length,
+          enrichedSections: enrichedCount,
+          durationMs: Date.now() - contextStartTime
+        })
+        
+      } catch (enrichError) {
+        // Fallback to standard RAG-only contexts
+        warn({ error: enrichError }, 'Hybrid enrichment failed, falling back to RAG-only')
+        onProgress?.('writing', 40, 'Gathering evidence for each section...')
+        sectionContexts = await GenerationContextService.buildContexts(
+          typedOutline,
+          sanitizedTopic,
+          allPapers
+        )
+      }
+    } else {
+      // Not enough findings for hybrid, use RAG-only
+      onProgress?.('writing', 40, 'Gathering evidence for each section...')
+      sectionContexts = await GenerationContextService.buildContexts(
+        typedOutline,
+        sanitizedTopic,
+        allPapers
+      )
+    }
     
     metrics.contextBuildingDuration = Date.now() - contextStartTime
     
@@ -568,7 +591,7 @@ export async function generatePaper(
     const totalChunks = allChunkCounts.reduce((a, b) => a + b, 0)
     metrics.pdfStats.avgChunksPerPaper = allPapers.length > 0 ? totalChunks / allPapers.length : 0
     
-    onProgress?.('writing', 45, 'Starting to write sections...', {
+    onProgress?.('writing', 48, 'Starting to write sections...', {
       sectionsWithContext: sectionContexts.length,
       durationMs: metrics.contextBuildingDuration,
       avgChunksPerSection: totalChunks / sectionContexts.length

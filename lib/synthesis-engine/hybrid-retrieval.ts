@@ -12,7 +12,6 @@
 
 import { createServiceClient } from '@/lib/supabase/service'
 import { getCachedQueryEmbedding } from '@/lib/rag/embedding-cache'
-import type { Pattern } from '@/lib/analysis/cross-document'
 import type { FormattedPattern, FormattedContradiction } from './formatters'
 import type { PaperInfo } from './types'
 

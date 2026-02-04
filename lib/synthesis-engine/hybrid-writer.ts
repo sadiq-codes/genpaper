@@ -18,7 +18,6 @@ import type { SynthesisPlan, PaperInfo } from './types'
 import type { AnalysisResult } from '@/lib/analysis/cross-document'
 import {
   buildHybridSectionContext,
-  buildAllHybridContexts,
   formatHybridContextForPrompt,
   type HybridSectionContext
 } from './hybrid-context'
