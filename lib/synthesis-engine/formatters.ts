@@ -97,11 +97,19 @@ export function formatSectionForPrompt(
     formatGapPlan(gp)
   )
   
-  // Format writing guidance
+  // Format writing guidance - convert structured key points to strings
+  const keyPointStrings = sectionPlan.keyPointsToMake.map(kp => {
+    // Include citation requirement in the point description
+    const citationNote = kp.requiredCitations.length > 0 
+      ? ` [cite: ${kp.requiredCitations.join(', ')}]` 
+      : ''
+    return `${kp.point}${citationNote}`
+  })
+  
   const sectionWritingGuidance: FormattedWritingGuidance = {
     approach: sectionPlan.writingGuidance.approach,
     tone: sectionPlan.writingGuidance.tone,
-    keyPointsToMake: sectionPlan.keyPointsToMake,
+    keyPointsToMake: keyPointStrings,
     transitionFrom: sectionPlan.writingGuidance.transitionFrom,
     transitionTo: sectionPlan.writingGuidance.transitionTo
   }
