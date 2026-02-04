@@ -113,34 +113,39 @@ const SYSTEM_PROMPT = `You are an expert academic writer planning a literature s
 
 CRITICAL INSTRUCTIONS:
 
-1. SECTION ALIGNMENT
-   - Each section MUST specify an outlineSectionKey matching the provided outline
-   - Each section MUST specify isLiteratureFocused (true for sections discussing existing literature)
+1. SECTION COUNT (MOST IMPORTANT)
+   - You MUST create EXACTLY the same number of sections as specified in the outline
+   - Do NOT skip sections, combine sections, or add extra sections
+   - If the outline has 5 sections, your plan MUST have exactly 5 sections
+
+2. SECTION ALIGNMENT
+   - Each section MUST specify an outlineSectionKey matching the provided outline EXACTLY
+   - Each section MUST specify isLiteratureFocused (copy value from outline)
    - Literature-focused sections get synthesis patterns/contradictions/gaps
    - Non-literature sections (Methods, Results) should NOT include synthesis patterns
 
-2. PAPER TYPE CONSTRAINTS
+3. PAPER TYPE CONSTRAINTS
    - Respect the paper type rules (required sections, forbidden sections)
    - Match your sections to the provided outline structure
    - Allocate content appropriately for the paper type
 
-3. PATTERN PRESENTATION
+4. PATTERN PRESENTATION
    - Decide which patterns are central vs supporting
    - Plan how to present quantitative data clearly
    - Include support statements like "X of Y studies (Z%) found..."
    - Only assign patterns to literature-focused sections
 
-4. HANDLING CONTRADICTIONS
+5. HANDLING CONTRADICTIONS
    - Present both sides fairly
    - Offer explanations for disagreements
    - Don't dismiss valid conflicting findings
 
-5. GAPS AND FUTURE WORK
+6. GAPS AND FUTURE WORK
    - Integrate gaps naturally, typically in Discussion or Conclusion
    - Connect gaps to patterns (what's known vs unknown)
    - Suggest concrete future research directions
 
-6. NARRATIVE FLOW
+7. NARRATIVE FLOW
    - Plan transitions between sections
    - Maintain a clear argument throughout
    - End with synthesis, not just summary
@@ -245,10 +250,12 @@ Source Requirements:
   let outlineText = ''
   if (outlineSections && outlineSections.length > 0) {
     outlineText = `
-OUTLINE SECTIONS TO ALIGN WITH:
-Each section in your plan MUST map to one of these outline sections via outlineSectionKey.
+OUTLINE SECTIONS (REQUIRED - CREATE EXACTLY ${outlineSections.length} SECTIONS):
+You MUST create exactly ${outlineSections.length} sections in your plan, one for EACH outline section below.
+Do NOT skip any sections. Do NOT combine sections. Do NOT create extra sections.
+
 ${outlineSections.map((s, i) => 
-  `${i + 1}. ${s.sectionKey}: "${s.title}" ${s.isLiteratureFocused ? '[LITERATURE-FOCUSED]' : ''} ${s.expectedWords ? `(~${s.expectedWords} words)` : ''}`
+  `${i + 1}. ${s.sectionKey}: "${s.title}" ${s.isLiteratureFocused ? '[LITERATURE-FOCUSED]' : '[NOT literature-focused]'} ${s.expectedWords ? `(~${s.expectedWords} words)` : ''}`
 ).join('\n')}
 `
   }
@@ -291,14 +298,17 @@ PAPERS (${papers.length}):
 ${papersText}
 ${constraintsText}
 Plan a coherent synthesis that:
-1. Maps each section to an outline section via outlineSectionKey
-2. Marks isLiteratureFocused correctly for each section
-3. Only includes patterns/contradictions/gaps in literature-focused sections
-4. Covers all important patterns in appropriate sections
-5. Addresses contradictions fairly
-6. Identifies gaps and future directions (typically in Discussion/Conclusion)
-7. Flows logically from section to section
-8. Provides clear writing guidance for each section`
+1. Creates EXACTLY the same number of sections as the outline (one section per outline section)
+2. Each section's outlineSectionKey MUST match an outline section key exactly
+3. Marks isLiteratureFocused correctly for each section (copy from outline)
+4. Only includes patterns/contradictions/gaps in literature-focused sections
+5. Covers all important patterns in appropriate sections
+6. Addresses contradictions fairly
+7. Places gaps and future directions in Discussion/Conclusion sections
+8. Flows logically from section to section with transitions
+9. Provides clear writing guidance for each section
+
+CRITICAL: Your sections array MUST have exactly ${outlineSections?.length || 'the same number of'} elements matching the outline.`
 }
 
 // =============================================================================
@@ -341,6 +351,18 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
     })
     
     const timeMs = Date.now() - startTime
+    
+    // Validate section count matches outline if provided
+    if (input.outlineSections && input.outlineSections.length > 0) {
+      if (object.sections.length !== input.outlineSections.length) {
+        warn({
+          expected: input.outlineSections.length,
+          received: object.sections.length,
+          outlineKeys: input.outlineSections.map(s => s.sectionKey),
+          planKeys: object.sections.map(s => s.outlineSectionKey)
+        }, 'Plan section count mismatch - LLM did not follow outline')
+      }
+    }
     
     // Transform to final plan with IDs
     const sections: SectionPlan[] = object.sections.map((s, _i) => ({

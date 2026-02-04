@@ -41,12 +41,20 @@ interface TestPaper {
 
 const TEST_PAPERS: TestPaper[] = [
   {
-    name: 'Tomato Spoilage Study',
+    name: 'Tomato Spoilage Study (Garba)',
     path: './AJPB+2022+4+2+no+4+Garba+Tomato+28+31+-+Copy.pdf'
   },
   {
-    name: 'Greenland Identity Politics',
-    path: './lbaulund,+What+kind+of+nation+state+will+Greenland+be_+Securitization+theory+as+a+strategy+for+analyzing+identity+politics++.pdf'
+    name: 'Fungi Contaminants in Tomato',
+    path: './I & I of fungi contaminants in tomato.pdf'
+  },
+  {
+    name: 'UJMR Tomato Study',
+    path: './UJMR1-102044882.pdf'
+  },
+  {
+    name: 'AJOL Tomato Study',
+    path: './ajol-file-journals_82_articles_92369_submission_proof_92369-973-234747-1-10-20130814.pdf'
   }
 ]
 
