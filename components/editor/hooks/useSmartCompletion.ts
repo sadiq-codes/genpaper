@@ -704,8 +704,31 @@ export function useSmartCompletion({
                 if (data.type === 'text') {
                   // Accumulate text silently - don't update UI during streaming
                   // This avoids showing raw JSON or unformatted citations
+                } else if (data.type === 'interim') {
+                  // STREAMING PREVIEW: Show interim ghost text immediately
+                  // This gives instant feedback while we wait for full response
+                  if (data.preview && !hasGhostText(editor) && editor && !editor.isDestroyed) {
+                    const previewText = data.preview as string
+                    // Show preview with no citations (interim state)
+                    // The smart spacing will be applied, empty citations array
+                    const previewSentence: QueuedSentence = {
+                      text: previewText,
+                      displayText: previewText,
+                      citations: []
+                    }
+                    const spacedPreview = prependSpaceIfNeeded(editor, previewSentence)
+                    editor.commands.setGhostText(
+                      spacedPreview.text,
+                      spacedPreview.displayText + '...',  // Add ellipsis to indicate loading
+                      [],  // No citations for preview
+                      currentPapers,
+                      0  // No queue yet
+                    )
+                    setLoadingMessage(null)  // Hide "AI is thinking" once we have preview
+                    console.log('[Autocomplete] Showing interim preview:', previewText.slice(0, 50))
+                  }
                 } else if (data.type === 'done') {
-                  // Final data with sentences array
+                  // Final data with sentences array - replace preview with final version
                   finalData = data
                   console.log('[Autocomplete] Stream complete:', {
                     sentencesCount: data.sentences?.length || 0,

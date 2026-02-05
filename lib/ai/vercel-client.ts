@@ -1,5 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai'
-import { getModel, getAutocompleteModel as getAutocompleteModelName, getFastAutocompleteModel as getFastAutocompleteModelName, EMBEDDING_CONFIG } from './config'
+import { getModel, getChatModel as getChatModelName, getAutocompleteModel as getAutocompleteModelName, getFastAutocompleteModel as getFastAutocompleteModelName, getExtractionModel as getExtractionModelName, EMBEDDING_CONFIG } from './config'
 
 // Vercel AI SDK client for paper generation
 export const ai = createOpenAI({
@@ -14,6 +14,15 @@ export const ai = createOpenAI({
  */
 export function getLanguageModel() {
   return ai.languageModel(getModel())
+}
+
+/**
+ * Get the chat model for editor chat interactions
+ * Uses GPT-4.1 for fast responses and good instruction following
+ * Override with AI_CHAT_MODEL env var
+ */
+export function getChatLanguageModel() {
+  return ai.languageModel(getChatModelName())
 }
 
 /**
@@ -32,6 +41,15 @@ export function getAutocompleteLanguageModel() {
  */
 export function getFastAutocompleteLanguageModel() {
   return ai.languageModel(getFastAutocompleteModelName())
+}
+
+/**
+ * Get the extraction model for paper processing
+ * Uses a smaller, faster model since extraction is a structured task
+ * Override with AI_EXTRACTION_MODEL env var
+ */
+export function getExtractionLanguageModel() {
+  return ai.languageModel(getExtractionModelName())
 }
 
 /**

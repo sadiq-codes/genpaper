@@ -172,8 +172,17 @@ system: |-
         ]
       }
     ],
-    "contextHint": "2-4 word description of what this adds"
+    "contextHint": "2-4 word description of what this adds",
+    "confidence": 0.85
   }
+  
+  **confidence** (0.0 to 1.0): How confident you are this completion is appropriate:
+  - 1.0: Perfect fit, directly supported by sources, flows naturally
+  - 0.7-0.9: Good fit, reasonable continuation
+  - 0.5-0.7: Acceptable but generic or loosely connected to sources
+  - <0.5: Uncertain, forced, or no good continuation available
+  
+  If you cannot produce a confident completion (confidence < 0.5), return empty sentences array.
   
   ## Citation Rules
   

@@ -6,9 +6,11 @@
  */
 
 // Default models if not specified in environment
-const DEFAULT_MODEL = 'gpt-4o-2024-11-20'
+const DEFAULT_MODEL = 'gpt-4o-2024-11-20' // Main model for paper generation
+const DEFAULT_CHAT_MODEL = 'gpt-4.1-2025-04-14' // Fast model for editor chat (good instruction following)
 const DEFAULT_AUTOCOMPLETE_MODEL = 'gpt-4.1-2025-04-14' // Faster model for inline completions
 const DEFAULT_FAST_AUTOCOMPLETE_MODEL = 'gpt-4o-mini' // Ultra-fast model for simple completions (no citations)
+const DEFAULT_EXTRACTION_MODEL = 'gpt-4o-mini' // Fast model for paper extraction (structured task)
 
 /**
  * Get the configured AI model from environment
@@ -42,6 +44,27 @@ export function getAutocompleteModel(): string {
  */
 export function getFastAutocompleteModel(): string {
   return process.env.AI_FAST_AUTOCOMPLETE_MODEL || DEFAULT_FAST_AUTOCOMPLETE_MODEL
+}
+
+/**
+ * Get the extraction model for paper processing
+ * Uses a smaller, faster model since extraction is a structured task
+ * 
+ * Set AI_EXTRACTION_MODEL env var to override
+ * Defaults to gpt-4o-mini for cost efficiency
+ */
+export function getExtractionModel(): string {
+  return process.env.AI_EXTRACTION_MODEL || DEFAULT_EXTRACTION_MODEL
+}
+
+/**
+ * Get the chat model for editor chat interactions
+ * Uses GPT-4.1 for fast responses and good instruction following
+ * 
+ * Set AI_CHAT_MODEL env var to override
+ */
+export function getChatModel(): string {
+  return process.env.AI_CHAT_MODEL || DEFAULT_CHAT_MODEL
 }
 
 /**

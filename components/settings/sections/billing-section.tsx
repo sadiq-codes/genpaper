@@ -28,10 +28,10 @@ interface BillingSectionProps {
 
 export function BillingSection({ user }: BillingSectionProps) {
   const { subscription, isLoading, refresh } = useSubscription()
-  const [isRedirecting, setIsRedirecting] = useState(false)
+  const [redirectingTier, setRedirectingTier] = useState<'starter' | 'pro' | 'manage' | null>(null)
   
   const handleUpgrade = (tier: 'starter' | 'pro') => {
-    setIsRedirecting(true)
+    setRedirectingTier(tier)
     window.location.href = getCheckoutUrl(tier, {
       email: user.email,
       userId: user.id,
@@ -39,7 +39,7 @@ export function BillingSection({ user }: BillingSectionProps) {
   }
   
   const handleManageSubscription = () => {
-    setIsRedirecting(true)
+    setRedirectingTier('manage')
     window.location.href = getPortalUrl()
   }
   
@@ -104,9 +104,9 @@ export function BillingSection({ user }: BillingSectionProps) {
               variant="outline" 
               size="sm"
               onClick={handleManageSubscription}
-              disabled={isRedirecting}
+              disabled={redirectingTier !== null}
             >
-              {isRedirecting ? (
+              {redirectingTier === 'manage' ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
@@ -151,14 +151,16 @@ export function BillingSection({ user }: BillingSectionProps) {
                 tier="starter"
                 isCurrentTier={false}
                 onUpgrade={() => handleUpgrade('starter')}
-                isRedirecting={isRedirecting}
+                isRedirecting={redirectingTier === 'starter'}
+                isDisabled={redirectingTier !== null}
               />
               {/* Pro */}
               <PlanCard
                 tier="pro"
                 isCurrentTier={false}
                 onUpgrade={() => handleUpgrade('pro')}
-                isRedirecting={isRedirecting}
+                isRedirecting={redirectingTier === 'pro'}
+                isDisabled={redirectingTier !== null}
                 recommended
               />
             </div>
@@ -172,7 +174,8 @@ export function BillingSection({ user }: BillingSectionProps) {
               tier="pro"
               isCurrentTier={false}
               onUpgrade={() => handleUpgrade('pro')}
-              isRedirecting={isRedirecting}
+              isRedirecting={redirectingTier === 'pro'}
+              isDisabled={redirectingTier !== null}
               recommended
             />
           </div>
@@ -194,12 +197,14 @@ function PlanCard({
   isCurrentTier,
   onUpgrade,
   isRedirecting,
+  isDisabled,
   recommended,
 }: {
   tier: SubscriptionTier
   isCurrentTier: boolean
   onUpgrade: () => void
   isRedirecting: boolean
+  isDisabled?: boolean
   recommended?: boolean
 }) {
   const config = TIER_CONFIG[tier]
@@ -226,7 +231,7 @@ function PlanCard({
         </ul>
         <Button 
           onClick={onUpgrade} 
-          disabled={isCurrentTier || isRedirecting}
+          disabled={isCurrentTier || isDisabled}
           className="w-full"
           variant={recommended ? 'default' : 'outline'}
         >

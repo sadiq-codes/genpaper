@@ -187,6 +187,7 @@ interface AISentence {
 interface AIStructuredResponse {
   sentences: AISentence[]
   contextHint: string
+  confidence: number  // 0.0-1.0, how confident the model is in this completion
   // Legacy single-text format (for backwards compatibility)
   text?: string
   citations?: NumberedCitation[]
@@ -242,11 +243,17 @@ function parseAIResponse(rawText: string): AIStructuredResponse | null {
         return null
       }
       
-      console.log(`[Autocomplete] Parsed ${finalSentences.length} sentences`)
+      console.log(`[Autocomplete] Parsed ${finalSentences.length} sentences, confidence: ${parsed.confidence}`)
+      
+      // Extract confidence score (default to 0.7 if not provided)
+      const confidence = typeof parsed.confidence === 'number' 
+        ? Math.max(0, Math.min(1, parsed.confidence)) 
+        : 0.7
       
       return {
         sentences: finalSentences,
-        contextHint: parsed.contextHint || 'Continuing...'
+        contextHint: parsed.contextHint || 'Continuing...',
+        confidence
       }
     }
     
@@ -274,6 +281,7 @@ function parseAIResponse(rawText: string): AIStructuredResponse | null {
           citations
         }],
         contextHint: parsed.contextHint || 'Continuing...',
+        confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
         // Keep legacy fields for debugging
         text: parsed.text.trim(),
         citations
@@ -513,6 +521,7 @@ export async function POST(request: NextRequest) {
           try {
             let fullText = ''
             let firstTokenTime: number | null = null
+            let sentInterim = false
             
             for await (const chunk of result.textStream) {
               if (abortController.signal.aborted) {
@@ -527,6 +536,45 @@ export async function POST(request: NextRequest) {
               }
               
               fullText += chunk
+              
+              // STREAMING PREVIEW: Try to extract and send interim text early
+              // Look for first complete sentence in the "text" field of the JSON
+              if (!sentInterim && !streamClosed) {
+                // Try to extract text from partial JSON - look for "text": "..." pattern
+                const textMatch = fullText.match(/"text"\s*:\s*"([^"]*(?:\\.[^"]*)*)/)
+                if (textMatch && textMatch[1]) {
+                  // Unescape JSON string
+                  let previewText = textMatch[1]
+                    .replace(/\\n/g, '\n')
+                    .replace(/\\"/g, '"')
+                    .replace(/\\\\/g, '\\')
+                  
+                  // Check if we have at least one complete sentence (ends with . ! or ?)
+                  const sentenceEnd = previewText.match(/[.!?](?:\s|$)/)
+                  if (sentenceEnd) {
+                    // Extract just the first sentence for preview
+                    const firstSentenceEnd = previewText.search(/[.!?](?:\s|$)/) + 1
+                    previewText = previewText.slice(0, firstSentenceEnd).trim()
+                    
+                    // Remove citation markers [1], [2] etc for clean preview
+                    previewText = previewText.replace(/\s*\[\d+\]/g, '')
+                    
+                    if (previewText.length > 10) {
+                      try {
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+                          type: 'interim', 
+                          preview: previewText 
+                        })}\n\n`))
+                        sentInterim = true
+                        console.log('[Autocomplete] Sent interim preview:', previewText.slice(0, 50))
+                      } catch {
+                        streamClosed = true
+                        return
+                      }
+                    }
+                  }
+                }
+              }
               
               // Guard against closed controller
               if (!streamClosed) {
@@ -559,7 +607,55 @@ export async function POST(request: NextRequest) {
               return
             }
             
-            console.log(`[Autocomplete] Parsed ${parsed.sentences.length} sentences`)
+            // CONFIDENCE THRESHOLD: Suppress low-confidence suggestions
+            const CONFIDENCE_THRESHOLD = 0.5
+            if (parsed.confidence < CONFIDENCE_THRESHOLD) {
+              console.log(`[Autocomplete] Low confidence (${parsed.confidence}) - suppressing suggestion`)
+              if (!streamClosed) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+                  type: 'error', 
+                  error: 'No confident suggestion available for this context' 
+                })}\n\n`))
+                streamClosed = true
+                controller.close()
+              }
+              return
+            }
+            
+            // BANNED PHRASE ENFORCEMENT: Reject suggestions containing filler phrases
+            // These are explicitly banned in the prompt but models sometimes ignore
+            const BANNED_PHRASES = [
+              'encompasses a diverse array',
+              'plays a crucial role',
+              'a wide range of',
+              'various aspects of',
+              'it is important to note',
+              'it should be noted',
+              'in recent years',
+              'has gained significant attention',
+              'has been widely studied',
+              'is of paramount importance',
+              'a plethora of',
+              'myriad of',
+            ]
+            
+            const allText = parsed.sentences.map(s => s.text.toLowerCase()).join(' ')
+            const foundBannedPhrase = BANNED_PHRASES.find(phrase => allText.includes(phrase.toLowerCase()))
+            
+            if (foundBannedPhrase) {
+              console.log(`[Autocomplete] Banned phrase detected: "${foundBannedPhrase}" - suppressing suggestion`)
+              if (!streamClosed) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+                  type: 'error', 
+                  error: 'Suggestion contained generic filler - please try again' 
+                })}\n\n`))
+                streamClosed = true
+                controller.close()
+              }
+              return
+            }
+            
+            console.log(`[Autocomplete] Parsed ${parsed.sentences.length} sentences, confidence: ${parsed.confidence}`)
             
             // Process each sentence independently with its own citations
             interface ProcessedSentence {

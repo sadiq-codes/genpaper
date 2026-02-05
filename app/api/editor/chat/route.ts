@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { getLanguageModel } from '@/lib/ai/vercel-client'
+import { getChatLanguageModel } from '@/lib/ai/vercel-client'
 import { streamText, convertToModelMessages, type UIMessage } from 'ai'
 import { NextRequest } from 'next/server'
 import { documentTools, getConfirmationLevel } from '@/lib/ai/tools/document-tools'
@@ -569,7 +569,7 @@ export async function POST(request: NextRequest) {
     // Stream the response with tools
     // When this is a tool result follow-up, disable tools so AI just responds with text
     const result = streamText({
-      model: getLanguageModel(),
+      model: getChatLanguageModel(),
       system: isToolResultMessage 
         ? `${systemPrompt}\n\n[IMPORTANT: This is a follow-up to tool results. Respond briefly acknowledging what was done. Do NOT use any tools - just provide a short, natural confirmation message.]`
         : systemPrompt,

@@ -15,7 +15,7 @@
 import { generateObject } from 'ai'
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
-import { getLanguageModel } from '@/lib/ai/vercel-client'
+import { getExtractionLanguageModel } from '@/lib/ai/vercel-client'
 import type {
   Finding,
   PaperExtraction,
@@ -275,7 +275,7 @@ export async function extractPaper(input: ExtractionInput): Promise<ExtractionRe
     console.log(`\n🔬 Extracting findings from paper (${text.length} chars)...`)
     
     const { object } = await generateObject({
-      model: getLanguageModel(),
+      model: getExtractionLanguageModel(),
       schema: ExtractionSchema,
       system: SYSTEM_PROMPT,
       prompt: buildPrompt(text),
