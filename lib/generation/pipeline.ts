@@ -677,8 +677,9 @@ export async function generatePaper(
         // Pass paper profile guidance for contextual intelligence
         profileGuidance,
         // Pass voice configuration for authorial persona variation
-        voiceConfig: paperProfile.voice
-        // Note: minSourcesRequired removed - using semantic citation guidance instead
+        voiceConfig: paperProfile.voice,
+        // Pass quality criteria from profile - eliminates per-section LLM calls
+        profileCriteria: paperProfile.qualityCriteria
       },
       // Progress callback - called when section starts
       (completed, total, currentSection) => {
@@ -758,7 +759,9 @@ export async function generatePaper(
               paperType: config.paperType,
               topic: sanitizedTopic,
               // Preserve voice configuration during rewrite for consistent authorial persona
-              voiceConfig: paperProfile.voice
+              voiceConfig: paperProfile.voice,
+              // Pass quality criteria from profile
+              profileCriteria: paperProfile.qualityCriteria
             }
           })
         } catch (rewriteError) {
@@ -852,7 +855,9 @@ export async function generatePaper(
                 paperType: config.paperType,
                 topic: sanitizedTopic,
                 // Preserve voice configuration during rewrite for consistent authorial persona
-                voiceConfig: paperProfile.voice
+                voiceConfig: paperProfile.voice,
+                // Pass quality criteria from profile
+                profileCriteria: paperProfile.qualityCriteria
               }
             })
             

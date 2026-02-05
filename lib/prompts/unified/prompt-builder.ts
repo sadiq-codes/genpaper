@@ -16,7 +16,7 @@ import {
   formatVoiceForTemplate,
   DEFAULT_VOICE_PROFILE_ID
 } from '@/lib/generation/voice-profiles'
-import type { PaperVoiceConfig } from '@/lib/generation/paper-profile-types'
+import type { PaperVoiceConfig, QualityCriterion } from '@/lib/generation/paper-profile-types'
 import type { EnrichedSectionContext } from '@/lib/synthesis-engine/outline-enricher'
 
 /**
@@ -55,6 +55,10 @@ export interface BuildPromptOptions extends TemplateOptions {
   // Voice/Authorial persona configuration
   // Controls hedging, confidence, citation posture, and intellectual risk
   voiceConfig?: PaperVoiceConfig
+  
+  // Quality criteria from paper profile - used directly instead of LLM calls
+  // This eliminates per-section generateQualityCriteria() calls
+  profileCriteria?: QualityCriterion[]
 }
 
 /**
@@ -213,10 +217,12 @@ async function generatePromptData(
   const alreadyCovered = ''
   const topic = options.topic || projectData.title
   const paperType = options.paperType || 'researchArticle'
-  const sectionPurpose = await buildSectionPurpose(context.title || String(context.sectionKey), topic, paperType)
+  // Use profile criteria directly - no LLM call
+  const sectionPurpose = buildSectionPurpose(context.title || String(context.sectionKey), options.profileCriteria)
   const exclusions = await buildExclusions(previousSummary)
   const usedEvidenceLedger = await buildUsedEvidenceLedger()
-  const { requiredPoints, qualityCriteria } = await buildPlanningData(context.title || String(context.sectionKey), topic, paperType)
+  // Use profile criteria directly - no LLM call
+  const { requiredPoints, qualityCriteria } = buildPlanningData(context.title || String(context.sectionKey), options.profileCriteria)
 
   // Original research context (if provided)
   const originalResearch = options.originalResearch
@@ -457,43 +463,32 @@ function addVoiceConditionalFlags(voice: TemplateVoiceData): TemplateVoiceData &
 // Template loading is fully handled by PromptService
 
 /**
- * Build section purpose guidance using quality criteria generation
+ * Build section purpose guidance using profile criteria directly
+ * NO LLM CALLS - uses criteria from paper profile generation
+ * 
+ * @param sectionTitle - The section being generated
+ * @param profileCriteria - Quality criteria from PaperProfile (already generated)
  */
-async function buildSectionPurpose(sectionTitle: string, topic: string, paperType: string): Promise<string> {
-  try {
-    // Import generators for quality criteria generation
-    const { generateQualityCriteria } = await import('@/lib/prompts/generators')
-    
-    // Generate discipline-specific quality criteria
-    const qualityCriteria = await generateQualityCriteria(
-      topic,
-      sectionTitle,
-      paperType as PaperTypeKey
-    )
-    
-    // Convert criteria to purpose statement
-    const purposeStatements = qualityCriteria.map(criterion => 
-      `Ensure ${criterion.toLowerCase()}`
+function buildSectionPurpose(sectionTitle: string, profileCriteria?: QualityCriterion[]): string {
+  // Use profile criteria directly - no LLM call needed
+  // The paper profile already contains discipline-specific quality criteria
+  if (profileCriteria && profileCriteria.length > 0) {
+    const purposeStatements = profileCriteria.slice(0, 3).map(c => 
+      `Ensure ${c.criterion.toLowerCase()}`
     ).join('; ')
     
     return `${purposeStatements}; avoid repetition of previous sections`
-    
-  } catch (error) {
-    console.warn('Failed to generate section purpose with quality criteria:', error)
-    
-    // Fallback to static mapping
-    const sectionPurposeMap: Record<string, string> = {
-      'introduction': 'Establish context and research questions; do not repeat background covered in abstract',
-      'methods': 'Report procedures only; no background or results discussion', 
-      'results': 'Present findings only; no interpretation or methods restatement',
-      'discussion': 'Interpret results and implications; avoid restating methods or results',
-      'conclusion': 'Synthesize key contributions; do not repeat detailed findings',
-      'literature-review': 'Critically analyze sources; avoid listing without synthesis'
-    }
-
-    const normalizedKey = sectionTitle.toLowerCase().replace(/[^a-z]/g, '-')
-    return sectionPurposeMap[normalizedKey] || `Focus on ${sectionTitle} content only; avoid repetition of previous sections`
   }
+  
+  // If no profile criteria provided, return generic guidance
+  // This should rarely happen since profile is always generated first
+  warn({
+    stage: 'prompt-builder',
+    step: 'build-section-purpose',
+    section: sectionTitle
+  }, 'No profile criteria provided - using generic guidance')
+  
+  return `Focus on ${sectionTitle} objectives; integrate evidence from sources; avoid repetition of previous sections`
 }
 
 /**
@@ -534,38 +529,40 @@ async function buildUsedEvidenceLedger(): Promise<string> {
 /**
  * Build planning data (required points and quality criteria) using section planning
  */
-async function buildPlanningData(sectionTitle: string, topic: string, paperType: string): Promise<{
+/**
+ * Build planning data using profile criteria directly
+ * NO LLM CALLS - uses criteria from paper profile generation
+ * 
+ * @param sectionTitle - The section being generated
+ * @param profileCriteria - Quality criteria from PaperProfile (already generated)
+ */
+function buildPlanningData(sectionTitle: string, profileCriteria?: QualityCriterion[]): {
   requiredPoints: string
   qualityCriteria: string
-}> {
-  try {
-    // Import planning functionality from generators.ts
-    const { generateQualityCriteria } = await import('@/lib/prompts/generators')
-    
-    // Generate quality criteria for this section
-    const criteria = await generateQualityCriteria(
-      topic,
-      sectionTitle,
-      paperType as PaperTypeKey
-    )
-    
-    // Format for template display
-    const qualityCriteria = criteria.map(c => `• ${c}`).join('\n')
-    
-    // Generate required points (simplified for now)
+} {
+  // Use profile criteria directly - no LLM call needed
+  // The paper profile already contains discipline-specific quality criteria
+  if (profileCriteria && profileCriteria.length > 0) {
+    const qualityCriteria = profileCriteria.map(c => `• ${c.criterion}: ${c.howToAchieve}`).join('\n')
     const requiredPoints = `• Address all ${sectionTitle} objectives\n• Integrate evidence from provided sources\n• Maintain logical flow with document structure`
     
     return {
       requiredPoints,
       qualityCriteria
     }
-    
-  } catch (error) {
-    console.warn('Failed to generate planning data:', error)
-    return {
-      requiredPoints: '',
-      qualityCriteria: ''
-    }
+  }
+  
+  // If no profile criteria provided, return minimal guidance
+  // This should rarely happen since profile is always generated first
+  warn({
+    stage: 'prompt-builder',
+    step: 'build-planning-data',
+    section: sectionTitle
+  }, 'No profile criteria provided - using minimal guidance')
+  
+  return {
+    requiredPoints: `• Address all ${sectionTitle} objectives\n• Integrate evidence from provided sources`,
+    qualityCriteria: ''
   }
 }
 

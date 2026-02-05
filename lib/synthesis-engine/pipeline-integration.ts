@@ -119,21 +119,28 @@ export async function extractThemesHybrid(
           const paper = papers.find(p => p.id === paperId)
           if (!paper) return null
           
-          // Get paper content - prefer pdf_content, fall back to abstract
-          const content = (paper as any).pdf_content || paper.abstract || ''
+          // Get paper content - ONLY use pdf_content for extraction
+          // Abstract-only papers are kept for RAG/citations but not LLM extraction
+          const pdfContent = (paper as any).pdf_content || ''
           
-          // Only extract from papers with substantial content
-          // This prevents wasting API calls on abstract-only papers
-          const MIN_CONTENT_LENGTH = 2000 // ~500 words minimum
-          const MIN_ABSTRACT_LENGTH = 500  // Allow good abstracts as fallback
+          // Only extract from papers with substantial full text
+          // This significantly reduces LLM calls while improving extraction quality
+          // (full-text papers provide richer, more specific findings)
+          const MIN_FULL_TEXT_LENGTH = 5000 // ~1200 words - real full text only
           
-          const hasFullText = content.length >= MIN_CONTENT_LENGTH
-          const hasGoodAbstract = !!(paper as any).pdf_content === false && 
-                                  paper.abstract && 
-                                  paper.abstract.length >= MIN_ABSTRACT_LENGTH
+          const hasPdfContent = pdfContent.length > 0
+          const hasFullText = hasPdfContent && pdfContent.length >= MIN_FULL_TEXT_LENGTH
           
-          if (!hasFullText && !hasGoodAbstract) {
-            console.log(`Skipping extraction for ${paperId} - insufficient content (${content.length} chars)`)
+          if (!hasFullText) {
+            const reason = !hasPdfContent ? 'abstract-only' : 'content-too-short'
+            info({
+              stage: 'extraction',
+              step: 'skip-paper',
+              paperId,
+              reason,
+              contentLength: pdfContent.length,
+              threshold: MIN_FULL_TEXT_LENGTH
+            }, `Skipping extraction for ${paperId} - ${reason} (${pdfContent.length} chars)`)
             completedCount++
             return null
           }
@@ -141,7 +148,7 @@ export async function extractThemesHybrid(
           try {
             const result = await extractPaper({
               paperId,
-              text: content
+              text: pdfContent
             })
             
             completedCount++
