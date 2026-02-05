@@ -152,7 +152,6 @@ describe('Theme Extraction Service', () => {
     discipline: {
       primary: 'Healthcare Informatics',
       related: ['Computer Science', 'Medicine'],
-      methodologicalTraditions: ['systematic review', 'meta-analysis'],
       fieldCharacteristics: {
         paceOfChange: 'rapid',
         theoryVsEmpirical: 'empirical-heavy',
@@ -169,8 +168,12 @@ describe('Theme Extraction Service', () => {
     sourceExpectations: {
       minimumUniqueSources: 20,
       idealSourceCount: 35,
-      sourceTypeDistribution: [],
       recencyProfile: 'cutting-edge',
+      searchYearRange: {
+        fromYear: new Date().getFullYear() - 10,
+        toYear: new Date().getFullYear(),
+        rationale: 'Cutting-edge field; focus on recent work'
+      },
       recencyGuidance: 'Focus on recent literature'
     },
     qualityCriteria: [],

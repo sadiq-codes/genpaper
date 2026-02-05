@@ -7,7 +7,6 @@ import { GenerationContextService } from '@/lib/rag/generation-context'
 import { SectionReviewer } from '@/lib/quality/section-reviewer'
 // Legacy validatePaperType removed - using profile-based validation only
 import { fourGramOverlapRatio } from '@/lib/utils/overlap'
-import { EvidenceTracker } from '@/lib/services/evidence-tracker'
 import { sanitizeTopic } from '@/lib/utils/prompt-safety'
 import { classifyError, CancellationError } from '@/lib/generation/errors'
 import { warn, error as logError, info } from '@/lib/utils/logger'
@@ -15,15 +14,16 @@ import { warn, error as logError, info } from '@/lib/utils/logger'
 // We only need cleanRemainingArtifacts to remove any leaked tool syntax
 import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
 import { logSectionCitations } from '@/lib/rag/relevance-feedback'
-import { mergeThemeAnalysisIntoProfile, buildThemeGuidanceForOutline } from '@/lib/generation/theme-extraction'
+import { mergeAnalysisResultIntoProfile, buildAnalysisGuidanceForOutline } from '@/lib/generation/theme-extraction'
 import { extractThemesHybrid, enrichAndBuildContexts, type HybridThemeExtractionResult } from '@/lib/synthesis-engine/pipeline-integration'
 import type { EnrichedSectionContext } from '@/lib/synthesis-engine/outline-enricher'
 import { getServiceClient } from '@/lib/supabase/service'
-import type { PaperProfile, ThemeAnalysis } from '@/lib/generation/paper-profile-types'
+import type { PaperProfile } from '@/lib/generation/paper-profile-types'
 import type { PaperStatus, OriginalResearchConfig, PaperTypeKey as SimplifiedPaperTypeKey } from '@/types/simplified'
 import { PAPER_TYPE_SEARCH_MULTIPLIERS, PAPER_TYPE_MIN_SEARCH } from '@/types/simplified'
 import type { GeneratedOutline, SectionContext, PaperTypeKey } from '@/lib/prompts/types'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
+import type { AnalysisResult } from '@/lib/analysis/cross-document'
 
 /**
  * Pipeline performance metrics for bottleneck analysis
@@ -101,8 +101,8 @@ export interface PipelineResult {
   citations: Record<string, { paperId: string; citationText: string }>
   /** The generated paper profile that guided generation */
   profile: PaperProfile
-  /** Theme analysis from collected papers (Scribbr-aligned approach) */
-  themeAnalysis?: ThemeAnalysis
+  /** Cross-document analysis result (patterns/contradictions/gaps) */
+  analysisResult?: AnalysisResult
   metrics: {
     papersUsed: number
     sectionsGenerated: number
@@ -195,10 +195,6 @@ export async function generatePaper(
   
   // Set project status to generating
   await updateResearchProjectStatus(projectId, 'generating' as PaperStatus)
-  
-  // Set up evidence tracking with database persistence
-  EvidenceTracker.setProject(projectId)
-  await EvidenceTracker.loadFromDatabase(projectId)
 
   try {
     // Step 1: Generate Paper Profile (contextual intelligence)
@@ -409,7 +405,7 @@ export async function generatePaper(
     const themeStartTime = Date.now()
     onProgress?.('planning', 25, 'Extracting findings from papers...')
     
-    let themeAnalysis: ThemeAnalysis | undefined
+    let analysisResult: AnalysisResult | undefined
     let hybridResult: HybridThemeExtractionResult | undefined
     let enhancedProfile = paperProfile
     
@@ -425,18 +421,15 @@ export async function generatePaper(
         }
       )
       
-      themeAnalysis = hybridResult.themeAnalysis
+      analysisResult = hybridResult.analysisResult
       
-      // Merge emergent themes into the profile
-      enhancedProfile = mergeThemeAnalysisIntoProfile(paperProfile, themeAnalysis)
+      // Merge cross-document signals into the profile
+      enhancedProfile = mergeAnalysisResultIntoProfile(paperProfile, analysisResult)
       
       info({
-        emergentThemes: themeAnalysis.emergentThemes.length,
-        debates: themeAnalysis.debates.length,
-        gaps: themeAnalysis.gaps.length,
-        pivotalPapers: themeAnalysis.pivotalPapers.length,
-        suggestedOrganization: themeAnalysis.organizationSuggestion.approach,
-        confidence: themeAnalysis.confidence,
+        patterns: analysisResult.patterns.length,
+        contradictions: analysisResult.contradictions.length,
+        gaps: analysisResult.gaps.length,
         // Hybrid-specific stats
         papersExtracted: hybridResult.extractionStats.papersExtracted,
         papersFromCache: hybridResult.extractionStats.papersFromCache,
@@ -445,12 +438,11 @@ export async function generatePaper(
       
       metrics.themeExtractionDuration = Date.now() - themeStartTime
       
-      onProgress?.('planning', 30, `Found ${themeAnalysis.emergentThemes.length} themes from ${hybridResult.extractionStats.totalFindings} findings`, {
-        themesFound: themeAnalysis.emergentThemes.length,
-        debatesFound: themeAnalysis.debates.length,
-        gapsFound: themeAnalysis.gaps.length,
+      onProgress?.('planning', 30, `Found ${analysisResult.patterns.length} patterns from ${hybridResult.extractionStats.totalFindings} findings`, {
+        patternsFound: analysisResult.patterns.length,
+        contradictionsFound: analysisResult.contradictions.length,
+        gapsFound: analysisResult.gaps.length,
         findingsExtracted: hybridResult.extractionStats.totalFindings,
-        suggestedOrganization: themeAnalysis.organizationSuggestion.approach,
         durationMs: metrics.themeExtractionDuration,
         phase: 'themes_complete'
       })
@@ -491,8 +483,8 @@ export async function generatePaper(
         keyFindings: config.originalResearch.key_findings
       } : undefined
     
-    // Build theme guidance for outline generation
-    const themeGuidance = themeAnalysis ? buildThemeGuidanceForOutline(themeAnalysis) : undefined
+    // Build analysis guidance for outline generation
+    const themeGuidance = analysisResult ? buildAnalysisGuidanceForOutline(analysisResult) : undefined
     
     const rawOutline = await generateOutline(
       config.paperType,
@@ -811,7 +803,9 @@ export async function generatePaper(
       }
       
       // Citation verification - verify that cited papers actually support the claims
-      // This is BLOCKING - if citations fail verification, we regenerate with feedback
+      // Simplified policy:
+      // - Always run verification (integrity signal)
+      // - Only regenerate when failure is SEVERE (avoid costly regen loops)
       try {
         const { verifySectionCitations, buildCitationFeedback } = await import('@/lib/quality/citation-verifier')
         const citationReport = await verifySectionCitations(
@@ -824,60 +818,83 @@ export async function generatePaper(
         
         if (!citationReport.passed && citationReport.totalCitations > 0) {
           metrics.citationStats.sectionsFailed++
-          warn({ 
-            section: sectionContext.title, 
-            verified: citationReport.verifiedCitations,
-            failed: citationReport.failedCitations.length,
-            score: (citationReport.score * 100).toFixed(0) + '%'
-          }, 'Citation verification failed - regenerating section')
-          
-          // Build feedback about which citations failed
-          const citationFeedback = buildCitationFeedback(citationReport)
-          
-          // Regenerate with citation feedback
-          try {
-            metrics.citationStats.regenerationsTriggered++
-            wasRewritten = true
-            rewriteReason = 'citation_verification'
-            
-            const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
-            const regenerated = await generateWithUnifiedTemplate({
-              context: sectionContext,
-              options: {
-                temperature: config.temperature || 0.2,
-                maxTokens: perSectionTokens,
-                forceRewrite: true,
-                rewriteText: result.content,
-                previousSectionsSummary: citationFeedback,
-                outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n'),
-                // Preserve profile guidance during rewrite to maintain paper type rules
-                profileGuidance,
-                paperType: config.paperType,
-                topic: sanitizedTopic,
-                // Preserve voice configuration during rewrite for consistent authorial persona
-                voiceConfig: paperProfile.voice,
-                // Pass quality criteria from profile
-                profileCriteria: paperProfile.qualityCriteria
+
+          // Determine severity (only severe failures trigger regeneration)
+          const severeByScore = citationReport.score < 0.4
+          const severeByZeroVerified = citationReport.verifiedCitations === 0
+          const severeByMissingEvidence = citationReport.failedCitations.some(f =>
+            f.issue?.toLowerCase().includes('no content available from cited paper')
+          )
+          const isSevere = severeByScore || severeByZeroVerified || severeByMissingEvidence
+
+          warn(
+            {
+              section: sectionContext.title,
+              verified: citationReport.verifiedCitations,
+              failed: citationReport.failedCitations.length,
+              score: (citationReport.score * 100).toFixed(0) + '%',
+              severe: isSevere
+            },
+            isSevere
+              ? 'Citation verification failed (severe) - regenerating section'
+              : 'Citation verification failed (non-severe) - keeping section'
+          )
+
+          if (isSevere) {
+            // Build feedback about which citations failed
+            const citationFeedback = buildCitationFeedback(citationReport)
+
+            // Regenerate ONCE with citation feedback (no multi-pass loops)
+            try {
+              metrics.citationStats.regenerationsTriggered++
+              wasRewritten = true
+              rewriteReason = 'citation_verification'
+
+              const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
+              const regenerated = await generateWithUnifiedTemplate({
+                context: sectionContext,
+                options: {
+                  temperature: config.temperature || 0.2,
+                  maxTokens: perSectionTokens,
+                  forceRewrite: true,
+                  rewriteText: result.content,
+                  previousSectionsSummary: citationFeedback,
+                  outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n'),
+                  // Preserve profile guidance during rewrite to maintain paper type rules
+                  profileGuidance,
+                  paperType: config.paperType,
+                  topic: sanitizedTopic,
+                  // Preserve voice configuration during rewrite for consistent authorial persona
+                  voiceConfig: paperProfile.voice,
+                  // Pass quality criteria from profile
+                  profileCriteria: paperProfile.qualityCriteria
+                }
+              })
+
+              // Re-verify regenerated content (single recheck; no further regen)
+              const recheck = await verifySectionCitations(
+                sectionContext.title,
+                regenerated.content,
+                sectionContext.contextChunks || []
+              )
+
+              if (recheck.passed || recheck.score > citationReport.score) {
+                result = regenerated
+                info(
+                  { section: sectionContext.title, newScore: (recheck.score * 100).toFixed(0) + '%' },
+                  'Section regenerated with improved citations'
+                )
+              } else {
+                warn({ section: sectionContext.title }, 'Citation regeneration did not improve - keeping original')
+                qualityIssues.push(`${sectionContext.title}: Some citations could not be verified`)
               }
-            })
-            
-            // Verify the regenerated content
-            const recheck = await verifySectionCitations(
-              sectionContext.title,
-              regenerated.content,
-              sectionContext.contextChunks || []
-            )
-            
-            if (recheck.passed || recheck.score > citationReport.score) {
-              result = regenerated
-              info({ section: sectionContext.title, newScore: (recheck.score * 100).toFixed(0) + '%' }, 'Section regenerated with improved citations')
-            } else {
-              warn({ section: sectionContext.title }, 'Regeneration did not improve citations - keeping original')
-              qualityIssues.push(`${sectionContext.title}: Some citations could not be verified`)
+            } catch (regenError) {
+              warn({ section: sectionContext.title, error: regenError }, 'Citation-based regeneration failed')
+              qualityIssues.push(`${sectionContext.title}: Citation verification issues detected`)
             }
-          } catch (regenError) {
-            warn({ section: sectionContext.title, error: regenError }, 'Citation-based regeneration failed')
-            qualityIssues.push(`${sectionContext.title}: Citation verification issues detected`)
+          } else {
+            // Non-severe: keep content; surface as quality issue but don't spend an LLM call
+            qualityIssues.push(`${sectionContext.title}: Some citations could not be verified`)
           }
         }
         
@@ -1090,10 +1107,6 @@ export async function generatePaper(
     
     await updateProjectContent(projectId, fullContent.trim(), citationsMap)
     
-    // Flush evidence tracker to ensure all usage is persisted to database
-    // This enables cross-session deduplication for resumable generation
-    await EvidenceTracker.flush(projectId)
-    
     // Finalize metrics
     metrics.totalDuration = Date.now() - startTime
     
@@ -1134,7 +1147,7 @@ export async function generatePaper(
       sections: sectionContexts,
       citations: citationsMap,
       profile: enhancedProfile,  // Return the enhanced profile with emergent themes
-      themeAnalysis,             // Include theme analysis for transparency
+      analysisResult,            // Include analysis result for transparency
       metrics: {
         papersUsed: allPapers.length,
         sectionsGenerated: completedSections,
@@ -1147,10 +1160,7 @@ export async function generatePaper(
 
   } catch (err) {
     logError({ error: err }, 'Pipeline error')
-    
-    // Clean up evidence tracker (use sync to avoid nested async issues)
-    EvidenceTracker.clearLedgerSync(projectId)
-    
+
     // Classify error for better reporting
     const classified = classifyError(err)
     logError({ category: classified.category, message: classified.userMessage }, 'Pipeline failed')

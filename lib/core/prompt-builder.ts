@@ -77,7 +77,6 @@ export interface PromptData {
   
   // Evidence and context (pre-formatted)
   evidenceSnippets: string
-  usedEvidenceLedger?: string
   
   // Original research context (for empirical papers)
   hasOriginalResearch?: boolean

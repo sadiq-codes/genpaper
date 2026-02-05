@@ -312,11 +312,6 @@ user: |-
   {{evidenceSnippets}}
   ```
   
-  {{#usedEvidenceLedger}}
-  ### Already Used Evidence
-  {{usedEvidenceLedger}}
-  {{/usedEvidenceLedger}}
-  
   ---
   
   ## OUTPUT REQUIREMENTS

@@ -16,6 +16,7 @@ import 'server-only'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { info, warn, error as logError } from '@/lib/utils/logger'
 import { createServiceClient } from '@/lib/supabase/service'
+import type { AnalysisResult } from '@/lib/analysis/cross-document'
 import type { 
   ThemeAnalysis,
   ThemeExtractionInput,
@@ -760,6 +761,171 @@ function themeNamesOverlap(theme1: string, theme2: string): boolean {
   // Check if at least 40% of significant words overlap
   const matches = words1.filter(w => words2.some(w2 => w2.includes(w) || w.includes(w2)))
   return matches.length >= Math.min(2, Math.ceil(words1.length * 0.4))
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// AnalysisResult-based helpers (preferred for hybrid pipeline)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Merge cross-document AnalysisResult into the paper profile.
+ * This is the preferred path for the hybrid synthesis pipeline (no ThemeAnalysis adapter).
+ */
+export function mergeAnalysisResultIntoProfile(
+  profile: PaperProfile,
+  analysis: AnalysisResult
+): PaperProfile {
+  const enhanced = { ...profile }
+
+  // Treat patterns as emergent themes (use the specific pattern claim)
+  const emergentThemeNames = (analysis.patterns || []).map(p => p.claim)
+
+  // Keep required themes that overlap with emergent themes
+  const overlappingRequired = enhanced.coverage.requiredThemes.filter(theme =>
+    emergentThemeNames.some(emergent => themeNamesOverlap(theme, emergent))
+  )
+
+  // Strong patterns become required; others become recommended
+  const strongThemes = (analysis.patterns || [])
+    .filter(p => p.strength === 'strong')
+    .map(p => p.claim)
+
+  enhanced.coverage.requiredThemes = [...new Set([...overlappingRequired, ...strongThemes])]
+
+  const otherThemes = (analysis.patterns || [])
+    .filter(p => p.strength !== 'strong')
+    .map(p => p.claim)
+
+  enhanced.coverage.recommendedThemes = [
+    ...new Set([...(enhanced.coverage.recommendedThemes || []), ...otherThemes])
+  ]
+
+  // Debates from contradictions
+  const debateDescriptions = (analysis.contradictions || []).map(c => c.description)
+  enhanced.coverage.debates = [...new Set([...(enhanced.coverage.debates || []), ...debateDescriptions])]
+
+  // Methodological considerations: contradictions explicitly marked methodological
+  const methodNotes = (analysis.contradictions || [])
+    .filter(c => c.contradictionType === 'methodological')
+    .map(c => `Methodological inconsistency: ${c.description}`)
+
+  enhanced.coverage.methodologicalConsiderations = [
+    ...new Set([...(enhanced.coverage.methodologicalConsiderations || []), ...methodNotes])
+  ]
+
+  // Gap-related pitfalls (cap to avoid overwhelming)
+  const gapWarnings = (analysis.gaps || [])
+    .filter(g => g.priority !== 'low') // include undefined + medium/high
+    .map(g => `Address gap: ${g.description}`)
+
+  enhanced.coverage.commonPitfalls = [
+    ...(enhanced.coverage.commonPitfalls || []),
+    ...gapWarnings.slice(0, 2)
+  ]
+
+  info(
+    {
+      originalRequiredThemes: profile.coverage.requiredThemes.length,
+      newRequiredThemes: enhanced.coverage.requiredThemes.length,
+      patterns: analysis.patterns?.length || 0,
+      contradictions: analysis.contradictions?.length || 0,
+      gaps: analysis.gaps?.length || 0
+    },
+    'Profile enhanced with cross-document analysis'
+  )
+
+  return enhanced
+}
+
+/**
+ * Build outline guidance text directly from AnalysisResult.
+ * Kept close to the ThemeAnalysis guidance format so existing outline prompting remains effective.
+ */
+export function buildAnalysisGuidanceForOutline(analysis: AnalysisResult): string {
+  const patterns = analysis.patterns || []
+  const contradictions = analysis.contradictions || []
+  const gaps = analysis.gaps || []
+
+  // Compute a rough confidence (0-1) from top signals
+  const patternConf = patterns.length ? patterns.slice(0, 5).reduce((s, p) => s + (p.confidence || 0), 0) / Math.min(5, patterns.length) : 0.5
+  const contraConf = contradictions.length ? contradictions.slice(0, 5).reduce((s, c) => s + (c.confidence || 0), 0) / Math.min(5, contradictions.length) : 0.5
+  const gapConf = gaps.length ? gaps.slice(0, 5).reduce((s, g) => s + (g.confidence || 0), 0) / Math.min(5, gaps.length) : 0.5
+  const confidence = Math.max(0, Math.min(1, (patternConf + contraConf + gapConf) / 3))
+
+  const themesText = patterns
+    .map(p => {
+      const strength = p.strength === 'strong' ? '***' : p.strength === 'moderate' ? '**' : '*'
+      const total = p.support?.total || analysis.analyzedPapers || 0
+      const count = p.support?.count || (p.support?.papers?.length || 0)
+      const pct = total > 0 ? Math.round((count / total) * 100) : 0
+      const desc = `${p.summary}. This pattern is supported by ${count} of ${total} papers (${pct}%).`
+      return `${strength} ${p.claim}: ${desc} (${count} papers)`
+    })
+    .join('\n') || 'No major cross-paper patterns identified'
+
+  const debatesText = contradictions.length > 0
+    ? contradictions.map(c => `- ${c.description}`).join('\n')
+    : 'No major debates identified'
+
+  const gapLabel = (priority?: string) => {
+    if (priority === 'high') return 'critical'
+    if (priority === 'medium') return 'notable'
+    if (priority === 'low') return 'minor'
+    return 'notable'
+  }
+
+  const gapsText = gaps
+    .filter(g => gapLabel(g.priority) !== 'minor')
+    .map(g => `- [${gapLabel(g.priority)}] ${g.description}`)
+    .join('\n') || 'No critical gaps identified'
+
+  // Pivotal papers: most frequently referenced in pattern supports (paperTitle is included in supports)
+  const paperCounts = new Map<string, { title: string; count: number }>()
+  for (const p of patterns) {
+    for (const sup of p.support?.papers || []) {
+      const existing = paperCounts.get(sup.paperId)
+      if (existing) {
+        existing.count++
+      } else {
+        paperCounts.set(sup.paperId, { title: sup.paperTitle || 'Unknown', count: 1 })
+      }
+    }
+  }
+  const pivotalText = [...paperCounts.entries()]
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 5)
+    .map(([paperId, meta]) => `- ${meta.title} (Supports ${meta.count} pattern(s) | ${paperId})`)
+    .join('\n') || 'No pivotal publications identified'
+
+  // Organizational suggestion (simple heuristic)
+  let approach: 'thematic' | 'hybrid' = 'thematic'
+  let rationale = 'Thematic organization allows for clear synthesis of findings across papers.'
+  if (patterns.length >= 3) {
+    approach = 'thematic'
+    rationale = `Analysis identified ${patterns.length} distinct patterns that can serve as organizing themes.`
+  } else if (contradictions.length >= 2) {
+    approach = 'hybrid'
+    rationale = `With ${contradictions.length} scholarly debates, a hybrid thematic-argumentative structure is recommended.`
+  }
+
+  return `## THEME ANALYSIS FROM COLLECTED LITERATURE
+**Confidence:** ${(confidence * 100).toFixed(0)}% | **Papers Analyzed:** ${analysis.analyzedPapers}
+
+### Emergent Themes (from actual papers)
+${themesText}
+
+### Scholarly Debates
+${debatesText}
+
+### Literature Gaps to Address
+${gapsText}
+
+### Pivotal Publications to Highlight
+${pivotalText}
+
+### Organizational Approach
+**Recommended:** ${approach}
+**Rationale:** ${rationale}`
 }
 
 /**

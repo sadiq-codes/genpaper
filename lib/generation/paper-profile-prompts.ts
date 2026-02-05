@@ -242,7 +242,6 @@ Return a JSON object with this exact structure:
   "discipline": {
     "primary": "string",
     "related": ["string"],
-    "methodologicalTraditions": ["string"],
     "fieldCharacteristics": {
       "paceOfChange": "rapid|moderate|slow",
       "theoryVsEmpirical": "theory-heavy|balanced|empirical-heavy",
@@ -270,17 +269,13 @@ Return a JSON object with this exact structure:
   "sourceExpectations": {
     "minimumUniqueSources": number,
     "idealSourceCount": number,
-    "sourceTypeDistribution": [
-      { "type": "string", "percentage": number, "importance": "required|recommended|optional" }
-    ],
     "recencyProfile": "cutting-edge|balanced|foundational-heavy",
     "searchYearRange": {
       "fromYear": number,
       "toYear": number,
       "rationale": "string explaining why this year range is appropriate"
     },
-    "recencyGuidance": "string",
-    "seminalWorks": ["string"] or null
+    "recencyGuidance": "string"
   },
   "qualityCriteria": [
     {
@@ -379,7 +374,6 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
       properties: {
         primary: { type: 'string' as const },
         related: { type: 'array' as const, items: { type: 'string' as const } },
-        methodologicalTraditions: { type: 'array' as const, items: { type: 'string' as const } },
         fieldCharacteristics: {
           type: 'object' as const,
           properties: {
@@ -391,7 +385,7 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
           additionalProperties: false
         }
       },
-      required: ['primary', 'related', 'methodologicalTraditions', 'fieldCharacteristics'],
+      required: ['primary', 'related', 'fieldCharacteristics'],
       additionalProperties: false
     },
     structure: {
@@ -437,19 +431,6 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
       properties: {
         minimumUniqueSources: { type: 'number' as const },
         idealSourceCount: { type: 'number' as const },
-        sourceTypeDistribution: {
-          type: 'array' as const,
-          items: {
-            type: 'object' as const,
-            properties: {
-              type: { type: 'string' as const },
-              percentage: { type: 'number' as const },
-              importance: { type: 'string' as const, enum: ['required', 'recommended', 'optional'] }
-            },
-            required: ['type', 'percentage', 'importance'],
-            additionalProperties: false
-          }
-        },
         recencyProfile: { type: 'string' as const, enum: ['cutting-edge', 'balanced', 'foundational-heavy'] },
         searchYearRange: {
           type: 'object' as const,
@@ -461,10 +442,9 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
           required: ['fromYear', 'toYear', 'rationale'],
           additionalProperties: false
         },
-        recencyGuidance: { type: 'string' as const },
-        seminalWorks: { type: 'array' as const, items: { type: 'string' as const } }
+        recencyGuidance: { type: 'string' as const }
       },
-      required: ['minimumUniqueSources', 'idealSourceCount', 'sourceTypeDistribution', 'recencyProfile', 'searchYearRange', 'recencyGuidance', 'seminalWorks'],
+      required: ['minimumUniqueSources', 'idealSourceCount', 'recencyProfile', 'searchYearRange', 'recencyGuidance'],
       additionalProperties: false
     },
     qualityCriteria: {

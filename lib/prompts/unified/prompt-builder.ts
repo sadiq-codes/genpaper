@@ -220,7 +220,6 @@ async function generatePromptData(
   // Use profile criteria directly - no LLM call
   const sectionPurpose = buildSectionPurpose(context.title || String(context.sectionKey), options.profileCriteria)
   const exclusions = await buildExclusions(previousSummary)
-  const usedEvidenceLedger = await buildUsedEvidenceLedger()
   // Use profile criteria directly - no LLM call
   const { requiredPoints, qualityCriteria } = buildPlanningData(context.title || String(context.sectionKey), options.profileCriteria)
 
@@ -264,7 +263,6 @@ async function generatePromptData(
     isRewrite: Boolean(currentText) || Boolean(options.forceRewrite),
     currentText: currentText || undefined,
     evidenceSnippets,
-    usedEvidenceLedger,
     // Original research fields for empirical papers
     hasOriginalResearch: originalResearch?.hasOriginalResearch || false,
     researchQuestion: originalResearch?.researchQuestion,
@@ -519,14 +517,6 @@ async function buildExclusions(previousSummary: string): Promise<string> {
 }
 
 /**
- * Build cross-section used evidence ledger  
- */
-async function buildUsedEvidenceLedger(): Promise<string> {
-  const { EvidenceTracker } = await import('@/lib/services/evidence-tracker')
-  return EvidenceTracker.getFormattedLedger()
-}
-
-/**
  * Build planning data (required points and quality criteria) using section planning
  */
 /**
@@ -593,32 +583,13 @@ async function buildOutlineTree(): Promise<string> {
 
 /**
  * Get summaries of all approved sections before the current one.
- * Uses EvidenceTracker to infer section progress when project service is unavailable.
  * Callers can provide summaries via options.previousSectionsSummary for richer context.
  */
 async function buildPreviousSectionsSummary(currentSectionKey?: string): Promise<string> {
-  // Use EvidenceTracker to infer section progress from evidence usage
-  const { EvidenceTracker } = await import('@/lib/services/evidence-tracker')
-  const stats = EvidenceTracker.getUsageStats()
-  
-  if (Object.keys(stats.sectionUsage).length === 0) {
-    return 'No previous sections approved yet.'
-  }
-  
-  // Build basic summaries from evidence usage stats
-  const summaries: string[] = []
-  for (const [sectionTitle, chunkCount] of Object.entries(stats.sectionUsage)) {
-    // Skip the current section if it's being processed
-    if (currentSectionKey && sectionTitle.toLowerCase().includes(currentSectionKey.toLowerCase())) {
-      continue
-    }
-    
-    // Generate basic summary based on evidence usage
-    const summary = generateBasicSectionSummary(sectionTitle, chunkCount)
-    summaries.push(`**${sectionTitle}:** ${summary}`)
-  }
-  
-  return summaries.length > 0 ? summaries.join('\n\n') : 'No previous sections approved yet.'
+  void currentSectionKey
+  // Evidence ledger tracking was removed; callers should provide
+  // options.previousSectionsSummary when they want this filled.
+  return 'No previous sections approved yet.'
 }
 
 /**

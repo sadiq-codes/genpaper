@@ -523,36 +523,18 @@ export class GenerationContextService {
     console.log(`📊 Building section contexts for ${outline.sections.length} sections...`)
     
     for (const section of outline.sections) {
-      const ids = Array.isArray(section.candidatePaperIds) ? section.candidatePaperIds : []
-      
       let contextChunks: PaperChunk[] = []
       try {
         const startTime = Date.now()
-        const targetIds = ids.length > 0 ? ids : allPaperIds
         
-        try {
-          // Retrieve chunks for this section
-          // Token-based selection (upstream) determines how many chunks are included
-          // The limit parameter is now just for initial retrieval pool
-          contextChunks = await this.getRelevantChunks(
-            `${section.title}: ${(section.keyPoints || []).join('. ')}`,
-            targetIds,
-            200, // Large pool - token budget determines final selection
-            allPapers
-          )
-        } catch (firstError) {
-          if (ids.length > 0 && allPaperIds.length > ids.length) {
-            console.warn(`⚠️ Assigned papers for "${section.title}" have no content, trying all papers...`)
-            contextChunks = await this.getRelevantChunks(
-              topic,
-              allPaperIds,
-              200, // Large pool - token budget determines final selection
-              allPapers
-            )
-          } else {
-            throw firstError
-          }
-        }
+        // Retrieval-only: do NOT require or rely on outline paper assignment.
+        // Always retrieve from the full paper pool; the retriever + reranker determine relevance.
+        contextChunks = await this.getRelevantChunks(
+          `${section.title}: ${(section.keyPoints || []).join('. ')}`,
+          allPaperIds,
+          200, // Large pool - token budget determines final selection
+          allPapers
+        )
         
         const retrievalTime = Date.now() - startTime
         console.log(`📄 Retrieved chunks for "${section.title}" (${contextChunks.length} chunks, ${retrievalTime}ms)`)

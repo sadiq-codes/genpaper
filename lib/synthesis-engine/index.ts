@@ -10,7 +10,6 @@
  * - Plan Builder: Creates paper-type-aware synthesis plans
  * - Constraint Builder: Extracts structural rules from PaperProfile
  * - Outline Enricher: Maps synthesis content to outline sections
- * - Theme Adapter: Converts analysis to ThemeAnalysis for pipeline compatibility
  * 
  * @module lib/synthesis-engine
  */
@@ -86,11 +85,6 @@ export {
   retrieveChunksForSection,
   getChunksByPaperIds
 } from './hybrid-retrieval'
-
-// =============================================================================
-// Functions - Theme Adapter (Pipeline Integration)
-// =============================================================================
-export { analysisResultToThemeAnalysis } from './theme-adapter'
 
 // =============================================================================
 // Functions - Formatters

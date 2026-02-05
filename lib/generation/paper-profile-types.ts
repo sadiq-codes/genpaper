@@ -16,8 +16,6 @@ export interface DisciplineContext {
   primary: string
   /** Related fields that inform this topic (e.g., ["Economics", "Psychology"]) */
   related: string[]
-  /** Methodological traditions in this field (e.g., ["quantitative empirical", "case study"]) */
-  methodologicalTraditions: string[]
   /** Characteristics of the field that affect paper expectations */
   fieldCharacteristics: {
     /** How fast the field evolves - affects recency expectations */
@@ -81,15 +79,6 @@ export interface SourceExpectations {
   minimumUniqueSources: number
   /** Ideal number of sources for a comprehensive paper */
   idealSourceCount: number
-  /** Distribution of source types expected */
-  sourceTypeDistribution: {
-    /** Type of source (e.g., "peer-reviewed journals", "industry reports") */
-    type: string
-    /** Approximate percentage of total sources */
-    percentage: number
-    /** How important this source type is */
-    importance: 'required' | 'recommended' | 'optional'
-  }[]
   /** How much to prioritize recent vs foundational literature */
   recencyProfile: 'cutting-edge' | 'balanced' | 'foundational-heavy'
   /** Explicit year range for searching papers - determined by AI based on topic context */
@@ -103,8 +92,6 @@ export interface SourceExpectations {
   }
   /** Specific guidance on recency for this field */
   recencyGuidance: string
-  /** Seminal works that should likely be cited in this area */
-  seminalWorks?: string[]
 }
 
 /**

@@ -21,7 +21,6 @@ import { extractPaper } from '../lib/extraction'
 import { analyzeFindings, type FindingWithPaper, type AnalysisResult } from '../lib/analysis/cross-document'
 import { 
   buildSynthesisPlan, 
-  analysisResultToThemeAnalysis,
   type PaperInfo,
   type StructuralConstraints,
   type OutlineSectionInput
@@ -186,7 +185,6 @@ function createMockPaperProfile(
     discipline: {
       primary: 'Interdisciplinary Research',
       related: ['Social Sciences', 'Natural Sciences'],
-      methodologicalTraditions: ['systematic review', 'thematic analysis'],
       fieldCharacteristics: {
         paceOfChange: 'moderate',
         theoryVsEmpirical: 'balanced',
@@ -203,11 +201,6 @@ function createMockPaperProfile(
     sourceExpectations: {
       minimumUniqueSources: 5,
       idealSourceCount: 15,
-      sourceTypeDistribution: [
-        { type: 'peer-reviewed journals', percentage: 70, importance: 'required' },
-        { type: 'conference papers', percentage: 20, importance: 'recommended' },
-        { type: 'books/chapters', percentage: 10, importance: 'optional' }
-      ],
       recencyProfile: 'balanced',
       searchYearRange: {
         fromYear: currentYear - 10,
@@ -533,35 +526,10 @@ async function main() {
   console.log(`\n⏱️  Analysis Time: ${timings['analysis']}ms`)
   
   // =========================================================================
-  // STEP 3: TEST THEME ADAPTER (Pipeline Compatibility)
+  // STEP 3: CREATE PAPER PROFILE & STRUCTURAL CONSTRAINTS
   // =========================================================================
   console.log('\n' + '='.repeat(80))
-  console.log('STEP 3: THEME ADAPTER (Pipeline Compatibility)')
-  console.log('='.repeat(80))
-  
-  const papers: PaperInfo[] = extractedPapers.map(p => ({
-    id: p.id,
-    title: p.title,
-    authors: p.authors,
-    year: p.year,
-    domain: p.domain
-  }))
-  
-  const themeAnalysis = analysisResultToThemeAnalysis(analysis, papers)
-  
-  console.log(`\n📋 ThemeAnalysis (for pipeline compatibility):`)
-  console.log(`   Emergent Themes: ${themeAnalysis.emergentThemes.length}`)
-  console.log(`   Scholarly Debates: ${themeAnalysis.debates.length}`)
-  console.log(`   Literature Gaps: ${themeAnalysis.gaps.length}`)
-  console.log(`   Pivotal Papers: ${themeAnalysis.pivotalPapers.length}`)
-  console.log(`   Organization: ${themeAnalysis.organizationSuggestion.approach}`)
-  console.log(`   Confidence: ${(themeAnalysis.confidence * 100).toFixed(0)}%`)
-  
-  // =========================================================================
-  // STEP 4: CREATE PAPER PROFILE & STRUCTURAL CONSTRAINTS
-  // =========================================================================
-  console.log('\n' + '='.repeat(80))
-  console.log('STEP 4: PAPER PROFILE & STRUCTURAL CONSTRAINTS')
+  console.log('STEP 3: PAPER PROFILE & STRUCTURAL CONSTRAINTS')
   console.log('='.repeat(80))
   
   const paperType: PaperTypeKey = 'literatureReview'
@@ -577,10 +545,10 @@ async function main() {
   displayConstraints(constraints)
   
   // =========================================================================
-  // STEP 5: CREATE OUTLINE SECTIONS
+  // STEP 4: CREATE OUTLINE SECTIONS
   // =========================================================================
   console.log('\n' + '='.repeat(80))
-  console.log('STEP 5: CREATE OUTLINE SECTIONS')
+  console.log('STEP 4: CREATE OUTLINE SECTIONS')
   console.log('='.repeat(80))
   
   const targetWordCount = 2500
@@ -598,12 +566,20 @@ async function main() {
   })
   
   // =========================================================================
-  // STEP 6: BUILD SYNTHESIS PLAN (with new required fields)
+  // STEP 5: BUILD SYNTHESIS PLAN (with new required fields)
   // =========================================================================
   console.log('\n' + '='.repeat(80))
-  console.log('STEP 6: BUILD SYNTHESIS PLAN')
+  console.log('STEP 5: BUILD SYNTHESIS PLAN')
   console.log('='.repeat(80))
   
+  const papers: PaperInfo[] = extractedPapers.map(p => ({
+    id: p.id,
+    title: p.title,
+    authors: p.authors,
+    year: p.year,
+    domain: p.domain
+  }))
+
   const planStart = Date.now()
   const planResult = await buildSynthesisPlan({
     projectId: 'test-project',
@@ -629,7 +605,7 @@ async function main() {
   console.log(`\n⏱️  Planning Time: ${timings['planning']}ms`)
   
   // =========================================================================
-  // STEP 7: SUMMARY & NEXT STEPS
+  // STEP 6: SUMMARY & NEXT STEPS
   // =========================================================================
   console.log('\n' + '='.repeat(80))
   console.log('SUMMARY')

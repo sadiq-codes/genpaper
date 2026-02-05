@@ -100,7 +100,6 @@ describe('Paper Profile Intelligence System', () => {
       discipline: {
         primary: 'Business',
         related: ['Economics'],
-        methodologicalTraditions: ['qualitative'],
         fieldCharacteristics: {
           paceOfChange: 'moderate',
           theoryVsEmpirical: 'balanced',
@@ -146,10 +145,12 @@ describe('Paper Profile Intelligence System', () => {
       sourceExpectations: {
         minimumUniqueSources: 20,
         idealSourceCount: 35,
-        sourceTypeDistribution: [
-          { type: 'Peer-reviewed journals', percentage: 70, importance: 'required' }
-        ],
         recencyProfile: 'balanced',
+        searchYearRange: {
+          fromYear: new Date().getFullYear() - 10,
+          toYear: new Date().getFullYear(),
+          rationale: 'Balanced coverage of recent and foundational literature'
+        },
         recencyGuidance: 'Include both foundational and recent work'
       },
       qualityCriteria: [
@@ -235,8 +236,12 @@ This study contributes to understanding entrepreneurial failure.
         sourceExpectations: {
           minimumUniqueSources: 15,
           idealSourceCount: 25,
-          sourceTypeDistribution: [],
           recencyProfile: 'balanced',
+          searchYearRange: {
+            fromYear: new Date().getFullYear() - 10,
+            toYear: new Date().getFullYear(),
+            rationale: 'Balanced coverage of recent and foundational literature'
+          },
           recencyGuidance: 'Mix of recent and foundational'
         }
       })
