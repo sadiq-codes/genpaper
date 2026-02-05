@@ -1011,10 +1011,6 @@ export async function generatePaper(
       
       // Remove invalid citation markers from content to prevent "(Untitled, n.d.)" rendering
       for (const invalidCitation of invalidCitations) {
-        // Remove Pandoc-style [@paper_id] markers
-        const pandocPattern = new RegExp(`\\[@${invalidCitation.paperId}\\]`, 'g')
-        fullContent = fullContent.replace(pandocPattern, '')
-        
         // Remove legacy [CITE: paper_id] markers
         const legacyPattern = new RegExp(`\\[CITE:\\s*${invalidCitation.paperId}\\]`, 'g')
         fullContent = fullContent.replace(legacyPattern, '')

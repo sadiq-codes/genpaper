@@ -2,7 +2,7 @@
  * TipTap JSON to Markdown serializer
  * 
  * Converts TipTap editor content back to clean markdown for storage.
- * Citation nodes are serialized as [@paperId#instanceId] markers.
+ * Citation nodes are serialized as [CITE: paperId] markers.
  */
 
 interface TipTapNode {
@@ -65,10 +65,9 @@ function serializeInline(nodes: TipTapNode[] | undefined): string {
         return serializeMarks(node.text || '', node.marks)
       
       case 'citation': {
-        // Serialize citation to [@paperId#instanceId] format
+        // Serialize citation to [CITE: paperId] format
         const paperId = node.attrs?.id || 'unknown'
-        const instanceId = node.attrs?.instanceId
-        return instanceId ? `[@${paperId}#${instanceId}]` : `[@${paperId}]`
+        return `[CITE: ${paperId}]`
       }
       
       case 'mathematics':

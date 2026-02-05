@@ -134,6 +134,7 @@ export async function generateWithUnifiedTemplate(
     system: promptData.system,
     prompt: promptData.user,
     temperature: resolvedOptions.temperature,
+    maxOutputTokens: resolvedOptions.maxTokens
   })
 
   fullContent = object.contentMarkdown
@@ -145,9 +146,13 @@ export async function generateWithUnifiedTemplate(
       paperId: entry.paperId,
       chunkId: entry.chunkId ?? null,
       quote: entry.quote ?? null,
-      citationText: `[@${entry.paperId}]`
+      citationText: `[CITE: ${entry.paperId}]`
     })
   }
+
+  // Clean any artifacts that shouldn't be in output (but keep [CITE:] markers for pipeline)
+  // Do this BEFORE emitting stream output so the UI preview stays clean.
+  fullContent = cleanNonCitationArtifacts(fullContent)
 
   // Emit a single "sentence" event for compatibility with existing streaming hooks.
   // (True streaming would require streamObject + incremental parsing.)
@@ -159,9 +164,6 @@ export async function generateWithUnifiedTemplate(
     word_count: fullContent.split(' ').length,
     citations: collectedCitations.length
   })
-  
-  // Clean any artifacts that shouldn't be in output (but keep [CITE:] markers for pipeline)
-  fullContent = cleanNonCitationArtifacts(fullContent)
   
   // Quality score now self-calibrates based on actual citations generated
   // We no longer enforce minimum citation counts - semantic guidance handles this

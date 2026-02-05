@@ -4,12 +4,12 @@
  * 
  * The new approach uses numbered citations [1], [2], etc. in AI output with a
  * CITATIONS metadata block that maps numbers to paper_ids and quotes. These are
- * then converted to storage format [@paperId#instanceId] and finally rendered as
+ * then converted to [CITE: paperId] markers and finally rendered as
  * formatted citations. This is more reliable because:
  * 1. AI doesn't need to invoke tools mid-generation
  * 2. Citation formatting is deterministic
  * 3. No race conditions with streaming
- * 4. Each citation instance is tracked with a unique ID
+ * 4. The final document uses a single, stable citation marker format
  * 
  * This file is kept for reference and potential future use cases where
  * real-time tool calling might be beneficial.

@@ -187,34 +187,31 @@ system: |-
   Key points: {{#keyPointsToMake}}{{.}}; {{/keyPointsToMake}}
   {{/sectionWritingGuidance}}
   
+  {{#requiresTable}}
   ───────────────────────────────────────────────────────────────────────────────
   📊 REQUIRED: Include at least ONE table in this section
   ───────────────────────────────────────────────────────────────────────────────
   Academic papers MUST include tables to organize complex information.
-  Choose the format appropriate for this section type:
   
-  **For Literature/Review sections:**
+  Choose the appropriate table format for this section type:
+  
+  **For Literature Review / Background sections:**
   | Author (Year) | Sample/Context | Method | Key Finding |
   |---------------|----------------|--------|-------------|
   | [From evidence] | [Details] | [Design] | [Result] |
   
-  **For Results/Findings sections:**
-  | Variable | N | Mean (SD) | Result | p-value |
-  |----------|---|-----------|--------|---------|
-  | [Measure] | [N] | [Stats] | [Finding] | [p] |
+  **For Results / Findings sections:**
+  | Variable/Measure | N | Value (Mean±SD or %) | Significance |
+  |------------------|---|---------------------|--------------|
+  | [Measure] | [N] | [Value] | [p-value or CI] |
   
-  **For Methods sections:**
-  | Characteristic | Group A | Group B | Total |
-  |----------------|---------|---------|-------|
-  | [Demographic] | [n (%)] | [n (%)] | [N] |
+  **For Discussion / Comparison sections:**
+  | Aspect | This Study | Prior Research | Implication |
+  |--------|------------|----------------|-------------|
+  | [Topic] | [Our finding] | [Literature says] | [Meaning] |
   
-  **For Comparison/Discussion:**
-  | Aspect | Finding A | Finding B | Implication |
-  |--------|-----------|-----------|-------------|
-  | [Topic] | [Position 1] | [Position 2] | [Meaning] |
-  
-  ⚠️ Do NOT skip the table. Tables are expected in scholarly writing.
-  Populate ONLY with data from your evidence - never invent statistics.
+  ⚠️ Do NOT skip the table. Populate with actual data from your evidence.
+  {{/requiresTable}}
 
   {{#voice}}
   ═══════════════════════════════════════════════════════════════════════════════
@@ -318,9 +315,7 @@ user: |-
   {{/currentText}}
   
   ### Evidence Context
-  Each snippet includes `paper_id` and (when available) `chunk_id`.
-  Use `paper_id` in in-text citation markers like `[CITE: paper_id]`.
-  Use `chunk_id` only for the structured citations output (provenance), not in the prose.
+  Each snippet tagged with [CONTEXT FROM: paper_id]. Use paper_id in CITATIONS block.
   
   Evidence strength guide:
   - `full_text`: Strong - quote and make confident claims
@@ -335,29 +330,9 @@ user: |-
   
   ## OUTPUT REQUIREMENTS
   
-  Return a SINGLE JSON object with this exact shape (no extra text):
-  
-  {
-    "contentMarkdown": "string (markdown; MUST start with: ## {{sectionPath}})",
-    "citations": [
-      {
-        "paperId": "uuid string",
-        "chunkId": "uuid string or null",
-        "quote": "string or null"
-      }
-    ]
-  }
-  
-  Content rules:
-  1. **Start:** `## {{sectionPath}}`
-  2. **Citations in prose:** Use ONLY `[CITE: paper_id]` markers (paper_id must be from Evidence Context).
-  3. **No metadata blocks:** Do NOT output `<!-- CITATIONS ... -->` or any HTML comments.
-  
-  Citations array rules:
-  - Include an entry for each citation you actually used in the prose.
-  - `paperId` MUST match the paper_id in the marker.
-  - `chunkId` should match the evidence snippet's chunk_id when available, otherwise null.
-  - `quote` should be the exact quoted span (or the closest supporting phrase) from the evidence snippet, otherwise null.
+  1. **Start:** ## {{sectionPath}}
+  2. **Content:** Synthesized prose with [1] [2] [3] citations
+  3. **End:** <!-- CITATIONS --> block mapping numbers to paper_ids
   
   **FINAL CHECKLIST:**
   □ Every paragraph has 2-3+ citations from evidence

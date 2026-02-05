@@ -14,17 +14,13 @@ import type { Root, Content, PhrasingContent, Text, Emphasis, Strong, InlineCode
 import type { CitationAttributes } from '../extensions/Citation'
 import type { ProjectPaper } from '../types'
 
-// Citation marker patterns - supports all formats:
-// - [@uuid#instanceId] - New format with instance tracking (preferred)
-// - [@uuid] - Pandoc style (backward compatible)
-// - [CITE: uuid] - AI generated citations (legacy)
-// - [CONTEXT FROM: uuid] - Legacy context format
-// For new format: Group 1 = paperId, Group 2 = instanceId (optional)
-const PANDOC_CITATION_PATTERN = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
+// Citation marker patterns:
+// - [CITE: uuid] - Citation marker format
+// - [CONTEXT FROM: uuid] - Legacy context/evidence marker format
 const LEGACY_CITATION_PATTERN = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
 
 // Combined pattern for detection (non-capturing for test only)
-const ANY_CITATION_PATTERN = /(?:\[@[a-f0-9-]+(?:#[a-f0-9-]+)?\]|\[(?:CITE|CONTEXT FROM):\s*[a-f0-9-]+\])/gi
+const ANY_CITATION_PATTERN = /\[(?:CITE|CONTEXT FROM):\s*[a-f0-9-]+\]/gi
 
 interface PaperLookup {
   [paperId: string]: ProjectPaper
@@ -96,16 +92,9 @@ function paperToCitationAttrs(paper: ProjectPaper): CitationAttributes {
 
 /**
  * Extract paper ID from a citation match
- * Handles both Pandoc [@uuid] and legacy [CITE: uuid] formats
+ * Handles [CITE: uuid] and [CONTEXT FROM: uuid] formats
  */
 function extractPaperIdFromMatch(match: RegExpMatchArray): string | null {
-  const fullMatch = match[0]
-  
-  // Pandoc format: [@uuid] - capture group 1
-  if (fullMatch.startsWith('[@')) {
-    return match[1] || null
-  }
-  
   // Legacy format: [CITE: uuid] or [CONTEXT FROM: uuid] - capture group 2
   return match[2] || null
 }
@@ -113,18 +102,16 @@ function extractPaperIdFromMatch(match: RegExpMatchArray): string | null {
 /**
  * Split text containing citation markers into text nodes and citation nodes
  * Citation nodes store paper ID, instanceId, and citedContent
- * Supports [@uuid#instanceId] (new), [@uuid] (Pandoc), and [CITE: uuid] (legacy) formats
+ * Supports [CITE: uuid] and [CONTEXT FROM: uuid] formats
  */
 function splitTextWithCitations(
   text: string,
   marks: Mark[],
   ctx: ConversionContext
 ): TipTapNode[] {
-  // Combined pattern to match all formats in order
-  // New format: [@paperId#instanceId] - Group 1 = paperId, Group 2 = instanceId
-  // Pandoc format: [@paperId] - Group 1 = paperId, Group 2 = undefined
-  // Legacy format: [CITE: paperId] - Group 3 = type, Group 4 = paperId
-  const combinedPattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]|\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  // Group 1 = type (CITE or CONTEXT FROM)
+  // Group 2 = paperId
+  const combinedPattern = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
   
   const parts: TipTapNode[] = []
   let lastIndex = 0
@@ -133,9 +120,9 @@ function splitTextWithCitations(
     const start = match.index!
     const end = start + match[0].length
     
-    // Extract paper ID and instance ID from either format
-    const paperId = match[1] || match[4] // Group 1 for new/Pandoc, Group 4 for legacy
-    const instanceId = match[2] || undefined // Group 2 for new format only
+    // Extract paper ID
+    const paperId = match[2]
+    const instanceId = undefined
 
     if (!paperId) {
       continue // Skip if no paper ID found
@@ -221,7 +208,7 @@ function phrasingToTipTap(
   switch (node.type) {
     case 'text': {
       const textNode = node as Text
-      // Check for citation markers in text (either Pandoc or legacy format)
+      // Check for citation markers in text
       ANY_CITATION_PATTERN.lastIndex = 0
       if (ANY_CITATION_PATTERN.test(textNode.value)) {
         return splitTextWithCitations(textNode.value, marks, ctx)
@@ -529,7 +516,7 @@ function rootToTipTap(root: Root, ctx: ConversionContext): TipTapNode {
  * Instead of the lossy:
  *   markdown → HTML → TipTap JSON → post-process citations
  * 
- * @param markdown - Raw markdown text (may contain [@paperId#instanceId] markers)
+ * @param markdown - Raw markdown text (may contain [CITE: paperId] markers)
  * @param papers - Array of papers for citation metadata
  * @param instanceQuotes - Optional map of instanceId → quote text for populating citedContent
  * @returns TipTap JSON document
@@ -584,7 +571,7 @@ export function markdownToTipTap(
 }
 
 /**
- * Check if text contains citation markers (either Pandoc or legacy format)
+ * Check if text contains citation markers
  */
 export function hasCitationMarkers(text: string): boolean {
   ANY_CITATION_PATTERN.lastIndex = 0
@@ -594,20 +581,16 @@ export function hasCitationMarkers(text: string): boolean {
 /**
  * Extract citation paper IDs from text
  * Supports all formats:
- * - [@paperId#instanceId] - New format with instance tracking
- * - [@paperId] - Pandoc style
- * - [CITE: paperId] - Legacy AI format
+ * - [CITE: paperId] - Citation marker
+ * - [CONTEXT FROM: paperId] - Legacy context marker
  */
 export function extractCitationIds(text: string): string[] {
-  // Combined pattern:
-  // - Group 1: paperId from [@paperId] or [@paperId#instanceId]
-  // - Group 2: instanceId (optional, ignored here)
-  // - Group 3: legacy type (CITE or CONTEXT FROM)
-  // - Group 4: paperId from legacy format
-  const combinedPattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]|\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  // Group 1: legacy type (CITE or CONTEXT FROM)
+  // Group 2: paperId
+  const combinedPattern = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
   const ids: string[] = []
   for (const match of text.matchAll(combinedPattern)) {
-    const paperId = match[1] || match[4] // Group 1 for new/Pandoc, Group 4 for legacy
+    const paperId = match[2]
     if (paperId) {
       ids.push(paperId)
     }

@@ -104,7 +104,6 @@ export async function logChunkCitations(entries: CitationLogEntry[]): Promise<vo
  * Supports multiple citation formats:
  * 1. New format: <!-- CITATIONS [1] paper_id: xxx | quote: "..." -->
  * 2. Legacy format: [CITE: paper_id]
- * 3. Pandoc format: [@paper_id]
  */
 export function extractCitedChunksFromContent(
   content: string,
@@ -130,12 +129,6 @@ export function extractCitedChunksFromContent(
   // 2. Legacy format: [CITE: paper_id]
   const legacyMatches = content.matchAll(/\[CITE:\s*([a-f0-9-]+)\]/gi)
   for (const match of legacyMatches) {
-    citedPaperIds.add(match[1].trim())
-  }
-  
-  // 3. Pandoc format: [@paper_id]
-  const pandocMatches = content.matchAll(/\[@([a-f0-9-]+)\]/gi)
-  for (const match of pandocMatches) {
     citedPaperIds.add(match[1].trim())
   }
   

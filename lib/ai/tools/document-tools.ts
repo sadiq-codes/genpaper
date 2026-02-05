@@ -135,12 +135,12 @@ User will confirm deletions.`,
  * Do NOT use this tool when:
  * - You need to rewrite/edit the text (use replaceBlock with markers instead)
  * - You're writing new content (use insertContent with markers instead)
- * - The claim already has a citation (check for [@...] markers in the document)
+ * - The claim already has a citation (check for [CITE: ...] markers in the document)
  */
 export const addCitationTool = tool({
   description: `Add a citation to existing text WITHOUT changing the text itself.
 
-⚠️ IMPORTANT: Check the document first - if the text already has a citation marker ([@...]), do NOT add another one.
+⚠️ IMPORTANT: Check the document first - if the text already has a citation marker ([CITE: ...]), do NOT add another one.
 
 When to use addCitation:
 - Single citation to existing claim that has NO citation

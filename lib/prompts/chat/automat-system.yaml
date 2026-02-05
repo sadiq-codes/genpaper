@@ -76,9 +76,9 @@ system: |-
   ### Citation Format
   
   **Existing Citations in Document:**
-  The document shows existing citations as `[@paperId#instanceId]` markers (e.g., `[@abc123#inst456]`).
+  The document shows existing citations as `[CITE: paperId]` markers (e.g., `[CITE: abc123]`).
   - These are EXISTING citations - do NOT duplicate them
-  - When editing text containing `[@...]` markers, PRESERVE them unless asked to replace
+  - When editing text containing `[CITE: ...]` markers, PRESERVE them unless asked to replace
   - The system renders these as formatted citations (e.g., "[1]" or "(Author, 2023)") for users
   
   **⚠️ CRITICAL: When INSERTING new content with citations (tool calls):**
@@ -100,9 +100,9 @@ system: |-
   - The user will see plain text without any citation links
   
   **When EDITING existing content with citations:**
-  - PRESERVE existing `[@paperId#instanceId]` markers in the text
+  - PRESERVE existing `[CITE: paperId]` markers in the text
   - Only ADD new [N] markers for NEW citations (with CITATIONS block)
-  - Example: If original text has `"claim [@abc#123]"`, your edit should keep it: `"improved claim [@abc#123]"`
+  - Example: If original text has `"claim [CITE: abc123]"`, your edit should keep it: `"improved claim [CITE: abc123]"`
   
   **When DISCUSSING sources conversationally (no tool call):**
   {{#output.isNumericCitationStyle}}
@@ -136,7 +136,7 @@ system: |-
   "claim [1] [1]"  ← duplicate citations
   ```
   ```
-  "claim [@abc#123] [1]"  ← adding [1] where [@...] already exists
+  "claim [CITE: abc123] [1]"  ← adding [1] where citation already exists
   ```
   
   ✅ **CORRECT format (citations will become clickable):**
@@ -150,14 +150,14 @@ system: |-
   {{^output.isNumericCitationStyle}}
   For conversational responses: "According to Lanteigne (2017), the research found that..."
   {{/output.isNumericCitationStyle}}
-  "Existing claim [@abc#123] remains supported."  ← preserving existing citation
+  "Existing claim [CITE: abc123] remains supported."  ← preserving existing citation
   
   **Rules:**
-  - PRESERVE existing `[@paperId#instanceId]` markers when editing
+  - PRESERVE existing `[CITE: paperId]` markers when editing
   - Each NEW [N] marker MUST have a matching entry in the CITATIONS block
   - Get paper_ids ONLY from INTERNAL REFERENCE sections (look for `<!-- INTERNAL REFERENCE` comments)
   - Quote the EXACT supporting sentence from source
-  - NEVER add a citation where one already exists (check for `[@...]`)
+  - NEVER add a citation where one already exists (check for `[CITE: ...]`)
   - NEVER place same citation consecutively ([1] [1] is wrong)
   - Combine points from same source: "X and Y [1]" NOT "X [1]. Y [1]."
   
@@ -200,15 +200,15 @@ system: |-
   
   Example - User says "add a citation to support the climate claim":
   - If claim has no citation → use `addCitation`
-  - If claim already has `[@...]` → do NOT add another (already cited)
+  - If claim already has `[CITE: ...]` → do NOT add another (already cited)
   
   Example - User says "rewrite this paragraph with better citations":
   - Use `replaceBlock` with [N] markers + CITATIONS block
-  - Preserve any existing `[@...]` markers you want to keep
+  - Preserve any existing `[CITE: ...]` markers you want to keep
   
   ### Tool Usage Rules
   1. **Prefer blockId** over text search when available
-  2. **Check for existing citations** before adding new ones (look for `[@...]` markers)
+  2. **Check for existing citations** before adding new ones (look for `[CITE: ...]` markers)
   3. **Ground ALL claims** in the provided source material
   4. **Confirm destructive operations** (delete, rewrite) with explanation
   5. **Ask for clarification** if target location is ambiguous

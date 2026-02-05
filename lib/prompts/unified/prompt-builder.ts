@@ -327,6 +327,17 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
     result.synthesisPatterns = synthesisPatterns
   }
   
+  // Determine if this section requires a table
+  // Tables are required for all content sections EXCEPT Introduction and Conclusion
+  const sectionKey = (context.sectionKey || '').toLowerCase()
+  const sectionTitle = (context.title || '').toLowerCase()
+  const isIntroOrConclusion = 
+    sectionKey.includes('intro') || sectionTitle.includes('intro') ||
+    sectionKey.includes('conclusion') || sectionTitle.includes('conclusion') ||
+    sectionKey.includes('abstract') || sectionTitle.includes('abstract')
+  
+  ;(result as Record<string, unknown>).requiresTable = !isIntroOrConclusion
+  
   if (synthesisContradictions.length > 0) {
     result.synthesisContradictions = synthesisContradictions
   }

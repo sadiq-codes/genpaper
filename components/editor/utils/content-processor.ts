@@ -81,7 +81,7 @@ export function hasMarkdownFormatting(text: string): boolean {
  * 
  * This preserves styles and handles citations as first-class nodes.
  * 
- * @param markdown - Raw markdown text with [CONTEXT FROM: uuid] markers
+ * @param markdown - Raw markdown text with [CITE: uuid] markers
  * @param papers - Array of papers for citation metadata lookup
  * @returns TipTap JSON document structure
  */
@@ -125,7 +125,7 @@ export function processAIContent(
 }
 
 /**
- * Map of instanceId → citedContent for populating citation nodes
+ * Map of paperId → citedContent for populating citation nodes
  */
 export type CitationQuotesMap = Map<string, string>
 
@@ -133,15 +133,13 @@ export type CitationQuotesMap = Map<string, string>
  * Process plain text (not markdown) with citation markers
  * Used for simpler cases like ghost text suggestions
  * 
- * Supports all citation formats:
- * - [@paperId#instanceId] - New format with instance tracking (preferred)
- * - [@paperId] - Pandoc style (backward compatible)
- * - [CITE: paperId] - Legacy AI format
- * - [CONTEXT FROM: paperId] - Legacy context format
+ * Supports:
+ * - [CITE: paperId] - Citation marker
+ * - [CONTEXT FROM: paperId] - Legacy context marker
  * 
  * @param text - Plain text with citation markers
  * @param papers - Array of papers for citation metadata lookup
- * @param citationQuotes - Optional map of instanceId → quote text
+ * @param citationQuotes - Optional map of paperId → quote text
  * @returns TipTap JSON fragment (content array, not full doc)
  */
 export function processPlainTextWithCitations(
@@ -154,12 +152,9 @@ export function processPlainTextWithCitations(
   }
 
   const paperLookup = createPaperLookup(papers)
-  // Combined pattern to match all formats:
-  // - Group 1: paperId from [@paperId] or [@paperId#instanceId]
-  // - Group 2: instanceId from [@paperId#instanceId] (optional)
-  // - Group 3: legacy type (CITE or CONTEXT FROM)
-  // - Group 4: paperId from legacy format
-  const pattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]|\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  // Group 1: legacy type (CITE or CONTEXT FROM)
+  // Group 2: paperId
+  const pattern = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
   const matches = [...text.matchAll(pattern)]
 
   if (matches.length === 0) {
@@ -171,9 +166,8 @@ export function processPlainTextWithCitations(
   let lastIndex = 0
 
   for (const match of matches) {
-    // Extract paper ID and instance ID from either format
-    const paperId = match[1] || match[4] // Group 1 for new/Pandoc, Group 4 for legacy
-    const instanceId = match[2] || undefined // Group 2 for instanceId (new format only)
+    // Extract paper ID
+    const paperId = match[2]
     const matchStart = match.index!
     const matchEnd = matchStart + match[0].length
 
@@ -194,7 +188,6 @@ export function processPlainTextWithCitations(
     if (!paper && process.env.NODE_ENV === 'development') {
       console.warn('[Citation] Paper not found in lookup (plain text):', {
         paperId,
-        instanceId,
         availableIds: Object.keys(paperLookup).slice(0, 10),
         lookupSize: Object.keys(paperLookup).length,
       })
@@ -205,13 +198,10 @@ export function processPlainTextWithCitations(
       ? paperToCitationAttrs(paper) 
       : { id: paperId }
     
-    // Add instanceId and citedContent if available
-    if (instanceId) {
-      attrs.instanceId = instanceId
-      const quote = citationQuotes?.get(instanceId)
-      if (quote) {
-        attrs.citedContent = quote
-      }
+    // Add citedContent if available
+    const quote = citationQuotes?.get(paperId)
+    if (quote) {
+      attrs.citedContent = quote
     }
     
     result.push({

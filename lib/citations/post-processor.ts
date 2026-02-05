@@ -1,6 +1,5 @@
 // Note: Server-dependent functions use dynamic imports to keep pure functions testable
 
-import { v4 as uuidv4 } from 'uuid'
 import type { CSLItem } from '@/lib/utils/csl'
 
 /**
@@ -17,10 +16,7 @@ import type { CSLItem } from '@/lib/utils/csl'
  */
 
 // Patterns to match citation markers
-// New format with instance tracking: [@paperId#instanceId] (group 1 = paperId, group 2 = instanceId)
-// Also matches legacy [@paperId] without instanceId for backward compatibility
-const PANDOC_CITE_PATTERN = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
-// Legacy format (for backward compatibility): [CITE: paper_id]
+// Supported format: [CITE: paper_id]
 const LEGACY_CITE_PATTERN = /\[CITE:\s*([a-f0-9-]+)\]/gi
 
 export interface CitationProcessResult {
@@ -41,19 +37,10 @@ export interface CitationProcessResult {
 
 /**
  * Extract all citation markers from content
- * Supports both [@paper_id] (Pandoc) and [CITE: paper_id] (legacy) formats
+ * Supports [CITE: paper_id] markers
  */
 export function extractCitationMarkers(content: string): Array<{ marker: string; paperId: string }> {
   const markers: Array<{ marker: string; paperId: string }> = []
-  
-  // Extract Pandoc-style [@paper_id] markers (preferred format)
-  const pandocPattern = new RegExp(PANDOC_CITE_PATTERN.source, 'gi')
-  for (const match of content.matchAll(pandocPattern)) {
-    markers.push({
-      marker: match[0],
-      paperId: match[1]
-    })
-  }
   
   // Extract legacy [CITE: paper_id] markers (backward compatibility)
   const legacyPattern = new RegExp(LEGACY_CITE_PATTERN.source, 'gi')
@@ -71,9 +58,8 @@ export function extractCitationMarkers(content: string): Array<{ marker: string;
  * Check if content contains citation markers (either format)
  */
 export function hasCitationMarkers(content: string): boolean {
-  PANDOC_CITE_PATTERN.lastIndex = 0
   LEGACY_CITE_PATTERN.lastIndex = 0
-  return PANDOC_CITE_PATTERN.test(content) || LEGACY_CITE_PATTERN.test(content)
+  return LEGACY_CITE_PATTERN.test(content)
 }
 
 /**
@@ -147,14 +133,10 @@ export async function processCitationMarkers(
     }
   }
   
-  // Replace all markers in content (both Pandoc and legacy formats)
+  // Replace all markers in content
   let processedContent = content
   
   for (const [paperId, formattedCitation] of replacements) {
-    // Replace Pandoc-style [@paper_id] markers
-    const pandocPattern = new RegExp(`\\[@${paperId}\\]`, 'gi')
-    processedContent = processedContent.replace(pandocPattern, formattedCitation)
-    
     // Replace legacy [CITE: paper_id] markers
     const legacyPattern = new RegExp(`\\[CITE:\\s*${paperId}\\]`, 'gi')
     processedContent = processedContent.replace(legacyPattern, formattedCitation)
@@ -197,9 +179,6 @@ export function cleanNonCitationArtifacts(content: string): string {
 export function cleanRemainingArtifacts(content: string): string {
   let cleaned = content
   
-  // Remove any remaining [@paperId] or [@paperId#instanceId] markers that weren't processed
-  cleaned = cleaned.replace(/\[@[a-f0-9-]+(?:#[a-f0-9-]+)?\]/gi, '')
-  
   // Remove any remaining [CITE: ...] legacy markers that weren't processed
   cleaned = cleaned.replace(/\[CITE:\s*[^\]]*\]/gi, '')
   
@@ -232,50 +211,6 @@ export async function processAndCleanCitations(
   result.content = cleanRemainingArtifacts(result.content)
   
   return result
-}
-
-// =============================================================================
-// Consecutive Citation Deduplication
-// =============================================================================
-
-/**
- * Remove consecutive duplicate citations with the same paperId.
- * Handles both storage format [@paperId#instanceId] and keeps only the first occurrence.
- * 
- * Example: "text [@abc#inst1] [@abc#inst2] more" → "text [@abc#inst1] more"
- * Example: "text [@abc#inst1][@abc#inst2][@abc#inst3] more" → "text [@abc#inst1] more"
- * 
- * @param content - Content with citation markers
- * @returns Content with consecutive duplicates removed
- */
-export function deduplicateConsecutiveCitations(content: string): {
-  content: string
-  duplicatesRemoved: number
-} {
-  let result = content
-  let duplicatesRemoved = 0
-  
-  // Pattern to match consecutive citations with the same paperId
-  // Captures: [@(paperId)#(instanceId)] followed by whitespace and [@(same paperId)#(any instanceId)]
-  // We need to run this multiple times to catch chains like [1][1][1]
-  let previousResult = ''
-  
-  while (previousResult !== result) {
-    previousResult = result
-    
-    // Match: [@paperId#instanceId] followed by optional whitespace and [@SAME-paperId#differentInstanceId]
-    result = result.replace(
-      /(\[@([a-f0-9-]+)#[a-f0-9-]+\])(\s*)\[@\2#[a-f0-9-]+\]/gi,
-      (match, firstCitation, paperId, whitespace) => {
-        duplicatesRemoved++
-        console.warn(`[Citation Dedup] Removed consecutive duplicate citation for paper: ${paperId}`)
-        // Keep the first citation and the whitespace (if any)
-        return firstCitation + whitespace
-      }
-    )
-  }
-  
-  return { content: result, duplicatesRemoved }
 }
 
 /**
@@ -332,20 +267,10 @@ interface NumberedCitationEntry {
 }
 
 /**
- * Citation instance to be saved to the database
- */
-export interface CitationInstanceToCreate {
-  instanceId: string   // UUID for this specific citation instance
-  paperId: string      // UUID of the paper being cited
-  quote: string        // The exact quote/context for this citation
-}
-
-/**
- * Result of converting numbered citations to storage format
+ * Result of converting numbered citations to [CITE: ...] markers
  */
 export interface ConvertNumberedResult {
-  content: string                        // Content with [@paperId#instanceId] markers
-  instancesToCreate: CitationInstanceToCreate[]  // Instances to save to DB
+  content: string
 }
 
 /**
@@ -390,16 +315,14 @@ export function hasNumberedCitationsBlock(content: string): boolean {
 }
 
 /**
- * Convert numbered citation markers to [@paperId#instanceId] format for storage
- * Uses the CITATIONS block to map [1], [2] etc. to paper IDs
- * Each citation occurrence gets a unique instanceId for tracking the specific quote used.
+ * Convert numbered citation markers to [CITE: paperId] markers.
+ * Uses the CITATIONS block to map [1], [2] etc. to paper IDs.
  * 
  * @param content - Content with [1], [2] markers and CITATIONS block
- * @returns Object with converted content and instances to save to DB
+ * @returns Object with converted content
  */
 export function convertNumberedToStorageFormat(content: string): ConvertNumberedResult {
   const citationsMap = parseNumberedCitationsBlock(content)
-  const instancesToCreate: CitationInstanceToCreate[] = []
   
   let result = content
   
@@ -414,48 +337,10 @@ export function convertNumberedToStorageFormat(content: string): ConvertNumbered
   }
   
   if (citationsMap.size > 0) {
-    // For each citation index, find all occurrences and replace with unique instances
+    // For each citation index, find all occurrences and replace with [CITE: paperId]
     for (const [index, entry] of citationsMap) {
       const pattern = new RegExp(`\\[${index}\\]`, 'g')
-      
-      // Replace each occurrence with a unique instanceId
-      result = result.replace(pattern, () => {
-        const instanceId = uuidv4()
-        
-        // Track this instance for DB insertion
-        instancesToCreate.push({
-          instanceId,
-          paperId: entry.paperId,
-          quote: entry.quote || '',
-        })
-        
-        return `[@${entry.paperId}#${instanceId}]`
-      })
-    }
-    
-    // After conversion, deduplicate any consecutive citations with same paperId
-    // This handles edge cases where different numbered citations map to the same paper
-    const { content: finalContent, duplicatesRemoved: storageDupsRemoved } = 
-      deduplicateConsecutiveCitations(result)
-    result = finalContent
-    
-    if (storageDupsRemoved > 0) {
-      console.log(`[Citation Dedup] Removed ${storageDupsRemoved} consecutive duplicate storage-format citations`)
-      // Also remove the duplicate instances from the array
-      // We need to filter out instances that were removed from content
-      const remainingInstanceIds = new Set<string>()
-      const instancePattern = /@[a-f0-9-]+#([a-f0-9-]+)\]/gi
-      for (const match of result.matchAll(instancePattern)) {
-        remainingInstanceIds.add(match[1])
-      }
-      // Filter instances to only keep those still in content
-      const originalCount = instancesToCreate.length
-      const filteredInstances = instancesToCreate.filter(inst => remainingInstanceIds.has(inst.instanceId))
-      instancesToCreate.length = 0
-      instancesToCreate.push(...filteredInstances)
-      if (instancesToCreate.length < originalCount) {
-        console.log(`[Citation Dedup] Filtered citation instances: ${originalCount} → ${instancesToCreate.length}`)
-      }
+      result = result.replace(pattern, `[CITE: ${entry.paperId}]`)
     }
   }
   
@@ -475,6 +360,5 @@ export function convertNumberedToStorageFormat(content: string): ConvertNumbered
   
   return {
     content: result,
-    instancesToCreate,
   }
 }

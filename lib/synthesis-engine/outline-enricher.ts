@@ -71,6 +71,9 @@ export interface EnrichedSectionContext extends SectionContext {
   // NEW: Flag for conditional template rendering
   hasSynthesisEnrichment: boolean
   
+  // NEW: Whether this section discusses existing literature (for table requirement)
+  isLiteratureFocused: boolean
+  
   // NEW: Synthesis content (only for literature-focused sections)
   synthesisContent?: SynthesisContent
   
@@ -187,7 +190,8 @@ export async function enrichOutlineSections(
     // Build enriched context
     const enriched: EnrichedSectionContext = {
       ...baseContext,
-      hasSynthesisEnrichment: isLitFocused && (!!planSection || analysisResult.patterns.length > 0)
+      hasSynthesisEnrichment: isLitFocused && (!!planSection || analysisResult.patterns.length > 0),
+      isLiteratureFocused: isLitFocused
     }
     
     // Only add synthesis content for literature-focused sections
