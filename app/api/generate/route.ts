@@ -5,6 +5,8 @@ import { generatePaper, type PipelineConfig } from '@/lib/generation/pipeline'
 import { acquireGenerationLock, releaseGenerationLock } from '@/lib/locks/generation-lock'
 import { warn, error as logError } from '@/lib/utils/logger'
 import { createServiceClient } from '@/lib/supabase/service'
+import { checkCanStartGeneration, recordPaperGenerated } from '@/lib/billing/gates'
+import type { PaperTypeKey } from '@/types/simplified'
 
 // Use Node.js runtime for better DNS resolution and OpenAI SDK compatibility
 export const runtime = 'nodejs'
@@ -185,6 +187,23 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    // Check subscription limits before starting generation
+    // Skip check if regenerating an existing project (already counted)
+    if (!existingProjectId) {
+      const gateCheck = await checkCanStartGeneration(
+        user.id,
+        paperType as PaperTypeKey,
+        length as 'short' | 'medium' | 'long'
+      )
+      
+      if (!gateCheck.allowed) {
+        return createErrorStream(
+          gateCheck.reason || 'You have reached your generation limit. Please upgrade your plan.',
+          request
+        )
+      }
+    }
+
     // Use existing project or create new one
     let project: { id: string }
     if (existingProjectId) {
@@ -339,6 +358,11 @@ export async function GET(request: NextRequest) {
 
           // Send completion
           if (!isControllerClosed) {
+            // Record paper generation for billing (only for new projects)
+            if (!existingProjectId) {
+              await recordPaperGenerated(user.id)
+            }
+            
             const completionData = JSON.stringify({
               type: 'complete',
               projectId: capturedProjectId,

@@ -7,10 +7,11 @@ import {
   Settings2, 
   Palette, 
   Shield,
+  CreditCard,
   type LucideIcon
 } from 'lucide-react'
 
-export type SettingsSection = 'profile' | 'writing' | 'editor' | 'appearance' | 'account'
+export type SettingsSection = 'profile' | 'writing' | 'editor' | 'appearance' | 'billing' | 'account'
 
 interface SectionConfig {
   id: SettingsSection
@@ -24,6 +25,7 @@ export const SETTINGS_SECTIONS: SectionConfig[] = [
   { id: 'writing', label: 'Writing', icon: PenLine, description: 'Citation style and defaults' },
   { id: 'editor', label: 'Editor', icon: Settings2, description: 'Autocomplete and shortcuts' },
   { id: 'appearance', label: 'Appearance', icon: Palette, description: 'Theme and display' },
+  { id: 'billing', label: 'Billing', icon: CreditCard, description: 'Subscription and usage' },
   { id: 'account', label: 'Account', icon: Shield, description: 'Security and data' },
 ]
 

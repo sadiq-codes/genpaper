@@ -6,6 +6,7 @@ import { ProfileSection } from './sections/profile-section'
 import { WritingSection } from './sections/writing-section'
 import { EditorSection } from './sections/editor-section'
 import { AppearanceSection } from './sections/appearance-section'
+import { BillingSection } from './sections/billing-section'
 import { AccountSection } from './sections/account-section'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -82,6 +83,8 @@ export function SettingsPage({ user, preferences }: SettingsPageProps) {
         )
       case 'appearance':
         return <AppearanceSection initialFontSize={preferences.fontSize} />
+      case 'billing':
+        return <BillingSection user={user} />
       case 'account':
         return <AccountSection user={user} />
       default:
