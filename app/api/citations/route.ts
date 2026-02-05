@@ -192,7 +192,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json()
+    // Robust body parsing: handle client disconnects / empty body gracefully
+    // (prevents "Unexpected end of JSON input" noise in dev + on aborted requests)
+    let body: any
+    try {
+      const text = await request.text()
+      if (!text || text.trim() === '') {
+        return NextResponse.json({ error: 'Empty request body' }, { status: 400 })
+      }
+      body = JSON.parse(text)
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        if (err.name === 'AbortError' || err.message.includes('aborted') || err.message.includes('ECONNRESET')) {
+          return new NextResponse(null, { status: 499 })
+        }
+      }
+      return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 })
+    }
 
     // Handle batch resolution (placeholder-based citations)
     if (body.refs && Array.isArray(body.refs)) {
@@ -402,7 +418,22 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Citation ID is required' }, { status: 400 })
     }
 
-    const body = await request.json()
+    // Robust body parsing: handle client disconnects / empty body gracefully
+    let body: unknown
+    try {
+      const text = await request.text()
+      if (!text || text.trim() === '') {
+        return NextResponse.json({ error: 'Empty request body' }, { status: 400 })
+      }
+      body = JSON.parse(text)
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        if (err.name === 'AbortError' || err.message.includes('aborted') || err.message.includes('ECONNRESET')) {
+          return new NextResponse(null, { status: 499 })
+        }
+      }
+      return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 })
+    }
     const validationResult = CitationUpdateSchema.safeParse(body)
     
     if (!validationResult.success) {

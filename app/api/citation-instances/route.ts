@@ -118,7 +118,8 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const projectId = searchParams.get('projectId')
-    const idsParam = searchParams.get('ids')
+    // Support both 'ids' and 'instanceIds' for backward compatibility
+    const idsParam = searchParams.get('ids') || searchParams.get('instanceIds')
 
     if (!projectId) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
@@ -162,13 +163,13 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Return as map: { instanceId: quote }
-    const instanceMap: Record<string, string> = {}
-    for (const instance of instances || []) {
-      instanceMap[instance.id] = instance.quote
-    }
+    // Return as array of {id, quote} objects (frontend expects this format)
+    const instanceArray = (instances || []).map(instance => ({
+      id: instance.id,
+      quote: instance.quote
+    }))
 
-    return NextResponse.json({ instances: instanceMap })
+    return NextResponse.json({ instances: instanceArray })
 
   } catch (error) {
     console.error('[citation-instances] GET error:', error)

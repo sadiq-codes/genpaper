@@ -230,22 +230,22 @@ export function getTargetingStrategy(
 export const DEFAULT_CHAT_TOOLS: ToolDefinition[] = [
   {
     name: 'insertContent',
-    description: 'Add new content at a specific location. Use [N] markers with CITATIONS block for citations.',
+    description: 'Add new content at a specific location. Use [N] markers in text AND include `citations` array in tool args.',
     preferredFor: 'Adding new paragraphs, sections, content with citations',
   },
   {
     name: 'replaceBlock',
-    description: 'Replace a block\'s content entirely (use blockId). Preserve existing [@...] citation markers.',
+    description: 'Replace a block\'s content entirely (use blockId). Use [N] markers AND `citations` array for new citations. Preserve existing [@...] markers.',
     preferredFor: 'Rewriting paragraphs with citations, editing content',
   },
   {
     name: 'replaceInSection',
-    description: 'Replace content using text search within a section',
+    description: 'Replace content using text search within a section. Include `citations` array if adding citations.',
     preferredFor: 'When blockId is not available, use text matching',
   },
   {
     name: 'rewriteSection',
-    description: 'Rewrite an entire section (requires user confirmation)',
+    description: 'Rewrite an entire section (requires user confirmation). Include `citations` array if adding citations.',
     preferredFor: 'Major section overhauls, restructuring',
   },
   {
@@ -255,12 +255,12 @@ export const DEFAULT_CHAT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'addCitation',
-    description: 'Add a single citation to existing text WITHOUT modifying the text. Requires afterPhrase and quote.',
+    description: 'Add a single citation to existing text WITHOUT modifying the text. Requires paperId and afterPhrase.',
     preferredFor: 'Adding citation to a claim that has no citation yet',
   },
   {
     name: 'highlightText',
-    description: 'Highlight text for user review',
+    description: 'Highlight text for user review. Use blockId for entire block, or searchPhrase for specific text.',
     preferredFor: 'Marking areas that need attention',
   },
   {

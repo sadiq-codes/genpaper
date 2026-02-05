@@ -413,11 +413,17 @@ export function validateToolCall(
       if (!args.paperId || typeof args.paperId !== 'string') {
         return { valid: false, error: 'addCitation requires paperId' }
       }
+      // afterPhrase is required to locate where to insert the citation
+      if (!args.afterPhrase || typeof args.afterPhrase !== 'string') {
+        return { valid: false, error: 'addCitation requires afterPhrase to locate insertion point' }
+      }
+      // quote is optional - useful for verification but not required for targeting
       break
       
     case 'highlightText':
-      if (!args.searchPhrase || typeof args.searchPhrase !== 'string') {
-        return { valid: false, error: 'highlightText requires searchPhrase' }
+      // Accept blockId OR searchPhrase (schema says blockId alone is valid for entire block highlight)
+      if (!args.blockId && !args.searchPhrase) {
+        return { valid: false, error: 'highlightText requires blockId or searchPhrase' }
       }
       break
       

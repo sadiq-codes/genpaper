@@ -7,9 +7,11 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Bot, User, Wrench, Trash2 } from 'lucide-react'
 import { RichChatInput } from './RichChatInput'
+import { EvidencePanel } from './EvidencePanel'
 import type { UIMessage } from 'ai'
 import type { PendingToolCall } from '../hooks/useEditorChat'
 import type { ProjectPaper } from '../types'
+import type { ChatMessageMetadata } from '@/app/api/editor/chat/route'
 import { cn } from '@/lib/utils'
 import { useChatImageUpload } from '../hooks/useChatImageUpload'
 
@@ -274,12 +276,58 @@ const MessageBubble = memo(function MessageBubble({
             ))}
           </div>
         )}
+
+        {/* Evidence transparency - show what sources were used (assistant messages only) */}
+        {isAssistant && (
+          <EvidencePanel
+            evidence={(message.metadata as ChatMessageMetadata)?.evidence}
+            papers={papers}
+            ragMetadata={(message.metadata as ChatMessageMetadata)?.ragMetadata}
+          />
+        )}
       </div>
     </div>
   )
 })
 
-function LoadingBubble() {
+/**
+ * LoadingBubble with action-oriented status labels.
+ * Shows what the assistant is DOING, not internal system states.
+ * 
+ * Simplified phases to avoid misleading "Searching..." when RAG is skipped:
+ * 1. "Thinking..." (optimistic, shown until metadata arrives)
+ * 2. Real status from metadata: "Found X excerpts" or nothing (if skipped)
+ */
+function LoadingBubble({ 
+  latestMessageMetadata 
+}: { 
+  latestMessageMetadata?: ChatMessageMetadata 
+}) {
+  // Determine status text based on actual state from metadata
+  const statusText = useMemo(() => {
+    // If we have real metadata from streaming, show actual info
+    if (latestMessageMetadata?.ragMetadata) {
+      const { chunksRetrieved, skipped } = latestMessageMetadata.ragMetadata
+      
+      // RAG was skipped - no text needed for simple/fast responses
+      if (skipped) {
+        return null
+      }
+      
+      // RAG completed with results - show count
+      if (chunksRetrieved > 0) {
+        return `Found ${chunksRetrieved} relevant excerpt${chunksRetrieved !== 1 ? 's' : ''}`
+      }
+      
+      // RAG completed but nothing found
+      return null
+    }
+    
+    // Before metadata arrives, just show "Thinking..."
+    // This avoids showing "Searching..." for requests that won't search
+    return 'Thinking...'
+  }, [latestMessageMetadata])
+
   return (
     <div className="flex gap-3 px-4 py-4">
       <Avatar className="h-6 w-6 shrink-0">
@@ -287,42 +335,15 @@ function LoadingBubble() {
           <Bot className="h-3.5 w-3.5" />
         </AvatarFallback>
       </Avatar>
-      <div className="flex items-center gap-1.5 py-1">
-        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.3s]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.15s]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" />
-      </div>
-    </div>
-  )
-}
-
-function HistoryLoadingSkeleton() {
-  return (
-    <div className="space-y-1 animate-pulse">
-      {/* User message skeleton */}
-      <div className="flex gap-3 px-4 py-4">
-        <div className="h-6 w-6 rounded-full bg-muted shrink-0" />
-        <div className="flex-1 space-y-2">
-          <div className="h-2.5 w-12 bg-muted rounded" />
-          <div className="h-3 w-3/4 bg-muted rounded" />
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-1.5 py-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.3s]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.15s]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" />
         </div>
-      </div>
-      {/* Assistant message skeleton */}
-      <div className="flex gap-3 px-4 py-4">
-        <div className="h-6 w-6 rounded-full bg-muted shrink-0" />
-        <div className="flex-1 space-y-2">
-          <div className="h-2.5 w-16 bg-muted rounded" />
-          <div className="h-3 w-full bg-muted rounded" />
-          <div className="h-3 w-2/3 bg-muted rounded" />
-        </div>
-      </div>
-      {/* Another pair */}
-      <div className="flex gap-3 px-4 py-4">
-        <div className="h-6 w-6 rounded-full bg-muted shrink-0" />
-        <div className="flex-1 space-y-2">
-          <div className="h-2.5 w-12 bg-muted rounded" />
-          <div className="h-3 w-1/2 bg-muted rounded" />
-        </div>
+        {statusText && (
+          <span className="text-[11px] text-muted-foreground">{statusText}</span>
+        )}
       </div>
     </div>
   )
@@ -358,7 +379,7 @@ export function ChatTab({
   messages, 
   onSendMessage, 
   isLoading = false,
-  isLoadingHistory = false,
+  isLoadingHistory: _isLoadingHistory = false, // Kept for API compatibility
   papers = [],
   projectId,
   pendingTools = [],
@@ -473,9 +494,8 @@ export function ChatTab({
       {/* Messages area - takes remaining space and scrolls */}
       <div className="flex-1 min-h-0 overflow-hidden">
         <ScrollArea ref={scrollAreaRef} className="h-full">
-          {isLoadingHistory ? (
-            <HistoryLoadingSkeleton />
-          ) : messages.length === 0 && !isLoading ? (
+          {messages.length === 0 && !isLoading ? (
+            // Show empty state immediately - no skeleton loading for fresh chat
             <EmptyState />
           ) : (
             <div className="space-y-1">
@@ -486,7 +506,14 @@ export function ChatTab({
                   papers={papers}
                 />
               ))}
-              {isLoading && <LoadingBubble />}
+              {isLoading && (
+                <LoadingBubble 
+                  latestMessageMetadata={
+                    // Get metadata from the latest assistant message (if streaming)
+                    messages.filter(m => m.role === 'assistant').pop()?.metadata as ChatMessageMetadata | undefined
+                  }
+                />
+              )}
             </div>
           )}
         </ScrollArea>

@@ -13,6 +13,7 @@ import {
   DEFAULT_CHAT_TOOLS,
 } from '@/lib/prompts/automat-context'
 import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
+import { shouldSkipRAG } from '@/lib/ai/intent-classifier'
 
 // =============================================================================
 // TYPES
@@ -106,6 +107,32 @@ interface RAGResult {
     chunksAvailable: number
     truncated: boolean
     papersCovered: number
+  }
+}
+
+/**
+ * Evidence chunk for transparency in chat UI.
+ * Sent to client so users can see what sources were used.
+ */
+export interface EvidenceChunk {
+  paperId: string
+  paperTitle?: string
+  content: string        // Truncated excerpt (~200 chars)
+}
+
+/**
+ * Metadata attached to each assistant message for transparency.
+ * Exported for use in client-side types.
+ */
+export interface ChatMessageMetadata {
+  evidence?: EvidenceChunk[]
+  ragMetadata?: {
+    chunksRetrieved: number
+    papersCovered: number
+    skipped: boolean      // True if RAG was skipped based on intent
+    fallbackUsed: boolean // True if mentioned-only returned 0, fell back to all papers
+    intent?: string       // Detected intent: research, editing, chat, meta
+    intentConfidence?: number // 0-1, how confident the classifier was
   }
 }
 
@@ -231,6 +258,7 @@ async function saveMessages(
 // =============================================================================
 
 export async function POST(request: NextRequest) {
+  const requestStart = performance.now()
   console.log('[Chat API] POST request received')
   
   try {
@@ -275,8 +303,37 @@ export async function POST(request: NextRequest) {
       console.log('[Chat API] Attached images:', attachedImages.length)
     }
 
+    // Get the last user message for intent classification FIRST
+    // This allows us to short-circuit expensive DB queries for trivial messages
+    const lastUserMessage = messages
+      .filter(m => m.role === 'user')
+      .pop()
+    
+    // Extract text content from UIMessage parts
+    const ragQuery = lastUserMessage 
+      ? getTextFromUIMessage(lastUserMessage)
+      : ''
+
+    // EARLY intent classification - do this BEFORE expensive DB queries
+    // Fast-path for trivial messages (greetings, meta questions) can skip paper lookup entirely
+    const intentStart = performance.now()
+    const { skip: skipRAG, classification: intentClassification } = await shouldSkipRAG(
+      ragQuery, 
+      mentionedPaperIds.length > 0
+    )
+    const intentEnd = performance.now()
+    console.log(`[Chat API] [TIMING] Intent classification: ${(intentEnd - intentStart).toFixed(0)}ms`)
+    console.log(`[Chat API] Intent: ${intentClassification.intent} (confidence: ${(intentClassification.confidence * 100).toFixed(0)}%) - ${intentClassification.reasoning}`)
+
+    // For chat/meta intents with no @mentions, skip expensive paper queries
+    // This provides a ~10s speedup for trivial messages like "hi" or "what can you do?"
+    const isTrivialMessage = (intentClassification.intent === 'chat' || intentClassification.intent === 'meta') 
+      && mentionedPaperIds.length === 0
+      && attachedImages.length === 0
+
     // Verify user owns the project and get project details including voice config
     console.log('[Chat API] Looking up project:', projectId, 'for user:', user.id)
+    const dbStart = performance.now()
     
     const { data: project, error: projectError } = await supabase
       .from('research_projects')
@@ -300,28 +357,6 @@ export async function POST(request: NextRequest) {
       return parsed.getFullYear()
     }
 
-    // Get project papers from project_citations table
-    const { data: projectPapers, error: papersError } = await supabase
-      .from('project_citations')
-      .select(`
-        paper_id,
-        papers (
-          id,
-          title,
-          authors,
-          publication_date,
-          abstract,
-          processing_status
-        )
-      `)
-      .eq('project_id', projectId)
-    
-    if (papersError) {
-      console.error('[Chat API] Error fetching project papers:', papersError)
-    }
-    
-    console.log('[Chat API] Found papers in project_citations:', projectPapers?.length || 0)
-
     type PaperData = { id: string; title: string; authors?: string[]; year?: number; abstract?: string; processing_status?: string }
     interface RawPaper {
       id: string
@@ -331,48 +366,101 @@ export async function POST(request: NextRequest) {
       abstract?: string
       processing_status?: string
     }
-    const allPapers: PaperData[] = (projectPapers || [])
-      .map(pp => {
-        const paper = pp.papers as unknown as RawPaper | null
-        if (!paper) return null
-        return {
-          id: paper.id,
-          title: paper.title,
-          authors: paper.authors,
-          year: extractYear(paper.publication_date),
-          abstract: paper.abstract,
-          processing_status: paper.processing_status
-        } as PaperData
-      })
-      .filter((p): p is PaperData => p !== null)
-
-    // Use all papers for chat context; only processed papers should be used for RAG
-    const papers = allPapers
-    const processedPapers = allPapers.filter(p => p.processing_status === 'processed' || !p.processing_status)
-    const pendingPapers = allPapers.filter(p => p.processing_status === 'pending' || p.processing_status === 'processing')
     
-    if (pendingPapers.length > 0) {
-      console.log('[Chat API] Papers still processing:', pendingPapers.map(p => p.title?.slice(0, 30)))
+    let allPapers: PaperData[] = []
+    let papers: PaperData[] = []
+    let processedPapers: PaperData[] = []
+    let paperIds: string[] = []
+    
+    // Skip expensive paper query for trivial messages (chat/meta intent)
+    if (isTrivialMessage) {
+      console.log('[Chat API] Skipping paper query - trivial message detected')
+    } else {
+      // Get project papers from project_citations table
+      const { data: projectPapers, error: papersError } = await supabase
+        .from('project_citations')
+        .select(`
+          paper_id,
+          papers (
+            id,
+            title,
+            authors,
+            publication_date,
+            abstract,
+            processing_status
+          )
+        `)
+        .eq('project_id', projectId)
+      
+      if (papersError) {
+        console.error('[Chat API] Error fetching project papers:', papersError)
+      }
+      
+      console.log('[Chat API] Found papers in project_citations:', projectPapers?.length || 0)
+
+      allPapers = (projectPapers || [])
+        .map(pp => {
+          const paper = pp.papers as unknown as RawPaper | null
+          if (!paper) return null
+          return {
+            id: paper.id,
+            title: paper.title,
+            authors: paper.authors,
+            year: extractYear(paper.publication_date),
+            abstract: paper.abstract,
+            processing_status: paper.processing_status
+          } as PaperData
+        })
+        .filter((p): p is PaperData => p !== null)
+
+      // Use all papers for chat context; only processed papers should be used for RAG
+      papers = allPapers
+      processedPapers = allPapers.filter(p => p.processing_status === 'processed' || !p.processing_status)
+      const pendingPapers = allPapers.filter(p => p.processing_status === 'pending' || p.processing_status === 'processing')
+      
+      if (pendingPapers.length > 0) {
+        console.log('[Chat API] Papers still processing:', pendingPapers.map(p => p.title?.slice(0, 30)))
+      }
+
+      paperIds = processedPapers.map(p => p.id)
+      console.log('[Chat API] Processed paper IDs available for RAG:', paperIds.length)
     }
-
-    const paperIds = processedPapers.map(p => p.id)
-    console.log('[Chat API] Processed paper IDs available for RAG:', paperIds.length)
-
-    // Get the last user message for RAG query
-    const lastUserMessage = messages
-      .filter(m => m.role === 'user')
-      .pop()
     
-    // Extract text content from UIMessage parts
-    const ragQuery = lastUserMessage 
-      ? getTextFromUIMessage(lastUserMessage)
-      : ''
-
-    // Get RAG context - prioritize mentioned papers if any
-    const ragPaperIds = mentionedPaperIds.length > 0 
-      ? [...new Set([...mentionedPaperIds, ...paperIds])] // Mentioned first, then others
-      : paperIds
-    const ragResult = await getRAGContext(ragQuery, projectId, ragPaperIds)
+    const dbEnd = performance.now()
+    console.log(`[Chat API] [TIMING] DB queries: ${(dbEnd - dbStart).toFixed(0)}ms${isTrivialMessage ? ' (paper query skipped)' : ''}`)
+    
+    const ragStart = performance.now()
+    let ragResult: RAGResult
+    let fallbackUsed = false  // Track if we fell back from mentioned-only to all papers
+    
+    if (skipRAG) {
+      console.log(`[Chat API] RAG skipped - intent is "${intentClassification.intent}":`, ragQuery.slice(0, 50))
+      ragResult = { 
+        context: '', 
+        chunks: [],
+        metadata: { chunksRetrieved: 0, chunksAvailable: 0, truncated: false, papersCovered: 0 } 
+      }
+    } else {
+      // Get RAG context - use ONLY mentioned papers when explicitly @mentioned
+      // This focuses retrieval on what the user cares about and speeds up the request
+      if (mentionedPaperIds.length > 0) {
+        // Try mentioned papers first
+        ragResult = await getRAGContext(ragQuery, projectId, mentionedPaperIds)
+        
+        // Fallback: if mentioned-only returns 0 chunks (papers might not be ingested),
+        // retry with all processed papers to still provide useful context
+        if (ragResult.chunks.length === 0 && paperIds.length > 0) {
+          console.log('[Chat API] RAG fallback - mentioned papers returned 0 chunks, trying all processed papers')
+          fallbackUsed = true
+          ragResult = await getRAGContext(ragQuery, projectId, paperIds)
+        }
+      } else {
+        // No mentions - search all processed papers
+        ragResult = await getRAGContext(ragQuery, projectId, paperIds)
+      }
+    }
+    const ragEnd = performance.now()
+    console.log(`[Chat API] [TIMING] RAG retrieval: ${(ragEnd - ragStart).toFixed(0)}ms (skipped: ${skipRAG})`)
 
     // Log RAG metadata for debugging
     console.log('[Chat API] RAG result metadata:', ragResult.metadata)
@@ -474,6 +562,10 @@ export async function POST(request: NextRequest) {
     // This handles the parts -> content transformation correctly
     const modelMessages = await convertToModelMessages(filteredMessages)
 
+    // Log total time to first token (before streaming starts)
+    const prepEnd = performance.now()
+    console.log(`[Chat API] [TIMING] Total prep time: ${(prepEnd - requestStart).toFixed(0)}ms (DB: ${(dbEnd - dbStart).toFixed(0)}ms, RAG: ${(ragEnd - ragStart).toFixed(0)}ms, prompt: ${(prepEnd - ragEnd).toFixed(0)}ms)`)
+
     // Stream the response with tools
     // When this is a tool result follow-up, disable tools so AI just responds with text
     const result = streamText({
@@ -505,9 +597,36 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    // Build evidence for transparency in chat UI
+    // Only include evidence if RAG actually ran and found relevant chunks
+    // Limit to 8 chunks max to keep payload reasonable
+    const hasRelevantEvidence = !skipRAG && ragResult.chunks.length > 0
+    const evidence: EvidenceChunk[] | undefined = hasRelevantEvidence
+      ? ragResult.chunks.slice(0, 8).map(chunk => {
+          const paper = allPapers.find(p => p.id === chunk.paper_id)
+          return {
+            paperId: chunk.paper_id,
+            paperTitle: paper?.title,
+            content: chunk.content.slice(0, 200) + (chunk.content.length > 200 ? '...' : ''),
+          }
+        })
+      : undefined
+
     // Use toUIMessageStreamResponse for useChat compatibility (Vercel AI SDK v6)
-    // This returns the proper format with parts array that useChat expects
-    return result.toUIMessageStreamResponse()
+    // Attach evidence metadata so users can see what sources were used
+    return result.toUIMessageStreamResponse({
+      messageMetadata: () => ({
+        evidence,
+        ragMetadata: {
+          chunksRetrieved: ragResult.metadata.chunksRetrieved,
+          papersCovered: ragResult.metadata.papersCovered,
+          skipped: skipRAG,
+          fallbackUsed,
+          intent: intentClassification.intent,
+          intentConfidence: intentClassification.confidence,
+        },
+      } satisfies ChatMessageMetadata),
+    })
 
   } catch (error) {
     console.error('Editor chat error:', error)

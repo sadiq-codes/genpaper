@@ -25,6 +25,10 @@ export type {
   TemplateOptions 
 } from '@/lib/core/prompt-builder'
 
+// In development, bypass template cache so prompt changes take effect immediately
+// without requiring a server restart. In production, cache for performance.
+const isDev = process.env.NODE_ENV === 'development'
+
 export class PromptService {
   private static templateCache = new Map<string, PromptTemplate>()
   
@@ -122,7 +126,9 @@ export class PromptService {
   }
 
   private static async loadTemplate(templateName: string): Promise<PromptTemplate> {
-    if (this.templateCache.has(templateName)) {
+    // In development, always reload templates from disk for instant prompt iteration
+    // In production, use cache for performance
+    if (!isDev && this.templateCache.has(templateName)) {
       return this.templateCache.get(templateName)!
     }
 

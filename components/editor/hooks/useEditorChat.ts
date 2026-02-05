@@ -503,23 +503,32 @@ export function useEditorChat({
     // Clear the results after sending
     toolResultsRef.current.delete(messageId)
     
-    // Build a summary of what happened
+    // Categorize results
     const accepted = results.filter(r => r.accepted)
-    const rejected = results.filter(r => !r.accepted)
+    const userRejected = results.filter(r => !r.accepted && !r.summary.startsWith('Targeting failed'))
+    const targetingFailed = results.filter(r => !r.accepted && r.summary.startsWith('Targeting failed'))
     
     // Create a system-style message for AI to respond to
     // Prefix with special marker so we can filter it from chat display
     let resultSummary = ''
     
-    if (accepted.length > 0 && rejected.length === 0) {
+    // Handle targeting failures specially - AI can retry with different targeting
+    if (targetingFailed.length > 0) {
+      const failureDetails = targetingFailed.map(r => `- ${r.toolName}: ${r.summary}`).join('\n')
+      resultSummary = `[TOOL_RESULT] ${targetingFailed.length} edit(s) failed due to targeting issues:\n${failureDetails}\n\nYou can retry with different targeting (try a shorter/different searchPhrase, or use section name instead).`
+      
+      if (accepted.length > 0) {
+        resultSummary += ` ${accepted.length} other edit(s) were accepted: ${accepted.map(r => r.summary).join(' ')}`
+      }
+    } else if (accepted.length > 0 && userRejected.length === 0) {
       // All accepted
       resultSummary = `[TOOL_RESULT] User accepted ${accepted.length === 1 ? 'the edit' : `all ${accepted.length} edits`}. ${accepted.map(r => r.summary).join(' ')} Please acknowledge briefly.`
-    } else if (rejected.length > 0 && accepted.length === 0) {
-      // All rejected
-      resultSummary = `[TOOL_RESULT] User rejected ${rejected.length === 1 ? 'the edit' : `all ${rejected.length} edits`}. Ask if they'd like a different approach.`
+    } else if (userRejected.length > 0 && accepted.length === 0) {
+      // All rejected by user
+      resultSummary = `[TOOL_RESULT] User rejected ${userRejected.length === 1 ? 'the edit' : `all ${userRejected.length} edits`}. Ask if they'd like a different approach.`
     } else {
       // Mixed
-      resultSummary = `[TOOL_RESULT] User accepted ${accepted.length} edit(s), rejected ${rejected.length}. ${accepted.map(r => r.summary).join(' ')} Acknowledge and ask about rejected edits.`
+      resultSummary = `[TOOL_RESULT] User accepted ${accepted.length} edit(s), rejected ${userRejected.length}. ${accepted.map(r => r.summary).join(' ')} Acknowledge and ask about rejected edits.`
     }
     
     // Send to AI - this triggers a new response
@@ -793,7 +802,8 @@ export function useEditorChat({
    */
   const recalculateRemainingEdits = useCallback((
     ed: Editor,
-    remainingTools: PendingToolCall[]
+    remainingTools: PendingToolCall[],
+    onTargetingFailure?: (tool: PendingToolCall, error: string) => void
   ): { valid: PendingToolCall[]; invalidCount: number } => {
     const valid: PendingToolCall[] = []
     let invalidCount = 0
@@ -808,9 +818,22 @@ export function useEditorChat({
         })
       } else {
         // Target no longer exists in document
-        console.log(`[useEditorChat] Edit "${tool.toolName}" could not be recalculated - target not found`)
+        const targetInfo = tool.args.searchPhrase 
+          ? `text "${(tool.args.searchPhrase as string).slice(0, 30)}..."`
+          : tool.args.section 
+            ? `section "${tool.args.section}"`
+            : tool.args.blockId 
+              ? `block ${tool.args.blockId}`
+              : 'target'
+        const errorMsg = `Could not find ${targetInfo}`
+        console.log(`[useEditorChat] Edit "${tool.toolName}" targeting failed: ${errorMsg}`)
         executedTools.current.add(tool.id) // Mark as handled
         invalidCount++
+        
+        // Report targeting failure if callback provided
+        if (onTargetingFailure) {
+          onTargetingFailure(tool, errorMsg)
+        }
       }
     }
 
@@ -882,7 +905,16 @@ export function useEditorChat({
       }
       
       // Recalculate positions for remaining edits
-      const { valid, invalidCount } = recalculateRemainingEdits(ed, remainingTools)
+      // Record targeting failures so AI can self-correct
+      const { valid, invalidCount } = recalculateRemainingEdits(ed, remainingTools, (failedTool, error) => {
+        recordToolResult(
+          failedTool.messageId, 
+          failedTool.id, 
+          failedTool.toolName, 
+          false, 
+          `Targeting failed: ${error}`
+        )
+      })
       
       // Update pending tools with recalculated positions
       setPendingTools(valid)

@@ -8,6 +8,7 @@
 // Default models if not specified in environment
 const DEFAULT_MODEL = 'gpt-4o-2024-11-20'
 const DEFAULT_AUTOCOMPLETE_MODEL = 'gpt-4.1-2025-04-14' // Faster model for inline completions
+const DEFAULT_FAST_AUTOCOMPLETE_MODEL = 'gpt-4o-mini' // Ultra-fast model for simple completions (no citations)
 
 /**
  * Get the configured AI model from environment
@@ -30,6 +31,17 @@ export function getModel(): string {
  */
 export function getAutocompleteModel(): string {
   return process.env.AI_AUTOCOMPLETE_MODEL || DEFAULT_AUTOCOMPLETE_MODEL
+}
+
+/**
+ * Get ultra-fast autocomplete model for simple completions
+ * Used when citations are disabled (skipRAG=true) for maximum speed
+ * 
+ * Set AI_FAST_AUTOCOMPLETE_MODEL env var to override
+ * Falls back to gpt-4o-mini for lowest latency
+ */
+export function getFastAutocompleteModel(): string {
+  return process.env.AI_FAST_AUTOCOMPLETE_MODEL || DEFAULT_FAST_AUTOCOMPLETE_MODEL
 }
 
 /**

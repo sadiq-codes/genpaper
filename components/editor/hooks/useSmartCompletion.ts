@@ -33,16 +33,25 @@ interface UseSmartCompletionReturn {
 
 interface EditorContext {
   precedingText: string
+  followingText: string  // FIM: text after cursor (suffix)
   currentParagraph: string
   currentSection: string
   documentOutline: string[]
   isInParagraph: boolean
   isEmptyParagraph: boolean
   hasHeadingAbove: boolean
+  // For contextual filter
+  charBeforeCursor: string
+  cursorAtLineEnd: boolean
 }
 
 // Auto-trigger debounce delay (only used when autoSuggestions enabled)
-const AUTO_TRIGGER_DEBOUNCE_MS = 1200
+// Reduced from 800ms to 400ms - contextual filter will prevent bad requests
+const AUTO_TRIGGER_DEBOUNCE_MS = 400
+
+// Minimum time between keystrokes to consider "paused typing"
+// If user types faster than this, skip the request (they're still typing)
+const MIN_PAUSE_BETWEEN_KEYSTROKES_MS = 200
 
 // Find the last complete sentence in text
 // Returns the sentence text or empty string if no complete sentence found
@@ -81,8 +90,13 @@ function extractEditorContext(editor: Editor): EditorContext | null {
   const currentParagraph = paragraphNode.textContent
   const cursorOffset = $from.parentOffset
   const textBeforeCursor = currentParagraph.slice(0, cursorOffset)
+  const textAfterCursor = currentParagraph.slice(cursorOffset)
   const isEmptyParagraph = currentParagraph.trim().length === 0
   const cursorPos = $from.pos
+  
+  // FIM context: Get character before cursor and check if at line end
+  const charBeforeCursor = cursorOffset > 0 ? currentParagraph.charAt(cursorOffset - 1) : ''
+  const cursorAtLineEnd = textAfterCursor.trim().length === 0
 
   // Find the last complete sentence before cursor
   let precedingText = findLastCompleteSentence(textBeforeCursor)
@@ -128,35 +142,118 @@ function extractEditorContext(editor: Editor): EditorContext | null {
     return true
   })
 
+  // Build followingText: collect text after cursor in current paragraph + next paragraphs
+  // Limited to ~500 chars for reasonable context without bloating prompt
+  let followingText = textAfterCursor
+  if (followingText.length < 500) {
+    doc.nodesBetween(cursorPos, doc.content.size, (node) => {
+      if (node.type.name === 'paragraph' && node !== paragraphNode && followingText.length < 500) {
+        followingText += ' ' + node.textContent.slice(0, 500 - followingText.length)
+      }
+      return followingText.length < 500
+    })
+  }
+  followingText = followingText.slice(0, 500).trim()
+
   return {
     precedingText,
+    followingText,
     currentParagraph,
     currentSection: currentSection || 'Untitled Section',
     documentOutline,
     isInParagraph,
     isEmptyParagraph,
-    hasHeadingAbove
+    hasHeadingAbove,
+    charBeforeCursor,
+    cursorAtLineEnd
   }
+}
+
+/**
+ * Contextual Filter: Determine if we should skip requesting a completion
+ * 
+ * Based on GitHub Copilot's approach - uses heuristics to avoid wasting API calls
+ * on positions where completions are unlikely to be helpful.
+ * 
+ * Returns: { shouldRequest: boolean, reason: string }
+ */
+function contextualFilter(context: EditorContext): { shouldRequest: boolean; reason: string } {
+  const { 
+    precedingText, 
+    followingText,
+    isEmptyParagraph, 
+    hasHeadingAbove, 
+    currentSection,
+    charBeforeCursor,
+    cursorAtLineEnd
+  } = context
+
+  // SKIP: Cursor is after closing punctuation with more text following
+  // e.g., "text here.) More text" - user is probably editing mid-sentence
+  const closingChars = /[)\]}"']$/
+  if (closingChars.test(charBeforeCursor) && followingText.trim().length > 0) {
+    return { shouldRequest: false, reason: 'cursor after closing punctuation with following text' }
+  }
+
+  // SKIP: Very short incomplete word (likely still typing)
+  // e.g., "The qu|" - user is mid-word
+  const lastWord = precedingText.split(/\s+/).pop() || ''
+  if (lastWord.length > 0 && lastWord.length < 3 && !/[.!?,:;]/.test(lastWord)) {
+    return { shouldRequest: false, reason: 'likely mid-word typing' }
+  }
+
+  // ALLOW: Empty paragraph after a heading -> opening sentence
+  if (isEmptyParagraph && hasHeadingAbove && currentSection !== 'Untitled Section') {
+    return { shouldRequest: true, reason: 'empty paragraph after heading' }
+  }
+
+  // SKIP: No meaningful text to work with
+  if (!precedingText.trim()) {
+    return { shouldRequest: false, reason: 'no preceding text' }
+  }
+
+  // SKIP: Less than 2 words
+  const wordCount = precedingText.trim().split(/\s+/).length
+  if (wordCount < 2) {
+    return { shouldRequest: false, reason: 'not enough words' }
+  }
+
+  // PREFER: Cursor at end of line/paragraph (natural completion point)
+  if (cursorAtLineEnd) {
+    return { shouldRequest: true, reason: 'cursor at line end' }
+  }
+
+  // ALLOW: After sentence-ending punctuation
+  if (/[.!?]$/.test(charBeforeCursor)) {
+    return { shouldRequest: true, reason: 'after sentence end' }
+  }
+
+  // ALLOW: After comma or semicolon (continuation point)
+  if (/[,;]$/.test(charBeforeCursor)) {
+    return { shouldRequest: true, reason: 'after continuation punctuation' }
+  }
+
+  // SKIP: Cursor is mid-sentence with substantial following text
+  // e.g., "The results show| that this is important."
+  if (followingText.trim().length > 20) {
+    return { shouldRequest: false, reason: 'mid-sentence with substantial following text' }
+  }
+
+  // DEFAULT: Allow if we have enough context
+  return { shouldRequest: true, reason: 'sufficient context' }
 }
 
 // Check if context has enough content to generate a completion
 // No longer determines suggestion type - the LLM does that semantically
 function shouldTriggerCompletion(context: EditorContext): boolean {
-  const { precedingText, isEmptyParagraph, hasHeadingAbove, currentSection } = context
-
-  // Empty paragraph after a real heading -> good for opening sentence
-  if (isEmptyParagraph && hasHeadingAbove && currentSection !== 'Untitled Section') {
-    return true
-  }
-
-  // Need at least some text to work with
-  if (!precedingText.trim()) {
+  const filterResult = contextualFilter(context)
+  
+  if (!filterResult.shouldRequest) {
+    console.log('[Autocomplete] Contextual filter blocked:', filterResult.reason)
     return false
   }
-
-  // Has meaningful text (2+ words) -> good for completion
-  const wordCount = precedingText.trim().split(/\s+/).length
-  return wordCount >= 2
+  
+  return true
 }
 
 // Processed sentence from API response
@@ -238,11 +335,23 @@ export function useSmartCompletion({
   // In-flight request promise cache for deduplication
   // Key: context hash, Value: pending promise
   const inFlightRequestRef = useRef<Map<string, Promise<void>>>(new Map())
+  // Track last keystroke time for rapid-typing detection
+  const lastKeystrokeTimeRef = useRef<number>(0)
   
   // SENTENCE QUEUE: Store remaining sentences for instant display on accept
   const sentenceQueueRef = useRef<QueuedSentence[]>([])
   // Track the context when sentences were fetched (to invalidate queue on context change)
   const queueContextRef = useRef<string>('')
+  
+  // COMPLETION CACHE: Store recent completions for reuse when user continues typing
+  // Key: prefix (preceding text), Value: { sentences, timestamp, section }
+  const completionCacheRef = useRef<Map<string, {
+    sentences: QueuedSentence[]
+    timestamp: number
+    section: string
+  }>>(new Map())
+  const CACHE_TTL_MS = 30000  // 30 seconds cache TTL
+  const MAX_CACHE_SIZE = 10
   
   // Track mounted state and cleanup on unmount
   useEffect(() => {
@@ -267,6 +376,75 @@ export function useSmartCompletion({
   useEffect(() => {
     papersRef.current = papers
   }, [papers])
+
+  // Check if we can reuse a cached completion
+  // Returns cached sentences if the current prefix is a continuation of a cached prefix
+  const checkCompletionCache = useCallback((context: EditorContext): QueuedSentence[] | null => {
+    const cache = completionCacheRef.current
+    const now = Date.now()
+    const currentPrefix = context.precedingText.trim()
+    const currentSection = context.currentSection
+    
+    // Clean up expired entries
+    for (const [key, entry] of cache.entries()) {
+      if (now - entry.timestamp > CACHE_TTL_MS) {
+        cache.delete(key)
+      }
+    }
+    
+    // Look for a cache entry where current prefix is a continuation
+    for (const [cachedPrefix, entry] of cache.entries()) {
+      // Same section and current text starts with cached prefix
+      if (entry.section === currentSection && currentPrefix.startsWith(cachedPrefix)) {
+        // Check if the user typed something that matches the start of the cached suggestion
+        const newlyTypedText = currentPrefix.slice(cachedPrefix.length).trim()
+        if (newlyTypedText.length > 0 && entry.sentences.length > 0) {
+          const firstSentence = entry.sentences[0].displayText.trim()
+          // If what user typed matches the beginning of our suggestion, reuse it
+          if (firstSentence.toLowerCase().startsWith(newlyTypedText.toLowerCase())) {
+            console.log('[Autocomplete] Cache hit! User typed matches suggestion prefix:', newlyTypedText)
+            // Adjust the sentence to exclude what user already typed
+            const adjustedSentences = entry.sentences.map((s, i) => {
+              if (i === 0) {
+                return {
+                  ...s,
+                  text: s.text.slice(newlyTypedText.length).trimStart(),
+                  displayText: s.displayText.slice(newlyTypedText.length).trimStart(),
+                  citations: s.citations.map(c => ({
+                    ...c,
+                    displayStartOffset: Math.max(0, c.displayStartOffset - newlyTypedText.length),
+                    displayEndOffset: Math.max(0, c.displayEndOffset - newlyTypedText.length)
+                  }))
+                }
+              }
+              return s
+            }).filter(s => s.displayText.trim().length > 0)
+            return adjustedSentences
+          }
+        }
+      }
+    }
+    
+    return null
+  }, [])
+
+  // Store completion in cache
+  const storeInCache = useCallback((prefix: string, section: string, sentences: QueuedSentence[]) => {
+    const cache = completionCacheRef.current
+    
+    // Limit cache size (LRU-style: just delete oldest if too many)
+    if (cache.size >= MAX_CACHE_SIZE) {
+      const oldestKey = cache.keys().next().value
+      if (oldestKey) cache.delete(oldestKey)
+    }
+    
+    cache.set(prefix.trim(), {
+      sentences,
+      timestamp: Date.now(),
+      section
+    })
+    console.log('[Autocomplete] Stored completion in cache, size:', cache.size)
+  }, [])
 
   // Cancel any pending API request (not the debounce timer)
   const cancelPendingRequest = useCallback(() => {
@@ -340,6 +518,24 @@ export function useSmartCompletion({
       return
     }
     
+    // CHECK CACHE: Try to reuse a prior completion if user continued typing
+    const cachedSentences = checkCompletionCache(context)
+    if (cachedSentences && cachedSentences.length > 0) {
+      console.log('[Autocomplete] Using cached completion:', cachedSentences.length, 'sentences')
+      const currentPapers = papersRef.current
+      const firstSentence = prependSpaceIfNeeded(editor, cachedSentences[0])
+      editor.commands.setGhostText(
+        firstSentence.text,
+        firstSentence.displayText,
+        firstSentence.citations,
+        currentPapers,
+        cachedSentences.length - 1
+      )
+      sentenceQueueRef.current = cachedSentences.slice(1)
+      queueContextRef.current = contextKey
+      return
+    }
+    
     // Check for in-flight request with same key (request deduplication)
     const existingRequest = inFlightRequestRef.current.get(contextKey)
     if (existingRequest) {
@@ -385,13 +581,16 @@ export function useSmartCompletion({
             projectId,
             context: {
               precedingText: context.precedingText,
+              followingText: context.followingText,  // FIM: send suffix for better context
               currentParagraph: context.currentParagraph,
               currentSection: context.currentSection,
               documentOutline: context.documentOutline
             },
             paperIds: prefs?.includeCitations ? currentPapers.map(p => p.id) : [],
+            // Skip RAG entirely when citations are disabled - makes autocomplete much faster
+            // Without this, empty paperIds triggers expensive library fallback + relevance RAG
+            skipRAG: !prefs?.includeCitations,
             topic: projectTopic
-            // suggestionType removed - LLM analyzes intent semantically
           }),
           signal
         })
@@ -571,6 +770,9 @@ export function useSmartCompletion({
         sentenceQueueRef.current = queuedSentences.slice(1)
         queueContextRef.current = contextKey
         
+        // CACHE: Store this completion for potential reuse
+        storeInCache(context.precedingText, context.currentSection, queuedSentences)
+        
         console.log('[Autocomplete] Showing first sentence, queued:', sentenceQueueRef.current.length)
         
         // Reset context key after successful ghost text display
@@ -630,12 +832,18 @@ export function useSmartCompletion({
   // Schedule completion request (auto-trigger based on prefs)
   // This is called by: manual trigger (Ctrl+Space) and background queue refill
   const scheduleAutoTrigger = useCallback(() => {
+    // Track keystroke time for rapid-typing detection
+    const now = Date.now()
+    const timeSinceLastKeystroke = now - lastKeystrokeTimeRef.current
+    lastKeystrokeTimeRef.current = now
+    
     console.log('[Autocomplete] scheduleAutoTrigger called', { 
       hasEditor: !!editor, 
       enabled, 
       autoSuggestions: prefs?.autoSuggestions,
       isGenerating,
-      isFocused: editor?.isFocused 
+      isFocused: editor?.isFocused,
+      timeSinceLastKeystroke
     })
     
     if (!editor || !enabled || isGenerating) {
@@ -688,6 +896,13 @@ export function useSmartCompletion({
     debounceTimeoutRef.current = setTimeout(() => {
       console.log('[Autocomplete] Timeout fired, checking conditions...')
       
+      // Check if user is still rapidly typing (keystroke within MIN_PAUSE threshold)
+      const timeSinceLastKeystroke = Date.now() - lastKeystrokeTimeRef.current
+      if (timeSinceLastKeystroke < MIN_PAUSE_BETWEEN_KEYSTROKES_MS) {
+        console.log('[Autocomplete] Timeout: user still typing rapidly', { timeSinceLastKeystroke })
+        return
+      }
+      
       // Re-check conditions before firing (use ref for isGenerating to avoid stale closure)
       if (!editor || !enabled || isGeneratingRef.current || editor.isDestroyed) {
         console.log('[Autocomplete] Timeout: basic checks failed', { isGenerating: isGeneratingRef.current })
@@ -709,9 +924,9 @@ export function useSmartCompletion({
         return
       }
       
-      // Check again that we have enough context
+      // Check again that we have enough context (includes contextual filter)
       if (!shouldTriggerCompletion(freshContext)) {
-        console.log('[Autocomplete] Timeout: not enough context')
+        console.log('[Autocomplete] Timeout: contextual filter blocked')
         return
       }
       
@@ -826,9 +1041,10 @@ export function useSmartCompletion({
       const now = Date.now()
       const timeSinceSetup = now - editorSetupTimeRef.current
       
-      // During the initial 2 seconds after editor setup, don't cancel requests
-      // This prevents aborting requests during initial content load which happens in multiple updates
-      const isInitialLoadPeriod = timeSinceSetup < 2000
+      // During the initial 1 second after editor setup, don't cancel requests
+      // This prevents aborting requests during initial content load
+      // Reduced from 2000ms to 1000ms for faster first autocomplete
+      const isInitialLoadPeriod = timeSinceSetup < 1000
       
       if (isInitialLoadPeriod) {
         console.log('[Autocomplete] In initial load period, not cancelling request', { timeSinceSetup })

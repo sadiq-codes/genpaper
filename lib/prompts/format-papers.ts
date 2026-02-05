@@ -74,7 +74,7 @@ export function formatPapersForContext(
   const {
     maxPapers = 15,
     header = '### Available Sources',
-    instructions = 'When discussing, cite by author name (e.g., "Smith et al. (2023) found...").\nWhen inserting content, use [N] markers with CITATIONS block.',
+    instructions = 'When discussing, cite by author name (e.g., "Smith et al. (2023) found...").\nWhen inserting content via tools, use [N] markers in text AND include `citations` array in tool args.',
   } = options
 
   const slicedPapers = papers.slice(0, maxPapers)
@@ -87,7 +87,7 @@ export function formatPapersForContext(
     return `[${num}] "${p.title}" (${authorStr}${yearStr})`
   }).join('\n')
 
-  // Internal mapping - for CITATIONS block only
+  // Internal mapping - for tool citations[] parameter
   const internalMapping = slicedPapers.map((p, index) => {
     return `[${index + 1}] = ${p.id}`
   }).join('\n')
@@ -97,7 +97,7 @@ ${instructions}
 
 ${visibleEntries}
 
-<!-- INTERNAL REFERENCE (for CITATIONS block only - NEVER show in responses):
+<!-- INTERNAL REFERENCE (for tool citations[].paperId - NEVER show in responses):
 ${internalMapping}
 -->`
 }
@@ -163,11 +163,11 @@ export function formatMentionedPapersForContext(
 
 Prioritize these sources when responding.
 - When DISCUSSING conversationally: Use author-year format like "Smith et al. (2023) found..."
-- When INSERTING content: Use [M1], [M2] markers with CITATIONS block
+- When INSERTING content via tools: Use [M1], [M2] markers in text AND include \`citations\` array in tool args
 
 ${formatted}
 
-<!-- INTERNAL REFERENCE (for CITATIONS block only - NEVER show in responses):
+<!-- INTERNAL REFERENCE (for tool citations[].paperId - NEVER show in responses):
 ${internalMapping}
 -->`
 }
@@ -205,11 +205,11 @@ export function formatRAGChunksForContext(
 
   return `### Evidence Excerpts
 Use these to support your responses. When discussing conversationally, paraphrase and cite by author name.
-When inserting content with tool calls, use [E1], [E2] markers with CITATIONS block.
+When inserting content via tools, use [E1], [E2] markers in text AND include \`citations\` array in tool args.
 
 ${visibleChunks}
 
-<!-- INTERNAL REFERENCE (for CITATIONS block only - NEVER show in responses):
+<!-- INTERNAL REFERENCE (for tool citations[].paperId - NEVER show in responses):
 ${internalMapping}
 -->`
 }

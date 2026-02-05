@@ -1,5 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai'
-import { getModel, getAutocompleteModel as getAutocompleteModelName, EMBEDDING_CONFIG } from './config'
+import { getModel, getAutocompleteModel as getAutocompleteModelName, getFastAutocompleteModel as getFastAutocompleteModelName, EMBEDDING_CONFIG } from './config'
 
 // Vercel AI SDK client for paper generation
 export const ai = createOpenAI({
@@ -23,6 +23,15 @@ export function getLanguageModel() {
  */
 export function getAutocompleteLanguageModel() {
   return ai.languageModel(getAutocompleteModelName())
+}
+
+/**
+ * Get ultra-fast autocomplete model for simple completions
+ * Used when citations are disabled for maximum speed
+ * Override with AI_FAST_AUTOCOMPLETE_MODEL env var
+ */
+export function getFastAutocompleteLanguageModel() {
+  return ai.languageModel(getFastAutocompleteModelName())
 }
 
 /**

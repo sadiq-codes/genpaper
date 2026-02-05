@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { SettingsSidebar, type SettingsSection, SETTINGS_SECTIONS } from './settings-sidebar'
 import { ProfileSection } from './sections/profile-section'
 import { WritingSection } from './sections/writing-section'
 import { EditorSection } from './sections/editor-section'
 import { AppearanceSection } from './sections/appearance-section'
-import { BillingSection } from './sections/billing-section'
 import { AccountSection } from './sections/account-section'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -16,6 +16,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Loader2 } from 'lucide-react'
+
+// Lazy load BillingSection - only loads when user clicks billing tab
+// This prevents the subscription API from being called on settings page load
+const BillingSection = dynamic(
+  () => import('./sections/billing-section').then(mod => ({ default: mod.BillingSection })),
+  { 
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+)
 
 export interface UserData {
   id: string
