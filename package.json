@@ -4,7 +4,13 @@
   "private": true,
   "packageManager": "bun@1.3.5",
   "overrides": {
-    "lightningcss": "1.29.2"
+    "lightningcss": "1.29.1",
+    "@tailwindcss/node": {
+      "lightningcss": "1.29.1"
+    },
+    "vite": {
+      "lightningcss": "1.29.1"
+    }
   },
   "scripts": {
     "dev": "next dev",
