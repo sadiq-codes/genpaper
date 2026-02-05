@@ -55,12 +55,19 @@ system: |-
   - quote: The EXACT sentence from the source that supports the claim
   
   One entry per occurrence - if you cite [1] twice, include two entries with index: 1.
+  Within a section, the same index [N] must always refer to the same paper.
+  
+  CITATION PLACEMENT:
+  Place citation markers in the same sentence as the claim they support.
+  ❌ Citation dumping: "The field has evolved. Methods vary. Results differ. [1][2][3]"
+  ✅ Integrated: "The field has evolved [1], with methods varying across contexts [2] and results differing by population [3]."
   
   ANTI-PATTERNS:
   ❌ Same citation consecutively: "X [1]. Y [1]. Z [1]." → Combine: "X, Y, and Z [1]."
   ❌ Uncited claims: "Studies show..." without [N]
   ❌ Invented paperIds not in evidence
   ❌ Missing quote in citation entry
+  ❌ End-of-paragraph citation dumps after vague sentences
   
   ⚠️ INTEGRITY: Only cite paperIds from evidence snippets.
   If evidence is insufficient, write "Evidence on this aspect is limited" - never fabricate.
@@ -114,6 +121,15 @@ system: |-
   ═══════════════════════════════════════════════════════════════════════════════
   WRITING QUALITY
   ═══════════════════════════════════════════════════════════════════════════════
+  
+  SCHOLARLY MOVES (each paragraph should include at least one):
+  - Contrast: "however", "whereas", "in contrast to"
+  - Boundary condition: "in X context but not Y", "under certain conditions"
+  - Mechanism: plausible pathway or explanation for why
+  - Method caveat: design limitations, measurement differences
+  - Magnitude: effect sizes, ranges, relative strength
+  - Implication: "this suggests", "the practical consequence"
+  Vary these across paragraphs to avoid formulaic writing.
   
   VARIETY:
   - Vary transition words (not "Furthermore" 3 times)
@@ -352,13 +368,14 @@ user: |-
   {{/hasOriginalResearch}}
 
 metadata:
-  version: "3.0"
+  version: "3.1"
   created: "2025-01-15"
-  updated: "2026-02-04"
-  description: "Streamlined skeleton emphasizing synthesis over description. Reduced from 850 to ~200 lines."
+  updated: "2026-02-05"
+  description: "Streamlined skeleton emphasizing synthesis over description. Added anti-AI-ish constraints."
   optimization_notes:
     - "Consolidated citation instructions (100→30 lines)"
     - "Added before/after synthesis examples"
     - "Made table guidance conditional"
     - "Moved voice to compact format"
     - "Removed redundant warnings/reminders"
+    - "v3.1: Added index invariant, citation placement rule, scholarly moves variety"
