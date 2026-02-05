@@ -65,6 +65,8 @@ interface EditorSidebarProps {
   isChatLoading?: boolean
   /** Is chat history being loaded */
   isChatLoadingHistory?: boolean
+  /** Chat error (for rate limit handling) */
+  chatError?: Error | null
   // Tool-related props (actions are in editor now, these are for status display)
   pendingTools?: PendingToolCall[]
   onConfirmTool?: (toolId: string) => void
@@ -92,6 +94,7 @@ export function EditorSidebar({
   onSendMessage,
   isChatLoading = false,
   isChatLoadingHistory = false,
+  chatError,
   pendingTools,
   onConfirmTool,
   onRejectTool,
@@ -164,6 +167,7 @@ export function EditorSidebar({
             onSendMessage={onSendMessage}
             isLoading={isChatLoading}
             isLoadingHistory={isChatLoadingHistory}
+            error={chatError}
             papers={papers}
             projectId={projectId}
             pendingTools={pendingTools}

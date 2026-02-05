@@ -176,6 +176,7 @@ export function ResearchEditor({
   const chatMessages = chat.messages
   const isChatLoading = chat.isLoading
   const isChatLoadingHistory = chat.isLoadingHistory
+  const chatError = chat.error
   const handleSendMessage = chat.sendMessage
   const pendingTools = chat.pendingTools
   const confirmTool = chat.confirmTool
@@ -461,6 +462,7 @@ export function ResearchEditor({
       onSendMessage={handleSendMessage}
       isChatLoading={isChatLoading}
       isChatLoadingHistory={isChatLoadingHistory}
+      chatError={chatError}
       pendingTools={pendingTools}
       onConfirmTool={confirmTool}
       onRejectTool={rejectTool}

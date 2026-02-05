@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Bot, User, Wrench, Trash2 } from 'lucide-react'
 import { RichChatInput } from './RichChatInput'
 import { EvidencePanel } from './EvidencePanel'
+import { ChatLimitBanner, ChatUsageIndicator } from '@/components/billing/chat-limit-banner'
 import type { UIMessage } from 'ai'
 import type { PendingToolCall } from '../hooks/useEditorChat'
 import type { ProjectPaper } from '../types'
@@ -115,6 +116,8 @@ interface ChatTabProps {
   isLoading?: boolean
   /** Is chat history being loaded */
   isLoadingHistory?: boolean
+  /** Error from chat API (used to show rate limit banners) */
+  error?: Error | null
   // Papers for @ mentions
   papers?: ProjectPaper[]
   projectId?: string
@@ -380,6 +383,7 @@ export function ChatTab({
   onSendMessage, 
   isLoading = false,
   isLoadingHistory: _isLoadingHistory = false, // Kept for API compatibility
+  error,
   papers = [],
   projectId,
   pendingTools = [],
@@ -476,6 +480,9 @@ export function ChatTab({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* Rate limit banner - show when limit reached */}
+      <ChatLimitBanner error={error} showUsageStats className="mx-3 mt-3" />
+      
       {/* Header with clear button - only show when no pending edits */}
       {messages.length > 0 && onClearHistory && pendingTools.length === 0 && (
         <div className="flex-shrink-0 flex justify-end p-2 border-b border-border">

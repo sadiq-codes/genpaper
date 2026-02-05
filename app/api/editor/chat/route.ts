@@ -14,6 +14,7 @@ import {
 } from '@/lib/prompts/automat-context'
 import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 import { shouldSkipRAG } from '@/lib/ai/intent-classifier'
+import { checkAndIncrementChatUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
 
 // =============================================================================
 // TYPES
@@ -269,6 +270,25 @@ export async function POST(request: NextRequest) {
     if (authError || !user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
         status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+
+    // Check daily usage limits (free tier: 10 chats/day, paid: unlimited)
+    const usageCheck = await checkAndIncrementChatUsage(user.id)
+    if (!usageCheck.allowed) {
+      const timeUntilReset = formatTimeUntilReset(usageCheck.resetsAt)
+      return new Response(JSON.stringify({ 
+        error: 'Daily chat limit reached',
+        code: 'CHAT_LIMIT_REACHED',
+        message: `You've used all ${usageCheck.dailyLimit} daily chat messages. Upgrade to a paid plan for unlimited chat, or wait ${timeUntilReset} for your limit to reset.`,
+        usage: {
+          current: usageCheck.currentUses,
+          limit: usageCheck.dailyLimit,
+          resetsAt: usageCheck.resetsAt.toISOString(),
+        }
+      }), { 
+        status: 429,
         headers: { 'Content-Type': 'application/json' }
       })
     }

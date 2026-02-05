@@ -17,6 +17,7 @@ import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 import { PromptService } from '@/lib/prompts/prompt-service'
 import { buildCompleteContext, formatPapersForContext } from '@/lib/prompts/costar-context'
 import { getUserLibraryPapers } from '@/lib/db/library'
+import { checkAndIncrementAutocompleteUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
 
 // Note: SuggestionType removed - the unified prompt now handles all cases
 // by having the LLM analyze writing intent semantically
@@ -310,6 +311,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     timings.auth = Date.now() - authStartTime
+
+    // Check daily usage limits (free tier: 10 autocompletes/day, paid: unlimited)
+    const usageCheck = await checkAndIncrementAutocompleteUsage(user.id)
+    if (!usageCheck.allowed) {
+      const timeUntilReset = formatTimeUntilReset(usageCheck.resetsAt)
+      return NextResponse.json({ 
+        error: 'Daily autocomplete limit reached',
+        code: 'AUTOCOMPLETE_LIMIT_REACHED',
+        message: `You've used all ${usageCheck.dailyLimit} daily autocomplete requests. Upgrade to a paid plan for unlimited autocomplete, or wait ${timeUntilReset} for your limit to reset.`,
+        usage: {
+          current: usageCheck.currentUses,
+          limit: usageCheck.dailyLimit,
+          resetsAt: usageCheck.resetsAt.toISOString(),
+        }
+      }, { status: 429 })
+    }
 
     // Parse request body
     let body: CompletionRequest

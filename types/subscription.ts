@@ -50,6 +50,12 @@ export interface TierLimits {
   
   /** Whether user gets priority generation queue */
   priorityGeneration: boolean
+  
+  /** Daily chat messages limit, or 'unlimited' for paid tiers */
+  dailyChatLimit: number | 'unlimited'
+  
+  /** Daily autocomplete requests limit, or 'unlimited' for paid tiers */
+  dailyAutocompleteLimit: number | 'unlimited'
 }
 
 export interface TierInfo {
@@ -74,15 +80,19 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
       allowedPaperTypes: ['literatureReview'],
       maxPaperLength: 'short',
       referencesVisible: 3,
-      editorChatEnabled: false,
+      editorChatEnabled: true, // Enabled with daily limits
       pdfExport: false,
       priorityGeneration: false,
+      dailyChatLimit: 10,
+      dailyAutocompleteLimit: 10,
     },
     features: [
       '1 literature review per month',
       'Short papers only',
       'Preview of references (3 visible)',
       'Basic generation',
+      '10 AI chat messages per day',
+      '10 autocompletes per day',
     ],
   },
   
@@ -98,13 +108,16 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
       editorChatEnabled: true,
       pdfExport: true,
       priorityGeneration: false,
+      dailyChatLimit: 'unlimited',
+      dailyAutocompleteLimit: 'unlimited',
     },
     features: [
       '5 papers per month',
       'Literature reviews, research articles & capstones',
       'Short & medium length papers',
       'Full references visible',
-      'AI editor chat',
+      'Unlimited AI editor chat',
+      'Unlimited autocomplete',
       'PDF export',
     ],
   },
@@ -121,13 +134,16 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
       editorChatEnabled: true,
       pdfExport: true,
       priorityGeneration: true,
+      dailyChatLimit: 'unlimited',
+      dailyAutocompleteLimit: 'unlimited',
     },
     features: [
       '15 papers per month',
       'All paper types including theses',
       'All paper lengths',
       'Full references visible',
-      'AI editor chat',
+      'Unlimited AI editor chat',
+      'Unlimited autocomplete',
       'PDF export',
       'Priority generation queue',
     ],

@@ -7,6 +7,22 @@ import type { SubscriptionTier } from '@/types/subscription'
 // Types
 // =============================================================================
 
+export interface DailyUsageStats {
+  chat: {
+    used: number
+    limit: number
+    remaining: number | 'unlimited'
+    isUnlimited: boolean
+  }
+  autocomplete: {
+    used: number
+    limit: number
+    remaining: number | 'unlimited'
+    isUnlimited: boolean
+  }
+  resetsAt: string
+}
+
 export interface SubscriptionData {
   tier: SubscriptionTier
   tierName: string
@@ -20,16 +36,24 @@ export interface SubscriptionData {
 export interface UseSubscriptionResult {
   /** Current subscription data */
   subscription: SubscriptionData | null
+  /** Daily usage stats (chat/autocomplete limits) */
+  dailyUsage: DailyUsageStats | null
   /** Loading state */
   isLoading: boolean
   /** Error message if fetch failed */
   error: string | null
   /** Refresh subscription data */
   refresh: () => Promise<void>
+  /** Refresh daily usage only (faster, for UI updates) */
+  refreshUsage: () => Promise<void>
   /** Check if user can generate another paper */
   canGenerate: boolean
   /** Check if user has a paid subscription */
   isPaid: boolean
+  /** Check if user can send chat messages */
+  canChat: boolean
+  /** Check if user can use autocomplete */
+  canAutocomplete: boolean
 }
 
 // =============================================================================
@@ -48,26 +72,45 @@ export interface UseSubscriptionResult {
  */
 export function useSubscription(): UseSubscriptionResult {
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null)
+  const [dailyUsage, setDailyUsage] = useState<DailyUsageStats | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  
+  const fetchUsage = useCallback(async () => {
+    try {
+      const response = await fetch('/api/billing/usage')
+      if (response.ok) {
+        const data = await response.json()
+        setDailyUsage(data)
+      }
+    } catch {
+      // Non-critical - don't set error for usage fetch failures
+      console.warn('Failed to fetch daily usage')
+    }
+  }, [])
   
   const fetchSubscription = useCallback(async () => {
     try {
       setIsLoading(true)
       setError(null)
       
-      const response = await fetch('/api/billing/subscription')
+      // Fetch subscription and usage in parallel
+      const [subResponse] = await Promise.all([
+        fetch('/api/billing/subscription'),
+        fetchUsage(),
+      ])
       
-      if (!response.ok) {
-        if (response.status === 401) {
+      if (!subResponse.ok) {
+        if (subResponse.status === 401) {
           // Not logged in - that's fine, just no subscription
           setSubscription(null)
+          setDailyUsage(null)
           return
         }
         throw new Error('Failed to fetch subscription')
       }
       
-      const data = await response.json()
+      const data = await subResponse.json()
       setSubscription(data)
       
     } catch (err) {
@@ -76,7 +119,7 @@ export function useSubscription(): UseSubscriptionResult {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [fetchUsage])
   
   useEffect(() => {
     fetchSubscription()
@@ -86,13 +129,25 @@ export function useSubscription(): UseSubscriptionResult {
   const canGenerate = subscription ? subscription.papersRemaining > 0 : false
   const isPaid = subscription ? subscription.tier !== 'free' : false
   
+  // Daily usage computed values
+  const canChat = dailyUsage 
+    ? (dailyUsage.chat.isUnlimited || (typeof dailyUsage.chat.remaining === 'number' && dailyUsage.chat.remaining > 0))
+    : true // Default to true when loading
+  const canAutocomplete = dailyUsage
+    ? (dailyUsage.autocomplete.isUnlimited || (typeof dailyUsage.autocomplete.remaining === 'number' && dailyUsage.autocomplete.remaining > 0))
+    : true // Default to true when loading
+  
   return {
     subscription,
+    dailyUsage,
     isLoading,
     error,
     refresh: fetchSubscription,
+    refreshUsage: fetchUsage,
     canGenerate,
     isPaid,
+    canChat,
+    canAutocomplete,
   }
 }
 
