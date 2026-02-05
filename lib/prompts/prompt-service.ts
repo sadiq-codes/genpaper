@@ -169,6 +169,7 @@ export class PromptService {
 
   // Delegate utility methods to pure PromptBuilder
   static formatEvidenceSnippets(chunks: Array<{ 
+    id?: string
     content: string
     paper_id: string
     title?: string

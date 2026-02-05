@@ -982,65 +982,8 @@ export async function generatePaper(
     
     onProgress?.('finishing', 92, 'Saving your paper...')
     
-    // Extract citations from CITATIONS blocks BEFORE converting markers
-    // This captures paper IDs and quotes for database storage
-    const { cleanNonCitationArtifacts, convertNumberedToStorageFormat, parseNumberedCitationsBlock } = await import('@/lib/citations/post-processor')
-    
-    // Parse all CITATIONS blocks from the full content to build allCitations
-    // This replaces the broken extractCitationMarkers approach
-    const citationsFromBlock = parseNumberedCitationsBlock(fullContent)
-    for (const [, entry] of citationsFromBlock) {
-      allCitations.push({
-        paperId: entry.paperId,
-        citationText: `[@${entry.paperId}]`
-      })
-    }
-    
-    // Convert numbered [1], [2] markers to [@paperId#instanceId] format for storage
-    // Returns both converted content and instances to save
-    const conversionResult = convertNumberedToStorageFormat(fullContent)
-    fullContent = conversionResult.content
-    
-    // Save citation instances to database (direct insert, no HTTP round-trip)
-    if (conversionResult.instancesToCreate.length > 0) {
-      try {
-        const serviceSupabase = getServiceClient()
-        
-        // Filter out instances without quotes and prepare for insert
-        const validInstances = conversionResult.instancesToCreate
-          .filter(i => i.instanceId && i.paperId && i.quote)
-          .map(inst => ({
-            id: inst.instanceId,
-            project_id: projectId,
-            paper_id: inst.paperId,
-            // Truncate quote to 100 words max (same as API route)
-            quote: inst.quote.split(/\s+/).slice(0, 100).join(' ')
-          }))
-        
-        if (validInstances.length > 0) {
-          const { error: insertError } = await serviceSupabase
-            .from('citation_instances')
-            .upsert(validInstances, { onConflict: 'id', ignoreDuplicates: true })
-          
-          if (insertError) {
-            // If the migration for citation_instances hasn't been applied yet,
-            // PostgREST returns PGRST205 (table missing from schema cache). Treat as optional.
-            const code = (insertError as { code?: string }).code
-            if (code === 'PGRST205') {
-              info({ code }, 'citation_instances not available (migration not applied); skipping instance save')
-            } else {
-              warn({ error: insertError }, 'Failed to save citation instances')
-            }
-          } else {
-            info({ count: validInstances.length }, 'Saved citation instances to database')
-          }
-        }
-      } catch (err) {
-        warn({ error: err }, 'Error saving citation instances')
-      }
-    }
-    
     // Clean non-citation artifacts (leaked tool syntax, etc.)
+    const { cleanNonCitationArtifacts } = await import('@/lib/citations/post-processor')
     fullContent = cleanNonCitationArtifacts(fullContent)
     
     // VALIDATION: Create set of valid paper IDs to filter out hallucinated citations

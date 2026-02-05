@@ -325,9 +325,6 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
   
   if (synthesisPatterns.length > 0) {
     result.synthesisPatterns = synthesisPatterns
-    // Add flags for conditional table guidance in template
-    ;(result as Record<string, unknown>).hasMultiplePatterns = synthesisPatterns.length >= 4
-    ;(result as Record<string, unknown>).patternCount = synthesisPatterns.length
   }
   
   if (synthesisContradictions.length > 0) {

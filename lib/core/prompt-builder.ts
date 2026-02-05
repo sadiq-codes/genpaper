@@ -312,6 +312,7 @@ Provide specific, actionable feedback on:
 
   // Pure utility functions (no I/O)
   static formatEvidenceSnippets(chunks: Array<{ 
+    id?: string
     content: string
     paper_id: string
     title?: string
@@ -346,6 +347,7 @@ Provide specific, actionable feedback on:
       selectedChunks.map((chunk) => ({
         // Note: Removed numeric "id" field to prevent AI from confusing snippet numbers with paper_id
         // The paper_id is the ONLY identifier that should be used in [CITE: paper_id] markers
+        chunk_id: chunk.id || undefined,
         paper_id: chunk.paper_id,
         title: chunk.title || 'Source',
         // Evidence strength helps LLM weight citations appropriately

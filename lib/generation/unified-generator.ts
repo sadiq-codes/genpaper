@@ -1,5 +1,6 @@
 import 'server-only'
-import { streamText } from 'ai'
+import { generateObject } from 'ai'
+import { z } from 'zod'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
 import type { SectionContext } from '@/lib/prompts/types'
@@ -41,7 +42,7 @@ export interface UnifiedGenerationConfig {
 
 export interface UnifiedGenerationResult {
   content: string
-  citations: Array<{ paperId: string; citationText: string }>
+  citations: Array<{ paperId: string; chunkId?: string | null; quote?: string | null; citationText: string }>
   tokensUsed: number
   generationTime: number
   qualityScore: number
@@ -106,121 +107,58 @@ export async function generateWithUnifiedTemplate(
   }
 
   let fullContent = ''
+  const collectedCitations: Array<{ paperId: string; chunkId?: string | null; quote?: string | null; citationText: string }> = []
+  // Token usage is not currently exposed by generateObject in our usage; keep as best-effort.
   let tokensUsed = 0
-  const collectedCitations: Array<{ paperId: string; citationText: string }> = []
 
   progress('context', 10, 'Building generation context...')
   
   const promptData = await buildPromptData(context, options)
   
-  progress('generation', 20, 'Starting content generation...')
+  progress('generation', 20, 'Generating section (structured output)...')
   
   const resolvedOptions = resolveGenOptions(options)
-  const targetWords = options.targetWords || 300
-  const targetChars = targetWords * 5.5 // Average chars per word
-  
-  // Use simple text streaming - no tools
-  // Citations are handled via [CITE: paper_id] markers that are post-processed
-  const result = await streamText({
+
+  const SectionOutputSchema = z.object({
+    contentMarkdown: z.string(),
+    citations: z.array(z.object({
+      paperId: z.string(),
+      chunkId: z.string().nullable().optional(),
+      quote: z.string().nullable().optional(),
+    })).default([]),
+  })
+
+  const { object } = await generateObject({
     model: getLanguageModel(),
+    schema: SectionOutputSchema,
     system: promptData.system,
     prompt: promptData.user,
     temperature: resolvedOptions.temperature,
-    maxOutputTokens: resolvedOptions.maxTokens
   })
 
-  // Sentence boundary detection with abbreviation handling
-  // Extended abbreviation list for academic content
-  const ABBREVIATIONS = [
-    'Dr', 'Mr', 'Mrs', 'Ms', 'Prof', 'vs', 'etc', 
-    'e\\.g', 'i\\.e', 'U\\.S', 'Fig', 'No', 'Vol', 'pp', 'al',
-    'et', 'Eq', 'Ref', 'Inc', 'Jr', 'Sr', 'Ltd', 'Co', 'St'
-  ]
-  const abbrevPattern = ABBREVIATIONS.join('|')
-  // Use NON-GLOBAL regex to avoid lastIndex mutation issues when slicing pendingText
-  const sentenceEndPattern = new RegExp(`(?<!(?:${abbrevPattern}))\\.(?=\\s+[A-Z])|[!?](?=\\s+[A-Z])`)
-  
-  let pendingText = ''
-  let totalChars = 0
-  let lastProgressUpdate = 0
-  const PROGRESS_UPDATE_INTERVAL = 500 // Update progress every ~500 chars
-  const MAX_BUFFER_SIZE = 5000 // Force flush if buffer gets too large
+  fullContent = object.contentMarkdown
 
-  for await (const delta of result.fullStream) {
-    if (delta.type === 'text-delta') {
-      pendingText += delta.text
-      totalChars += delta.text.length
-      
-      // Real-time progress updates based on generated content
-      if (totalChars - lastProgressUpdate >= PROGRESS_UPDATE_INTERVAL) {
-        lastProgressUpdate = totalChars
-        // Progress from 20% to 45% during generation (leaving room for post-processing)
-        const generationProgress = Math.min(45, 20 + (totalChars / targetChars) * 25)
-        const wordsGenerated = Math.round(totalChars / 5.5)
-        progress('generation', generationProgress, `Generating... ${wordsGenerated} words`)
-      }
-      
-      // Extract complete sentences from buffer
-      // Using non-global regex + loop to avoid lastIndex mutation issues
-      let match
-      while ((match = sentenceEndPattern.exec(pendingText))) {
-        // Include the punctuation mark in the sentence
-        const sentence = pendingText.slice(0, match.index + 1)
-        pendingText = pendingText.slice(match.index + 1)
-        
-        // Stream sentence immediately
-        fullContent += sentence
-        onStreamEvent?.({ type: 'sentence', data: { text: sentence }})
-      }
-      
-      // Buffer overflow protection: force flush at paragraph or space boundary
-      if (pendingText.length > MAX_BUFFER_SIZE) {
-        // Try to find a good break point
-        let flushPoint = pendingText.lastIndexOf('\n\n', MAX_BUFFER_SIZE)
-        if (flushPoint === -1) flushPoint = pendingText.lastIndexOf('\n', MAX_BUFFER_SIZE)
-        if (flushPoint === -1) flushPoint = pendingText.lastIndexOf(' ', MAX_BUFFER_SIZE)
-        if (flushPoint === -1) flushPoint = MAX_BUFFER_SIZE
-        
-        const toFlush = pendingText.slice(0, flushPoint)
-        pendingText = pendingText.slice(flushPoint)
-        
-        fullContent += toFlush
-        onStreamEvent?.({ type: 'sentence', data: { text: toFlush }})
-      }
-    }
+  // Convert to citation records for return value (for quality scoring + pipeline)
+  for (const entry of object.citations || []) {
+    if (!entry.paperId) continue
+    collectedCitations.push({
+      paperId: entry.paperId,
+      chunkId: entry.chunkId ?? null,
+      quote: entry.quote ?? null,
+      citationText: `[@${entry.paperId}]`
+    })
   }
 
-  // Flush any remaining text
-  if (pendingText) {
-    fullContent += pendingText
-    onStreamEvent?.({ type: 'sentence', data: { text: pendingText }})
-  }
-
-  try {
-    const usage = await result.usage
-    tokensUsed = usage?.totalTokens || 0
-  } catch (err) {
-    // Token usage retrieval is non-critical, log and continue
-    console.warn('Failed to retrieve token usage:', err instanceof Error ? err.message : String(err))
+  // Emit a single "sentence" event for compatibility with existing streaming hooks.
+  // (True streaming would require streamObject + incremental parsing.)
+  if (fullContent) {
+    onStreamEvent?.({ type: 'sentence', data: { text: fullContent }})
   }
   
   progress('generation', 50, 'Content generated successfully', {
     word_count: fullContent.split(' ').length,
-    token_count: tokensUsed
+    citations: collectedCitations.length
   })
-
-  // Extract citations from CITATIONS block (numbered format: [1], [2] with block at end)
-  const { parseNumberedCitationsBlock } = await import('@/lib/citations/post-processor')
-  const citationsFromBlock = parseNumberedCitationsBlock(fullContent)
-  console.log(`📊 Citations found in CITATIONS block: ${citationsFromBlock.size}`)
-  
-  // Convert to citation records for return value
-  for (const [, entry] of citationsFromBlock) {
-    collectedCitations.push({
-      paperId: entry.paperId,
-      citationText: `[@${entry.paperId}]`
-    })
-  }
   
   // Clean any artifacts that shouldn't be in output (but keep [CITE:] markers for pipeline)
   fullContent = cleanNonCitationArtifacts(fullContent)
@@ -229,7 +167,7 @@ export async function generateWithUnifiedTemplate(
   // We no longer enforce minimum citation counts - semantic guidance handles this
   const qualityScore = calculateBasicQualityScore({
     content: fullContent,
-    citations: collectedCitations,
+    citations: collectedCitations.map(c => ({ paperId: c.paperId, citationText: c.citationText })),
     targetWords: options.targetWords || 300,
     minCitationsExpected: Math.max(collectedCitations.length, 1)  // Self-calibrating
   })
