@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -13,11 +14,13 @@ import {
   Crown, 
   ExternalLink, 
   Loader2,
-  CheckCircle 
+  CheckCircle,
+  PartyPopper
 } from 'lucide-react'
 import { useSubscription, getCheckoutUrl, getPortalUrl } from '@/lib/hooks/use-subscription'
 import { TIER_CONFIG } from '@/types/subscription'
 import type { SubscriptionTier } from '@/types/subscription'
+import { toast } from 'sonner'
 
 interface BillingSectionProps {
   user: {
@@ -29,6 +32,27 @@ interface BillingSectionProps {
 export function BillingSection({ user }: BillingSectionProps) {
   const { subscription, isLoading, refresh } = useSubscription()
   const [redirectingTier, setRedirectingTier] = useState<'starter' | 'pro' | 'manage' | null>(null)
+  const searchParams = useSearchParams()
+  
+  // Show success toast after checkout
+  useEffect(() => {
+    const checkoutSuccess = searchParams.get('checkout')
+    if (checkoutSuccess === 'success') {
+      // Refresh subscription data
+      refresh()
+      // Show success toast
+      toast.success('Welcome to your new plan!', {
+        description: 'Your subscription has been activated.',
+        icon: <PartyPopper className="h-4 w-4" />,
+      })
+      // Clean up URL
+      const url = new URL(window.location.href)
+      url.searchParams.delete('checkout')
+      url.searchParams.delete('checkoutId')
+      url.searchParams.delete('customer_session_token')
+      window.history.replaceState({}, '', url.toString())
+    }
+  }, [searchParams, refresh])
   
   const handleUpgrade = (tier: 'starter' | 'pro') => {
     setRedirectingTier(tier)

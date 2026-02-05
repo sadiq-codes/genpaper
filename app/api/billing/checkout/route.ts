@@ -17,6 +17,6 @@ const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
 export const GET = Checkout({
   accessToken: process.env.POLAR_ACCESS_TOKEN!,
-  successUrl: `${appUrl}/dashboard?checkout=success`,
+  successUrl: `${appUrl}/settings#billing?checkout=success`,
   server: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox',
 })
