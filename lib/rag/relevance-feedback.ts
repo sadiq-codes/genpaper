@@ -101,9 +101,7 @@ export async function logChunkCitations(entries: CitationLogEntry[]): Promise<vo
 /**
  * Extract cited chunk IDs from generated content.
  * 
- * Supports multiple citation formats:
- * 1. New format: <!-- CITATIONS [1] paper_id: xxx | quote: "..." -->
- * 2. Legacy format: [CITE: paper_id]
+ * Extracts paper IDs from storage format: [@paperId#instanceId] or [@paperId]
  */
 export function extractCitedChunksFromContent(
   content: string,
@@ -111,24 +109,9 @@ export function extractCitedChunksFromContent(
 ): string[] {
   const citedPaperIds = new Set<string>()
   
-  // 1. New format: Extract from <!-- CITATIONS ... --> blocks
-  // Matches: [1] paper_id: abc-123 | quote: "..."
-  const citationBlockPattern = /<!--\s*CITATIONS?\s*([\s\S]*?)-->/gi
-  const citationBlocks = content.matchAll(citationBlockPattern)
-  
-  for (const blockMatch of citationBlocks) {
-    const blockContent = blockMatch[1]
-    // Match individual citation entries: [N] paper_id: xxx
-    const entryPattern = /\[\d+\]\s*paper_id:\s*([a-f0-9-]+)/gi
-    const entries = blockContent.matchAll(entryPattern)
-    for (const entry of entries) {
-      citedPaperIds.add(entry[1].trim())
-    }
-  }
-  
-  // 2. Legacy format: [CITE: paper_id]
-  const legacyMatches = content.matchAll(/\[CITE:\s*([a-f0-9-]+)\]/gi)
-  for (const match of legacyMatches) {
+  // Storage format: [@paperId#instanceId] or [@paperId]
+  const storageMatches = content.matchAll(/\[@([a-f0-9-]+)(?:#[a-f0-9-]+)?\]/gi)
+  for (const match of storageMatches) {
     citedPaperIds.add(match[1].trim())
   }
   
@@ -193,30 +176,58 @@ export async function refreshCitationStats(): Promise<void> {
 }
 
 /**
+ * Structured citation from generation (used for logging)
+ */
+interface StructuredCitationForLogging {
+  paperId: string
+  index?: number
+  quote?: string
+}
+
+/**
  * Higher-level function to log citations after section generation.
  * Call this after each section is generated with its content and context.
+ * 
+ * @param structuredCitations - If provided, uses these directly instead of parsing content
  */
 export async function logSectionCitations(
   projectId: string,
   sectionType: string,
   generatedContent: string,
   contextChunks: Array<{ id?: string; paper_id: string; content: string }>,
-  queryContext?: string
+  queryContext?: string,
+  structuredCitations?: StructuredCitationForLogging[]
 ): Promise<void> {
-  // Find which chunks were actually cited
-  const citedChunkIds = extractCitedChunksFromContent(generatedContent, contextChunks)
+  // Get cited paper IDs - prefer structured citations if provided
+  let citedPaperIds: Set<string>
   
-  if (citedChunkIds.length === 0) {
+  if (structuredCitations && structuredCitations.length > 0) {
+    // Use structured citations directly (more reliable)
+    citedPaperIds = new Set(structuredCitations.map(c => c.paperId))
+  } else {
+    // Fallback: parse from content (for stored content with [@...] markers)
+    const citedChunkIds = extractCitedChunksFromContent(generatedContent, contextChunks)
+    if (citedChunkIds.length === 0) {
+      return
+    }
+    // Get paper IDs from chunks
+    citedPaperIds = new Set(
+      citedChunkIds
+        .map(id => contextChunks.find(c => c.id === id)?.paper_id)
+        .filter((id): id is string => !!id)
+    )
+  }
+  
+  if (citedPaperIds.size === 0) {
     return
   }
   
-  // Build log entries
+  // Find chunks from cited papers
   const entries: CitationLogEntry[] = []
-  for (const chunkId of citedChunkIds) {
-    const chunk = contextChunks.find(c => c.id === chunkId)
-    if (chunk) {
+  for (const chunk of contextChunks) {
+    if (chunk.id && citedPaperIds.has(chunk.paper_id)) {
       entries.push({
-        chunkId,
+        chunkId: chunk.id,
         paperId: chunk.paper_id,
         projectId,
         sectionType,
@@ -225,5 +236,7 @@ export async function logSectionCitations(
     }
   }
   
-  await logChunkCitations(entries)
+  if (entries.length > 0) {
+    await logChunkCitations(entries)
+  }
 }

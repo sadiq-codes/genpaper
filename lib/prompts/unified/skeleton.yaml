@@ -37,7 +37,8 @@ system: |-
   CITATION REQUIREMENTS
   ═══════════════════════════════════════════════════════════════════════════════
   
-  FORMAT: Use [1], [2], [3] markers. End with <!-- CITATIONS --> block.
+  FORMAT: Use numbered [1], [2], [3] markers in your prose. 
+  The structured output will capture paperId and quote for each citation.
   
   DENSITY TARGETS:
   - Literature-focused sections: 3-5 citations per paragraph
@@ -47,18 +48,21 @@ system: |-
   MUST CITE: Statistics, findings, theories, methods, definitions, claims about research.
   NO CITATION: Your own synthesis, transitions, universally accepted facts.
   
-  CITATION FORMAT:
-  <!-- CITATIONS
-  [1] paper_id: abc-123 | quote: "Exact sentence from source"
-  [2] paper_id: def-456 | quote: "Exact sentence from source"
-  -->
+  CITATION MAPPING (in structured output):
+  For each citation marker [N] in your prose, provide an entry in the citations array:
+  - index: The number N from the marker
+  - paperId: The exact paper_id from the evidence snippet (copy it exactly)
+  - quote: The EXACT sentence from the source that supports the claim
+  
+  One entry per occurrence - if you cite [1] twice, include two entries with index: 1.
   
   ANTI-PATTERNS:
   ❌ Same citation consecutively: "X [1]. Y [1]. Z [1]." → Combine: "X, Y, and Z [1]."
   ❌ Uncited claims: "Studies show..." without [N]
-  ❌ Invented paper_ids not in evidence
+  ❌ Invented paperIds not in evidence
+  ❌ Missing quote in citation entry
   
-  ⚠️ INTEGRITY: Only cite paper_ids from evidence snippets.
+  ⚠️ INTEGRITY: Only cite paperIds from evidence snippets.
   If evidence is insufficient, write "Evidence on this aspect is limited" - never fabricate.
   
   ═══════════════════════════════════════════════════════════════════════════════
@@ -315,7 +319,7 @@ user: |-
   {{/currentText}}
   
   ### Evidence Context
-  Each snippet tagged with [CONTEXT FROM: paper_id]. Use paper_id in CITATIONS block.
+  Each snippet tagged with [CONTEXT FROM: paper_id]. Copy the paper_id exactly as paperId in citations.
   
   Evidence strength guide:
   - `full_text`: Strong - quote and make confident claims
@@ -330,9 +334,11 @@ user: |-
   
   ## OUTPUT REQUIREMENTS
   
-  1. **Start:** ## {{sectionPath}}
-  2. **Content:** Synthesized prose with [1] [2] [3] citations
-  3. **End:** <!-- CITATIONS --> block mapping numbers to paper_ids
+  1. **contentMarkdown:** Start with ## {{sectionPath}}, then synthesized prose with [1] [2] [3] markers
+  2. **citations:** Array with one entry per citation occurrence:
+     - index: The [N] marker number
+     - paperId: Copy exact paper_id from evidence snippet
+     - quote: Exact supporting sentence from source
   
   **FINAL CHECKLIST:**
   □ Every paragraph has 2-3+ citations from evidence
@@ -340,6 +346,7 @@ user: |-
   □ Pre-analyzed statistics used EXACTLY as provided
   □ No fabricated citations or paper_ids
   □ Different from "Already Covered" content
+  □ Each [N] marker has a corresponding entry in citations array with quote
   {{#hasOriginalResearch}}
   □ YOUR findings presented without citations (your data)
   {{/hasOriginalResearch}}

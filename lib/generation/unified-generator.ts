@@ -40,9 +40,22 @@ export interface UnifiedGenerationConfig {
   onStreamEvent?: (event: StreamEvent) => void
 }
 
+/**
+ * Citation entry from structured output
+ * index: The [N] marker number in the prose
+ * paperId: The paper being cited
+ * quote: The exact supporting sentence from the source
+ */
+export interface StructuredCitation {
+  index: number
+  paperId: string
+  quote: string
+}
+
 export interface UnifiedGenerationResult {
   content: string
-  citations: Array<{ paperId: string; chunkId?: string | null; quote?: string | null; citationText: string }>
+  /** Raw citations from structured output - one entry per citation occurrence, in order */
+  citations: StructuredCitation[]
   tokensUsed: number
   generationTime: number
   qualityScore: number
@@ -53,7 +66,7 @@ export interface UnifiedGenerationResult {
  */
 function calculateBasicQualityScore(params: {
   content: string
-  citations: Array<{ paperId: string; citationText: string }>
+  citations: StructuredCitation[]
   targetWords: number
   minCitationsExpected?: number
 }): number {
@@ -107,7 +120,7 @@ export async function generateWithUnifiedTemplate(
   }
 
   let fullContent = ''
-  const collectedCitations: Array<{ paperId: string; chunkId?: string | null; quote?: string | null; citationText: string }> = []
+  const collectedCitations: StructuredCitation[] = []
   // Token usage is not currently exposed by generateObject in our usage; keep as best-effort.
   let tokensUsed = 0
 
@@ -119,13 +132,15 @@ export async function generateWithUnifiedTemplate(
   
   const resolvedOptions = resolveGenOptions(options)
 
+  // Schema for structured output with numbered citation markers
+  // LLM outputs [1], [2], [3] in prose, and citations array maps each occurrence
   const SectionOutputSchema = z.object({
-    contentMarkdown: z.string(),
+    contentMarkdown: z.string().describe('The section content with [1], [2], [3] citation markers'),
     citations: z.array(z.object({
-      paperId: z.string(),
-      chunkId: z.string().nullable().optional(),
-      quote: z.string().nullable().optional(),
-    })).default([]),
+      index: z.number().describe('The citation marker number [N] this entry corresponds to'),
+      paperId: z.string().describe('The exact paper_id from the evidence snippet'),
+      quote: z.string().describe('The exact sentence from the source that supports the claim'),
+    })).default([]).describe('One entry per citation occurrence in order of appearance'),
   })
 
   const { object } = await generateObject({
@@ -139,18 +154,17 @@ export async function generateWithUnifiedTemplate(
 
   fullContent = object.contentMarkdown
 
-  // Convert to citation records for return value (for quality scoring + pipeline)
+  // Collect citations from structured output
   for (const entry of object.citations || []) {
-    if (!entry.paperId) continue
+    if (!entry.paperId || entry.index === undefined) continue
     collectedCitations.push({
+      index: entry.index,
       paperId: entry.paperId,
-      chunkId: entry.chunkId ?? null,
-      quote: entry.quote ?? null,
-      citationText: `[CITE: ${entry.paperId}]`
+      quote: entry.quote || '',
     })
   }
 
-  // Clean any artifacts that shouldn't be in output (but keep [CITE:] markers for pipeline)
+  // Clean any artifacts that shouldn't be in output (keep numbered [N] markers for pipeline)
   // Do this BEFORE emitting stream output so the UI preview stays clean.
   fullContent = cleanNonCitationArtifacts(fullContent)
 
@@ -169,7 +183,7 @@ export async function generateWithUnifiedTemplate(
   // We no longer enforce minimum citation counts - semantic guidance handles this
   const qualityScore = calculateBasicQualityScore({
     content: fullContent,
-    citations: collectedCitations.map(c => ({ paperId: c.paperId, citationText: c.citationText })),
+    citations: collectedCitations,
     targetWords: options.targetWords || 300,
     minCitationsExpected: Math.max(collectedCitations.length, 1)  // Self-calibrating
   })

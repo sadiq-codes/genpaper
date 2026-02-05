@@ -235,7 +235,7 @@ export const DEFAULT_CHAT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'replaceBlock',
-    description: 'Replace a block\'s content entirely (use blockId). Preserve existing [CITE: ...] citation markers.',
+    description: 'Replace a block\'s content entirely (use blockId). Preserve existing [@...] citation markers.',
     preferredFor: 'Rewriting paragraphs with citations, editing content',
   },
   {

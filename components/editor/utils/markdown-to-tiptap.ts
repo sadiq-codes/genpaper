@@ -14,13 +14,9 @@ import type { Root, Content, PhrasingContent, Text, Emphasis, Strong, InlineCode
 import type { CitationAttributes } from '../extensions/Citation'
 import type { ProjectPaper } from '../types'
 
-// Citation marker patterns:
-// - [CITE: uuid] - Citation marker format
-// - [CONTEXT FROM: uuid] - Legacy context/evidence marker format
-const LEGACY_CITATION_PATTERN = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
-
-// Combined pattern for detection (non-capturing for test only)
-const ANY_CITATION_PATTERN = /\[(?:CITE|CONTEXT FROM):\s*[a-f0-9-]+\]/gi
+// Citation marker pattern: [@paperId#instanceId] or [@paperId]
+// Group 1 = paperId, Group 2 = instanceId (optional)
+const CITATION_PATTERN = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
 
 interface PaperLookup {
   [paperId: string]: ProjectPaper
@@ -92,9 +88,16 @@ function paperToCitationAttrs(paper: ProjectPaper): CitationAttributes {
 
 /**
  * Extract paper ID from a citation match
- * Handles [CITE: uuid] and [CONTEXT FROM: uuid] formats
+ * Handles both Pandoc [@uuid] and legacy [CITE: uuid] formats
  */
 function extractPaperIdFromMatch(match: RegExpMatchArray): string | null {
+  const fullMatch = match[0]
+  
+  // Pandoc format: [@uuid] - capture group 1
+  if (fullMatch.startsWith('[@')) {
+    return match[1] || null
+  }
+  
   // Legacy format: [CITE: uuid] or [CONTEXT FROM: uuid] - capture group 2
   return match[2] || null
 }
@@ -102,27 +105,26 @@ function extractPaperIdFromMatch(match: RegExpMatchArray): string | null {
 /**
  * Split text containing citation markers into text nodes and citation nodes
  * Citation nodes store paper ID, instanceId, and citedContent
- * Supports [CITE: uuid] and [CONTEXT FROM: uuid] formats
+ * Supports [@paperId#instanceId] and [@paperId] formats
  */
 function splitTextWithCitations(
   text: string,
   marks: Mark[],
   ctx: ConversionContext
 ): TipTapNode[] {
-  // Group 1 = type (CITE or CONTEXT FROM)
-  // Group 2 = paperId
-  const combinedPattern = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  // Pattern: [@paperId#instanceId] or [@paperId]
+  // Group 1 = paperId, Group 2 = instanceId (optional)
+  const citationPattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
   
   const parts: TipTapNode[] = []
   let lastIndex = 0
 
-  for (const match of text.matchAll(combinedPattern)) {
+  for (const match of text.matchAll(citationPattern)) {
     const start = match.index!
     const end = start + match[0].length
     
-    // Extract paper ID
-    const paperId = match[2]
-    const instanceId = undefined
+    const paperId = match[1]
+    const instanceId = match[2] || undefined
 
     if (!paperId) {
       continue // Skip if no paper ID found
@@ -209,8 +211,8 @@ function phrasingToTipTap(
     case 'text': {
       const textNode = node as Text
       // Check for citation markers in text
-      ANY_CITATION_PATTERN.lastIndex = 0
-      if (ANY_CITATION_PATTERN.test(textNode.value)) {
+      CITATION_PATTERN.lastIndex = 0
+      if (CITATION_PATTERN.test(textNode.value)) {
         return splitTextWithCitations(textNode.value, marks, ctx)
       }
       return [{
@@ -516,7 +518,7 @@ function rootToTipTap(root: Root, ctx: ConversionContext): TipTapNode {
  * Instead of the lossy:
  *   markdown → HTML → TipTap JSON → post-process citations
  * 
- * @param markdown - Raw markdown text (may contain [CITE: paperId] markers)
+ * @param markdown - Raw markdown text (may contain [@paperId#instanceId] markers)
  * @param papers - Array of papers for citation metadata
  * @param instanceQuotes - Optional map of instanceId → quote text for populating citedContent
  * @returns TipTap JSON document
@@ -574,26 +576,19 @@ export function markdownToTipTap(
  * Check if text contains citation markers
  */
 export function hasCitationMarkers(text: string): boolean {
-  ANY_CITATION_PATTERN.lastIndex = 0
-  return ANY_CITATION_PATTERN.test(text)
+  CITATION_PATTERN.lastIndex = 0
+  return CITATION_PATTERN.test(text)
 }
 
 /**
  * Extract citation paper IDs from text
- * Supports all formats:
- * - [CITE: paperId] - Citation marker
- * - [CONTEXT FROM: paperId] - Legacy context marker
+ * Supports [@paperId#instanceId] and [@paperId] formats
  */
 export function extractCitationIds(text: string): string[] {
-  // Group 1: legacy type (CITE or CONTEXT FROM)
-  // Group 2: paperId
-  const combinedPattern = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  const pattern = /\[@([a-f0-9-]+)(?:#[a-f0-9-]+)?\]/gi
   const ids: string[] = []
-  for (const match of text.matchAll(combinedPattern)) {
-    const paperId = match[2]
-    if (paperId) {
-      ids.push(paperId)
-    }
+  for (const match of text.matchAll(pattern)) {
+    ids.push(match[1])
   }
   return ids
 }

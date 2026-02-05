@@ -14,6 +14,22 @@ import { z } from 'zod'
 import { tool } from 'ai'
 
 // =============================================================================
+// CITATION SCHEMA
+// =============================================================================
+
+/**
+ * Schema for structured citations in tool calls.
+ * Each entry maps a [N] marker in content to a paper and quote.
+ */
+const citationEntrySchema = z.object({
+  index: z.number().describe('The citation marker number [N] this entry corresponds to'),
+  paperId: z.string().describe('The paper_id from INTERNAL REFERENCE section'),
+  quote: z.string().describe('The exact supporting sentence from the source'),
+})
+
+export type CitationEntry = z.infer<typeof citationEntrySchema>
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -41,12 +57,21 @@ Targeting (in order of preference):
 2. afterPhrase - Insert after specific text
 3. location - General positioning: "cursor", "end", "after:SectionName", "start:SectionName"
 
+CITATIONS: If content has [1], [2], [3] markers, include citations array.
+Each marker MUST have a corresponding entry with index, paperId, and quote.
+
 Examples:
-- Insert after block: { afterBlockId: "par_abc123", content: "New text" }
-- Insert after phrase: { afterPhrase: "existing sentence.", content: "New text" }
-- Insert at section end: { location: "after:Introduction", content: "New paragraph" }`,
+- Simple insert: { content: "New text without citations" }
+- With citations: { 
+    content: "Research shows X [1] and Y [2].", 
+    citations: [
+      { index: 1, paperId: "uuid-here", quote: "exact quote" },
+      { index: 2, paperId: "uuid-here", quote: "exact quote" }
+    ]
+  }`,
   inputSchema: z.object({
-    content: z.string().describe('The content to insert'),
+    content: z.string().describe('The content to insert (use [1], [2], [3] for citations)'),
+    citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker'),
     afterBlockId: z.string().optional().describe('Insert after this block ID'),
     afterPhrase: z.string().optional().describe('Insert after this specific text'),
     location: z.string().optional().describe('General location: "cursor", "end", "after:SectionName", "start:SectionName"'),
@@ -62,15 +87,23 @@ export const replaceBlock = tool({
 For ENTIRE BLOCK replacement: Use blockId alone
 For PARTIAL replacement (specific text): Use searchPhrase (with optional blockId to scope)
 
+CITATIONS: If newContent has [1], [2], [3] markers, include citations array.
+PRESERVE existing [@...] markers when editing - they are existing citations.
+
 Examples:
 - Replace whole paragraph: { blockId: "par_abc123", newContent: "New paragraph text" }
-- Replace specific sentence: { searchPhrase: "old sentence text", newContent: "new sentence text" }
-- Replace text in specific block: { blockId: "par_abc123", searchPhrase: "old text", newContent: "new text" }`,
+- With citations: { 
+    blockId: "par_abc123", 
+    newContent: "Updated claim [1].", 
+    citations: [{ index: 1, paperId: "uuid", quote: "quote" }]
+  }
+- Preserve existing: { blockId: "par_abc123", newContent: "Edited text [@existing-id#inst-id] with new [1].", citations: [...] }`,
   inputSchema: z.object({
     blockId: z.string().optional().describe('Block ID - alone replaces entire block, with searchPhrase scopes the search'),
     section: z.string().optional().describe('Section name to scope the search'),
     searchPhrase: z.string().optional().describe('Specific text to find and replace'),
-    newContent: z.string().describe('The replacement content'),
+    newContent: z.string().describe('The replacement content (use [1], [2], [3] for new citations)'),
+    citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker'),
   }),
 })
 
@@ -80,11 +113,13 @@ Examples:
 export const replaceInSection = tool({
   description: `Replace specific text within a section. Use searchPhrase to find and replace.
 
-This always does TEXT-LEVEL replacement (not block-level).`,
+This always does TEXT-LEVEL replacement (not block-level).
+If newContent has [1], [2], [3] markers, include citations array.`,
   inputSchema: z.object({
     section: z.string().describe('Section name (e.g., "Introduction", "Methods")'),
     searchPhrase: z.string().describe('The specific text to find and replace'),
-    newContent: z.string().describe('The replacement text'),
+    newContent: z.string().describe('The replacement text (use [1], [2], [3] for citations)'),
+    citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker'),
   }),
 })
 
@@ -94,10 +129,12 @@ This always does TEXT-LEVEL replacement (not block-level).`,
 export const rewriteSection = tool({
   description: `Completely rewrite a section. Use for major restructuring.
   
-WARNING: Replaces ALL content in the section. User will confirm.`,
+WARNING: Replaces ALL content in the section. User will confirm.
+If newContent has [1], [2], [3] markers, include citations array.`,
   inputSchema: z.object({
     section: z.string().describe('Section name to rewrite'),
-    newContent: z.string().describe('Complete new section content (excluding heading)'),
+    newContent: z.string().describe('Complete new section content (use [1], [2], [3] for citations)'),
+    citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker'),
     reason: z.string().describe('Why rewriting is needed'),
   }),
 })
@@ -135,12 +172,12 @@ User will confirm deletions.`,
  * Do NOT use this tool when:
  * - You need to rewrite/edit the text (use replaceBlock with markers instead)
  * - You're writing new content (use insertContent with markers instead)
- * - The claim already has a citation (check for [CITE: ...] markers in the document)
+ * - The claim already has a citation (check for [@...] markers in the document)
  */
 export const addCitationTool = tool({
   description: `Add a citation to existing text WITHOUT changing the text itself.
 
-⚠️ IMPORTANT: Check the document first - if the text already has a citation marker ([CITE: ...]), do NOT add another one.
+⚠️ IMPORTANT: Check the document first - if the text already has a citation marker ([@...]), do NOT add another one.
 
 When to use addCitation:
 - Single citation to existing claim that has NO citation
@@ -261,22 +298,30 @@ export function getConfirmationLevel(toolName: string): ToolConfirmationLevel {
 // =============================================================================
 
 /**
- * Check if content has numbered citation markers but no CITATIONS block.
+ * Check if content has numbered citation markers but no citations array.
  * Returns a warning message if format is invalid, null otherwise.
  */
-function checkCitationFormat(content: string): string | null {
-  // Check if content has numbered markers [1], [2], etc.
+function checkCitationFormat(content: string, citations?: CitationEntry[]): string | null {
+  // Check if content has numbered markers [1], [2], etc. (but not things like [E1], [M1])
   const numberedMarkerPattern = /\[(\d+)\]/g
-  const numberedMarkers = content.match(numberedMarkerPattern)
-  const hasNumberedMarkers = numberedMarkers && numberedMarkers.length > 0
+  const matches = content.match(numberedMarkerPattern)
+  const hasNumberedMarkers = matches && matches.length > 0
   
-  // Check for CITATIONS block
-  const hasCitationsBlock = /<!--\s*CITATIONS/i.test(content)
+  if (hasNumberedMarkers && (!citations || citations.length === 0)) {
+    const uniqueMarkers = [...new Set(matches)]
+    return `Content has citation markers (${uniqueMarkers.join(', ')}) but NO citations array. ` +
+           `These will be STRIPPED. Include citations parameter with index, paperId, and quote for each marker.`
+  }
   
-  if (hasNumberedMarkers && !hasCitationsBlock) {
-    const uniqueMarkers = [...new Set(numberedMarkers)]
-    return `Content has citation markers (${uniqueMarkers.join(', ')}) but NO CITATIONS block. ` +
-           `These will be STRIPPED. Include <!-- CITATIONS [1] paper_id: ... --> block.`
+  // Check that all markers have corresponding citations
+  if (hasNumberedMarkers && citations && citations.length > 0) {
+    const markerIndices = new Set(matches!.map(m => parseInt(m.slice(1, -1), 10)))
+    const citationIndices = new Set(citations.map(c => c.index))
+    
+    const missingCitations = [...markerIndices].filter(i => !citationIndices.has(i))
+    if (missingCitations.length > 0) {
+      return `Content has markers ${missingCitations.map(i => `[${i}]`).join(', ')} without corresponding citation entries.`
+    }
   }
   
   return null
@@ -297,13 +342,15 @@ export function validateToolCall(
   }
 
   // Validate required args based on tool type
+  const citations = args.citations as CitationEntry[] | undefined
+  
   switch (toolName) {
     case 'insertContent':
       if (!args.content || typeof args.content !== 'string' || args.content.trim() === '') {
         return { valid: false, error: 'insertContent requires non-empty content' }
       }
       // Check citation format
-      const insertCitationWarning = checkCitationFormat(args.content)
+      const insertCitationWarning = checkCitationFormat(args.content, citations)
       if (insertCitationWarning) {
         console.warn(`[validateToolCall] ⚠️ insertContent: ${insertCitationWarning}`)
       }
@@ -318,7 +365,7 @@ export function validateToolCall(
         return { valid: false, error: 'replaceBlock requires blockId, searchPhrase, or section' }
       }
       // Check citation format
-      const replaceCitationWarning = checkCitationFormat(args.newContent)
+      const replaceCitationWarning = checkCitationFormat(args.newContent as string, citations)
       if (replaceCitationWarning) {
         console.warn(`[validateToolCall] ⚠️ replaceBlock: ${replaceCitationWarning}`)
       }
@@ -335,7 +382,7 @@ export function validateToolCall(
         return { valid: false, error: 'replaceInSection requires newContent' }
       }
       // Check citation format
-      const replaceInSectionWarning = checkCitationFormat(args.newContent)
+      const replaceInSectionWarning = checkCitationFormat(args.newContent, citations)
       if (replaceInSectionWarning) {
         console.warn(`[validateToolCall] ⚠️ replaceInSection: ${replaceInSectionWarning}`)
       }
@@ -349,7 +396,7 @@ export function validateToolCall(
         return { valid: false, error: 'rewriteSection requires newContent' }
       }
       // Check citation format
-      const rewriteWarning = checkCitationFormat(args.newContent)
+      const rewriteWarning = checkCitationFormat(args.newContent, citations)
       if (rewriteWarning) {
         console.warn(`[validateToolCall] ⚠️ rewriteSection: ${rewriteWarning}`)
       }

@@ -52,10 +52,7 @@ function formatChatCitation(paper: ProjectPaper): string {
 
 /**
  * Process content to replace citation markers with formatted citations.
- * Handles multiple formats:
- * - [@paperId#instanceId] - new format with instance tracking
- * - [@paperId] - pandoc style
- * - [CITE: paperId] - legacy format
+ * Supports [@paperId#instanceId] and [@paperId] formats
  */
 function processChatCitations(content: string, papers: ProjectPaper[]): string {
   if (!content || papers.length === 0) return content
@@ -63,27 +60,11 @@ function processChatCitations(content: string, papers: ProjectPaper[]): string {
   // Create a lookup map for quick paper access
   const paperMap = new Map(papers.map(p => [p.id, p]))
   
-  let result = content
-  
-  // Pattern 1: [@paperId#instanceId] - new format
-  result = result.replace(/\[@([a-f0-9-]+)#[a-f0-9-]+\]/gi, (match, paperId) => {
+  // Pattern: [@paperId#instanceId] or [@paperId]
+  return content.replace(/\[@([a-f0-9-]+)(?:#[a-f0-9-]+)?\]/gi, (match, paperId) => {
     const paper = paperMap.get(paperId)
     return paper ? formatChatCitation(paper) : match
   })
-  
-  // Pattern 2: [@paperId] - pandoc style (without instance)
-  result = result.replace(/\[@([a-f0-9-]+)\](?!#)/gi, (match, paperId) => {
-    const paper = paperMap.get(paperId)
-    return paper ? formatChatCitation(paper) : match
-  })
-  
-  // Pattern 3: [CITE: paperId] - legacy format
-  result = result.replace(/\[CITE:\s*([a-f0-9-]+)\]/gi, (match, paperId) => {
-    const paper = paperMap.get(paperId)
-    return paper ? formatChatCitation(paper) : match
-  })
-  
-  return result
 }
 
 // =============================================================================

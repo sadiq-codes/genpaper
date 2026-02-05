@@ -84,15 +84,14 @@ export async function createResearchProject(
 
 /**
  * Extract citation paper IDs from content
- * Supports:
- * - [CITE: uuid] (legacy)
+ * Supports storage format: [@paperId#instanceId] or [@paperId]
  */
 function extractCitationPaperIds(content: string): string[] {
   const paperIds = new Set<string>()
   
-  // Legacy format: [CITE: uuid]
-  const legacyPattern = /\[CITE:\s*([a-f0-9-]{36})\]/gi
-  for (const match of content.matchAll(legacyPattern)) {
+  // Storage format: [@paperId#instanceId] or [@paperId]
+  const pattern = /\[@([a-f0-9-]{36})(?:#[a-f0-9-]{36})?\]/gi
+  for (const match of content.matchAll(pattern)) {
     paperIds.add(match[1])
   }
   

@@ -81,7 +81,7 @@ export function hasMarkdownFormatting(text: string): boolean {
  * 
  * This preserves styles and handles citations as first-class nodes.
  * 
- * @param markdown - Raw markdown text with [CITE: uuid] markers
+ * @param markdown - Raw markdown text with [CONTEXT FROM: uuid] markers
  * @param papers - Array of papers for citation metadata lookup
  * @returns TipTap JSON document structure
  */
@@ -125,7 +125,7 @@ export function processAIContent(
 }
 
 /**
- * Map of paperId → citedContent for populating citation nodes
+ * Map of instanceId → citedContent for populating citation nodes
  */
 export type CitationQuotesMap = Map<string, string>
 
@@ -133,13 +133,11 @@ export type CitationQuotesMap = Map<string, string>
  * Process plain text (not markdown) with citation markers
  * Used for simpler cases like ghost text suggestions
  * 
- * Supports:
- * - [CITE: paperId] - Citation marker
- * - [CONTEXT FROM: paperId] - Legacy context marker
+ * Supports [@paperId#instanceId] and [@paperId] formats
  * 
  * @param text - Plain text with citation markers
  * @param papers - Array of papers for citation metadata lookup
- * @param citationQuotes - Optional map of paperId → quote text
+ * @param citationQuotes - Optional map of instanceId → quote text
  * @returns TipTap JSON fragment (content array, not full doc)
  */
 export function processPlainTextWithCitations(
@@ -152,9 +150,9 @@ export function processPlainTextWithCitations(
   }
 
   const paperLookup = createPaperLookup(papers)
-  // Group 1: legacy type (CITE or CONTEXT FROM)
-  // Group 2: paperId
-  const pattern = /\[(CITE|CONTEXT FROM):\s*([a-f0-9-]+)\]/gi
+  // Pattern: [@paperId#instanceId] or [@paperId]
+  // Group 1 = paperId, Group 2 = instanceId (optional)
+  const pattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
   const matches = [...text.matchAll(pattern)]
 
   if (matches.length === 0) {
@@ -166,8 +164,8 @@ export function processPlainTextWithCitations(
   let lastIndex = 0
 
   for (const match of matches) {
-    // Extract paper ID
-    const paperId = match[2]
+    const paperId = match[1]
+    const instanceId = match[2] || undefined
     const matchStart = match.index!
     const matchEnd = matchStart + match[0].length
 
@@ -188,6 +186,7 @@ export function processPlainTextWithCitations(
     if (!paper && process.env.NODE_ENV === 'development') {
       console.warn('[Citation] Paper not found in lookup (plain text):', {
         paperId,
+        instanceId,
         availableIds: Object.keys(paperLookup).slice(0, 10),
         lookupSize: Object.keys(paperLookup).length,
       })
@@ -198,10 +197,13 @@ export function processPlainTextWithCitations(
       ? paperToCitationAttrs(paper) 
       : { id: paperId }
     
-    // Add citedContent if available
-    const quote = citationQuotes?.get(paperId)
-    if (quote) {
-      attrs.citedContent = quote
+    // Add instanceId and citedContent if available
+    if (instanceId) {
+      attrs.instanceId = instanceId
+      const quote = citationQuotes?.get(instanceId)
+      if (quote) {
+        attrs.citedContent = quote
+      }
     }
     
     result.push({

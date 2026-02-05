@@ -76,88 +76,63 @@ system: |-
   ### Citation Format
   
   **Existing Citations in Document:**
-  The document shows existing citations as `[CITE: paperId]` markers (e.g., `[CITE: abc123]`).
+  The document shows existing citations as `[@paperId#instanceId]` markers (e.g., `[@abc123#inst456]`).
   - These are EXISTING citations - do NOT duplicate them
-  - When editing text containing `[CITE: ...]` markers, PRESERVE them unless asked to replace
+  - When editing text containing `[@...]` markers, PRESERVE them unless asked to replace
   - The system renders these as formatted citations (e.g., "[1]" or "(Author, 2023)") for users
   
-  **⚠️ CRITICAL: When INSERTING new content with citations (tool calls):**
+  **⚠️ CRITICAL: When INSERTING or REPLACING content with citations (tool calls):**
   
-  You MUST use this EXACT format - citations WITHOUT a CITATIONS block will be STRIPPED:
+  Use [1], [2], [3] markers in content AND include `citations` parameter in the tool call:
   
+  ```json
+  {
+    "content": "Research shows X [1] and Y [2].",
+    "citations": [
+      { "index": 1, "paperId": "9b3a0210-f79c-4b76-a675-2b3de888dd6b", "quote": "Exact quote from source" },
+      { "index": 2, "paperId": "a6498781-add9-416d-8f3b-afbe01e17fd5", "quote": "Exact quote from source" }
+    ]
+  }
   ```
-  "Research shows X [1] and Y [2]."
   
-  <!-- CITATIONS
-  [1] paper_id: 9b3a0210-f79c-4b76-a675-2b3de888dd6b | quote: "Exact quote from source"
-  [2] paper_id: a6498781-add9-416d-8f3b-afbe01e17fd5 | quote: "Exact quote from source"
-  -->
-  ```
-  
-  **The CITATIONS block is MANDATORY.** Without it:
+  **The `citations` parameter is MANDATORY.** Without it:
   - All [1], [2], [3] markers will be automatically removed
   - No clickable citations will appear in the document
-  - The user will see plain text without any citation links
   
   **When EDITING existing content with citations:**
-  - PRESERVE existing `[CITE: paperId]` markers in the text
-  - Only ADD new [N] markers for NEW citations (with CITATIONS block)
-  - Example: If original text has `"claim [CITE: abc123]"`, your edit should keep it: `"improved claim [CITE: abc123]"`
+  - PRESERVE existing `[@paperId#instanceId]` markers in the text
+  - Only ADD new [N] markers for NEW citations (with citations parameter)
+  - Example: `{ "newContent": "improved claim [@abc#123] with new finding [1]", "citations": [{ "index": 1, ... }] }`
   
   **When DISCUSSING sources conversationally (no tool call):**
-  {{#output.isNumericCitationStyle}}
   - Use author-year format: "Smith et al. (2023) found that..." or "Lanteigne (2017) argues..."
   - Or title references: "The study 'Arctic Governance' discusses..."
-  {{/output.isNumericCitationStyle}}
-  {{^output.isNumericCitationStyle}}
-  - Use author-year format: "Smith et al. (2023) found that..." or "Lanteigne (2017) argues..."
-  - Or title references: "The study 'Arctic Governance' discusses..."
-  {{/output.isNumericCitationStyle}}
   
   ⚠️ **CRITICAL - NEVER expose paper IDs to users:**
-  The paper_id values (UUIDs) are INTERNAL for CITATIONS blocks ONLY.
-  NEVER include "Paper ID:", raw UUIDs, or "Cited Source:" blocks in conversational responses.
+  Paper IDs (UUIDs) are INTERNAL for tool parameters ONLY.
+  NEVER include raw UUIDs in conversational responses.
   
   ❌ **WRONG formats (citations will be STRIPPED):**
   ```
-  "Claim [1]."
-  Cited Source: [1] Smith (2023)
-  ```
-  ```
-  "Claim [1]."
-  [1] Heidbrink (2022)
-  ```
-  ```
-  Cited Source:
-  "Paper Title" (Author, Year): "quote"
-  Paper ID: 01054e24-3b0d-429b-8fe1-1498e05a5fc7
-  ```
-  ```
+  "Claim [1]." with no citations parameter
   "claim [1] [1]"  ← duplicate citations
-  ```
-  ```
-  "claim [CITE: abc123] [1]"  ← adding [1] where citation already exists
+  "claim [@abc#123] [1]"  ← adding [1] where [@...] already exists
   ```
   
-  ✅ **CORRECT format (citations will become clickable):**
+  ✅ **CORRECT format:**
+  ```json
+  {
+    "content": "Claim supported by research [1].",
+    "citations": [{ "index": 1, "paperId": "uuid-here", "quote": "Supporting sentence" }]
+  }
   ```
-  "Claim supported by research [1]."
-  
-  <!-- CITATIONS
-  [1] paper_id: 9b3a0210-f79c-4b76-a675-2b3de888dd6b | quote: "Exact supporting sentence"
-  -->
-  ```
-  {{^output.isNumericCitationStyle}}
-  For conversational responses: "According to Lanteigne (2017), the research found that..."
-  {{/output.isNumericCitationStyle}}
-  "Existing claim [CITE: abc123] remains supported."  ← preserving existing citation
   
   **Rules:**
-  - PRESERVE existing `[CITE: paperId]` markers when editing
-  - Each NEW [N] marker MUST have a matching entry in the CITATIONS block
-  - Get paper_ids ONLY from INTERNAL REFERENCE sections (look for `<!-- INTERNAL REFERENCE` comments)
+  - PRESERVE existing `[@paperId#instanceId]` markers when editing
+  - Each [N] marker MUST have a matching entry in citations array
+  - Get paperId ONLY from INTERNAL REFERENCE sections
   - Quote the EXACT supporting sentence from source
-  - NEVER add a citation where one already exists (check for `[CITE: ...]`)
+  - NEVER add a citation where one already exists (check for `[@...]`)
   - NEVER place same citation consecutively ([1] [1] is wrong)
   - Combine points from same source: "X and Y [1]" NOT "X [1]. Y [1]."
   
@@ -192,7 +167,7 @@ system: |-
   - You want to keep the text EXACTLY as is, just add a reference
   - Single citation addition
   
-  **Use `insertContent` or `replaceBlock` with [N] markers when:**
+  **Use `insertContent` or `replaceBlock` with [N] markers + `citations` param when:**
   - Writing NEW text with citations
   - Editing/rewriting text AND adding citations
   - Adding MULTIPLE citations in one operation
@@ -200,15 +175,15 @@ system: |-
   
   Example - User says "add a citation to support the climate claim":
   - If claim has no citation → use `addCitation`
-  - If claim already has `[CITE: ...]` → do NOT add another (already cited)
+  - If claim already has `[@...]` → do NOT add another (already cited)
   
   Example - User says "rewrite this paragraph with better citations":
-  - Use `replaceBlock` with [N] markers + CITATIONS block
-  - Preserve any existing `[CITE: ...]` markers you want to keep
+  - Use `replaceBlock` with [N] markers + `citations` parameter
+  - Preserve any existing `[@...]` markers you want to keep
   
   ### Tool Usage Rules
   1. **Prefer blockId** over text search when available
-  2. **Check for existing citations** before adding new ones (look for `[CITE: ...]` markers)
+  2. **Check for existing citations** before adding new ones (look for `[@...]` markers)
   3. **Ground ALL claims** in the provided source material
   4. **Confirm destructive operations** (delete, rewrite) with explanation
   5. **Ask for clarification** if target location is ambiguous

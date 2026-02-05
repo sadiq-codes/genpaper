@@ -4,7 +4,7 @@
  * Serializes TipTap document to plain text for AI context.
  * 
  * Key difference from editor.getText():
- * - Citations render as [CITE: paperId] markers (not formatted text)
+ * - Citations render as [@paperId#instanceId] markers (not formatted text)
  * - This lets AI see where citations exist and preserve them
  * - AI can add new citations using the same marker format
  * 
@@ -19,11 +19,11 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
  * Serialize a ProseMirror document to plain text with citation markers.
  * 
  * @param doc - ProseMirror document node
- * @returns Plain text with [CITE: paperId] markers for citations
+ * @returns Plain text with [@paperId#instanceId] markers for citations
  * 
  * @example
  * Input: Document with citation nodes
- * Output: "Climate change impacts are significant [CITE: abc123] and require attention."
+ * Output: "Climate change impacts are significant [@abc123#inst456] and require attention."
  */
 export function serializeForAIContext(doc: ProseMirrorNode): string {
   const chunks: string[] = []
@@ -37,7 +37,8 @@ export function serializeForAIContext(doc: ProseMirrorNode): string {
     if (node.type.name === 'citation') {
       // Serialize citation as marker format
       const paperId = node.attrs.id || 'unknown'
-      const marker = `[CITE: ${paperId}]`
+      const instanceId = node.attrs.instanceId
+      const marker = instanceId ? `[@${paperId}#${instanceId}]` : `[@${paperId}]`
       chunks.push(marker)
       return false
     }
@@ -101,7 +102,8 @@ export function getNodeTextWithCitations(node: ProseMirrorNode): string {
     
     if (child.type.name === 'citation') {
       const paperId = child.attrs.id || 'unknown'
-      const marker = `[CITE: ${paperId}]`
+      const instanceId = child.attrs.instanceId
+      const marker = instanceId ? `[@${paperId}#${instanceId}]` : `[@${paperId}]`
       chunks.push(marker)
       return false
     }

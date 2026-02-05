@@ -68,64 +68,124 @@ const MAX_CITATIONS_TO_VERIFY = 15
 const CLAIM_CONTEXT_CHARS = 200
 
 // ============================================================================
+// Types for Structured Citations
+// ============================================================================
+
+/**
+ * Citation from structured output (used during generation)
+ */
+export interface StructuredCitationInput {
+  index: number
+  paperId: string
+  quote: string
+}
+
+// ============================================================================
 // Core Functions
 // ============================================================================
 
 /**
- * Extract claims with their citations from content
- * Returns the sentence/context containing each citation marker
+ * Helper to extract claim context around a citation marker
  */
-export function extractCitedClaims(content: string): Array<{
+function extractClaimContext(
+  content: string,
+  markerIndex: number,
+  markerLength: number,
+  cleanPattern: RegExp
+): string | null {
+  const start = Math.max(0, markerIndex - CLAIM_CONTEXT_CHARS)
+  const end = Math.min(content.length, markerIndex + markerLength + CLAIM_CONTEXT_CHARS)
+  
+  let claim = content.slice(start, end).trim()
+  
+  // Try to get complete sentences
+  const beforeMarker = content.slice(Math.max(0, markerIndex - 500), markerIndex)
+  const sentenceStartMatch = beforeMarker.match(/[.!?]\s+([^.!?]*)$/)
+  if (sentenceStartMatch) {
+    const sentenceStart = markerIndex - sentenceStartMatch[1].length
+    claim = content.slice(sentenceStart, end).trim()
+  }
+  
+  const afterMarker = content.slice(markerIndex, Math.min(content.length, markerIndex + 500))
+  const sentenceEndMatch = afterMarker.match(/[.!?]/)
+  if (sentenceEndMatch && sentenceEndMatch.index) {
+    const sentenceEnd = markerIndex + sentenceEndMatch.index + 1
+    claim = content.slice(
+      claim.length > CLAIM_CONTEXT_CHARS ? markerIndex - CLAIM_CONTEXT_CHARS : start,
+      sentenceEnd
+    ).trim()
+  }
+  
+  const cleanClaim = claim.replace(cleanPattern, '').trim()
+  return cleanClaim.length > 20 ? cleanClaim : null
+}
+
+/**
+ * Extract claims with their citations from content.
+ * 
+ * Supported formats:
+ * - [1], [2], [3] numbered markers (during generation, requires citations array)
+ * - [@paperId#instanceId] storage format (for stored/verified content)
+ * 
+ * IMPORTANT: For numbered markers, this function consumes citations as an
+ * "occurrence stream" - each marker is matched with the next available citation
+ * entry that has the same index. This matches the contract where the LLM provides
+ * one citation entry per occurrence (e.g., two [1] markers = two entries with index: 1).
+ * 
+ * @param content - Content with citation markers
+ * @param citations - Optional structured citations array for numbered marker mapping
+ * @returns Array of cited claims with paperId, claim text, and marker
+ */
+export function extractCitedClaims(
+  content: string,
+  citations?: StructuredCitationInput[]
+): Array<{
   paperId: string
   claim: string
   marker: string
 }> {
   const citedClaims: Array<{ paperId: string; claim: string; marker: string }> = []
   
-  // Match [CITE: paper_id] markers
-  const markerPattern = /\[CITE:\s*([a-f0-9-]+)\]/gi
-  let match
+  // Pattern to match all citation markers for cleaning
+  const allMarkersPattern = /\[\d+\]|\[@[a-f0-9-]+(?:#[a-f0-9-]+)?\]/gi
   
-  while ((match = markerPattern.exec(content)) !== null) {
+  // 1. Match numbered [N] markers (during generation)
+  // Use occurrence-stream approach: consume citation entries as we match markers
+  if (citations && citations.length > 0) {
+    // Create mutable queue - we'll consume entries as we match markers in order
+    const citationQueue = [...citations]
+    
+    const numberedPattern = /\[(\d+)\]/g
+    let match
+    
+    while ((match = numberedPattern.exec(content)) !== null) {
+      const index = parseInt(match[1], 10)
+      
+      // Find and consume the first citation entry with this index
+      const entryIdx = citationQueue.findIndex(c => c.index === index)
+      if (entryIdx === -1) {
+        // No citation entry for this marker - skip it
+        continue
+      }
+      
+      // Remove the entry from queue (consume it)
+      const citation = citationQueue.splice(entryIdx, 1)[0]
+      
+      const claim = extractClaimContext(content, match.index, match[0].length, allMarkersPattern)
+      if (claim) {
+        citedClaims.push({ paperId: citation.paperId, claim, marker: match[0] })
+      }
+    }
+  }
+  
+  // 2. Match storage format [@paperId#instanceId] (for stored content)
+  const storagePattern = /\[@([a-f0-9-]+)(?:#[a-f0-9-]+)?\]/gi
+  let match
+  while ((match = storagePattern.exec(content)) !== null) {
     const paperId = match[1]
-    const marker = match[0]
-    const markerIndex = match.index
-    
-    // Extract surrounding context as the "claim"
-    const start = Math.max(0, markerIndex - CLAIM_CONTEXT_CHARS)
-    const end = Math.min(content.length, markerIndex + marker.length + CLAIM_CONTEXT_CHARS)
-    
-    let claim = content.slice(start, end).trim()
-    
-    // Try to get complete sentences
-    // Find sentence start (look for . ! ? before the marker)
-    const beforeMarker = content.slice(Math.max(0, markerIndex - 500), markerIndex)
-    const sentenceStartMatch = beforeMarker.match(/[.!?]\s+([^.!?]*)$/)
-    if (sentenceStartMatch) {
-      const sentenceStart = markerIndex - sentenceStartMatch[1].length
-      claim = content.slice(sentenceStart, end).trim()
-    }
-    
-    // Find sentence end (look for . ! ? after the marker)
-    const afterMarker = content.slice(markerIndex, Math.min(content.length, markerIndex + 500))
-    const sentenceEndMatch = afterMarker.match(/[.!?]/)
-    if (sentenceEndMatch && sentenceEndMatch.index) {
-      const sentenceEnd = markerIndex + sentenceEndMatch.index + 1
-      claim = content.slice(
-        claim.length > CLAIM_CONTEXT_CHARS ? markerIndex - CLAIM_CONTEXT_CHARS : start,
-        sentenceEnd
-      ).trim()
-    }
-    
-    // Remove the citation marker from the claim for cleaner comparison
-    const cleanClaim = claim.replace(/\[CITE:\s*[a-f0-9-]+\]/gi, '').trim()
-    
-    if (cleanClaim.length > 20) { // Skip very short claims
-      citedClaims.push({
-        paperId,
-        claim: cleanClaim,
-        marker
-      })
+    const claim = extractClaimContext(content, match.index, match[0].length, allMarkersPattern)
+    if (claim) {
+      citedClaims.push({ paperId, claim, marker: match[0] })
     }
   }
   
@@ -203,13 +263,19 @@ export async function verifyCitation(
 /**
  * Verify all citations in a section
  * Returns a report indicating which citations verified and which failed
+ * 
+ * @param sectionTitle - Title of the section being verified
+ * @param content - Content with citation markers ([1], [2] or [CITE:...] or [@...])
+ * @param contextChunks - Evidence chunks to verify against
+ * @param citations - Optional structured citations array for mapping numbered markers to paperIds
  */
 export async function verifySectionCitations(
   sectionTitle: string,
   content: string,
-  contextChunks: EvidenceChunk[]
+  contextChunks: EvidenceChunk[],
+  citations?: StructuredCitationInput[]
 ): Promise<SectionCitationReport> {
-  const citedClaims = extractCitedClaims(content)
+  const citedClaims = extractCitedClaims(content, citations)
   
   // No citations = automatic pass (uncited synthesis is allowed)
   if (citedClaims.length === 0) {

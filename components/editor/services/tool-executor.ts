@@ -64,11 +64,18 @@ export interface ToolExecutionOptions {
   projectId?: string
 }
 
-/** Citation instance extracted from CITATIONS block */
+/** Citation instance for saving to database */
 interface ExtractedCitationInstance {
   instanceId: string      // UUID for this specific citation instance
   paperId: string         // UUID of the paper being cited
   quote: string           // The exact quote/context for this citation
+}
+
+/** Citation entry from tool arguments (matches CitationEntry in document-tools.ts) */
+interface CitationInput {
+  index: number
+  paperId: string
+  quote: string
 }
 
 interface BlockTarget {
@@ -311,70 +318,51 @@ function executeWithGhostMeta(
 
 /**
  * Convert numbered citation markers [1], [2] to [@paperId#instanceId] format
- * Uses the CITATIONS block at the end of content to map numbers to paper IDs
- * Also extracts citation instances with their quotes for saving to database
+ * Uses the citations array from tool arguments to map numbers to paper IDs
  * 
  * Each citation occurrence gets a unique instanceId for tracking the specific quote used.
  * 
- * STRICT MODE: If content has [N] markers but no CITATIONS block, markers are STRIPPED
- * and a warning is logged. This prevents invalid plain-text citations from being inserted.
+ * STRICT MODE: If content has [N] markers but no citations array, markers are STRIPPED.
  */
-function convertNumberedCitations(content: string): { content: string; instances: ExtractedCitationInstance[] } {
+function convertNumberedCitations(
+  content: string, 
+  citations?: CitationInput[]
+): { content: string; instances: ExtractedCitationInstance[] } {
   // Check if content has numbered markers [1], [2], etc. (but not things like [E1], [M1])
   const numberedMarkerPattern = /\[(\d+)\]/g
   const numberedMarkers = content.match(numberedMarkerPattern)
   const hasNumberedMarkers = numberedMarkers && numberedMarkers.length > 0
   
-  // Pattern to extract the CITATIONS block
-  const citationsBlockPattern = /<!--\s*CITATIONS\s*([\s\S]*?)-->/i
-  const blockMatch = content.match(citationsBlockPattern)
+  if (!hasNumberedMarkers) {
+    // No numbered markers - nothing to convert
+    return { content, instances: [] }
+  }
   
-  if (hasNumberedMarkers && !blockMatch) {
-    // STRICT: Content has [N] markers but NO CITATIONS block
-    // These markers are useless without paper ID mapping - strip them
+  if (!citations || citations.length === 0) {
+    // STRICT: Content has [N] markers but NO citations array
     const uniqueMarkers = [...new Set(numberedMarkers)]
-    console.warn('[ToolExecutor] ⚠️ CITATION FORMAT ERROR: Content has numbered markers but NO CITATIONS block!')
+    console.warn('[ToolExecutor] ⚠️ CITATION FORMAT ERROR: Content has numbered markers but NO citations array!')
     console.warn(`[ToolExecutor] Found markers: ${uniqueMarkers.join(', ')}`)
-    console.warn('[ToolExecutor] These markers will be STRIPPED. AI must include <!-- CITATIONS --> block.')
-    console.warn('[ToolExecutor] Expected format:')
-    console.warn('  "Claim [1] and finding [2]."')
-    console.warn('  <!-- CITATIONS')
-    console.warn('  [1] paper_id: uuid-here | quote: "exact quote"')
-    console.warn('  [2] paper_id: uuid-here | quote: "exact quote"')
-    console.warn('  -->')
+    console.warn('[ToolExecutor] These markers will be STRIPPED. AI must include citations parameter.')
     
     // Strip all numbered markers since we can't map them to papers
     const stripped = content.replace(numberedMarkerPattern, '')
     return { content: stripped, instances: [] }
   }
   
-  if (!blockMatch) {
-    // No numbered markers and no CITATIONS block - nothing to do
-    return { content, instances: [] }
-  }
-  
-  console.log('[ToolExecutor] Found CITATIONS block, parsing...')
-  
   // UUID format pattern for validation
   const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   
-  // Parse citation entries: [N] paper_id: xxx | quote: "yyy"
-  const entryPattern = /\[(\d+)\]\s*paper_id:\s*([a-f0-9-]+)(?:\s*\|\s*quote:\s*"([^"]*)")?/gi
-  const citationsMap = new Map<number, { paperId: string; quote?: string }>()
+  // Build map from index to citation data, validating UUIDs
+  const citationsMap = new Map<number, { paperId: string; quote: string }>()
   const invalidCitations: Array<{ index: number; paperId: string; reason: string }> = []
   
-  for (const match of blockMatch[1].matchAll(entryPattern)) {
-    const index = parseInt(match[1], 10)
-    const paperId = match[2]
-    const quote = match[3] || undefined
-    
-    // Validate UUID format
-    if (!UUID_PATTERN.test(paperId)) {
-      invalidCitations.push({ index, paperId, reason: 'malformed UUID format' })
+  for (const citation of citations) {
+    if (!UUID_PATTERN.test(citation.paperId)) {
+      invalidCitations.push({ index: citation.index, paperId: citation.paperId, reason: 'malformed UUID format' })
       continue
     }
-    
-    citationsMap.set(index, { paperId, quote })
+    citationsMap.set(citation.index, { paperId: citation.paperId, quote: citation.quote || '' })
   }
   
   // Log invalid citations
@@ -386,11 +374,11 @@ function convertNumberedCitations(content: string): { content: string; instances
   }
   
   if (citationsMap.size === 0) {
-    console.log('[ToolExecutor] CITATIONS block found but no valid entries parsed')
-    return { content: content.replace(citationsBlockPattern, '').trim(), instances: [] }
+    console.log('[ToolExecutor] All citations rejected - stripping markers')
+    return { content: content.replace(numberedMarkerPattern, ''), instances: [] }
   }
   
-  console.log(`[ToolExecutor] Parsed ${citationsMap.size} valid citations from block:`, 
+  console.log(`[ToolExecutor] Converting ${citationsMap.size} citation types:`, 
     Array.from(citationsMap.entries()).map(([i, c]) => `[${i}] -> ${c.paperId}`)
   )
   
@@ -402,7 +390,6 @@ function convertNumberedCitations(content: string): { content: string; instances
   for (const [index, { paperId, quote }] of citationsMap) {
     const pattern = new RegExp(`\\[${index}\\]`, 'g')
     
-    // Replace each occurrence with a unique instanceId
     result = result.replace(pattern, () => {
       const instanceId = uuidv4()
       
@@ -410,20 +397,17 @@ function convertNumberedCitations(content: string): { content: string; instances
       instances.push({
         instanceId,
         paperId,
-        quote: quote || '',
+        quote,
       })
       
       return `[@${paperId}#${instanceId}]`
     })
   }
   
-  // Remove the CITATIONS block
-  result = result.replace(citationsBlockPattern, '').trim()
-  
-  // Strip any orphaned [N] markers that weren't in the CITATIONS block
+  // Strip any orphaned [N] markers that weren't in the citations array
   result = result.replace(/\[(\d+)\]/g, '')
   
-  console.log(`[ToolExecutor] Converted ${citationsMap.size} citation types to ${instances.length} instances with [@paperId#instanceId] format`)
+  console.log(`[ToolExecutor] Converted to ${instances.length} instances with [@paperId#instanceId] format`)
   
   return { content: result, instances }
 }
@@ -440,10 +424,15 @@ interface PreparedContent {
  * Prepare content for insertion - converts markdown to TipTap JSON if needed
  * @param content - Raw content string
  * @param papers - Papers context for citation resolution
+ * @param citations - Structured citations from tool arguments
  */
-function prepareContent(content: string, papers: ProjectPaper[] = []): PreparedContent {
+function prepareContent(
+  content: string, 
+  papers: ProjectPaper[] = [],
+  citations?: CitationInput[]
+): PreparedContent {
   // First, convert numbered [1], [2] citations to [@paperId#instanceId] format
-  const { content: contentWithCitations, instances } = convertNumberedCitations(content)
+  const { content: contentWithCitations, instances } = convertNumberedCitations(content, citations)
   
   if (hasMarkdownFormatting(contentWithCitations)) {
     // Convert markdown to TipTap JSON for proper rendering (tables, lists, etc.)
@@ -610,6 +599,7 @@ function executeInsertContent(
   projectId?: string
 ): ToolExecutionResult {
   const rawContent = args.content as string
+  const citations = args.citations as CitationInput[] | undefined
   const afterBlockId = args.afterBlockId as string | undefined || args.blockId as string | undefined
   const afterPhrase = args.afterPhrase as string | undefined
   const location = args.location as string | undefined
@@ -619,7 +609,7 @@ function executeInsertContent(
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const { content, instances } = prepareContent(rawContent, papers)
+  const { content, instances } = prepareContent(rawContent, papers, citations)
   const isMarkdown = typeof content !== 'string'
   
   if (isMarkdown) {
@@ -758,13 +748,14 @@ function executeReplaceBlock(
   const section = args.section as string | undefined
   const searchPhrase = args.searchPhrase as string | undefined
   const rawContent = args.newContent as string
+  const citations = args.citations as CitationInput[] | undefined
 
   if (!rawContent) {
     return { success: false, message: 'No new content provided' }
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const { content: newContent, instances } = prepareContent(rawContent, papers)
+  const { content: newContent, instances } = prepareContent(rawContent, papers, citations)
   // Note: isMarkdown available for future logging/debugging
   const _isMarkdown = typeof newContent !== 'string'
 
@@ -871,13 +862,14 @@ function executeReplaceInSection(
   const section = args.section as string
   const searchPhrase = args.searchPhrase as string
   const rawContent = args.newContent as string
+  const citations = args.citations as CitationInput[] | undefined
 
   if (!searchPhrase || !rawContent) {
     return { success: false, message: 'Missing search phrase or new content' }
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const { content: newContent, instances } = prepareContent(rawContent, papers)
+  const { content: newContent, instances } = prepareContent(rawContent, papers, citations)
 
   const target = findTargetBlock(editor, { section, searchPhrase })
 
@@ -926,13 +918,14 @@ function executeRewriteSection(
 ): ToolExecutionResult {
   const sectionName = args.section as string
   const rawContent = args.newContent as string
+  const citations = args.citations as CitationInput[] | undefined
 
   if (!sectionName || !rawContent) {
     return { success: false, message: 'Missing section name or new content' }
   }
 
   // Prepare content - convert markdown to TipTap JSON if needed
-  const { content: newContent, instances } = prepareContent(rawContent, papers)
+  const { content: newContent, instances } = prepareContent(rawContent, papers, citations)
   const isMarkdown = typeof newContent !== 'string'
 
   const sectionBounds = findSectionBounds(editor, sectionName)

@@ -818,10 +818,15 @@ export class CitationService {
     }
     
     // Extract all citation markers from content
+    // Supports both [@uuid] (Pandoc) and [CITE: uuid] (legacy) formats
+    const pandocPattern = /\[@([a-f0-9-]{36})\]/gi
     const legacyPattern = /\[CITE:\s*([a-f0-9-]{36})\]/gi
     
     const paperIds = new Set<string>()
     
+    for (const match of project.content.matchAll(pandocPattern)) {
+      paperIds.add(match[1])
+    }
     for (const match of project.content.matchAll(legacyPattern)) {
       paperIds.add(match[1])
     }

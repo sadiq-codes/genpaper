@@ -1,8 +1,9 @@
 import 'server-only'
+import { v4 as uuidv4 } from 'uuid'
 import { updateProjectContent, updateResearchProjectStatus, updateProjectVoiceProfile, savePartialContent } from '@/lib/db/research'
 import { collectPapers } from '@/lib/generation/discovery'
 import { generateOutline, type OriginalResearchInput } from '@/lib/prompts/generators'
-import { generateMultipleSectionsUnified } from '@/lib/generation/unified-generator'
+import { generateMultipleSectionsUnified, type StructuredCitation } from '@/lib/generation/unified-generator'
 import { GenerationContextService } from '@/lib/rag/generation-context'
 import { SectionReviewer } from '@/lib/quality/section-reviewer'
 // Legacy validatePaperType removed - using profile-based validation only
@@ -10,8 +11,8 @@ import { fourGramOverlapRatio } from '@/lib/utils/overlap'
 import { sanitizeTopic } from '@/lib/utils/prompt-safety'
 import { classifyError, CancellationError } from '@/lib/generation/errors'
 import { warn, error as logError, info } from '@/lib/utils/logger'
-// Citation markers [CITE: paper_id] are kept in markdown - UI renders them
-// We only need cleanRemainingArtifacts to remove any leaked tool syntax
+// Citation markers converted from [N] to [@paperId#instanceId] for storage
+// cleanRemainingArtifacts removes any leaked tool syntax
 import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
 import { logSectionCitations } from '@/lib/rag/relevance-feedback'
 import { mergeAnalysisResultIntoProfile, buildAnalysisGuidanceForOutline } from '@/lib/generation/theme-extraction'
@@ -24,6 +25,15 @@ import { PAPER_TYPE_SEARCH_MULTIPLIERS, PAPER_TYPE_MIN_SEARCH } from '@/types/si
 import type { GeneratedOutline, SectionContext, PaperTypeKey } from '@/lib/prompts/types'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
 import type { AnalysisResult } from '@/lib/analysis/cross-document'
+
+/**
+ * Citation instance to be saved to the database
+ */
+export interface CitationInstance {
+  instanceId: string
+  paperId: string
+  quote: string
+}
 
 /**
  * Pipeline performance metrics for bottleneck analysis
@@ -99,6 +109,8 @@ export interface PipelineResult {
   outline: GeneratedOutline
   sections: SectionContext[]
   citations: Record<string, { paperId: string; citationText: string }>
+  /** Citation instances to be saved for hover quote previews */
+  citationInstances?: CitationInstance[]
   /** The generated paper profile that guided generation */
   profile: PaperProfile
   /** Cross-document analysis result (patterns/contradictions/gaps) */
@@ -112,6 +124,133 @@ export interface PipelineResult {
   }
   /** Detailed performance metrics for bottleneck analysis */
   performanceMetrics?: PipelineMetrics
+}
+
+/**
+ * Statistics from the citation conversion process
+ */
+export interface CitationConversionStats {
+  /** Number of [N] markers successfully converted to [@paperId#instanceId] */
+  markersConverted: number
+  /** Number of times we reused the first quote because LLM provided fewer entries than markers */
+  quotesReused: number
+  /** Number of orphan markers removed (indices with no citation entries) */
+  orphanMarkersRemoved: number
+  /** Number of citations with invalid/hallucinated paper IDs */
+  invalidCitationsFiltered: number
+}
+
+/**
+ * Convert numbered citation markers [1], [2], [3] to storage format [@paperId#instanceId]
+ * using the structured citation data from the LLM.
+ * 
+ * @param content - Content with [1], [2], [3] markers
+ * @param citations - Structured citations array from LLM (one entry per occurrence, in order)
+ * @param validPaperIds - Set of valid paper IDs to filter out hallucinated citations
+ * @returns Object with converted content, instances to save to DB, and conversion stats
+ */
+function convertNumberedCitationsToStorage(
+  content: string,
+  citations: StructuredCitation[],
+  validPaperIds: Set<string>
+): {
+  content: string
+  instances: CitationInstance[]
+  invalidCitations: StructuredCitation[]
+  stats: CitationConversionStats
+} {
+  const instances: CitationInstance[] = []
+  const invalidCitations: StructuredCitation[] = []
+  const stats: CitationConversionStats = {
+    markersConverted: 0,
+    quotesReused: 0,
+    orphanMarkersRemoved: 0,
+    invalidCitationsFiltered: 0,
+  }
+  
+  // Group citations by index and filter valid ones
+  const citationsByIndex = new Map<number, StructuredCitation[]>()
+  for (const citation of citations) {
+    if (!validPaperIds.has(citation.paperId)) {
+      invalidCitations.push(citation)
+      stats.invalidCitationsFiltered++
+      continue
+    }
+    const existing = citationsByIndex.get(citation.index) || []
+    existing.push(citation)
+    citationsByIndex.set(citation.index, existing)
+  }
+  
+  let result = content
+  
+  // Process each citation index
+  for (const [index, citationsForIndex] of citationsByIndex) {
+    const pattern = new RegExp(`\\[${index}\\]`, 'g')
+    const markersInContent = (content.match(pattern) || []).length
+    let occurrenceCount = 0
+    
+    // Warn if marker count doesn't match citation entries
+    if (markersInContent > citationsForIndex.length) {
+      const reusedCount = markersInContent - citationsForIndex.length
+      stats.quotesReused += reusedCount
+      warn({
+        index,
+        markersInContent,
+        citationEntries: citationsForIndex.length,
+        quotesReused: reusedCount,
+      }, 'More [N] markers than citation entries - reusing first quote for extra occurrences')
+    }
+    
+    // Replace each occurrence with a unique instanceId
+    result = result.replace(pattern, () => {
+      const citation = citationsForIndex[occurrenceCount] || citationsForIndex[0]
+      occurrenceCount++
+      stats.markersConverted++
+      
+      const instanceId = uuidv4()
+      instances.push({
+        instanceId,
+        paperId: citation.paperId,
+        quote: citation.quote,
+      })
+      
+      return `[@${citation.paperId}#${instanceId}]`
+    })
+  }
+  
+  // Remove any numbered markers that weren't in the citations array (hallucinated indices)
+  result = result.replace(/\[\d+\]/g, (match) => {
+    stats.orphanMarkersRemoved++
+    warn({ marker: match }, 'Removing numbered citation marker with no corresponding citation data')
+    return ''
+  })
+  
+  // Clean up any double spaces left by removed citations
+  result = result
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([.,;:])/g, '$1')
+  
+  // Log summary stats if there were issues
+  if (stats.quotesReused > 0 || stats.orphanMarkersRemoved > 0 || stats.invalidCitationsFiltered > 0) {
+    info({
+      markersConverted: stats.markersConverted,
+      quotesReused: stats.quotesReused,
+      orphanMarkersRemoved: stats.orphanMarkersRemoved,
+      invalidCitationsFiltered: stats.invalidCitationsFiltered,
+    }, 'Citation conversion completed with issues')
+  }
+  
+  return { content: result, instances, invalidCitations, stats }
+}
+
+/**
+ * Convert StructuredCitation array to the format expected by SectionReviewer
+ */
+function toReviewerFormat(citations: StructuredCitation[]): Array<{ paperId: string; citationText: string }> {
+  return citations.map(c => ({
+    paperId: c.paperId,
+    citationText: `[${c.index}]`
+  }))
 }
 
 /**
@@ -637,7 +776,7 @@ export async function generatePaper(
     
     let completedSections = 0
     let fullContent = ''
-    const allCitations: Array<{ paperId: string; citationText: string }> = []
+    const allCitations: StructuredCitation[] = []
     
     // Compute safe per-section token allocation
     const totalMaxTokens = config.maxTokens || 16000
@@ -775,7 +914,8 @@ export async function generatePaper(
           sectionContext.sectionKey,
           result.content,
           sectionContext.contextChunks,
-          sectionContext.title
+          sectionContext.title,
+          result.citations  // Pass structured citations for reliable extraction
         ).catch(err => {
           // Non-critical - don't fail pipeline on feedback logging errors
           warn({ section: sectionContext.title, error: err }, 'Citation feedback logging failed')
@@ -787,7 +927,7 @@ export async function generatePaper(
         const review = await SectionReviewer.reviewSection(
           sectionContext.sectionKey,
           result.content,
-          result.citations,
+          toReviewerFormat(result.citations),
           sectionContext.contextChunks || [],
           sectionContext.expectedWords || 300
         )
@@ -811,7 +951,8 @@ export async function generatePaper(
         const citationReport = await verifySectionCitations(
           sectionContext.title,
           result.content,
-          sectionContext.contextChunks || []
+          sectionContext.contextChunks || [],
+          result.citations  // Pass structured citations for numbered marker mapping
         )
         
         metrics.citationStats.sectionsVerified++
@@ -872,10 +1013,12 @@ export async function generatePaper(
               })
 
               // Re-verify regenerated content (single recheck; no further regen)
+              // Pass regenerated.citations to enable numbered marker mapping
               const recheck = await verifySectionCitations(
                 sectionContext.title,
                 regenerated.content,
-                sectionContext.contextChunks || []
+                sectionContext.contextChunks || [],
+                regenerated.citations
               )
 
               if (recheck.passed || recheck.score > citationReport.score) {
@@ -989,62 +1132,82 @@ export async function generatePaper(
     // VALIDATION: Create set of valid paper IDs to filter out hallucinated citations
     const validPaperIds = new Set(allPapers.map(p => p.id))
     
-    // Filter and validate citations
-    const validCitations: Array<{ paperId: string; citationText: string }> = []
-    const invalidCitations: Array<{ paperId: string; citationText: string }> = []
-    
-    for (const citation of allCitations) {
-      if (validPaperIds.has(citation.paperId)) {
-        validCitations.push(citation)
-      } else {
-        invalidCitations.push(citation)
-      }
-    }
+    // Convert numbered [1], [2] markers to [@paperId#instanceId] format
+    // This also validates paper IDs and generates instances for the database
+    const { 
+      content: processedContent, 
+      instances: citationInstances, 
+      invalidCitations,
+      stats: conversionStats
+    } = convertNumberedCitationsToStorage(fullContent, allCitations, validPaperIds)
+    fullContent = processedContent
     
     // Log warnings for invalid citations (hallucinated or malformed paper IDs)
     if (invalidCitations.length > 0) {
       warn({
         invalidCount: invalidCitations.length,
         totalCitations: allCitations.length,
-        invalidIds: invalidCitations.slice(0, 5).map(c => c.paperId), // Log first 5 for debugging
+        invalidIds: invalidCitations.slice(0, 5).map(c => c.paperId),
       }, 'Filtered out citations with invalid/hallucinated paper IDs')
-      
-      // Remove invalid citation markers from content to prevent "(Untitled, n.d.)" rendering
-      for (const invalidCitation of invalidCitations) {
-        // Remove legacy [CITE: paper_id] markers
-        const legacyPattern = new RegExp(`\\[CITE:\\s*${invalidCitation.paperId}\\]`, 'g')
-        fullContent = fullContent.replace(legacyPattern, '')
-      }
-      
-      // Clean up any double spaces left by removed citations
-      // IMPORTANT: do not collapse newlines, or markdown headings/paragraphs break.
-      // Collapse only repeated spaces/tabs within a line, and normalize space-before-punctuation.
-      fullContent = fullContent
-        .replace(/[ \t]{2,}/g, ' ')
-        .replace(/[ \t]+([.,;:])/g, '$1')
     }
     
-    const citedPaperIds = new Set(validCitations.map(c => c.paperId))
+    // Log conversion stats if there were quote reuse or orphan issues
+    if (conversionStats.quotesReused > 0 || conversionStats.orphanMarkersRemoved > 0) {
+      warn({
+        markersConverted: conversionStats.markersConverted,
+        quotesReused: conversionStats.quotesReused,
+        orphanMarkersRemoved: conversionStats.orphanMarkersRemoved,
+      }, 'Citation conversion had quality issues - LLM may need prompt improvements')
+    }
+    
+    // Build citations map for project_citations table (deduplicated by paperId)
+    const citedPaperIds = new Set(citationInstances.map(c => c.paperId))
     const citationsMap: Record<string, { paperId: string; citationText: string }> = {}
     
-    for (const citation of validCitations) {
-      // Deduplicate by paperId
-      const key = `cite-${citation.paperId}`
-      if (!citationsMap[key]) {
-        citationsMap[key] = {
-          paperId: citation.paperId,
-          citationText: citation.citationText
-        }
+    for (const paperId of citedPaperIds) {
+      const key = `cite-${paperId}`
+      citationsMap[key] = {
+        paperId,
+        citationText: `[@${paperId}]`
       }
     }
     
     info({ 
       validCitations: citedPaperIds.size,
       invalidCitations: invalidCitations.length,
-      totalGenerated: allCitations.length
-    }, 'Citations validated and filtered')
+      totalGenerated: allCitations.length,
+      instancesCreated: citationInstances.length
+    }, 'Citations validated and converted to storage format')
     
+    // Save content with converted citations
     await updateProjectContent(projectId, fullContent.trim(), citationsMap)
+    
+    // Save citation instances for hover quote previews
+    if (citationInstances.length > 0) {
+      try {
+        const supabase = getServiceClient()
+        const { error: instancesError } = await supabase
+          .from('citation_instances')
+          .upsert(
+            citationInstances.map(inst => ({
+              id: inst.instanceId,
+              paper_id: inst.paperId,
+              project_id: projectId,
+              quote: inst.quote,
+            })),
+            { onConflict: 'id' }
+          )
+        
+        if (instancesError) {
+          // Non-fatal - log and continue
+          warn({ error: instancesError }, 'Failed to save citation instances')
+        } else {
+          info({ count: citationInstances.length }, 'Citation instances saved for hover previews')
+        }
+      } catch (err) {
+        warn({ error: err }, 'Failed to save citation instances')
+      }
+    }
     
     // Finalize metrics
     metrics.totalDuration = Date.now() - startTime
@@ -1085,6 +1248,7 @@ export async function generatePaper(
       outline: typedOutline,
       sections: sectionContexts,
       citations: citationsMap,
+      citationInstances,  // For hover quote previews
       profile: enhancedProfile,  // Return the enhanced profile with emergent themes
       analysisResult,            // Include analysis result for transparency
       metrics: {
