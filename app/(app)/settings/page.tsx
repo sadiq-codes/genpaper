@@ -62,10 +62,15 @@ export default async function SettingsPage() {
         description="Manage your account settings and preferences"
       />
       
-      <SettingsPageClient 
-        user={userData}
-        preferences={preferences}
-      />
+      {/* Centered content wrapper to match library page style */}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-5xl mx-auto">
+          <SettingsPageClient 
+            user={userData}
+            preferences={preferences}
+          />
+        </div>
+      </div>
     </PageContainer>
   )
 }
