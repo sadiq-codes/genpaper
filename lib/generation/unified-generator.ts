@@ -134,14 +134,13 @@ export async function generateWithUnifiedTemplate(
 
   // Schema for structured output with numbered citation markers
   // LLM outputs [1], [2], [3] in prose, and citations array maps each occurrence
-  // NOTE: All fields must be required (no .default() or .optional()) for OpenAI structured output
   const SectionOutputSchema = z.object({
     contentMarkdown: z.string().describe('The section content with [1], [2], [3] citation markers'),
     citations: z.array(z.object({
       index: z.number().describe('The citation marker number [N] this entry corresponds to'),
       paperId: z.string().describe('The exact paper_id from the evidence snippet'),
       quote: z.string().describe('The exact sentence from the source that supports the claim'),
-    })).describe('One entry per citation occurrence in order of appearance. Return empty array [] if no citations.'),
+    })).default([]).describe('One entry per citation occurrence in order of appearance'),
   })
 
   const { object } = await generateObject({

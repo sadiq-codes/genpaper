@@ -468,16 +468,114 @@ export function GenerationProgress({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Use refs for lastEventId/processedEventIds to avoid reconnection loops
   }, [onComplete, onError])
 
+  // Check for existing run and restore progress from localStorage
+  const checkExistingRunAndStart = useCallback(async () => {
+    if (isStartingRef.current || hasCompletedRef.current) return
+    
+    try {
+      console.log('[Generation] Checking for existing run for project:', projectId)
+      
+      // Check for existing active generation
+      const statusResponse = await fetch(`/api/generate/status/${projectId}`)
+      if (!statusResponse.ok) {
+        console.warn('[Generation] Failed to check status, starting new generation')
+        startGeneration()
+        return
+      }
+      
+      const status = await statusResponse.json()
+      console.log('[Generation] Status check result:', status)
+      
+      // Case 1: Active run exists - resume watching it
+      if (status.hasActiveRun && status.runId) {
+        console.log('[Generation] Resuming existing run:', status.runId)
+        
+        // Restore progress from localStorage if available
+        const storedProgress = localStorage.getItem(`generation-progress-${status.runId}`)
+        if (storedProgress) {
+          try {
+            const parsed = JSON.parse(storedProgress)
+            if (parsed.progress !== undefined) {
+              dispatch({
+                type: 'PROGRESS_UPDATE',
+                payload: {
+                  progress: parsed.progress,
+                  stage: parsed.stage || status.currentStage || 'writing',
+                  message: parsed.message || 'Resuming generation...',
+                  papersFound: parsed.papersFound,
+                },
+              })
+            }
+            // Restore last event ID for proper replay
+            if (parsed.lastEventId) {
+              lastEventIdRef.current = parsed.lastEventId
+            }
+            console.log('[Generation] Restored progress from localStorage:', parsed)
+          } catch (e) {
+            console.warn('[Generation] Failed to parse stored progress:', e)
+          }
+        } else {
+          // No stored progress - use server status
+          dispatch({
+            type: 'PROGRESS_UPDATE',
+            payload: {
+              progress: status.progress || 0,
+              stage: status.currentStage || 'writing',
+              message: 'Resuming generation...',
+            },
+          })
+        }
+        
+        setConnectionState(prev => ({
+          ...prev,
+          runId: status.runId,
+        }))
+        return
+      }
+      
+      // Case 2: Generation already completed
+      if (status.status === 'completed' && status.content) {
+        console.log('[Generation] Project already complete')
+        hasCompletedRef.current = true
+        dispatch({ type: 'COMPLETE' })
+        onComplete(status.content)
+        // Clean up localStorage
+        localStorage.removeItem(`generation-progress-${status.runId}`)
+        return
+      }
+      
+      // Case 3: Previous generation failed
+      if (status.status === 'failed') {
+        console.log('[Generation] Previous generation failed, starting new')
+        // Clean up localStorage for failed run
+        if (status.runId) {
+          localStorage.removeItem(`generation-progress-${status.runId}`)
+        }
+        startGeneration()
+        return
+      }
+      
+      // Case 4: No active run - start new generation
+      console.log('[Generation] No active run, starting new generation')
+      startGeneration()
+      
+    } catch (err) {
+      console.error('[Generation] Error checking existing run:', err)
+      // Fall back to starting new generation
+      startGeneration()
+    }
+  }, [projectId, startGeneration, onComplete])
+
   // Start generation on mount
   useEffect(() => {
     if (initialRunId) {
       // Already have a runId - just connect to events
       setConnectionState(prev => ({ ...prev, runId: initialRunId }))
     } else {
-      // Need to start a new generation
-      startGeneration()
+      // Check for existing run first, then start if needed
+      checkExistingRunAndStart()
     }
-  }, [initialRunId, startGeneration])
+  }, [initialRunId, checkExistingRunAndStart])
 
   // Connect to events when we have a runId
   useEffect(() => {
@@ -487,6 +585,36 @@ export function GenerationProgress({
       return cleanup
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- connectToEvents is stable, only reconnect on runId change
+  }, [connectionState.runId])
+
+  // Persist progress to localStorage for page refresh recovery
+  useEffect(() => {
+    if (connectionState.runId && !hasCompletedRef.current && progress > 0) {
+      const progressData = {
+        progress,
+        stage: currentStage,
+        message,
+        papersFound,
+        lastEventId: lastEventIdRef.current,
+        timestamp: Date.now(),
+      }
+      try {
+        localStorage.setItem(
+          `generation-progress-${connectionState.runId}`,
+          JSON.stringify(progressData)
+        )
+      } catch (e) {
+        // localStorage might be full or disabled
+        console.warn('[Generation] Failed to persist progress:', e)
+      }
+    }
+  }, [connectionState.runId, progress, currentStage, message, papersFound])
+
+  // Clean up localStorage when generation completes
+  useEffect(() => {
+    if (hasCompletedRef.current && connectionState.runId) {
+      localStorage.removeItem(`generation-progress-${connectionState.runId}`)
+    }
   }, [connectionState.runId])
 
   // Handle page visibility changes - reconnect when page becomes visible
