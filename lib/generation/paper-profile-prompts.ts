@@ -174,6 +174,17 @@ Create a comprehensive paper profile by analyzing:
    - Is practitioner relevance expected?
 
 2. STRUCTURE GUIDANCE
+   
+   WORD COUNT TARGETS BY PAPER TYPE (CRITICAL - follow these ranges):
+   - Literature Review: 3,000-8,000 words total (sections: 400-1,500 words each)
+   - Research Article: 4,000-8,000 words total (sections: 500-1,500 words each)
+   - Capstone Project: 5,000-10,000 words total (sections: 600-2,000 words each)
+   - Master's Thesis: 15,000-25,000 words total (sections: 1,500-4,000 words each)
+   - PhD Dissertation: 40,000-80,000 words total (sections: 3,000-10,000 words each)
+   
+   Your minWords and maxWords for each section MUST sum to the appropriate total for this paper type.
+   For a ${formatPaperType(paperType)}, ensure total word count falls within the expected range.
+   
    - What sections are APPROPRIATE for this specific ${formatPaperType(paperType)} on this topic?
    - For each section provide: key (camelCase), title, purpose, word range (min/max), citation expectation (none/light/moderate/heavy), key elements, and isLiteratureFocused
    - isLiteratureFocused: Set to TRUE for sections that discuss, review, or synthesize EXISTING LITERATURE (prior work, existing theories, published findings). Set to FALSE for sections describing ORIGINAL work (your own methodology, data collection, results, analysis).
@@ -230,6 +241,23 @@ Create a comprehensive paper profile by analyzing:
      * If the paper must compare, rank, or recommend → avoid overly hedged conservative voice
    - Provide a rationale explaining why this voice is appropriate given the title's requirements
    - Available profiles: conservative-reviewer, confident-researcher, senior-scholar, balanced-academic
+
+8. PAPER SUBTYPE SELECTION (CRITICAL)
+   Based on the topic and the guidance provided for this paper type, EXPLICITLY select the most appropriate subtype/mode.
+   
+   The guidance document for this paper type defines specific types or modes. You MUST:
+   - Identify which type (A/B/C/D) or mode best matches this topic
+   - State the type identifier and its full name
+   - Explain WHY this type is most appropriate for this specific topic
+   
+   Examples by paper type:
+   - Literature Review: Type A (Standalone), Type B (Background Chapter), Type C (Systematic), Type D (Scoping)
+   - Capstone Project: Type A (Empirical), Type B (Secondary Analysis), Type C (Applied/Professional), Type D (Creative)
+   - Master's Thesis: Type A (Empirical), Type B (Theoretical/Secondary), Type C (Applied/Professional)
+   - PhD Dissertation: Type A (Empirical/Scientific), Type B (Theoretical/Philosophical), Type C (Humanities/Interpretive), Type D (Practice-Based)
+   - Research Article: Mode A (Primary Research), Mode B (Secondary Analysis), Mode C (Mixed)
+   
+   Your structure and section choices should ALIGN with the selected subtype.
 
 Return a JSON object with this exact structure:
 {
@@ -297,6 +325,11 @@ Return a JSON object with this exact structure:
   "voice": {
     "profileId": "conservative-reviewer|confident-researcher|senior-scholar|balanced-academic",
     "rationale": "string explaining why this voice is appropriate for this paper"
+  },
+  "paperSubtype": {
+    "type": "string - the type identifier (e.g., 'A', 'B', 'C', 'D' or mode name)",
+    "name": "string - the full name (e.g., 'Standalone Literature Review', 'Applied Capstone')",
+    "rationale": "string - why this type/mode was selected based on the topic"
   }
 }`
 
@@ -495,8 +528,18 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
       },
       required: ['profileId', 'rationale'],
       additionalProperties: false
+    },
+    paperSubtype: {
+      type: 'object' as const,
+      properties: {
+        type: { type: 'string' as const },
+        name: { type: 'string' as const },
+        rationale: { type: 'string' as const }
+      },
+      required: ['type', 'name', 'rationale'],
+      additionalProperties: false
     }
   },
-  required: ['titleContract', 'discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules', 'voice'],
+  required: ['titleContract', 'discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules', 'voice', 'paperSubtype'],
   additionalProperties: false
 }

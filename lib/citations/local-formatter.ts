@@ -204,7 +204,9 @@ export async function ensureStyle(styleId: string): Promise<string> {
  */
 function parseAuthor(name: string): CSLAuthor {
   if (!name || !name.trim()) {
-    return { literal: 'Unknown' }
+    // Return empty object - caller should filter these out
+    // This prevents "Unknown" from polluting citation display
+    return { family: '', given: '' }
   }
   
   const trimmed = name.trim()
@@ -235,11 +237,15 @@ export function paperToCSL(paper: CitationPaper): CSLJson {
     return cslJsonCache.get(paper.id)!
   }
   
+  // Filter out empty/whitespace author names before parsing
+  // This prevents "Unknown" from appearing when author data is incomplete
+  const validAuthors = (paper.authors || []).filter(name => name && name.trim())
+  
   const csl: CSLJson = {
     id: paper.id,
     type: paper.type || 'article-journal',
     title: paper.title || 'Untitled',
-    author: (paper.authors || []).map(parseAuthor),
+    author: validAuthors.map(parseAuthor),
     issued: paper.year ? { 'date-parts': [[paper.year]] } : undefined,
     'container-title': paper.journal || paper.venue,
     DOI: paper.doi,
@@ -358,11 +364,13 @@ export function formatInlineMultiple(
  * Fast fallback format (no citation-js, pure string manipulation)
  */
 function formatFallback(paper: CitationPaper): string {
-  const authors = paper.authors || []
+  // Filter out empty/whitespace-only author names
+  const authors = (paper.authors || []).filter(a => a && a.trim())
   const year = paper.year || 'n.d.'
   
   if (authors.length === 0) {
-    return `(${year})`
+    // Use "Anonymous" per APA style convention for unknown authors
+    return `(Anonymous, ${year})`
   }
   
   // Extract last name from first author

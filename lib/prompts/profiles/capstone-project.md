@@ -1,213 +1,242 @@
 # Capstone Project Context
 
-A capstone project demonstrates your ability to conduct independent research and apply knowledge from your program of study. It should meet rigorous academic standards.
-
-## Structure Expectations
-
-### 1. Introduction (Use Funnel Structure)
-- **Start BROAD:** Introduce the general topic and its importance (global/societal level)
-- **NARROW DOWN:** Focus on the specific area you're investigating
-- **STATE THE PROBLEM:** What gap or issue does your study address?
-- **PURPOSE:** Clear statement of what your study aims to accomplish
-- **SIGNIFICANCE:** Who benefits from this research and how?
-- **SCOPE:** Define the boundaries of your study
-
-### 2. Literature Review (Critical Analysis, Not Just Summary)
-- Synthesize existing research to show patterns and themes
-- Identify debates, contradictions, and tensions in the literature
-- Evaluate methodological strengths and limitations of prior studies
-- EXPLICITLY STATE THE GAP your study addresses
-- End with justification for why your study is needed
-
-**Organizational Approach - Choose based on your topic:**
-- **THEMATIC:** Group by themes (e.g., economic factors, social factors, policy factors)
-- **CHRONOLOGICAL:** Show how understanding evolved (e.g., 1990s → 2000s → 2010s → present)
-- **METHODOLOGICAL:** Compare quantitative vs. qualitative findings
-- **THEORETICAL:** Examine different theoretical explanations
-
-**Pivotal Publications:** Identify and discuss landmark studies that shaped the field. Explain WHY they were influential, not just what they found.
-
-### 3. Methodology (Detailed and Replicable)
-- Research design with justification for your choice
-- Population and sample (who, how many, how selected)
-- Instruments/measures (describe and justify)
-- Validity and reliability of instruments
-- Data collection procedures (step by step)
-- Method of data analysis (statistical tests or qualitative approach)
-
-### 4. Results (Present Without Interpretation)
-- Present findings systematically (by research question or hypothesis)
-- Use tables and figures appropriately
-- Report statistics completely (means, SDs, test statistics, p-values, effect sizes)
-- Include a summary of key findings at the end
-
-### 5. Discussion (Three-Part Structure for EACH Finding)
-
-For every major finding, you MUST:
-- **STATE:** "Our results showed that..." (what did you find?)
-- **COMPARE:** "This aligns with / contradicts Smith (2020) who found..."
-- **EXPLAIN:** "This difference may be explained by..." (why agree/disagree?)
-
-Do NOT simply restate results. Connect each finding to existing literature.
-
-### 6. Conclusion
-- **Implications:** What do your findings mean for theory and practice?
-- **Limitations:** Honest acknowledgment of study constraints
-- **Recommendations:** Practical suggestions based on findings
-- **Future Research:** What questions remain unanswered?
-
-## Citing Empirical Studies in Literature Review
-
-When reviewing prior research, provide methodological context:
-
-⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
-
-**WEAK:** "[Author] found that [topic] affects [outcome]."
-
-**STRONG:** "[Author from YOUR evidence] [method from YOUR evidence] and found that [finding from YOUR evidence] 
-([statistic IF in YOUR evidence]), though [limitation from YOUR evidence]."
-
-⚠️ CRITICAL: Only include statistics (r, p-values, sample sizes) that ACTUALLY APPEAR in your evidence.
-If numbers aren't available, write qualitatively: "found a significant relationship" instead of inventing "r = .45".
-
-## Gap Identification (REQUIRED)
-
-After reviewing literature, explicitly state:
-- What has been studied extensively
-- What remains understudied or contested
-- How YOUR study addresses this gap
-
-⚠️ FORMAT EXAMPLE - DO NOT COPY CONTENT:
-> "Despite extensive research on [well-studied area from YOUR evidence], few studies have examined 
-> [understudied area you identify from YOUR evidence]. This gap is significant because..."
+A capstone project demonstrates your ability to conduct independent scholarly work and apply knowledge from your program. It serves as a culminating academic experience that showcases both subject mastery and research/analytical skills.
 
 ---
 
-## Synthesis Requirements (Critical for Capstone Level)
+## Capstone Project Types
 
-A capstone project must demonstrate your ability to SYNTHESIZE, not just summarize.
+Based on the topic and context, determine which type best matches and follow the corresponding guidance:
 
-### Synthesis Patterns
+**How to identify the type:** Look at what the project aims to produce:
+- Original data collection → Type A
+- Analysis of existing literature/sources → Type B  
+- A practical deliverable or intervention → Type C
+- A creative work with reflection → Type D
 
-⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
+### Type A: Empirical Research
+You collect and analyze original data (surveys, experiments, interviews, observations, archival research).
+- **Structure:** Introduction → Literature Review → Methodology → Results → Discussion → Conclusion
+- **Key requirement:** Rigorous data collection and systematic analysis
+- **Common in:** Sciences, social sciences, education, health fields
 
-❌ **AVOID (Descriptive - Poor Quality):**
-> "[Author A] found X. [Author B] found Y. [Author C] found Z."
+### Type B: Secondary Analysis / Synthesis
+You analyze existing sources, datasets, texts, or artifacts without collecting new primary data.
+- **Structure:** Introduction → Literature Review → Analytical Framework → Analysis → Discussion → Conclusion
+- **Key requirement:** Systematic approach to source selection and critical interpretation
+- **Common in:** Humanities, social sciences, interdisciplinary studies
 
-✅ **USE (Integrated Synthesis - Expected Quality) - STRUCTURE ONLY:**
-> "Research on [topic from YOUR evidence] converges around a central finding: [finding from YOUR evidence] 
-> [1] [2] [3]. However, the 
-> mechanisms underlying this relationship remain contested. Some [studies from YOUR evidence] 
-> attribute it to [factor from YOUR evidence] [4], while others emphasize 
-> [other factors from YOUR evidence] [5]. Notably, [specific studies from YOUR evidence] 
-> [6] suggest [nuance from YOUR evidence], challenging [earlier assumptions from YOUR evidence]."
->
-> <!-- CITATIONS
-> [1] paper_id: actual-id-from-evidence | quote: "exact quote"
-> [2] paper_id: actual-id-from-evidence | quote: "exact quote"
-> ... (continue for all citations)
-> -->
+### Type C: Applied / Professional
+You create a practical deliverable (policy brief, business plan, curriculum, program design, intervention) with scholarly justification.
+- **Structure:** Introduction → Literature Review → Needs Assessment → Project Design → Implementation/Evaluation Plan → Conclusion
+- **Key requirement:** Clear connection between scholarly research and practical application
+- **Common in:** Business, education, public policy, healthcare, social work
 
-⚠️ Replace ALL bracketed content with ACTUAL information from your evidence snippets.
-
-### Critical Evaluation Framework
-
-For EACH major finding or claim you discuss, consider:
-
-| Dimension | Questions to Address |
-|-----------|---------------------|
-| **Methodological Quality** | Was the sample adequate? Design appropriate? Measures valid? |
-| **Generalizability** | To what contexts do findings apply? Any replication? |
-| **Contradictions** | Do other studies disagree? Why might they differ? |
-| **Gaps** | What remains untested? What would strengthen the evidence? |
-
-⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
-
-### Example (Good Critical Evaluation) - STRUCTURE ONLY:
-> "While multiple studies support [finding from YOUR evidence] [1] 
-> [2], methodological limitations warrant caution. [Limitation you identify from YOUR evidence], 
-> limiting generalizability. Furthermore, [another limitation from YOUR evidence], as [study from YOUR evidence] 
-> [3] demonstrated [related finding from YOUR evidence]. These limitations highlight 
-> the need for [your study's approach]."
->
-> <!-- CITATIONS
-> [1] paper_id: actual-id | quote: "exact quote"
-> [2] paper_id: actual-id | quote: "exact quote"
-> [3] paper_id: actual-id | quote: "exact quote"
-> -->
-
-⚠️ CRITICAL: Do NOT invent sample sizes ("N=280") or time periods ("4-week," "8+ weeks").
-Only include such details if they ACTUALLY APPEAR in your evidence snippets.
+### Type D: Creative / Practice-Based
+You produce creative work (art, design, performance, creative writing, multimedia) with critical reflection.
+- **Structure:** Introduction → Contextual Review → Creative Work Description → Critical Reflection → Conclusion
+- **Key requirement:** Scholarly framing of creative choices and critical analysis of your process
+- **Common in:** Fine arts, design, creative writing, media studies, performing arts
 
 ---
 
-## Table Requirements for Capstone Projects
+## Introduction (CARS Framework)
 
-### Required Tables:
+Structure your introduction using the **Create A Research Space** model:
 
-⚠️ TABLE FORMAT EXAMPLES BELOW - DO NOT COPY VALUES ⚠️
-Populate tables ONLY with data from YOUR evidence snippets.
+### Move 1: Establish Territory (1-2 paragraphs)
+- Introduce the broader topic and its importance
+- Demonstrate the topic is significant and worth investigating
+- Provide essential background the reader needs
 
-**Table 1: Summary of Key Studies** (in Literature Review)
-| Author (Year) | Sample | Design | Key Finding | Relevance to Present Study |
-|---------------|--------|--------|-------------|---------------------------|
-| [Author from evidence] [1] | [Sample IF in evidence] | [Design from evidence] | [Finding from evidence] | [Your relevance assessment] |
+### Move 2: Establish Niche (1-2 paragraphs)
+- Identify a gap, problem, or opportunity in existing knowledge/practice
+- Indicate what previous work has missed, overlooked, or left unresolved
+- Use gap-signaling language: "However...", "Yet little research has...", "What remains unclear is..."
 
-**Table 2: Comparison of Approaches** (when applicable)
-| Approach | Advantages | Limitations | Studies Using |
-|----------|------------|-------------|---------------|
-| [Method from evidence] | [Advantages from evidence] | [Limitations from evidence] | [2] [3] |
+### Move 3: Occupy the Niche (1 paragraph)
+- State how YOUR capstone addresses the gap
+- Present your purpose statement, research questions, or project objectives
+- Preview your approach and scope
+- Briefly indicate your contribution
 
-<!-- CITATIONS
-[1] paper_id: actual-id | quote: "exact quote"
-[2] paper_id: actual-id | quote: "exact quote"
-[3] paper_id: actual-id | quote: "exact quote"
--->
-
-⚠️ CRITICAL: If your evidence doesn't include sample sizes or specific advantages/limitations,
-write "not reported" - NEVER invent data to fill table cells.
-
-### Results Tables (Required):
-- Descriptive statistics for all variables
-- Correlation matrix (for quantitative studies)
-- Main analysis results with full statistics
-- Hypothesis testing summary
-
-### Table Guidelines:
-- Every results section should have at least ONE data table
-- Literature review should include at least ONE summary table
-- Reference tables in the text ("As shown in Table 1...")
-- Include notes for significance levels
+**Anti-patterns to avoid:**
+- Starting too narrow (no context established)
+- Vague purpose ("This paper will explore...")
+- Missing gap statement (why is this needed?)
 
 ---
 
-## Source Diversity Requirements
+## Literature Review
 
-**Capstone projects require THOROUGH literature coverage:**
+Your literature review must SYNTHESIZE existing work, not merely summarize it.
 
-- Literature Review section: cite **60-80%** of available relevant sources
-- Each major theme should draw from **at least 3-4 different sources**
-- Avoid citing any single source more than 3 times
-- Include both foundational works AND recent research
+### Organizational Approaches (choose one or combine):
+- **Thematic:** Group by recurring themes or concepts
+- **Chronological:** Trace how understanding evolved over time
+- **Methodological:** Compare findings from different research approaches
+- **Theoretical:** Organize by competing theories or frameworks
 
-**Source Distribution Check:**
-- [ ] Have I covered the major perspectives on this topic?
-- [ ] Am I citing different sources for different claims?
-- [ ] Have I included recent research (last 5 years)?
-- [ ] Have I acknowledged any contradictory findings?
-- [ ] Am I using multiple sources to support key arguments?
+### Requirements:
+1. **Synthesis:** Group related sources, identify patterns across studies
+2. **Critical evaluation:** Assess methodological strengths and limitations
+3. **Gap identification:** Explicitly state what remains unknown or unresolved
+4. **Pivotal works:** Identify landmark studies and explain WHY they were influential
+
+### Gap Statement (REQUIRED)
+Your literature review must conclude with an explicit gap statement:
+> "Despite extensive research on [well-studied area], [understudied aspect] remains unclear. This capstone addresses this gap by..."
 
 ---
 
-## Quantitative Synthesis
+## Methodology by Project Type
 
-When multiple studies report similar findings, aggregate when possible:
+### For Type A: Empirical Research
 
-| Situation | How to Synthesize |
-|-----------|-------------------|
-| Same metric, 3+ studies | "Effect sizes ranged from r = 0.30 to r = 0.55" |
-| Consistent direction | "All four studies found positive effects" |
-| Mixed findings | "Results were mixed, with 3 of 6 studies finding significance" |
-| No numbers available | "Studies consistently/predominantly/generally found..." |
+**Quantitative:**
+- Research design and justification
+- Population and sampling procedures
+- Variables (independent, dependent, control)
+- Instruments with validity/reliability evidence
+- Data collection procedures
+- Statistical analysis methods
 
-**CRITICAL:** Never fabricate statistics. If numbers aren't in the evidence, use qualitative synthesis.
+**Qualitative:**
+- Research approach (phenomenology, grounded theory, case study, etc.)
+- Participant selection and rationale
+- Data collection methods (interviews, observations, documents)
+- Analysis approach (thematic analysis, coding procedures)
+- Trustworthiness measures (triangulation, member checking)
+
+### For Type B: Secondary Analysis
+- Sources analyzed and selection criteria
+- Analytical or theoretical framework
+- Systematic procedures for analysis
+- How patterns/themes were identified
+
+### For Type C: Applied/Professional
+- Needs assessment approach
+- Stakeholder analysis (if applicable)
+- Design rationale grounded in literature
+- Implementation considerations
+- Evaluation criteria or metrics
+
+### For Type D: Creative/Practice-Based
+- Creative process and methodology
+- Materials, techniques, or media used
+- Theoretical or artistic influences
+- Iterative development process
+
+---
+
+## Results / Findings
+
+Present findings systematically WITHOUT interpretation (save that for Discussion).
+
+### Type A (Empirical):
+- Organize by research question or hypothesis
+- Present data with appropriate statistics or thematic findings
+- Use tables/figures to clarify complex information
+- For quantitative: report descriptive and inferential statistics
+- For qualitative: present themes with illustrative evidence
+
+### Type B (Secondary Analysis):
+- Present analytical findings organized by theme or framework
+- Support claims with evidence from analyzed sources
+- Show patterns across sources
+
+### Type C (Applied/Professional):
+- Describe the deliverable/intervention
+- Present design components with rationale
+- Include evaluation plan or preliminary outcomes
+
+### Type D (Creative/Practice-Based):
+- Document the creative work
+- Describe key decisions and their rationale
+
+---
+
+## Discussion (STATE-COMPARE-EXPLAIN)
+
+For EACH major finding, use this three-part structure:
+
+1. **STATE:** "This study found that..." (what did you find?)
+2. **COMPARE:** "This aligns with / contradicts [prior work]..." (how does it relate to existing knowledge?)
+3. **EXPLAIN:** "This may be explained by..." (why might results agree or differ?)
+
+**Requirements:**
+- Connect every finding to your literature review
+- Address unexpected results honestly
+- Discuss practical AND theoretical implications
+- Do NOT simply restate results
+
+---
+
+## Conclusion
+
+Your conclusion must answer: **"So what? Why does this matter?"**
+
+### Required Elements:
+
+**Contribution Statement:**
+What new knowledge, insight, or practical value does your capstone provide? Be specific.
+
+**Implications:**
+- For theory: How does this extend or challenge existing understanding?
+- For practice: How can practitioners, policymakers, or professionals use this?
+
+**Limitations:**
+Acknowledge constraints honestly (sample size, scope, methodology, time). This demonstrates scholarly maturity, not weakness.
+
+**Future Directions:**
+What questions remain? What would you recommend for future research or development?
+
+**Anti-patterns to avoid:**
+- Introducing new information not discussed earlier
+- Vague claims ("More research is needed")
+- Overstating implications beyond what evidence supports
+
+---
+
+## Table Requirements
+
+Include at least ONE table appropriate to your project type. Use these header structures:
+
+### Type A (Empirical - Quantitative):
+| Variable | N | Mean | SD | [Additional statistics as needed] |
+
+### Type A (Empirical - Qualitative):
+| Theme | Description | Example Quote | Frequency |
+
+### Type B (Secondary Analysis):
+| Source | Context | Key Finding | Relevance to Argument |
+
+### Type C (Applied/Professional):
+| Design Component | Research Basis | Implementation Consideration |
+
+### Type D (Creative/Practice-Based):
+| Element/Decision | Influences | Rationale |
+
+**Guidelines:**
+- Reference tables in text ("As shown in Table 1...")
+- Tables complement prose; don't duplicate extensively
+- Only include data that appears in your evidence
+
+---
+
+## Source Diversity
+
+Capstone projects require thorough engagement with literature:
+- Cite 60-80% of available relevant sources
+- Each major section should draw from multiple sources
+- Avoid over-reliance on any single source (max 3 citations per source)
+- Include both foundational works and recent research
+
+---
+
+## Evidence Integrity
+
+**CRITICAL:** Only cite information that appears in your provided sources.
+- Never fabricate statistics, sample sizes, or specific findings
+- If numbers aren't available, describe qualitatively ("found a significant relationship" not "r = .45")
+- When uncertain, state what the evidence shows, not what you assume

@@ -3,7 +3,6 @@ import yaml from 'js-yaml'
 import fs from 'fs/promises'
 import path from 'path'
 import { PromptBuilder, type PromptTemplate } from '@/lib/core/prompt-builder'
-import type { PaperTypeKey, SectionKey } from './types'
 import type { PromptData, BuiltPrompt, TemplateOptions } from '@/lib/core/prompt-builder'
 import type { ChatCOStarContext, CompleteCOStarContext } from './costar-context'
 import type { ChatAUTOMATContext } from './automat-context'
@@ -186,9 +185,5 @@ export class PromptService {
 
   static buildSectionPath(sections: string[], currentSection: string): string {
     return PromptBuilder.buildSectionPath(sections, currentSection)
-  }
-
-  static estimateTargetWords(paperType: PaperTypeKey, sectionKey: SectionKey): number {
-    return PromptBuilder.estimateTargetWords(paperType, sectionKey)
   }
 }

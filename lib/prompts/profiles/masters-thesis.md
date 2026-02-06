@@ -1,180 +1,284 @@
 # Master's Thesis Context
 
-A master's thesis demonstrates mastery of research methods and makes a meaningful contribution to the field.
+A master's thesis demonstrates mastery of research methods and makes a meaningful contribution to the field. It shows your ability to conduct independent scholarly work at a level between capstone projects and doctoral dissertations.
 
-## Structure Expectations
+---
 
-### 1. Introduction (Funnel Structure)
-- Start broad: general topic and its importance
-- Narrow down: specific area of investigation
-- State: research problem, purpose, questions/hypotheses
-- Preview: significance and scope of study
+## Thesis Types
 
-### 2. Literature Review (Critical Analysis Required)
-- Synthesize existing research, don't just summarize
-- Identify debates, contradictions, and gaps
-- Justify how YOUR study addresses the gap
-- End with clear statement of what remains unknown
+Based on the topic and research approach, determine which type best matches:
 
-**Organizational Approach - Choose based on your topic:**
-- **THEMATIC:** Organize by themes (best for multi-faceted topics)
-- **CHRONOLOGICAL:** Trace development over time (best for evolving topics)
-- **METHODOLOGICAL:** Compare research approaches (best for method-diverse topics)
-- **THEORETICAL:** Organize by competing theories (best for theory-rich topics)
+**How to identify the type:**
+- You collect new data (surveys, interviews, experiments) → Type A
+- You analyze existing literature, texts, or datasets → Type B
+- You create something for professional practice → Type C
 
-**Pivotal Publications:** Identify landmark studies that shaped the field and explain WHY they were influential (not just what they found).
+### Type A: Empirical Research Thesis
+You collect and analyze original data through primary research methods.
+- **Structure:** Introduction → Literature Review → Methodology → Results → Discussion → Conclusion
+- **Key requirement:** Rigorous data collection and systematic analysis
+- **Common in:** Sciences, social sciences, education, health fields, psychology
 
-### 3. Methodology (Replicable Detail)
+### Type B: Theoretical / Secondary Analysis Thesis
+You analyze existing literature, published data, texts, or artifacts to generate new insights or advance theory.
+- **Structure:** Introduction → Literature Review → Theoretical Framework → Analysis → Discussion → Conclusion
+- **Key requirement:** Novel synthesis, theoretical contribution, or critical analysis
+- **Common in:** Humanities, philosophy, history, literature, some social sciences
+
+### Type C: Applied / Professional Thesis
+You address a practical problem in professional practice with scholarly justification.
+- **Structure:** Introduction → Literature Review → Context/Needs Assessment → Intervention/Solution → Evaluation → Conclusion
+- **Key requirement:** Clear link between research and professional application
+- **Common in:** Education (curriculum design), nursing, social work, business, public administration
+
+---
+
+## Introduction (CARS Framework)
+
+Structure your introduction using the **Create A Research Space** model:
+
+### Move 1: Establish Territory (1-2 paragraphs)
+- Introduce the broader topic and its significance
+- Demonstrate the topic merits scholarly investigation
+- Provide essential background (theory, context, key concepts)
+
+### Move 2: Establish Niche (1-2 paragraphs)
+- Identify a gap, problem, or opportunity in existing knowledge
+- What has previous research missed, overlooked, or left unresolved?
+- Signal phrases: "However...", "Yet little research has...", "What remains unclear is..."
+
+### Move 3: Occupy the Niche (1 paragraph)
+- State how YOUR thesis addresses the gap
+- Present research questions or hypotheses
+- Preview your approach and contribution
+- Briefly outline the thesis structure
+
+**Anti-patterns to avoid:**
+- Starting with dictionary definitions
+- Opening too broadly ("Since the dawn of time...")
+- Burying the research question
+- Vague purpose statements
+
+---
+
+## Literature Review (Critical Analysis Required)
+
+The literature review demonstrates your mastery of existing scholarship and justifies your research.
+
+### Requirements:
+1. **Synthesize** - Integrate sources, identify patterns across studies (don't just summarize)
+2. **Evaluate critically** - Assess methodological strengths and limitations
+3. **Identify debates** - Show contradictions and contested areas
+4. **Establish the gap** - Build the case for why your research is needed
+
+### Organizational Approaches (choose one or combine):
+- **Thematic:** Group by recurring themes (best for multi-faceted topics)
+- **Chronological:** Trace development over time (best for evolving topics)
+- **Methodological:** Compare findings by research approach (best for method-diverse topics)
+- **Theoretical:** Organize by competing theories (best for theory-rich topics)
+
+### Pivotal Publications
+Identify landmark studies and explain WHY they were influential—not just what they found.
+
+---
+
+## Theoretical Framework
+
+Your theoretical framework grounds your research in established theory.
+
+### Purpose:
+- Justifies and contextualizes your research approach
+- Explains the theories or models guiding your analysis
+- Shows how concepts in your study relate to each other
+- Distinguishes your framework from a simple literature summary
+
+### Required Elements:
+1. **Identify relevant theories** from your literature review
+2. **Explain key concepts** and how you define them
+3. **Show relationships** between concepts/variables
+4. **Justify your choice** of framework over alternatives
+5. **Connect to your research** - how does the framework guide your methodology and analysis?
+
+**Note:** Theoretical framework is NOT the same as literature review. The lit review surveys existing research; the theoretical framework identifies the specific theories you'll use.
+
+---
+
+## Methodology by Thesis Type
+
+### For Type A: Empirical Research
+
+**Quantitative:**
 - Research design with justification
 - Population and sampling (who, how many, how selected)
+- Variables (independent, dependent, control) with operational definitions
 - Instruments with validity and reliability evidence
 - Data collection procedures
-- Analysis methods with justification
+- Statistical analysis methods
 
-### 4. Results (Systematic Presentation)
-- Present findings without interpretation
+**Qualitative:**
+- Research approach (phenomenology, grounded theory, case study, ethnography, etc.)
+- Participant selection and rationale
+- Data collection (interviews, observations, documents)
+- Analysis approach (thematic analysis, coding procedures)
+- Trustworthiness measures (triangulation, member checking, audit trail)
+
+**Mixed Methods:**
+- Rationale for mixed approach
+- Design type (convergent, explanatory, exploratory)
+- Integration of quantitative and qualitative components
+
+### For Type B: Theoretical / Secondary Analysis
+- Sources analyzed and selection criteria
+- Theoretical or analytical framework
+- Systematic procedures for analysis
+- How themes/arguments were developed
+
+### For Type C: Applied / Professional
+- Context and needs assessment approach
+- Stakeholder considerations
+- Design rationale grounded in literature
+- Implementation procedures
+- Evaluation criteria
+
+---
+
+## Results / Findings
+
+Present findings systematically WITHOUT interpretation (save for Discussion).
+
+### For Quantitative Research:
+- Organize by research question or hypothesis
+- Present descriptive statistics, then inferential
 - Use tables and figures appropriately
-- Organize by research questions/hypotheses
-- Include summary of key findings
+- Report effect sizes and confidence intervals where applicable
 
-### 5. Discussion (Three-Part Structure for Each Finding)
-- **STATE:** What did you find?
-- **COMPARE:** How does it align/contrast with prior research?
-- **EXPLAIN:** Why might your results agree or differ?
+### For Qualitative Research:
+- Present themes with rich supporting evidence
+- Use illustrative quotes
+- Show how themes relate to research questions
+- Include participant voice
 
-### 6. Conclusion
-- Implications (theoretical and practical)
-- Limitations acknowledged honestly
-- Recommendations for future research
-
-## Citing Empirical Studies in Literature Review
-
-When reviewing prior research, include context about methodology:
-
-⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
-
-**Weak:** "[Author] found [topic] affects [outcome]."
-
-**Strong:** "[Author from YOUR evidence] [method from YOUR evidence] and found [finding from YOUR evidence] 
-(β = [value IF in evidence], p [value IF in evidence]), though [limitation from YOUR evidence or you identify]."
-
-⚠️ CRITICAL: Only include statistics (β, p-values, sample sizes) that ACTUALLY APPEAR in your evidence.
-If numbers aren't available, write qualitatively: "found a significant relationship" instead of inventing "β = 0.42".
-
-## Gap Identification
-
-**GAP IDENTIFICATION IS MANDATORY:**
-
-Your literature review must explicitly state what gap exists and how your study addresses it.
+### For Secondary/Theoretical Analysis:
+- Present analytical findings organized by argument
+- Support claims with evidence from sources
+- Build toward your theoretical contribution
 
 ---
 
-## Synthesis Requirements (Critical for Master's Level)
+## Discussion (STATE-COMPARE-EXPLAIN)
 
-Master's theses demand SYNTHESIS, not just summary. You must demonstrate analytical thinking.
+For EACH major finding, use this three-part structure:
 
-### Synthesis Patterns
+1. **STATE:** "This study found that..." (what did you find?)
+2. **COMPARE:** "This aligns with / contradicts [prior work]..." (how does it relate to existing literature?)
+3. **EXPLAIN:** "This may be explained by..." (why might results agree or differ?)
 
-⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
-
-❌ **AVOID (Descriptive - Undergraduate Level):**
-> "[Author A] found X. [Author B] found Y. [Author C] found Z."
-
-✅ **USE (Synthetic - Master's Level) - STRUCTURE ONLY:**
-> "A convergent pattern emerges from [type of research from YOUR evidence]: [description of studies from YOUR evidence] 
-> consistently link [topic] to [outcome] [1] [2] [3]. However, 
-> [other type of research from YOUR evidence] reveal a more nuanced picture, with [factors from YOUR evidence] 
-> moderating this relationship [4] [5]. This [type of divide you identify] 
-> suggests that [your synthesis/interpretation]."
-
-⚠️ Replace ALL bracketed content with ACTUAL information from your evidence.
-Do not invent sample sizes (like "N > 500") unless they appear in your evidence.
-
-### Critical Evaluation Framework
-
-For EVERY major claim or finding you discuss, evaluate:
-
-| Dimension | Questions to Address |
-|-----------|---------------------|
-| **Methodological Quality** | Sample size? Design appropriate? Biases controlled? |
-| **Generalizability** | Context-specific or broadly applicable? Replicated? |
-| **Contradictions** | Other studies disagree? Why might findings differ? |
-| **Gaps** | What remains untested? What would strengthen evidence? |
-
-⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
-
-### Example (Good Critical Evaluation) - STRUCTURE ONLY:
-> "While [evidence type from YOUR sources] suggests [finding from YOUR evidence] [1], 
-> [limitation you identify] limits confidence. Specifically, 
-> [pattern you observe in YOUR evidence] [1]. This [gap/artifact you identify] has not been 
-> adequately addressed in subsequent research, representing a significant methodological 
-> gap that this thesis aims to address through [your approach]."
-
-⚠️ CRITICAL: Only include effect sizes (d = X.XX) if they ACTUALLY APPEAR in your evidence.
-If numbers aren't available, write: "suggests a moderate effect" instead of inventing "d = 0.45".
+### Additional Requirements:
+- Connect findings back to your theoretical framework
+- Discuss implications for theory AND practice
+- Address unexpected results honestly
+- Do NOT simply restate results
 
 ---
 
-## Table Requirements for Master's Theses
+## Conclusion
 
-### Required Tables:
+Your conclusion must answer: **"So what? What does this thesis contribute?"**
 
-⚠️ TABLE FORMAT EXAMPLES BELOW - DO NOT COPY VALUES ⚠️
-Populate tables ONLY with data from YOUR evidence snippets.
+### Required Elements:
 
-**Table 1: Summary of Key Studies** (in Literature Review)
-| Author (Year) | Sample | Design | Key Finding | Limitation |
-|---------------|--------|--------|-------------|------------|
-| [Author from evidence] [1] | [Sample IF in evidence] | [Design from evidence] | [Finding from evidence] | [Limitation from evidence] |
+**Contribution Statement:**
+What new knowledge, insight, or understanding does your thesis provide?
 
-**Table 2: Comparison of Theoretical Frameworks** (if applicable)
+**Summary of Key Findings:**
+Brief synthesis (not repetition) of main results.
+
+**Implications:**
+- **Theoretical:** How does this extend or challenge understanding?
+- **Practical:** How can practitioners or policymakers use this?
+
+**Limitations:**
+Acknowledge constraints honestly (scope, sample, methodology). This shows scholarly maturity.
+
+**Future Research:**
+Specific directions, not generic "more research is needed."
+
+**Anti-patterns:**
+- Introducing new information
+- Overstating implications
+- Excessive hedging that undermines contribution
+
+---
+
+## Table Requirements
+
+Include tables appropriate to your thesis type (at least ONE in literature review, at least ONE in results).
+
+### For Literature Review:
+
+**Summary of Key Studies**
+| Author (Year) | Sample/Context | Design | Key Finding | Limitation |
+
+**Theoretical Framework Comparison** (if applicable)
 | Theory | Key Propositions | Supporting Evidence | Critiques |
-|--------|-----------------|---------------------|-----------|
-| [Theory from evidence] | [Propositions from evidence] | [1] [2] | [Critiques from evidence] |
 
-**Table 3: Methodological Comparison** (if discussing methods)
-| Method | Strengths | Weaknesses | Studies Using |
-|--------|-----------|------------|---------------|
-| [Method from evidence] | [Strengths from evidence] | [Weaknesses from evidence] | [1] [2] |
+### For Quantitative Results:
 
-⚠️ CRITICAL: If your evidence doesn't include sample sizes, designs, or limitations, 
-either omit that column OR write "not reported" - NEVER invent data.
+**Descriptive Statistics**
+| Variable | N | Mean | SD | Min | Max |
 
-### Results Tables (Required):
-- Descriptive statistics
-- Correlation matrix (if quantitative)
-- Main analysis results with confidence intervals
-- Hypothesis support summary
+**Main Analysis Results**
+| Predictor | β | SE | p | 95% CI |
 
----
+### For Qualitative Results:
 
-## Source Diversity Requirements
+**Themes and Evidence**
+| Theme | Description | Example Quote | Frequency |
 
-**Master's theses require COMPREHENSIVE literature coverage:**
+### For Applied/Professional Thesis:
 
-- Literature Review section: cite **70-100%** of available relevant sources
-- Each major theme should draw from **at least 4-5 different sources**
-- Avoid citing any single source more than 3-4 times
-- Include both foundational/seminal works AND recent studies
+**Needs Assessment Summary**
+| Need Identified | Evidence | Priority | Addressed By |
 
-**Source Distribution Check:**
-- [ ] Have I covered classic/foundational works in the field?
-- [ ] Have I included recent research (last 5 years)?
-- [ ] Am I citing different sources for different claims?
-- [ ] Have I represented different methodological approaches?
-- [ ] Have I acknowledged contradictory findings?
+**Guidelines:**
+- Reference tables in text
+- Tables complement prose—don't duplicate extensively
+- Only include data from your evidence or analysis
 
 ---
 
-## Quantitative Synthesis
+## Source Diversity
 
-When multiple studies report comparable findings, aggregate when possible:
+Master's theses require comprehensive literature coverage:
+- Cite **70-90%** of available relevant sources
+- Each major theme: draw from **4-5+ different sources**
+- Avoid over-reliance on single sources (max 3-4 citations per source)
+- Include foundational works AND recent research
+- Represent different methodological approaches
 
-| Situation | How to Synthesize |
-|-----------|-------------------|
-| Same metric, 3+ studies | "Effect sizes ranged from d = 0.3 to d = 0.6" |
-| Consistent direction | "All seven studies found positive effects" |
-| Mixed findings | "Results were mixed, with 4 of 9 studies finding significance" |
-| Meta-analyses exist | "Meta-analytic evidence suggests d = 0.45 [CITE]" |
+---
 
-**CRITICAL:** Never fabricate statistics. If specific numbers aren't available in evidence, use qualitative descriptors.
+## Synthesis Requirements
+
+Master's theses demand SYNTHESIS, not just summary.
+
+### Synthesis Pattern:
+❌ **Avoid:** "[Author A] found X. [Author B] found Y. [Author C] found Z."
+
+✅ **Use:** "A convergent pattern emerges: [studies] consistently link [topic] to [outcome] [1][2][3]. However, [other research] reveals moderating factors [4][5], suggesting [your synthesis]."
+
+### Critical Evaluation:
+For major claims, evaluate:
+- **Methodological quality:** Sample size? Design appropriate?
+- **Generalizability:** Context-specific or broadly applicable?
+- **Contradictions:** Studies that disagree? Why might they differ?
+- **Gaps:** What remains untested?
+
+---
+
+## Evidence Integrity
+
+**CRITICAL:** Only cite information from your provided sources.
+- Never fabricate statistics, sample sizes, or findings
+- If numbers aren't available, describe qualitatively
+- Write "found a significant relationship" not invented "β = 0.42"

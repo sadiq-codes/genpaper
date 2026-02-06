@@ -110,7 +110,8 @@ export function extractCitedChunksFromContent(
   const citedPaperIds = new Set<string>()
   
   // Storage format: [@paperId#instanceId] or [@paperId]
-  const storageMatches = content.matchAll(/\[@([a-f0-9-]+)(?:#[a-f0-9-]+)?\]/gi)
+  // instanceId may be non-UUID (alphanumeric with timestamp)
+  const storageMatches = content.matchAll(/\[@([a-f0-9-]{36})(?:#[^\]]+)?\]/gi)
   for (const match of storageMatches) {
     citedPaperIds.add(match[1].trim())
   }

@@ -15,6 +15,7 @@ import pLimit from 'p-limit'
 import { checkPaperExists, createPaperMetadata } from '@/lib/db/papers'
 import { createChunksForPaper } from '@/lib/content/ingestion'
 import { getOrExtractFullText } from '@/lib/services/pdf-processor'
+import { tryHtmlFallbackFromDoi, tryEuropePmcFullText } from '@/lib/content/html-extractor'
 import type { PaperDTO } from '@/lib/schemas/paper'
 import { PaperSources } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
@@ -516,7 +517,9 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
     },
     source: `academic_search_${paper.source}`,
     citation_count: paper.citationCount,
-    authors: (paper.authors && paper.authors.length > 0) ? paper.authors : ['Unknown'],
+    // Keep empty array if no authors - don't use placeholder 'Unknown' which pollutes the data
+    // The display layer handles empty authors appropriately (shows "Anonymous" per citation style)
+    authors: (paper.authors && paper.authors.length > 0) ? paper.authors : [],
     // Additional bibliographic fields for complete citations
     volume: paper.volume || undefined,
     issue: paper.issue || undefined,
@@ -762,9 +765,104 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
         console.warn(`❌ PDF failed [${failureType}]: ${paperDTO.pdf_url}`)
         console.warn(`   Reason: ${errorMessage.slice(0, 200)}`)
         console.warn(`   Duration: ${pdfProcessingMs}ms | Paper: "${paperDTO.title.slice(0, 50)}..."`)
+        
+        // Last resort: try content extraction via DOI if available
+        if (paperDTO.doi) {
+          let recovered = false
+          
+          // Try 1: HTML from publisher landing page
+          try {
+            const htmlResult = await tryHtmlFallbackFromDoi(paperDTO.doi, 30_000)
+            if (htmlResult?.content && htmlResult.content.length > 200) {
+              contentParts.push(htmlResult.content)
+              console.log(`✅ HTML-from-DOI recovery: ${htmlResult.content.length} chars after PDF failure`)
+              recovered = true
+              try {
+                const serviceClient = getServiceClient()
+                await serviceClient.from('papers').update({
+                  pdf_content: htmlResult.content,
+                  content_source: 'html'
+                }).eq('id', paperId)
+              } catch (persistErr) {
+                console.warn(`Failed to persist HTML content for ${paperId}:`, persistErr)
+              }
+            }
+          } catch (htmlErr) {
+            console.warn(`❌ HTML-from-DOI recovery failed for ${paperDTO.doi}:`, htmlErr instanceof Error ? htmlErr.message : String(htmlErr))
+          }
+          
+          // Try 2: Europe PMC full-text XML (if paper is in PMC)
+          if (!recovered) {
+            try {
+              const epmcResult = await tryEuropePmcFullText(paperDTO.doi, 30_000)
+              if (epmcResult?.content && epmcResult.content.length > 200) {
+                contentParts.push(epmcResult.content)
+                console.log(`✅ Europe PMC XML recovery: ${epmcResult.content.length} chars after PDF failure`)
+                try {
+                  const serviceClient = getServiceClient()
+                  await serviceClient.from('papers').update({
+                    pdf_content: epmcResult.content,
+                    content_source: 'html'
+                  }).eq('id', paperId)
+                } catch (persistErr) {
+                  console.warn(`Failed to persist EPMC content for ${paperId}:`, persistErr)
+                }
+              }
+            } catch (epmcErr) {
+              console.warn(`❌ Europe PMC XML recovery failed for ${paperDTO.doi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
+            }
+          }
+        }
+      }
+    } else if (paperDTO.doi) {
+      // No PDF URL but DOI exists — try content extraction fallbacks
+      console.log(`📄 No PDF URL, trying content fallbacks via DOI for: "${paperDTO.title.slice(0, 50)}..."`)
+      let recovered = false
+      
+      // Try 1: HTML from publisher landing page
+      try {
+        const htmlResult = await tryHtmlFallbackFromDoi(paperDTO.doi, 30_000)
+        if (htmlResult?.content && htmlResult.content.length > 200) {
+          contentParts.push(htmlResult.content)
+          console.log(`✅ HTML-from-DOI success: ${htmlResult.content.length} chars for "${paperDTO.title.slice(0, 50)}..."`)
+          recovered = true
+          try {
+            const serviceClient = getServiceClient()
+            await serviceClient.from('papers').update({
+              pdf_content: htmlResult.content,
+              content_source: 'html'
+            }).eq('id', paperId)
+          } catch (persistErr) {
+            console.warn(`Failed to persist HTML content for ${paperId}:`, persistErr)
+          }
+        }
+      } catch (htmlErr) {
+        console.warn(`❌ HTML-from-DOI failed for ${paperDTO.doi}:`, htmlErr instanceof Error ? htmlErr.message : String(htmlErr))
+      }
+      
+      // Try 2: Europe PMC full-text XML (if paper is in PMC)
+      if (!recovered) {
+        try {
+          const epmcResult = await tryEuropePmcFullText(paperDTO.doi, 30_000)
+          if (epmcResult?.content && epmcResult.content.length > 200) {
+            contentParts.push(epmcResult.content)
+            console.log(`✅ Europe PMC XML success: ${epmcResult.content.length} chars for "${paperDTO.title.slice(0, 50)}..."`)
+            try {
+              const serviceClient = getServiceClient()
+              await serviceClient.from('papers').update({
+                pdf_content: epmcResult.content,
+                content_source: 'html'
+              }).eq('id', paperId)
+            } catch (persistErr) {
+              console.warn(`Failed to persist EPMC content for ${paperId}:`, persistErr)
+            }
+          }
+        } catch (epmcErr) {
+          console.warn(`❌ Europe PMC XML failed for ${paperDTO.doi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
+        }
       }
     } else {
-      console.log(`📄 No PDF URL for: "${paperDTO.title.slice(0, 50)}..."`)
+      console.log(`📄 No PDF URL and no DOI for: "${paperDTO.title.slice(0, 50)}..."`)
     }
     
     // Step 5: Create chunks using unified chunker (same settings for all content types)

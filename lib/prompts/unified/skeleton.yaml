@@ -131,10 +131,30 @@ system: |-
   - Implication: "this suggests", "the practical consequence"
   Vary these across paragraphs to avoid formulaic writing.
   
+  PARAGRAPH STRUCTURE (CLAIM-EVIDENCE-ANALYSIS-TRANSITION):
+  Each body paragraph should follow this pattern:
+  1. CLAIM (1 sentence): State your point clearly
+  2. EVIDENCE (2-4 sentences): Synthesized support from multiple sources [1] [2]
+  3. ANALYSIS (1-2 sentences): Interpret—why it matters, what it means
+  4. TRANSITION (optional): Bridge to the next paragraph's topic
+  
+  ❌ Anti-patterns:
+  - All-evidence paragraphs (list citations without interpretation)
+  - Claim-only paragraphs (assertions without support)
+  - Missing analysis (report findings but never explain significance)
+  
+  TRANSITIONS (vary these to avoid repetitive writing):
+  - Within sentences: Addition (moreover, additionally), Contrast (however, whereas), 
+    Causation (consequently, therefore), Example (for instance, specifically)
+  - Between paragraphs: Signal the relationship—"Building on this foundation...", 
+    "In contrast to [previous topic]...", "A related consideration..."
+  - Between sections: Connect backward ("Having established X...") AND 
+    forward ("...which raises the question of Y, addressed next")
+  
   VARIETY:
   - Vary transition words (not "Furthermore" 3 times)
   - Mix sentence lengths (short punchy + longer complex)
-  - Vary paragraph openings
+  - Vary paragraph openings (not every paragraph starts with "Studies show...")
   
   REPETITION PREVENTION:
   - Check "Already Covered" section - don't restate
@@ -356,6 +376,8 @@ user: |-
      - paperId: Copy exact paper_id from evidence snippet
      - quote: Exact supporting sentence from source
   
+  ⚠️ **IMPORTANT:** Always include both fields. If no citations are needed, return `citations: []` (empty array, never omit the field).
+  
   **FINAL CHECKLIST:**
   □ Every paragraph has 2-3+ citations from evidence
   □ Content is SYNTHESIZED (comparing/integrating), not just described
@@ -368,9 +390,9 @@ user: |-
   {{/hasOriginalResearch}}
 
 metadata:
-  version: "3.1"
+  version: "3.2"
   created: "2025-01-15"
-  updated: "2026-02-05"
+  updated: "2026-02-06"
   description: "Streamlined skeleton emphasizing synthesis over description. Added anti-AI-ish constraints."
   optimization_notes:
     - "Consolidated citation instructions (100→30 lines)"
@@ -379,3 +401,4 @@ metadata:
     - "Moved voice to compact format"
     - "Removed redundant warnings/reminders"
     - "v3.1: Added index invariant, citation placement rule, scholarly moves variety"
+    - "v3.2: Added explicit instruction to always return citations array (even if empty) for OpenAI structured output compatibility"

@@ -373,7 +373,8 @@ export function processNumberedCitations(
 
 // New format with instance tracking: [@paperId#instanceId] (group 1 = paperId, group 2 = instanceId)
 // Also matches legacy [@paperId] without instanceId for backward compatibility
-const PANDOC_CITE_PATTERN = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
+// instanceId may be non-UUID (alphanumeric with timestamp)
+const PANDOC_CITE_PATTERN = /\[@([a-f0-9-]{36})(?:#([^\]]+))?\]/gi
 
 // Legacy citation format (for backward compatibility): [CITE: paper_id]
 const LEGACY_CITE_PATTERN = /\[CITE:\s*([a-f0-9-]+)\]/gi

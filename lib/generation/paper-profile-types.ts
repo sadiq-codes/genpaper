@@ -151,6 +151,29 @@ export interface TitleContract {
 }
 
 /**
+ * Paper Subtype Selection
+ * 
+ * Captures which specific type/mode was selected for the paper based on the topic.
+ * Each paper type (literatureReview, capstoneProject, etc.) has subtypes that
+ * determine the appropriate structure and approach.
+ * 
+ * Examples:
+ * - Literature Review: Type A (Standalone), Type B (Background), Type C (Systematic), Type D (Scoping)
+ * - Capstone Project: Type A (Empirical), Type B (Secondary), Type C (Applied), Type D (Creative)
+ * - Master's Thesis: Type A (Empirical), Type B (Theoretical), Type C (Applied)
+ * - PhD Dissertation: Type A (Empirical), Type B (Theoretical), Type C (Humanities), Type D (Practice-Based)
+ * - Research Article: Mode A (Primary), Mode B (Secondary), Mode C (Mixed)
+ */
+export interface PaperSubtype {
+  /** The type identifier (e.g., "A", "B", "C", "D" or mode name) */
+  type: string
+  /** Human-readable name (e.g., "Standalone Literature Review", "Applied Capstone") */
+  name: string
+  /** Why this type/mode was selected based on the topic */
+  rationale: string
+}
+
+/**
  * Voice configuration for authorial persona
  * Enables distinct "author voices" to reduce AI detectability
  */
@@ -206,6 +229,14 @@ export interface PaperProfile {
    * just covering related background material.
    */
   titleContract?: TitleContract
+  
+  // Paper Subtype (explicit type/mode selection)
+  /**
+   * The selected subtype/mode for this paper based on topic analysis.
+   * Makes explicit which type (e.g., Systematic Review vs. Standalone Review)
+   * was chosen and why, enabling debugging and transparency.
+   */
+  paperSubtype?: PaperSubtype
 }
 
 /**

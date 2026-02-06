@@ -63,18 +63,15 @@ if (!CONTACT_EMAIL) {
 
 // PDF URL Detection Utilities
 
-// Known paywall domains that will return 403/require tokens
-// These should be filtered out to avoid wasting time on failed downloads
+// Domains that ALWAYS require API tokens — these will never work with a plain fetch.
+// Publisher domains with mixed OA/paywalled content (Wiley, ScienceDirect, T&F, SAGE, OUP)
+// are intentionally NOT listed here — many papers on those hosts are legitimately OA
+// and the download attempt + %PDF header check will filter out paywalled ones.
 const PAYWALL_DOMAINS = [
-  'api.elsevier.com',           // Requires API token
-  'api.wiley.com',              // Requires TDM Client Token
-  'onlinelibrary.wiley.com/doi/pdfdirect', // Often requires access
-  'academic.oup.com',           // Oxford - often paywalled
-  'www.aeaweb.org/articles/pdf', // AEA journals - paywalled
-  'pubsonline.informs.org',     // INFORMS - paywalled
-  'www.sciencedirect.com/science/article', // ScienceDirect landing pages
-  'tandfonline.com',            // Taylor & Francis - often paywalled
-  'journals.sagepub.com',       // SAGE - often paywalled
+  'api.elsevier.com',           // Requires Elsevier API token
+  'api.wiley.com',              // Requires Wiley TDM Client Token
+  'www.aeaweb.org/articles/pdf', // AEA journals - always paywalled
+  'pubsonline.informs.org',     // INFORMS - always paywalled
 ]
 
 // Landing page patterns that look like PDF URLs but aren't
@@ -114,7 +111,7 @@ function isDirectPdfUrl(url: string): boolean {
     return false
   }
   
-  // Direct PDF patterns - known good sources
+  // Direct PDF patterns - known good sources and mixed-OA publishers
   const pdfPatterns = [
     /\.pdf$/i,
     /arxiv\.org\/pdf\//i,
@@ -133,6 +130,12 @@ function isDirectPdfUrl(url: string): boolean {
     /plos\.org\/.*\.pdf/i,                       // PLOS OA PDFs
     /nature\.com\/.*\.pdf/i,                     // Nature (some OA)
     /doi\.org\/.*\.pdf$/i,                       // DOI resolving to PDF
+    /onlinelibrary\.wiley\.com\/doi\/pdf\//i,    // Wiley (many hybrid OA)
+    /onlinelibrary\.wiley\.com\/doi\/pdfdirect\//i,
+    /sciencedirect\.com\/.*\/pdf/i,              // ScienceDirect OA articles
+    /tandfonline\.com\/doi\/pdf\//i,             // Taylor & Francis OA
+    /journals\.sagepub\.com\/doi\/pdf\//i,       // SAGE OA
+    /academic\.oup\.com\/.*\/pdf/i,              // Oxford OA
   ]
   
   return pdfPatterns.some(pattern => pattern.test(url))
@@ -173,10 +176,8 @@ async function findArxivPdf(title: string): Promise<string | null> {
   }
 }
 
-// ResearchGate PDF finder (simplified)
-async function findResearchGatePdf(): Promise<string | null> {
-  // This would require web scraping or API access to ResearchGate
-  // For now, return null (implement if needed)
+// ResearchGate PDF finder (simplified) — disabled, requires scraping
+async function _findResearchGatePdf(): Promise<string | null> {
   return null
 }
 
@@ -507,6 +508,8 @@ async function findCorePdf(doi: string): Promise<string | null> {
       
       if (data.results && data.results.length > 0) {
         const work = data.results[0]
+        
+        // Try existing URLs first
         const pdfUrl = work.downloadUrl || 
           (work.sourceFulltextUrls?.find((url: string) => url.endsWith('.pdf') || url.includes('/pdf')) || 
            work.sourceFulltextUrls?.[0])
@@ -514,6 +517,13 @@ async function findCorePdf(doi: string): Promise<string | null> {
         if (pdfUrl && isDirectPdfUrl(pdfUrl)) {
           console.log(`✅ CORE API found PDF: ${pdfUrl}`)
           return pdfUrl
+        }
+        
+        // Fallback: try CORE's direct download endpoint using CORE ID
+        if (work.id) {
+          const coreDirectUrl = `https://core.ac.uk/download/${work.id}.pdf`
+          console.log(`✅ CORE API found PDF via direct download: ${coreDirectUrl}`)
+          return coreDirectUrl
         }
       }
       
@@ -738,6 +748,7 @@ interface SemanticScholarResponse {
 }
 
 interface CoreWork {
+  id?: number  // CORE internal ID — used for direct PDF download endpoint
   title: string
   yearPublished?: number
   doi?: string
@@ -1455,13 +1466,21 @@ export async function getOpenAccessPdf(doi: string): Promise<string | null> {
         return null
       }
       
-      // Check if we have a valid open access location with PDF
-      if (data.best_oa_location?.url_for_pdf && 
-          data.best_oa_location.host_type && 
-          (data.best_oa_location.host_type !== 'publisher' || 
-           (data.best_oa_location.host_type === 'publisher' && data.journal_is_oa))) {
-        console.log(`✅ Found Unpaywall PDF: ${data.best_oa_location.url_for_pdf}`)
+      // Trust best_oa_location if it has a PDF URL — Unpaywall only lists
+      // verified open access locations, so host_type filtering is unnecessary
+      if (data.best_oa_location?.url_for_pdf) {
+        console.log(`✅ Found Unpaywall PDF (best): ${data.best_oa_location.url_for_pdf}`)
         return data.best_oa_location.url_for_pdf
+      }
+      
+      // Fall through to oa_locations array for additional PDF URLs
+      if (Array.isArray(data.oa_locations)) {
+        for (const loc of data.oa_locations) {
+          if (loc?.url_for_pdf) {
+            console.log(`✅ Found Unpaywall PDF (oa_locations): ${loc.url_for_pdf}`)
+            return loc.url_for_pdf
+          }
+        }
       }
       
       return null
@@ -1504,74 +1523,93 @@ async function findPmcPdf(url: string): Promise<string | null> {
   return null
 }
 
-// PDF Strategies ordered by speed and reliability (cheap first)
-// Strategy ordering matters: we want to minimize latency while maximizing success
-const pdfStrategies: PdfStrategy[] = [
-  // Tier 1: Cheap pattern-based (pure string transforms + quick HEAD check)
-  {
-    name: 'KnownPatterns',
-    fn: (paper) => findPdfByKnownPatterns(paper),
-    available: true
-  },
-  // Tier 1: PMC pattern matching (cheap)
-  {
-    name: 'PMC',
-    fn: (paper) => findPmcPdf(paper.url || paper.pdf_url || ''),
-    available: true
-  },
-  // Tier 2: DOI resolution (single redirect follow, ~200-400ms)
-  {
-    name: 'DOI-Resolver',
-    fn: (paper) => resolveDoi(paper.doi || ''),
-    available: true
-  },
-  // Tier 2: Unpaywall API (reliable, ~500ms)
-  {
-    name: 'Unpaywall',
-    fn: (paper) => getOpenAccessPdf(paper.doi || ''),
-    available: true
-  },
-  // Tier 2: CORE API (200M+ OA papers, ~500ms) - only if API key available
-  {
-    name: 'CORE',
-    fn: (paper) => findCorePdf(paper.doi || ''),
-    available: !!process.env.CORE_API_KEY
-  },
-  // Tier 3: Title-based searches (slower, ~1-2s each)
-  {
-    name: 'ArXiv',
-    fn: (paper) => findArxivPdf(paper.title),
-    available: true
-  },
-  {
-    name: 'bioRxiv',
-    fn: (paper) => findBiorxivPdf(paper.title),
-    available: true
-  },
-  {
-    name: 'medRxiv',
-    fn: (paper) => findMedrxivPdf(paper.title),
-    available: true
-  },
-  // Disabled strategies
-  {
-    name: 'ResearchGate',
-    fn: () => findResearchGatePdf(),
-    available: false // Disabled - requires scraping
+// PMC ID converter: resolve DOI → PMCID → direct PMC PDF URL
+// Uses NCBI's ID converter API — works for any paper that's in PMC regardless of source
+async function findPmcPdfByDoi(doi: string): Promise<string | null> {
+  if (!doi) return null
+  try {
+    const cleanDoi = doi.replace(/^https?:\/\/doi\.org\//i, '').trim()
+    const url = `https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids=${encodeURIComponent(cleanDoi)}&format=json`
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000)
+    try {
+      const response = await fetch(url, { signal: controller.signal })
+      if (!response.ok) return null
+      const data = await response.json()
+      const record = data.records?.[0]
+      if (record?.pmcid) {
+        const pmcId = record.pmcid.replace(/^PMC/i, '')
+        console.log(`✅ PMC ID converter found PMCID: PMC${pmcId} for DOI: ${cleanDoi}`)
+        return `https://www.ncbi.nlm.nih.gov/pmc/articles/PMC${pmcId}/pdf/`
+      }
+      return null
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  } catch {
+    return null
   }
+}
+
+// PDF strategies grouped into tiers for parallel execution within each tier.
+// Tier 1 = instant pattern matching, Tier 2 = API lookups (parallel), Tier 3 = title searches (parallel)
+
+const tier1Strategies: PdfStrategy[] = [
+  { name: 'KnownPatterns', fn: (paper) => findPdfByKnownPatterns(paper), available: true },
+  { name: 'PMC', fn: (paper) => findPmcPdf(paper.url || paper.pdf_url || ''), available: true },
 ]
 
-// Enhanced single-paper PDF enrichment with early exit
+const tier2Strategies: PdfStrategy[] = [
+  { name: 'DOI-Resolver', fn: (paper) => resolveDoi(paper.doi || ''), available: true },
+  { name: 'Unpaywall', fn: (paper) => getOpenAccessPdf(paper.doi || ''), available: true },
+  { name: 'CORE', fn: (paper) => findCorePdf(paper.doi || ''), available: !!process.env.CORE_API_KEY },
+  { name: 'PMC-via-DOI', fn: (paper) => findPmcPdfByDoi(paper.doi || ''), available: true },
+]
+
+const tier3Strategies: PdfStrategy[] = [
+  { name: 'ArXiv', fn: (paper) => findArxivPdf(paper.title), available: true },
+  { name: 'bioRxiv', fn: (paper) => findBiorxivPdf(paper.title), available: true },
+  { name: 'medRxiv', fn: (paper) => findMedrxivPdf(paper.title), available: true },
+]
+
+const _pdfStrategies: PdfStrategy[] = [...tier1Strategies, ...tier2Strategies, ...tier3Strategies]
+
+/**
+ * Run a tier of strategies in parallel, return the first valid PDF URL found.
+ */
+async function runTierParallel(strategies: PdfStrategy[], paper: AcademicPaper): Promise<string | null> {
+  const available = strategies.filter(s => s.available)
+  if (available.length === 0) return null
+
+  const results = await Promise.allSettled(
+    available.map(async (strategy) => {
+      const pdfUrl = await strategy.fn(paper)
+      if (pdfUrl && isDirectPdfUrl(pdfUrl)) {
+        return { name: strategy.name, pdfUrl }
+      }
+      return null
+    })
+  )
+
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value) {
+      console.log(`✅ ${result.value.name} found PDF for "${paper.title.substring(0, 50)}..."`)
+      return result.value.pdfUrl
+    }
+  }
+  return null
+}
+
+// Enhanced single-paper PDF enrichment: Tier 1 sequential (instant), then Tier 2 parallel, then Tier 3 parallel
 async function enrichPdf(paper: AcademicPaper): Promise<AcademicPaper> {
   // Skip if we already have a direct PDF URL
   if (isDirectPdfUrl(paper.pdf_url || '')) {
     return paper
   }
 
-  // Try strategies sequentially with early exit
-  for (const strategy of pdfStrategies) {
+  // Tier 1: Cheap pattern-based (sequential, near-instant)
+  for (const strategy of tier1Strategies) {
     if (!strategy.available) continue
-    
     try {
       const pdfUrl = await strategy.fn(paper)
       if (pdfUrl && isDirectPdfUrl(pdfUrl)) {
@@ -1580,10 +1618,21 @@ async function enrichPdf(paper: AcademicPaper): Promise<AcademicPaper> {
       }
     } catch (error) {
       console.warn(`${strategy.name} strategy failed:`, error)
-      // Continue to next strategy
     }
   }
-  
+
+  // Tier 2: API lookups in parallel (DOI resolver, Unpaywall, CORE hit different hosts)
+  const tier2Result = await runTierParallel(tier2Strategies, paper)
+  if (tier2Result) {
+    return { ...paper, pdf_url: tier2Result }
+  }
+
+  // Tier 3: Title-based searches in parallel (arXiv, bioRxiv, medRxiv)
+  const tier3Result = await runTierParallel(tier3Strategies, paper)
+  if (tier3Result) {
+    return { ...paper, pdf_url: tier3Result }
+  }
+
   return paper
 }
 

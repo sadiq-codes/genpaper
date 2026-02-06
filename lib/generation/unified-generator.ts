@@ -134,13 +134,14 @@ export async function generateWithUnifiedTemplate(
 
   // Schema for structured output with numbered citation markers
   // LLM outputs [1], [2], [3] in prose, and citations array maps each occurrence
+  // NOTE: All fields must be required (no .default() or .optional()) for OpenAI structured output
   const SectionOutputSchema = z.object({
     contentMarkdown: z.string().describe('The section content with [1], [2], [3] citation markers'),
     citations: z.array(z.object({
       index: z.number().describe('The citation marker number [N] this entry corresponds to'),
       paperId: z.string().describe('The exact paper_id from the evidence snippet'),
       quote: z.string().describe('The exact sentence from the source that supports the claim'),
-    })).default([]).describe('One entry per citation occurrence in order of appearance'),
+    })).describe('One entry per citation occurrence in order of appearance. Return empty array [] if no citations.'),
   })
 
   const { object } = await generateObject({
@@ -219,7 +220,35 @@ export async function generateFullSection(
 }
 
 /**
- * Batch processing - process multiple sections sequentially with unified approach
+ * Extract a concise summary from generated section content.
+ * Takes the first 2 sentences + lists cited paper IDs.
+ * No LLM call — pure text extraction.
+ */
+function extractSectionSummary(title: string, content: string, citations: StructuredCitation[]): string {
+  // Extract first 2 sentences as a content preview
+  const sentences = content
+    .replace(/\[(\d+)\]/g, '') // strip citation markers for cleaner summary
+    .split(/(?<=[.!?])\s+/)
+    .filter(s => s.trim().length > 20)
+    .slice(0, 2)
+    .join(' ')
+    .trim()
+  
+  const preview = sentences.length > 300 ? sentences.slice(0, 300) + '...' : sentences
+  
+  // Collect unique cited paper IDs
+  const citedPapers = [...new Set(citations.map(c => c.paperId))].slice(0, 8)
+  const citedStr = citedPapers.length > 0 
+    ? ` (cited: ${citedPapers.join(', ')})` 
+    : ''
+  
+  return `**${title}**: ${preview}${citedStr}`
+}
+
+/**
+ * Batch processing - process multiple sections sequentially with unified approach.
+ * Passes rolling summaries of completed sections to each subsequent section
+ * for cross-section coherence and overlap avoidance.
  * 
  * @param onBatchProgress - Called when a section starts (completed = sections done so far)
  * @param onSectionComplete - Called when a section finishes with its content
@@ -233,17 +262,24 @@ export async function generateMultipleSectionsUnified(
   onStreamChunk?: (sectionTitle: string, chunk: string, fullContentSoFar: string) => void
 ): Promise<UnifiedGenerationResult[]> {
   const results: UnifiedGenerationResult[] = []
+  const sectionSummaries: string[] = []
   
   for (let i = 0; i < contexts.length; i++) {
     const sectionTitle = contexts[i].title || contexts[i].sectionKey
     onBatchProgress?.(i, contexts.length, contexts[i].sectionKey)
+    
+    // Build rolling summary of all previous sections for coherence
+    const sectionOptions = { ...options }
+    if (sectionSummaries.length > 0) {
+      sectionOptions.previousSectionsSummary = sectionSummaries.join('\n')
+    }
     
     // Track accumulated content for this section to pass to streaming callback
     let sectionContent = ''
     
     const result = await generateWithUnifiedTemplate({
       context: contexts[i],
-      options,
+      options: sectionOptions,
       onStreamEvent: onStreamChunk ? (event) => {
         if (event.type === 'sentence') {
           sectionContent += event.data.text
@@ -252,6 +288,9 @@ export async function generateMultipleSectionsUnified(
       } : undefined
     })
     results.push(result)
+    
+    // Build summary from completed section for subsequent sections
+    sectionSummaries.push(extractSectionSummary(sectionTitle, result.content, result.citations))
     
     // Notify that section is complete with content
     onSectionComplete?.(sectionTitle, result.content, i + 1, contexts.length)

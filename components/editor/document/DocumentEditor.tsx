@@ -48,7 +48,8 @@ const lowlight = createLowlight(common)
  * Extract all instanceIds from content that uses [@paperId#instanceId] format
  */
 function extractInstanceIds(content: string): string[] {
-  const pattern = /\[@[a-f0-9-]{36}#([a-f0-9-]{36})\]/gi
+  // instanceId may be non-UUID (alphanumeric with timestamp), so use [^\]]+ to match any chars
+  const pattern = /\[@[a-f0-9-]{36}#([^\]]+)\]/gi
   const instanceIds: string[] = []
   for (const match of content.matchAll(pattern)) {
     instanceIds.push(match[1])

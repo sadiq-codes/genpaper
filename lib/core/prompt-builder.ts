@@ -369,48 +369,6 @@ Provide specific, actionable feedback on:
     return path.join(' → ')
   }
 
-  static estimateTargetWords(paperType: PaperTypeKey, sectionKey: SectionKey): number {
-    // Keep only keys that exist in PaperTypeKey union from prompts/types
-    const wordEstimates: Partial<Record<PaperTypeKey, Record<string, number>>> = {
-      researchArticle: {
-        introduction: 400,
-        methods: 600,
-        results: 800,
-        discussion: 700,
-        conclusion: 300
-      },
-      literatureReview: {
-        introduction: 500,
-        background: 1000,
-        analysis: 1200,
-        synthesis: 800,
-        conclusion: 400
-      },
-      capstoneProject: {
-        introduction: 300,
-        methodology: 800,
-        discussion: 600,
-        conclusion: 300
-      },
-      mastersThesis: {
-        introduction: 600,
-        methodology: 1200,
-        results: 1200,
-        discussion: 1000,
-        conclusion: 500
-      },
-      phdDissertation: {
-        introduction: 800,
-        methodology: 1500,
-        results: 1600,
-        discussion: 1400,
-        conclusion: 600
-      }
-    }
-
-    return wordEstimates[paperType]?.[sectionKey] || 500
-  }
-
   /**
    * Build chat system prompt from template and CO-STAR context
    */

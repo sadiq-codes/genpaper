@@ -163,7 +163,7 @@ export async function extractPdfMetadataTiered(
     warn('All extraction methods failed, using fallback')
     return {
       title: 'Extraction Failed',
-      authors: ['Unknown'],
+      authors: [], // Don't use placeholder - empty array is handled by display layer
       abstract: 'PDF content extraction failed',
       fullText: 'PDF content extraction failed',
       extractionMethod: 'fallback',
@@ -178,7 +178,7 @@ export async function extractPdfMetadataTiered(
     error('Tiered extraction completely failed', { error: err })
     return {
       title: 'Critical Extraction Error',
-      authors: ['Unknown'],
+      authors: [], // Don't use placeholder - empty array is handled by display layer
       abstract: 'Critical error during PDF processing',
       fullText: 'Critical error during PDF processing',
       extractionMethod: 'fallback',
@@ -332,7 +332,7 @@ async function parseTextLayer(pdfBuffer: Buffer): Promise<Partial<TieredExtracti
 
     return {
       title: title || 'Untitled Paper',
-      authors: authors.length > 0 ? authors : ['Unknown'],
+      authors: authors, // Keep as-is, don't add placeholder
       abstract: abstract || undefined,
       doi: doi || undefined,
       fullText: data.text,

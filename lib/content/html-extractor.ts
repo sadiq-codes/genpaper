@@ -15,11 +15,12 @@ export interface HtmlExtractionResult {
   contentSource: 'html'
 }
 
-// Academic-friendly user agents
+// Academic-friendly user agents (Chrome 120+)
 const USER_AGENTS = [
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
 ]
 
 function getRandomUserAgent(): string {
@@ -505,4 +506,129 @@ export async function tryHtmlFallback(
   console.log(`📄 Converted PDF URL to HTML: ${pdfUrl} → ${htmlUrl}`)
   
   return extractArticleHtml(htmlUrl, timeoutMs)
+}
+
+/**
+ * Attempt HTML extraction using a DOI when no PDF URL is available.
+ * Resolves the DOI to a publisher landing page, then extracts article content.
+ * 
+ * @param doi - The DOI to resolve
+ * @param timeoutMs - Request timeout
+ * @returns Extracted content or null
+ */
+export async function tryHtmlFallbackFromDoi(
+  doi: string,
+  timeoutMs: number = 30000
+): Promise<HtmlExtractionResult | null> {
+  if (!doi) return null
+  
+  try {
+    // Resolve DOI to publisher landing page URL (follow redirect)
+    const doiUrl = `https://doi.org/${encodeURIComponent(doi)}`
+    console.log(`📄 Resolving DOI for HTML fallback: ${doiUrl}`)
+    
+    const response = await fetch(doiUrl, {
+      method: 'HEAD',
+      headers: { 'User-Agent': getRandomUserAgent() },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10_000),
+    })
+    
+    const resolvedUrl = response.url
+    if (!resolvedUrl || resolvedUrl === doiUrl) {
+      console.log(`📄 DOI did not resolve to a publisher URL: ${doi}`)
+      return null
+    }
+    
+    // Only attempt extraction on supported publishers
+    if (!isSupportedPublisher(resolvedUrl)) {
+      console.log(`📄 Resolved URL not a supported publisher for HTML extraction: ${resolvedUrl}`)
+      return null
+    }
+    
+    console.log(`📄 DOI resolved to: ${resolvedUrl}`)
+    return extractArticleHtml(resolvedUrl, timeoutMs)
+    
+  } catch (error) {
+    console.warn(`📄 DOI HTML fallback failed for ${doi}:`, error instanceof Error ? error.message : String(error))
+    return null
+  }
+}
+
+/**
+ * Fetch full-text content from Europe PMC's fullTextXML endpoint.
+ * Works for any paper in PMC — returns structured XML that we strip to plain text.
+ * 
+ * @param doi - The paper's DOI
+ * @param timeoutMs - Request timeout
+ * @returns Extracted content or null
+ */
+export async function tryEuropePmcFullText(
+  doi: string,
+  timeoutMs: number = 30000
+): Promise<HtmlExtractionResult | null> {
+  if (!doi) return null
+
+  try {
+    // First resolve DOI → PMCID via NCBI ID converter
+    const cleanDoi = doi.replace(/^https?:\/\/doi\.org\//i, '').trim()
+    const idUrl = `https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids=${encodeURIComponent(cleanDoi)}&format=json`
+    
+    const idResponse = await fetch(idUrl, {
+      headers: { 'User-Agent': getRandomUserAgent() },
+      signal: AbortSignal.timeout(8_000),
+    })
+    if (!idResponse.ok) return null
+    
+    const idData = await idResponse.json()
+    const pmcid = idData.records?.[0]?.pmcid
+    if (!pmcid) return null
+
+    console.log(`📄 Europe PMC fulltext: resolved ${cleanDoi} → ${pmcid}`)
+
+    // Fetch full-text XML from Europe PMC
+    const xmlUrl = `https://www.ebi.ac.uk/europepmc/webservices/rest/${pmcid}/fullTextXML`
+    const xmlResponse = await fetch(xmlUrl, {
+      headers: { 'User-Agent': getRandomUserAgent() },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+
+    if (!xmlResponse.ok) {
+      console.log(`📄 Europe PMC fulltext XML returned ${xmlResponse.status} for ${pmcid}`)
+      return null
+    }
+
+    const xml = await xmlResponse.text()
+    if (!xml || xml.length < 500) return null
+
+    // Strip XML tags to get plain text, normalize whitespace
+    const text = xml
+      .replace(/<\/?(?:xref|ext-link|italic|bold|sup|sub|underline)[^>]*>/g, ' ') // inline tags → space
+      .replace(/<ref-list[\s\S]*$/i, '') // remove references section
+      .replace(/<[^>]+>/g, ' ')          // strip remaining tags
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (text.length < 500) {
+      console.log(`📄 Europe PMC fulltext too short (${text.length} chars) for ${pmcid}`)
+      return null
+    }
+
+    const content = text.length > 1_000_000 ? text.slice(0, 1_000_000) : text
+    console.log(`✅ Europe PMC fulltext XML success: ${content.length} chars for ${pmcid}`)
+
+    return {
+      content,
+      contentSource: 'html',
+    }
+  } catch (error) {
+    console.warn(`📄 Europe PMC fulltext failed for ${doi}:`, error instanceof Error ? error.message : String(error))
+    return null
+  }
 }

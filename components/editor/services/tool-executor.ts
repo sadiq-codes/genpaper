@@ -12,7 +12,7 @@ import type { Editor } from '@tiptap/react'
 import { v4 as uuidv4 } from 'uuid'
 import { findBlockById } from '../extensions/BlockId'
 import { toast } from 'sonner'
-import { hasMarkdownFormatting, processAIContent } from '../utils/content-processor'
+import { hasMarkdownFormatting, processAIContent, hasCitationMarkers, processPlainTextWithCitations } from '../utils/content-processor'
 import { validatePositions } from '../utils/position-utils'
 import { 
   findTextInStructure, 
@@ -434,14 +434,24 @@ function prepareContent(
   // First, convert numbered [1], [2] citations to [@paperId#instanceId] format
   const { content: contentWithCitations, instances } = convertNumberedCitations(content, citations)
   
+  // Use provided papers or fall back to global context
+  const papersContext = papers.length > 0 ? papers : _globalPapersContext
+
   if (hasMarkdownFormatting(contentWithCitations)) {
     // Convert markdown to TipTap JSON for proper rendering (tables, lists, etc.)
-    // Use provided papers or fall back to global context
-    const papersContext = papers.length > 0 ? papers : _globalPapersContext
     const doc = processAIContent(contentWithCitations, papersContext)
     // Return the content array, not the full doc wrapper
     return { content: doc.content || contentWithCitations, instances }
   }
+
+  // If the content isn't markdown but includes citation markers like [@paperId#...],
+  // convert those markers into proper TipTap citation nodes so they render consistently
+  // (and get numbered for numeric styles).
+  if (hasCitationMarkers(contentWithCitations)) {
+    const fragment = processPlainTextWithCitations(contentWithCitations, papersContext)
+    return { content: fragment, instances }
+  }
+
   return { content: contentWithCitations, instances }
 }
 

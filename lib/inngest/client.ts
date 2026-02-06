@@ -15,6 +15,8 @@ export interface GenerationStartEvent {
     runId: string;
     projectId: string;
     userId: string;
+    /** Whether this is a new project (true) or regeneration of existing (false) */
+    isNewProject: boolean;
     config: {
       topic: string;
       paperType: string;

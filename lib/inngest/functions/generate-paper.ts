@@ -22,6 +22,7 @@ import {
   emitCancelled,
   getRun,
 } from "@/lib/generation/run-manager";
+import { recordPaperGenerated } from "@/lib/billing/gates";
 import type { PaperTypeKey } from "@/lib/prompts/types";
 
 export const generatePaperFunction = inngest.createFunction(
@@ -44,7 +45,7 @@ export const generatePaperFunction = inngest.createFunction(
   },
   { event: "paper/generation.start" },
   async ({ event, step }) => {
-    const { runId, projectId, userId, config, baseUrl } = event.data;
+    const { runId, projectId, userId, isNewProject, config, baseUrl } = event.data;
 
     // Step 1: Mark run as started
     await step.run("mark-started", async () => {
@@ -153,6 +154,14 @@ export const generatePaperFunction = inngest.createFunction(
       if (result.cancelled) {
         // Already handled in generate step
         return { status: "cancelled" };
+      }
+
+      // Record paper generation for billing (only for new projects, not regenerations)
+      if (isNewProject) {
+        const recorded = await recordPaperGenerated(userId);
+        if (!recorded) {
+          console.warn(`[Billing] Failed to record paper generation for user ${userId}`);
+        }
       }
 
       // Emit completion event

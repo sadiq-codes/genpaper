@@ -1,224 +1,359 @@
 # PhD Dissertation Context
 
-A doctoral dissertation represents an **ORIGINAL CONTRIBUTION TO KNOWLEDGE** in the field.
+A doctoral dissertation represents an **ORIGINAL CONTRIBUTION TO KNOWLEDGE** in the field. It demonstrates your ability to conduct independent research at the highest scholarly level and positions you as an emerging expert in your area of study.
 
-## Structure Expectations (Highest Standards)
+---
 
-### 1. Introduction (Funnel Structure)
-- Broad context: significance of the research area
-- Narrow focus: specific problem being addressed
-- Clear statement: research questions/hypotheses
-- Contribution preview: what this dissertation adds to knowledge
+## Dissertation Types
 
-### 2. Literature Review (Exhaustive and Critical)
-- Comprehensive coverage of relevant literature
-- Critical analysis of theories, methods, and findings
-- Identification of contradictions and debates in the field
-- Clear articulation of the gap your research fills
-- Theoretical/conceptual framework guiding the study
+Based on the research approach and discipline, determine which type best matches:
 
-**Organizational Approach - Choose the most illuminating structure:**
-- **THEMATIC:** Organize by recurring themes or concepts
-- **CHRONOLOGICAL:** Trace how understanding evolved over time
-- **METHODOLOGICAL:** Compare findings from different research approaches
-- **THEORETICAL:** Examine competing theoretical perspectives
-- **COMBINED:** Use thematic structure with chronological development within themes
+**How to identify the type:**
+- Original empirical data collection → Type A
+- Theoretical/philosophical argumentation → Type B
+- Analysis of texts, artifacts, historical sources → Type C
+- Creative work with scholarly exegesis → Type D
 
-**Pivotal Publications (Required at doctoral level):**
+### Type A: Empirical/Scientific Dissertation
+Original data collection through experiments, surveys, interviews, observations, or computational methods.
+- **Structure:** Introduction → Literature Review → Methodology → Results → Discussion → Conclusion
+- **Contribution:** New empirical evidence, tested hypotheses, validated models, documented phenomena
+- **Common in:** Sciences, social sciences, psychology, education, health fields
+
+### Type B: Theoretical/Philosophical Dissertation
+Advances theory, develops conceptual frameworks, or engages in philosophical analysis.
+- **Structure:** Introduction → Literature Review → Theoretical Development → Analysis → Synthesis → Conclusion
+- **Contribution:** New theoretical framework, conceptual synthesis, philosophical argument, paradigm critique
+- **Common in:** Philosophy, theoretical sciences, theoretical social sciences, mathematics
+
+### Type C: Humanities/Interpretive Dissertation
+Analysis of texts, artworks, historical documents, cultural artifacts, or social phenomena.
+- **Structure:** Introduction → Literature Review → Methodology/Approach → Thematic Chapters → Conclusion
+- **Contribution:** New interpretation, historical understanding, cultural analysis, recovered narratives
+- **Common in:** History, literature, art history, religious studies, cultural studies, musicology
+
+### Type D: Practice-Based/Creative Dissertation
+Original creative work accompanied by scholarly exegesis/critical reflection.
+- **Structure:** Introduction → Contextual Review → Creative Work Documentation → Critical Exegesis → Conclusion
+- **Contribution:** Original creative output plus scholarly contribution to understanding practice
+- **Common in:** Fine arts, creative writing, design, performance, composition, architecture
+
+---
+
+## Introduction (CARS Framework)
+
+Structure your introduction using the **Create A Research Space** model, with doctoral-level depth:
+
+### Move 1: Establish Territory (1-2 paragraphs)
+- Situate the research within the broader field and its intellectual traditions
+- Demonstrate the topic's significance, timeliness, and scholarly importance
+- Provide essential theoretical and contextual background
+
+### Move 2: Establish Niche (1-2 paragraphs)
+- Identify what previous scholarship has missed, overlooked, or left unresolved
+- **Gap types:** Knowledge gap, methodological gap, theoretical gap, contextual gap, population gap
+- Be specific—vague gaps ("more research is needed") produce vague dissertations
+- Signal phrases: "However, what remains unexplored...", "Despite this progress, scholars have not...", "A critical limitation of prior work..."
+
+### Move 3: Occupy the Niche (1 paragraph)
+- State your central research questions, hypotheses, or thesis
+- Preview your approach and methodology
+- Articulate your contribution clearly and specifically
+
+### Move 4: Epistemological Positioning (Doctoral-Specific)
+Briefly situate your research philosophically. This positioning should inform and justify your methodological choices:
+
+- **Positivist/Post-positivist:** Objective reality exists; knowledge through testable hypotheses and systematic observation
+- **Interpretivist/Constructivist:** Reality is socially constructed; knowledge through understanding meaning and experience
+- **Critical/Transformative:** Knowledge is shaped by power; research serves emancipatory goals
+- **Pragmatist:** Focus on what works; knowledge judged by practical consequences
+- **Post-structuralist/Postmodern:** Challenges fixed meanings; attentive to discourse and power
+
+Your paradigm should align with your methodology. A mismatch undermines coherence.
+
+### Anti-patterns to avoid:
+- Opening with dictionary definitions
+- Overly broad openings ("Throughout human history...")
+- Burying the research questions in lengthy background
+- Vague contribution statements ("This adds to the literature...")
+- Claiming to "fill a gap" without explaining why the gap matters
+
+---
+
+## Literature Review (Exhaustive and Critical)
+
+Doctoral literature reviews demonstrate **mastery** of the field—comprehensive coverage with critical analysis.
+
+### Requirements:
+1. **Comprehensive coverage:** Address all major theoretical perspectives and empirical traditions
+2. **Critical analysis:** Evaluate methodological strengths and limitations of prior work
+3. **Identify debates:** Show contradictions, contested areas, and ongoing controversies
+4. **Trace evolution:** Demonstrate how understanding has developed over time
+5. **Establish gap:** Build a compelling case for why this study is necessary
+
+### Organizational Approaches (choose the most illuminating):
+- **Thematic:** Organize by recurring themes or concepts
+- **Chronological:** Trace how understanding evolved over time
+- **Methodological:** Compare findings from different research approaches
+- **Theoretical:** Examine competing theoretical perspectives
+- **Combined:** Thematic structure with chronological development within themes
+
+### Pivotal Publications (Required at doctoral level)
 - Identify foundational works that established key concepts
 - Highlight studies that redirected the field's direction
-- Explain the INFLUENCE of landmark studies, not just their findings
+- Explain the **INFLUENCE** of landmark studies, not just their findings
 - Show how your work builds on or challenges these pivotal contributions
 
-### 3. Methodology (Rigorous and Justified)
-- Philosophical underpinnings (epistemology, ontology if relevant)
-- Research design with thorough justification
-- Detailed sampling strategy
+---
+
+## Theoretical/Conceptual Framework
+
+Doctoral work requires explicit theoretical grounding.
+
+### Theoretical Framework:
+- Explains the established theories you're using to guide your research
+- Justifies why these theories are appropriate for your study
+- Shows how concepts relate to each other
+- Provides the lens through which you'll interpret findings
+
+### Conceptual Framework:
+- Your own framework synthesizing multiple theories
+- Visual or narrative representation of relationships between variables/concepts
+- Derived from literature but represents your synthesis
+
+### Requirements:
+1. **Identify key theories** relevant to your research questions
+2. **Explain core concepts** and how you define/operationalize them
+3. **Show relationships** between concepts (hypothesized or theoretical)
+4. **Justify your choice** over alternative frameworks
+5. **Connect to methodology** - how does the framework guide your research design?
+
+**Note:** Theoretical framework ≠ literature review. The lit review surveys the field; the framework identifies your specific analytical lens.
+
+---
+
+## Methodology by Dissertation Type
+
+### For Type A: Empirical/Scientific
+
+**Quantitative:**
+- Research design with philosophical justification
+- Population, sampling strategy, sample size justification (with power analysis if applicable)
+- Variables with operational definitions
 - Instruments with validity and reliability evidence
-- Ethical considerations
-- Detailed procedures for data collection and analysis
-- Strategies for ensuring trustworthiness/rigor
+- Data collection procedures
+- Statistical analysis plan with justification
+- Strategies for ensuring rigor (internal/external validity)
 
-### 4. Results (Comprehensive Presentation)
-- Systematic presentation aligned with research questions
-- Appropriate use of tables, figures, and statistical reporting
-- For qualitative: themes with rich supporting evidence
-- Summary of findings
+**Qualitative:**
+- Research approach (phenomenology, grounded theory, ethnography, case study, narrative inquiry)
+- Philosophical foundations and fit with research questions
+- Participant selection with rationale
+- Data collection methods (interviews, observations, documents, artifacts)
+- Analysis approach with procedural detail
+- Trustworthiness measures (credibility, transferability, dependability, confirmability)
+- Reflexivity statement
 
-### 5. Discussion (Three-Part Structure - Rigorous)
+**Mixed Methods:**
+- Rationale for mixed approach
+- Design type (convergent, explanatory sequential, exploratory sequential)
+- Integration strategy
+- Priority and timing of components
 
-For EACH major finding:
-- **STATE:** Present the finding clearly
-- **COMPARE:** Discuss alignment/contradiction with existing literature
-- **EXPLAIN:** Provide theoretical explanation for agreement/disagreement
-- **EXTEND:** Discuss implications for theory and practice
+### For Type B: Theoretical/Philosophical
+- Philosophical approach and traditions engaged
+- Key concepts and their development
+- Argument structure and logical framework
+- Engagement with objections and alternatives
+- Criteria for evaluating the argument's success
 
-### 6. Contribution to Knowledge (REQUIRED)
-- Explicitly state what NEW knowledge this dissertation provides
-- How does it advance theory in the field?
-- How does it inform practice?
+### For Type C: Humanities/Interpretive
+- Primary sources and selection criteria
+- Interpretive or theoretical framework (e.g., feminist, postcolonial, new historicist)
+- Hermeneutic or analytical approach
+- Contextualization strategy
+- Handling of evidence and interpretation
+- Reflexivity considerations
 
-### 7. Conclusion
-- Theoretical and practical implications
-- Honest acknowledgment of limitations
-- Specific recommendations for future research
-- Final statement of contribution
-
-## Citing Empirical Studies
-
-For doctoral-level work, provide methodological context when citing:
-- Include: purpose, sample/method, key findings, and limitations
-- This demonstrates critical engagement with the literature
-
-## Gap Identification
-
-**GAP IDENTIFICATION IS MANDATORY:**
-
-The literature review must build a compelling case for why this study is necessary.
-
----
-
-## Synthesis Requirements (Critical for Doctoral Level)
-
-Doctoral dissertations demand the HIGHEST level of synthesis. You must demonstrate:
-- Mastery of the literature
-- Critical analytical thinking
-- Ability to identify patterns across diverse sources
-- Integration of theoretical perspectives
-
-### Synthesis Patterns
-
-⚠️ FORMAT EXAMPLES BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
-
-❌ **AVOID (Descriptive - Undergraduate Level):**
-> "[Author A] found X. [Author B] found Y. [Author C] found Z."
-
-❌ **AVOID (Basic Synthesis - Master's Level):**
-> "Several studies have found X [1] [2] [3], though some disagree [4]."
-
-✅ **USE (Deep Synthesis - Doctoral Level) - STRUCTURE ONLY:**
-> "The relationship between [topic from YOUR evidence] has been the subject of sustained scholarly 
-> attention, yielding a complex evidentiary landscape. 
-> [Type of studies from YOUR evidence] consistently demonstrate 
-> [finding from YOUR evidence] [1] [2] [3], with 
-> [additional evidence IF available in YOUR sources] [4]. However, this apparent 
-> consensus masks important methodological heterogeneity. [Studies with different approach from YOUR evidence] 
-> yield [different findings from YOUR evidence] [5], suggesting [your interpretation]. 
-> Moreover, [other type of research from YOUR evidence] challenge [aspect], revealing 
-> [nuances from YOUR evidence] [6] [7]. This [gap you identify] 
-> represents a significant gap that this dissertation addresses through [your approach]."
->
-> <!-- CITATIONS
-> [1] paper_id: actual-id | quote: "exact quote"
-> [2] paper_id: actual-id | quote: "exact quote"
-> ... (continue for all citations)
-> -->
-
-⚠️ CRITICAL: Do NOT invent sample sizes ("N > 10,000") or effect sizes ("r = 0.35-0.42").
-Only include statistics that ACTUALLY APPEAR in your evidence snippets.
-If numbers aren't available, use qualitative terms: "consistently demonstrate a positive relationship".
-
-### Critical Evaluation Framework (Doctoral Standard)
-
-For EVERY major body of work you discuss, provide:
-
-| Dimension | Doctoral-Level Evaluation |
-|-----------|--------------------------|
-| **Methodological Quality** | Detailed assessment of designs, measures, analyses. Identify systematic biases across the literature. |
-| **Theoretical Coherence** | How well do findings fit theoretical predictions? What anomalies exist? |
-| **Replication & Generalizability** | Has it been replicated? Across what contexts? Where does generalizability break down? |
-| **Evolution of Understanding** | How has thinking evolved? What triggered paradigm shifts? |
-| **Remaining Controversies** | What debates remain unresolved? What are the competing positions? |
-
-⚠️ FORMAT EXAMPLE BELOW - DO NOT COPY VALUES, ONLY STRUCTURE:
-
-### Example (Doctoral-Level Critical Evaluation) - STRUCTURE ONLY:
-> "The theoretical foundation of [topic] has undergone significant revision since 
-> [foundational work from YOUR evidence] [1]. While the original model 
-> posited [original claim from YOUR evidence], subsequent empirical tests revealed [findings from YOUR evidence] 
-> [2] [3], prompting [later work from YOUR evidence] 
-> [4] to propose [modification from YOUR evidence]. However, this revised model 
-> has itself been challenged on [grounds from YOUR evidence]. [Other researchers from YOUR evidence] [5] 
-> demonstrated [contradicting finding from YOUR evidence], suggesting [interpretation]. 
-> Meanwhile, [yet another perspective from YOUR evidence] [6] has argued [alternative view]. 
-> This ongoing theoretical ferment represents both a challenge and an opportunity for the 
-> present dissertation, which adopts [your approach]."
-
-⚠️ CRITICAL: Do NOT use "Smith (1985)", "Jones (2005)", "Brown", or "Wilson (2018)" - 
-these are EXAMPLE placeholders. Use ACTUAL authors from YOUR evidence snippets only.
+### For Type D: Practice-Based/Creative
+- Creative methodology and process documentation
+- Relationship between practice and research components
+- Methods for documenting and reflecting on creative process
+- Criteria for evaluating creative work
+- Critical framework for exegesis
 
 ---
 
-## Table Requirements for Doctoral Dissertations
+## Results / Findings
 
-### Required Tables in Literature Review:
+Present findings systematically, organized by research questions or themes.
 
-⚠️ TABLE FORMAT EXAMPLES BELOW - DO NOT COPY VALUES ⚠️
-Populate tables ONLY with data from YOUR evidence snippets.
+### For Quantitative Research:
+- Descriptive statistics first, then inferential
+- Systematic reporting aligned with hypotheses
+- Tables and figures with appropriate statistical detail
+- Effect sizes and confidence intervals
+- Address each research question/hypothesis explicitly
 
-**Table 1: Comprehensive Study Summary**
-| Author (Year) | Research Question | Design | Sample | Measures | Key Findings | Limitations | Quality Rating |
-|---------------|-------------------|--------|--------|----------|--------------|-------------|----------------|
-| [Author from evidence] [1] | [RQ from evidence] | [Design from evidence] | [Sample IF in evidence] | [Measures from evidence] | [Finding from evidence] | [Limitation] | [Your rating] |
+### For Qualitative Research:
+- Present themes with rich supporting evidence
+- Include participant voice (quotes)
+- Show how themes relate to research questions
+- Address negative cases or disconfirming evidence
+- Visual representations of themes if helpful
 
-**Table 2: Theoretical Framework Comparison**
-| Theory | Key Propositions | Predictions for This Study | Supporting Evidence | Contradicting Evidence |
-|--------|-----------------|---------------------------|---------------------|----------------------|
-| [Theory from evidence] | [Props from evidence] | [Your prediction] | [1] [2] | [1] [2] |
+### For Humanities/Interpretive:
+- Present analytical findings organized by argument
+- Support claims with textual/archival evidence
+- Build toward your interpretive contribution
 
-**Table 3: Methodological Quality Assessment**
-| Study | Sample Adequacy | Measure Validity | Design Rigor | Confound Control | Overall Rating |
-|-------|----------------|------------------|--------------|------------------|----------------|
-| [1] | [Your assessment] | [Your assessment] | [Your assessment] | [Your assessment] | [Your rating] |
-
-**Table 4: Meta-Analytic Summary** (if applicable - ONLY if meta-analyses are in YOUR evidence)
-| Meta-Analysis | Studies Included | Overall Effect | Heterogeneity | Moderators Identified |
-|---------------|------------------|----------------|---------------|----------------------|
-| [1] | [k from evidence] | [Effect from evidence] | [I² from evidence] | [Moderators from evidence] |
-
-⚠️ CRITICAL: If your evidence doesn't include effect sizes, heterogeneity statistics, or quality ratings,
-either omit those columns OR write "not reported" - NEVER invent meta-analytic statistics.
-
-### Results Tables (Required - Comprehensive):
-- Participant/sample characteristics
-- Measure descriptive statistics and reliability
-- Correlation matrices
-- Main analyses with all relevant statistics
-- Post-hoc analyses
-- Sensitivity/robustness checks
+### For Practice-Based:
+- Document the creative work itself
+- Present key decisions and their rationale
+- Connect creative choices to theoretical/contextual framework
 
 ---
 
-## Source Diversity Requirements
+## Discussion (STATE-COMPARE-EXPLAIN-EXTEND)
 
-**Doctoral dissertations require EXHAUSTIVE literature coverage:**
+For EACH major finding, use this four-part structure:
 
-- Literature Review: cite **90-100%** of available relevant sources
-- Each major theme should draw from **8-10+ different sources**
+1. **STATE:** Present the finding clearly
+2. **COMPARE:** Discuss alignment/contradiction with existing literature
+3. **EXPLAIN:** Provide theoretical explanation for agreement/disagreement
+4. **EXTEND:** Discuss implications for theory, methodology, and practice
+
+### Requirements:
+- Connect every finding back to your theoretical framework
+- Address unexpected results honestly
+- Discuss rival explanations
+- Acknowledge the boundaries of your interpretations
+- Do NOT simply restate results
+
+---
+
+## Contribution to Knowledge (REQUIRED)
+
+This section must explicitly articulate what NEW knowledge this dissertation provides.
+
+### Types of Contribution:
+- **Theoretical:** New framework, extended theory, challenged assumptions, integrated perspectives
+- **Methodological:** New approach, validated method, innovative design, adapted technique
+- **Empirical:** New evidence, tested relationships, documented phenomena, replicated findings
+- **Practical:** Applications, recommendations, interventions, policy implications
+
+### Requirements:
+1. State the contribution explicitly—do not leave it for readers to infer
+2. Explain how this advances the field beyond existing knowledge
+3. Situate your contribution within the scholarly conversation
+4. Be appropriately confident—you are becoming an expert
+
+---
+
+## Conclusion
+
+Your conclusion must answer: **"What new knowledge does this dissertation contribute, and why does it matter?"**
+
+### Required Elements:
+
+**Contribution Synthesis:**
+Restate your contribution clearly and confidently (not copied from earlier—synthesized).
+
+**Summary of Key Findings:**
+Brief synthesis of main findings in relation to research questions.
+
+**Implications:**
+- **For theory:** How does this change/advance scholarly understanding?
+- **For practice:** How should practitioners, policymakers, or professionals respond?
+- **For methodology:** What does this suggest for future research approaches?
+
+**Limitations:**
+Acknowledge constraints without undermining your contribution. Frame as scope boundaries, not fatal flaws.
+
+**Future Research:**
+Specific directions arising directly from your findings—not generic "more research is needed."
+
+### Anti-patterns:
+- Introducing new arguments, evidence, or citations
+- Simply restating the introduction
+- Overstating implications beyond what findings support
+- Excessive hedging that undermines your contribution
+- Generic future directions without specificity
+
+---
+
+## Table Requirements
+
+Include tables appropriate to your dissertation type.
+
+### For Quantitative Dissertations:
+
+**Descriptive Statistics**
+| Variable | N | Mean | SD | Min | Max |
+
+**Main Analysis Results**
+| Predictor | β | SE | t | p | 95% CI |
+
+**Hypothesis Support Summary**
+| Hypothesis | Finding | Supported? |
+
+### For Qualitative Dissertations:
+
+**Themes and Evidence**
+| Theme | Description | Example Quote | Prevalence |
+
+**Participant Characteristics**
+| Pseudonym | Demographics | Relevant Background |
+
+### For Humanities Dissertations:
+
+**Source Analysis**
+| Text/Source | Key Features | Interpretation | Significance |
+
+**Comparative Analysis**
+| Aspect | Source A | Source B | Analysis |
+
+### For Practice-Based Dissertations:
+
+**Creative Decisions**
+| Element | Decision | Influences | Critical Reflection |
+
+### Guidelines:
+- Reference tables in text
+- Tables complement prose—don't duplicate extensively
+- Only include data from your evidence or analysis
+- For quantitative: include significance notations (* p < .05)
+
+---
+
+## Source Diversity
+
+Doctoral dissertations require **exhaustive** literature coverage:
+- Cite **90-100%** of available relevant sources
+- Each major theme: **8-10+ different sources**
 - Include foundational works, recent advances, AND contradicting perspectives
-- No source should dominate the review (avoid citing any source 5+ times)
-- Represent the full spectrum of methodological approaches in your field
-
-**Source Distribution Check (Doctoral Standard):**
-- [ ] Have I covered ALL major theoretical perspectives?
-- [ ] Have I included foundational/seminal works AND critiques of them?
-- [ ] Have I represented quantitative, qualitative, AND mixed-methods research?
-- [ ] Have I acknowledged and addressed contradictory findings?
-- [ ] Have I traced the evolution of understanding chronologically?
-- [ ] Have I critically evaluated each major source?
-- [ ] Have I synthesized (not just summarized) across sources?
+- Avoid over-reliance on any single source (max 4-5 citations per source)
+- Represent the full spectrum of methodological and theoretical approaches
 
 ---
 
-## Quantitative Synthesis (Doctoral Level)
+## Synthesis Requirements
 
-At the doctoral level, quantitative synthesis should be sophisticated:
+Doctoral dissertations demand the **highest level** of synthesis.
 
-| Situation | Doctoral-Level Synthesis |
-|-----------|-------------------------|
-| Effect sizes available | "Meta-analytic estimates range from d = 0.30 to d = 0.55, with heterogeneity (I² = 72%) suggesting moderating factors [CITE]" |
-| Methodological variation | "Self-report studies yield larger effects (d = 0.52) than behavioral measures (d = 0.28), suggesting possible inflation [CITE]" |
-| Temporal trends | "Effect sizes have decreased over time, from d = 0.6 in 1990s studies to d = 0.35 in post-2015 research [CITE]" |
-| Publication bias suspected | "Funnel plot asymmetry suggests possible publication bias, with small negative studies potentially underrepresented [CITE]" |
+### Synthesis Pattern:
+❌ **Avoid (Descriptive):** "[Author A] found X. [Author B] found Y."
 
-**CRITICAL:** Never fabricate statistics. When specific numbers aren't available, describe patterns qualitatively but acknowledge the limitation.
+❌ **Avoid (Basic):** "Several studies found X [1][2][3], though some disagree [4]."
+
+✅ **Use (Doctoral):** "The relationship between [topic] has yielded a complex evidentiary landscape. [Studies] consistently demonstrate [finding] [1][2][3]. However, this apparent consensus masks methodological heterogeneity. [Different approaches] yield [different findings] [4][5], suggesting [interpretation]. This [gap] represents a significant opportunity that this dissertation addresses through [approach]."
+
+---
+
+## Evidence Integrity
+
+**CRITICAL:** Only cite information from your provided sources.
+- Never fabricate statistics, sample sizes, or findings
+- If numbers aren't available, describe qualitatively ("found a significant relationship")
+- Never invent effect sizes (d = 0.45) or meta-analytic statistics
+- When uncertain, state what evidence shows, not what you assume

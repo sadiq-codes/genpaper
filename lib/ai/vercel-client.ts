@@ -53,10 +53,22 @@ export function getExtractionLanguageModel() {
 }
 
 /**
- * Get the embedding model instance
- * Always uses OpenAI embeddings regardless of chat model
+ * Get the embedding model instance.
+ * 
+ * When EMBEDDING_SERVER_URL is set, uses a self-hosted all-MiniLM-L6-v2 server
+ * (OpenAI-compatible endpoint). Otherwise falls back to OpenAI's API.
+ * 
+ * Set EMBEDDING_SERVER_URL=http://<your-server>:8787 in .env.local
+ * Set EMBEDDING_API_TOKEN to the token configured on the server (optional)
  */
 export function getEmbeddingModel() {
+  if (process.env.EMBEDDING_SERVER_URL) {
+    const embeddingClient = createOpenAI({
+      baseURL: `${process.env.EMBEDDING_SERVER_URL}/v1`,
+      apiKey: process.env.EMBEDDING_API_TOKEN || 'unused',
+    })
+    return embeddingClient.embedding(EMBEDDING_CONFIG.model)
+  }
   return ai.embedding(EMBEDDING_CONFIG.model)
 }
 

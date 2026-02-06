@@ -107,6 +107,8 @@ export async function generatePaperProfile(
         recencyProfile: validatedProfile.sourceExpectations.recencyProfile,
         qualityCriteriaCount: validatedProfile.qualityCriteria.length,
         requiredThemes: validatedProfile.coverage.requiredThemes.length,
+        paperSubtype: validatedProfile.paperSubtype?.name,
+        paperSubtypeId: validatedProfile.paperSubtype?.type,
         attempt: attempt > 0 ? attempt + 1 : undefined
       }, 'Paper profile generated successfully')
       
@@ -839,12 +841,19 @@ is INCOMPLETE, regardless of how well-written it is.
 ═══════════════════════════════════════════════════════════════════════════════
 ` : ''
 
+  // Build paper subtype guidance if present
+  const subtypeGuidance = profile.paperSubtype 
+    ? `**Paper Subtype:** ${profile.paperSubtype.name} (${profile.paperSubtype.type})
+**Subtype Rationale:** ${profile.paperSubtype.rationale}
+` 
+    : ''
+
   // Section mode - full guidance for content generation
   return `## PAPER PROFILE GUIDANCE - BINDING CONSTRAINTS
 ${titleContractGuidance}${typeWarning}
 **Discipline:** ${profile.discipline.primary}
 **Paper Type:** ${profile.paperType}
-**Field Characteristics:** ${profile.discipline.fieldCharacteristics.paceOfChange} pace of change, ${profile.discipline.fieldCharacteristics.theoryVsEmpirical}, ${profile.discipline.fieldCharacteristics.practitionerRelevance} practitioner relevance
+${subtypeGuidance}**Field Characteristics:** ${profile.discipline.fieldCharacteristics.paceOfChange} pace of change, ${profile.discipline.fieldCharacteristics.theoryVsEmpirical}, ${profile.discipline.fieldCharacteristics.practitionerRelevance} practitioner relevance
 ${voiceGuidance}
 ### Recommended Structure
 ${sections}

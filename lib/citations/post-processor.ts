@@ -22,7 +22,8 @@ import type { CSLItem } from '@/lib/utils/csl'
 
 // Storage format: [@paperId#instanceId] (group 1 = paperId, group 2 = instanceId)
 // Also matches [@paperId] without instanceId for edge cases
-const STORAGE_CITE_PATTERN = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
+// instanceId may be non-UUID (alphanumeric with timestamp)
+const STORAGE_CITE_PATTERN = /\[@([a-f0-9-]{36})(?:#([^\]]+))?\]/gi
 
 export interface CitationProcessResult {
   /** Processed content with formatted citations */
@@ -143,7 +144,8 @@ export async function processCitationMarkers(
   
   for (const [paperId, formattedCitation] of replacements) {
     // Replace [@paperId] and [@paperId#instanceId] markers
-    const pattern = new RegExp(`\\[@${paperId}(?:#[a-f0-9-]+)?\\]`, 'gi')
+    // instanceId may be non-UUID (alphanumeric with timestamp)
+    const pattern = new RegExp(`\\[@${paperId}(?:#[^\\]]+)?\\]`, 'gi')
     processedContent = processedContent.replace(pattern, formattedCitation)
   }
   
@@ -185,7 +187,8 @@ export function cleanRemainingArtifacts(content: string): string {
   let cleaned = content
   
   // Remove any remaining [@paperId] or [@paperId#instanceId] markers that weren't processed
-  cleaned = cleaned.replace(/\[@[a-f0-9-]+(?:#[a-f0-9-]+)?\]/gi, '')
+  // instanceId may be non-UUID (alphanumeric with timestamp)
+  cleaned = cleaned.replace(/\[@[a-f0-9-]{36}(?:#[^\]]+)?\]/gi, '')
   
   // Also clean non-citation artifacts
   cleaned = cleanNonCitationArtifacts(cleaned)
@@ -248,8 +251,9 @@ export function deduplicateConsecutiveCitations(content: string): {
     previousResult = result
     
     // Match: [@paperId#instanceId] followed by optional whitespace and [@SAME-paperId#differentInstanceId]
+    // instanceId may be non-UUID (alphanumeric with timestamp)
     result = result.replace(
-      /(\[@([a-f0-9-]+)#[a-f0-9-]+\])(\s*)\[@\2#[a-f0-9-]+\]/gi,
+      /(\[@([a-f0-9-]{36})#[^\]]+\])(\s*)\[@\2#[^\]]+\]/gi,
       (match, firstCitation, paperId, whitespace) => {
         duplicatesRemoved++
         console.warn(`[Citation Dedup] Removed consecutive duplicate citation for paper: ${paperId}`)

@@ -9,6 +9,8 @@ import {
 } from "@/lib/generation/run-manager";
 import { createServiceClient } from "@/lib/supabase/service";
 import { warn, error as logError } from "@/lib/utils/logger";
+import { checkCanStartGeneration } from "@/lib/billing/gates";
+import type { PaperTypeKey } from "@/lib/prompts/types";
 
 export const runtime = "nodejs";
 
@@ -95,6 +97,26 @@ export async function POST(request: NextRequest) {
         { error: "Topic is required" },
         { status: 400, headers: getCorsHeaders(request) }
       );
+    }
+
+    // Check billing limits for new projects (skip for regenerations)
+    if (!existingProjectId) {
+      const gateCheck = await checkCanStartGeneration(
+        user.id,
+        paperType as PaperTypeKey,
+        length as "short" | "medium" | "long"
+      );
+
+      if (!gateCheck.allowed) {
+        return NextResponse.json(
+          { 
+            error: gateCheck.reason || "You have reached your generation limit. Please upgrade your plan.",
+            code: "LIMIT_EXCEEDED",
+            requiredTier: gateCheck.requiredTier,
+          },
+          { status: 403, headers: getCorsHeaders(request) }
+        );
+      }
     }
 
     // Determine project ID (use existing or create new)
@@ -201,12 +223,14 @@ export async function POST(request: NextRequest) {
     const baseUrl = url.origin;
 
     // Trigger Inngest function
+    const isNewProject = !existingProjectId;
     await inngest.send({
       name: "paper/generation.start",
       data: {
         runId: run.id,
         projectId,
         userId: user.id,
+        isNewProject,
         config: {
           topic,
           paperType: finalPaperType,

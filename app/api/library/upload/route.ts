@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
       .from('papers')
       .insert({
         title: titleFromFilename,
-        authors: ['Unknown Author'],
+        authors: [], // Empty until extracted from PDF - display layer handles this
         source: 'upload',
         pdf_url: storedPdfUrl,
         owner_id: user.id,

@@ -147,7 +147,8 @@ export function extractCitedClaims(
   const citedClaims: Array<{ paperId: string; claim: string; marker: string }> = []
   
   // Pattern to match all citation markers for cleaning
-  const allMarkersPattern = /\[\d+\]|\[@[a-f0-9-]+(?:#[a-f0-9-]+)?\]/gi
+  // instanceId may be non-UUID (alphanumeric with timestamp)
+  const allMarkersPattern = /\[\d+\]|\[@[a-f0-9-]{36}(?:#[^\]]+)?\]/gi
   
   // 1. Match numbered [N] markers (during generation)
   // Use occurrence-stream approach: consume citation entries as we match markers
@@ -179,7 +180,8 @@ export function extractCitedClaims(
   }
   
   // 2. Match storage format [@paperId#instanceId] (for stored content)
-  const storagePattern = /\[@([a-f0-9-]+)(?:#[a-f0-9-]+)?\]/gi
+  // instanceId may be non-UUID (alphanumeric with timestamp)
+  const storagePattern = /\[@([a-f0-9-]{36})(?:#[^\]]+)?\]/gi
   let match
   while ((match = storagePattern.exec(content)) !== null) {
     const paperId = match[1]

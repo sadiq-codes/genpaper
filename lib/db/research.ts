@@ -90,7 +90,8 @@ function extractCitationPaperIds(content: string): string[] {
   const paperIds = new Set<string>()
   
   // Storage format: [@paperId#instanceId] or [@paperId]
-  const pattern = /\[@([a-f0-9-]{36})(?:#[a-f0-9-]{36})?\]/gi
+  // instanceId may be non-UUID (alphanumeric with timestamp)
+  const pattern = /\[@([a-f0-9-]{36})(?:#[^\]]+)?\]/gi
   for (const match of content.matchAll(pattern)) {
     paperIds.add(match[1])
   }

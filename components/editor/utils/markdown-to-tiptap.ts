@@ -16,7 +16,9 @@ import type { ProjectPaper } from '../types'
 
 // Citation marker pattern: [@paperId#instanceId] or [@paperId]
 // Group 1 = paperId, Group 2 = instanceId (optional)
-const CITATION_PATTERN = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
+// NOTE: instanceId is not always a UUID; older content may use base36 suffixes.
+// We accept any non-']' characters after '#'.
+const CITATION_PATTERN = /\[@([a-f0-9-]{36})(?:#([^\]]+))?\]/gi
 
 interface PaperLookup {
   [paperId: string]: ProjectPaper
@@ -113,8 +115,8 @@ function splitTextWithCitations(
   ctx: ConversionContext
 ): TipTapNode[] {
   // Pattern: [@paperId#instanceId] or [@paperId]
-  // Group 1 = paperId, Group 2 = instanceId (optional)
-  const citationPattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
+  // Group 1 = paperId (UUID), Group 2 = instanceId (optional, may be non-UUID)
+  const citationPattern = /\[@([a-f0-9-]{36})(?:#([^\]]+))?\]/gi
   
   const parts: TipTapNode[] = []
   let lastIndex = 0
@@ -585,7 +587,7 @@ export function hasCitationMarkers(text: string): boolean {
  * Supports [@paperId#instanceId] and [@paperId] formats
  */
 export function extractCitationIds(text: string): string[] {
-  const pattern = /\[@([a-f0-9-]+)(?:#[a-f0-9-]+)?\]/gi
+  const pattern = /\[@([a-f0-9-]{36})(?:#[^\]]+)?\]/gi
   const ids: string[] = []
   for (const match of text.matchAll(pattern)) {
     ids.push(match[1])

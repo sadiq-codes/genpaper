@@ -151,8 +151,8 @@ export function processPlainTextWithCitations(
 
   const paperLookup = createPaperLookup(papers)
   // Pattern: [@paperId#instanceId] or [@paperId]
-  // Group 1 = paperId, Group 2 = instanceId (optional)
-  const pattern = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
+  // Group 1 = paperId (UUID), Group 2 = instanceId (may be non-UUID with alphanumeric chars)
+  const pattern = /\[@([a-f0-9-]{36})(?:#([^\]]+))?\]/gi
   const matches = [...text.matchAll(pattern)]
 
   if (matches.length === 0) {

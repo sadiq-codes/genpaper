@@ -12,13 +12,13 @@ export const PDF_BUCKET = 'papers-pdfs'
 export const MAX_PDF_SIZE = 50 * 1024 * 1024 // 50MB limit
 export const DOWNLOAD_TIMEOUT = 60000 // 60 seconds (increased from 30s for slower academic servers)
 
-// Academic-friendly user agents to rotate through
+// Academic-friendly user agents to rotate through (Chrome 120+)
 const USER_AGENTS = [
-  'Mozilla/5.0 (compatible; GenPaper Academic Research Tool; +mailto:research@example.com)',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-  'Mozilla/5.0 (compatible; Academic Research Bot 1.0; +mailto:research@genpaperapp.com)'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
 ]
 
 function getRandomUserAgent(): string {
