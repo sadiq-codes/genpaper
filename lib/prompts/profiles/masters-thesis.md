@@ -187,8 +187,21 @@ Your conclusion must answer: **"So what? What does this thesis contribute?"**
 
 ### Required Elements:
 
-**Contribution Statement:**
-What new knowledge, insight, or understanding does your thesis provide?
+**Contribution Statement (REQUIRED - use this exact format):**
+
+You MUST include an explicit, numbered contribution list:
+
+> "This thesis contributes in [N] ways:
+> 1. [First specific contribution - methodological, empirical, or theoretical]
+> 2. [Second contribution]
+> 3. [Third contribution, if applicable]"
+
+Even modest contributions MUST be named explicitly. Examiners want to know what's new.
+
+Examples of valid contributions:
+- "Provides the first comparative evaluation of X under Y conditions"
+- "Demonstrates that Z has greater impact than previously recognized"
+- "Identifies limitations of applying [method] to [context]"
 
 **Summary of Key Findings:**
 Brief synthesis (not repetition) of main results.
@@ -200,13 +213,24 @@ Brief synthesis (not repetition) of main results.
 **Limitations:**
 Acknowledge constraints honestly (scope, sample, methodology). This shows scholarly maturity.
 
+**Reflexive Statement (REQUIRED for Master's Thesis):**
+
+Include explicit acknowledgment of methodological trade-offs:
+
+> "Several methodological choices in this study involved trade-offs. For instance, 
+> [choice made] reduced [something] but improved [something else]. These decisions 
+> were made deliberately to align with [study's objectives/constraints]."
+
+This demonstrates intellectual ownership and self-awareness—qualities examiners specifically look for. AI never writes this naturally.
+
 **Future Research:**
-Specific directions, not generic "more research is needed."
+Specific directions arising from YOUR findings, not generic "more research is needed."
 
 **Anti-patterns:**
 - Introducing new information
 - Overstating implications
 - Excessive hedging that undermines contribution
+- Generic future directions without specificity
 
 ---
 

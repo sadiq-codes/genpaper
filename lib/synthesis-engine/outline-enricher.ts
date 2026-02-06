@@ -8,7 +8,7 @@
  * @module lib/synthesis-engine/outline-enricher
  */
 
-import type { GeneratedOutline, SectionContext, SectionKey } from '@/lib/prompts/types'
+import type { GeneratedOutline, SectionContext } from '@/lib/prompts/types'
 import type { PaperProfile } from '@/lib/generation/paper-profile-types'
 import type { PaperWithAuthors } from '@/types/simplified'
 import type { AnalysisResult } from '@/lib/analysis/cross-document'
@@ -188,40 +188,42 @@ export async function enrichOutlineSections(
     )
     
     // Build enriched context
+    // hasSynthesisEnrichment is true when we have ANY plan data (writing guidance, paper priority, or synthesis content)
     const enriched: EnrichedSectionContext = {
       ...baseContext,
-      hasSynthesisEnrichment: isLitFocused && (!!planSection || analysisResult.patterns.length > 0),
+      hasSynthesisEnrichment: !!planSection || (isLitFocused && analysisResult.patterns.length > 0),
       isLiteratureFocused: isLitFocused
     }
     
-    // Only add synthesis content for literature-focused sections
+    // Add writing guidance and paper priority for ALL sections (from plan)
+    if (planSection) {
+      // Convert structured key points to strings for template
+      const keyPointStrings = planSection.keyPointsToMake.map(kp => kp.point)
+      
+      enriched.writingGuidance = {
+        approach: planSection.writingGuidance.approach,
+        tone: planSection.writingGuidance.tone,
+        keyPointsToMake: keyPointStrings,
+        transitionFrom: planSection.writingGuidance.transitionFrom || undefined,
+        transitionTo: planSection.writingGuidance.transitionTo || undefined,
+        paragraphStrategy: planSection.writingGuidance.paragraphStrategy || undefined,
+        synthesisLevel: planSection.writingGuidance.synthesisLevel || undefined,
+        mustNotRepeat: planSection.mustNotRepeat.length > 0 ? planSection.mustNotRepeat : undefined
+      }
+      
+      enriched.paperPriority = {
+        primary: planSection.papers.primary,
+        supporting: planSection.papers.supporting
+      }
+    }
+    
+    // Only add synthesis content (patterns, contradictions, gaps) for literature-focused sections
     if (isLitFocused) {
       if (planSection) {
-        // Use plan section content
         enriched.synthesisContent = {
           patterns: planSection.content.patterns,
           contradictions: planSection.content.contradictions,
           gaps: planSection.content.gaps
-        }
-        
-        // Convert structured key points to strings for template
-        const keyPointStrings = planSection.keyPointsToMake.map(kp => kp.point)
-        
-        enriched.writingGuidance = {
-          approach: planSection.writingGuidance.approach,
-          tone: planSection.writingGuidance.tone,
-          keyPointsToMake: keyPointStrings,
-          transitionFrom: planSection.writingGuidance.transitionFrom || undefined,
-          transitionTo: planSection.writingGuidance.transitionTo || undefined,
-          // NEW: Pass structured guidance from Phase 4
-          paragraphStrategy: planSection.writingGuidance.paragraphStrategy || undefined,
-          synthesisLevel: planSection.writingGuidance.synthesisLevel || undefined,
-          mustNotRepeat: planSection.mustNotRepeat.length > 0 ? planSection.mustNotRepeat : undefined
-        }
-        
-        enriched.paperPriority = {
-          primary: planSection.papers.primary,
-          supporting: planSection.papers.supporting
         }
       } else {
         // Fallback: distribute raw analysis data to relevant sections
@@ -291,7 +293,7 @@ export async function enrichOutlineSections(
  * Used when synthesis plan building fails
  */
 function distributeAnalysisToSection(
-  sectionKey: SectionKey,
+  sectionKey: string,
   sectionTitle: string,
   analysis: AnalysisResult
 ): SynthesisContent {

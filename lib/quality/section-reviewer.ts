@@ -1,5 +1,4 @@
 import 'server-only'
-import type { SectionKey } from '@/lib/prompts/types'
 
 export interface ReviewResult {
   section: string
@@ -35,7 +34,7 @@ export class SectionReviewer {
    * Review a single section for quality issues
    */
   static reviewSection(
-    sectionKey: SectionKey,
+    sectionKey: string,
     content: string,
     citations: Array<{ paperId: string; citationText: string }>,
     contextChunks: Array<{ paper_id: string; content: string }>,
@@ -175,7 +174,7 @@ export class SectionReviewer {
    * Check section distinctness - do sections repeat each other?
    */
   private static checkSectionDistinctness(
-    sections: Array<{ key: SectionKey; content: string }>
+    sections: Array<{ key: string; content: string }>
   ): number {
     if (sections.length < 2) return 100
     

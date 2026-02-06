@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   BookOpen,
   Zap,
@@ -17,7 +17,11 @@ import {
   Shield,
   Menu,
   X,
+  Sparkles,
+  Crown,
 } from "lucide-react"
+import { TIER_CONFIG } from "@/types/subscription"
+import type { SubscriptionTier } from "@/types/subscription"
 import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
@@ -61,6 +65,12 @@ export default function LandingPage() {
                 className="text-muted-foreground hover:text-foreground transition-colors text-sm font-medium"
               >
                 Features
+              </a>
+              <a
+                href="#pricing"
+                className="text-muted-foreground hover:text-foreground transition-colors text-sm font-medium"
+              >
+                Pricing
               </a>
               <a
                 href="#benefits"
@@ -111,6 +121,13 @@ export default function LandingPage() {
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Features
+                </a>
+                <a
+                  href="#pricing"
+                  className="text-muted-foreground hover:text-foreground transition-colors font-medium px-2 py-2"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  Pricing
                 </a>
                 <a
                   href="#benefits"
@@ -388,7 +405,36 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="py-24 bg-muted/30">
+      {/* Pricing Section */}
+      <section id="pricing" className="py-24 bg-muted/30 scroll-mt-16">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold text-foreground mb-4">Simple, transparent pricing</h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+              Choose the plan that fits your research needs. Start free, upgrade anytime.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+            {/* Free Tier */}
+            <PricingCard tier="free" icon={<Sparkles className="h-6 w-6" />} user={user} />
+            
+            {/* Starter Tier */}
+            <PricingCard tier="starter" icon={<Zap className="h-6 w-6" />} user={user} />
+            
+            {/* Pro Tier */}
+            <PricingCard tier="pro" icon={<Crown className="h-6 w-6" />} user={user} recommended />
+          </div>
+
+          <div className="text-center mt-8">
+            <Link href="/pricing" className="text-sm text-primary hover:underline">
+              View full comparison →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="py-24 bg-background">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-4xl font-bold text-foreground mb-6">
             {user ? "Ready to continue?" : "Start writing smarter today"}
@@ -472,6 +518,9 @@ export default function LandingPage() {
             </div>
 
             <div className="flex items-center space-x-6 text-sm text-muted-foreground">
+              <Link href="/pricing" className="hover:text-foreground transition-colors">
+                Pricing
+              </Link>
               <a href="#" className="hover:text-foreground transition-colors">
                 Privacy
               </a>
@@ -490,5 +539,82 @@ export default function LandingPage() {
         </div>
       </footer>
     </div>
+  )
+}
+
+// Pricing Card Component for landing page
+function PricingCard({
+  tier,
+  icon,
+  user,
+  recommended,
+}: {
+  tier: SubscriptionTier
+  icon: React.ReactNode
+  user: User | null
+  recommended?: boolean
+}) {
+  const config = TIER_CONFIG[tier]
+  
+  const getButtonProps = () => {
+    if (tier === 'free') {
+      return {
+        href: user ? '/projects' : '/signup',
+        text: user ? 'Current Plan' : 'Get Started Free',
+      }
+    }
+    return {
+      href: user ? '/settings#billing' : '/signup',
+      text: user ? `Upgrade to ${config.name}` : `Get ${config.name}`,
+    }
+  }
+  
+  const { href, text } = getButtonProps()
+  
+  return (
+    <Card className={`relative ${recommended ? 'border-primary border-2' : 'border-border'}`}>
+      {recommended && (
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+          <span className="bg-primary text-primary-foreground text-xs font-medium px-3 py-1 rounded-full">
+            Most Popular
+          </span>
+        </div>
+      )}
+      <CardHeader className="text-center pb-2">
+        <div className={`w-12 h-12 mx-auto rounded-lg flex items-center justify-center mb-4 ${
+          recommended ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+        }`}>
+          {icon}
+        </div>
+        <CardTitle className="text-xl">{config.name}</CardTitle>
+        <CardDescription>{config.description}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="text-center">
+          <span className="text-4xl font-bold">${config.price}</span>
+          {config.price > 0 && (
+            <span className="text-muted-foreground">/month</span>
+          )}
+        </div>
+        
+        <ul className="space-y-3">
+          {config.features.slice(0, 4).map((feature, i) => (
+            <li key={i} className="flex items-start gap-3 text-sm">
+              <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+              <span>{feature}</span>
+            </li>
+          ))}
+        </ul>
+        
+        <Button
+          className="w-full"
+          variant={recommended ? 'default' : 'outline'}
+          size="lg"
+          asChild
+        >
+          <Link href={href}>{text}</Link>
+        </Button>
+      </CardContent>
+    </Card>
   )
 }

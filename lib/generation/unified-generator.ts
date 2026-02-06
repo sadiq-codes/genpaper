@@ -136,7 +136,7 @@ export async function generateWithUnifiedTemplate(
   // LLM outputs [1], [2], [3] in prose, and citations array maps each occurrence
   // NOTE: All fields must be required (no .default() or .optional()) for OpenAI structured output
   const SectionOutputSchema = z.object({
-    contentMarkdown: z.string().describe('The section content with [1], [2], [3] citation markers'),
+    contentMarkdown: z.string().describe('The FULL section content in Markdown with [1], [2], [3] citation markers. MUST meet the target word count specified in the prompt. Write thorough, detailed academic prose.'),
     citations: z.array(z.object({
       index: z.number().describe('The citation marker number [N] this entry corresponds to'),
       paperId: z.string().describe('The exact paper_id from the evidence snippet'),
@@ -246,9 +246,146 @@ function extractSectionSummary(title: string, content: string, citations: Struct
 }
 
 /**
+ * Generate a section by producing each subsection separately, then combining.
+ * This overcomes the token/verbosity limitation of single-call generation
+ * by targeting 600-1400 words per subsection instead of 2000-4000 per section.
+ *
+ * Citation indices are renumbered across subsections so the combined section
+ * has a single sequential [1], [2], ... sequence.
+ */
+async function generateSectionBySubsections(
+  parentContext: SectionContext,
+  options: BuildPromptOptions,
+  onStreamEvent?: (event: StreamEvent) => void
+): Promise<UnifiedGenerationResult> {
+  const subsections = parentContext.subsections!
+  const startTime = Date.now()
+  let combinedContent = ''
+  const combinedCitations: StructuredCitation[] = []
+  let totalTokensUsed = 0
+  let citationOffset = 0
+  const subsectionSummaries: string[] = []
+
+  for (let i = 0; i < subsections.length; i++) {
+    const sub = subsections[i]
+
+    // Per-subsection word target
+    const subTargetWords = sub.expectedWords
+      || Math.round((parentContext.expectedWords || 1000) / subsections.length)
+
+    // Leaf context for this subsection — same evidence, scoped key points
+    const subContext: SectionContext = {
+      sectionKey: `${parentContext.sectionKey}.sub${i}`,
+      title: sub.title,
+      candidatePaperIds: parentContext.candidatePaperIds,
+      contextChunks: parentContext.contextChunks,
+      expectedWords: subTargetWords,
+      keyPoints: sub.keyPoints,
+      // No nested subsections — this is a leaf
+    }
+
+    // Build options for this subsection
+    const subOptions: BuildPromptOptions = { ...options }
+    subOptions.targetWords = subTargetWords
+    // Token budget: words × 1.5 (tokens/word) × 1.4 (JSON overhead)
+    subOptions.maxTokens = Math.max(2000, Math.round(subTargetWords * 1.5 * 1.4))
+
+    // Inject parent section context so the model knows this is a subsection, not a top-level section
+    const parentFraming = `You are writing subsection "${sub.title}" (${i + 1} of ${subsections.length}) inside section "${parentContext.title}". Stay within the subsection scope — do not reintroduce broad context that belongs to the parent section or earlier subsections.`
+    const existingSummary = subOptions.previousSectionsSummary || ''
+    const parts = [existingSummary, parentFraming]
+
+    // Add previous subsection summaries for within-section coherence
+    if (subsectionSummaries.length > 0) {
+      parts.push(
+        `--- Previous subsections of "${parentContext.title}" ---`,
+        ...subsectionSummaries
+      )
+    }
+    subOptions.previousSectionsSummary = parts.filter(Boolean).join('\n')
+
+    const result = await generateWithUnifiedTemplate({
+      context: subContext,
+      options: subOptions,
+      onStreamEvent,
+    })
+
+    // Renumber citation markers to avoid collisions between subsections.
+    // Derive max index from BOTH content markers AND citations array,
+    // so the offset advances even if the model returns citations: [].
+    let subContent = result.content.trim()
+
+    // Scan content for the highest [N] marker actually present in prose
+    let maxIndexInContent = 0
+    const markerMatches = subContent.matchAll(/\[(\d+)\]/g)
+    for (const m of markerMatches) {
+      maxIndexInContent = Math.max(maxIndexInContent, parseInt(m[1], 10))
+    }
+    const maxIndexInCitations = result.citations.reduce((max, c) => Math.max(max, c.index), 0)
+    const maxIndexInSub = Math.max(maxIndexInContent, maxIndexInCitations)
+
+    if (citationOffset > 0) {
+      // Collect ALL unique indices from both content and citations
+      const indicesFromCitations = result.citations.map(c => c.index)
+      const indicesFromContent: number[] = []
+      for (const m of subContent.matchAll(/\[(\d+)\]/g)) {
+        indicesFromContent.push(parseInt(m[1], 10))
+      }
+      const allIndices = [...new Set([...indicesFromCitations, ...indicesFromContent])].sort((a, b) => b - a)
+
+      // Replace highest indices first to avoid [1] → [11] collisions
+      for (const idx of allIndices) {
+        const pattern = new RegExp(`\\[${idx}\\]`, 'g')
+        subContent = subContent.replace(pattern, `[${idx + citationOffset}]`)
+      }
+    }
+
+    const shiftedCitations = result.citations.map(c => ({
+      ...c,
+      index: c.index + citationOffset,
+    }))
+
+    // Advance offset past the highest index used in this subsection
+    citationOffset += maxIndexInSub
+
+    // Convert top-level ## heading to ### for subsection level
+    subContent = subContent.replace(/^## /, '### ')
+
+    combinedContent += subContent + '\n\n'
+    combinedCitations.push(...shiftedCitations)
+    totalTokensUsed += result.tokensUsed
+
+    // Build summary for subsequent subsections
+    subsectionSummaries.push(
+      extractSectionSummary(sub.title, result.content, result.citations)
+    )
+  }
+
+  // Prepend parent section heading
+  combinedContent = `## ${parentContext.title}\n\n${combinedContent.trim()}`
+
+  const qualityScore = calculateBasicQualityScore({
+    content: combinedContent,
+    citations: combinedCitations,
+    targetWords: parentContext.expectedWords || 1000,
+  })
+
+  return {
+    content: combinedContent,
+    citations: combinedCitations,
+    tokensUsed: totalTokensUsed,
+    generationTime: (Date.now() - startTime) / 1000,
+    qualityScore,
+  }
+}
+
+/**
  * Batch processing - process multiple sections sequentially with unified approach.
  * Passes rolling summaries of completed sections to each subsequent section
  * for cross-section coherence and overlap avoidance.
+ *
+ * Sections with subsections are automatically split into per-subsection
+ * generation calls for better length compliance.
  * 
  * @param onBatchProgress - Called when a section starts (completed = sections done so far)
  * @param onSectionComplete - Called when a section finishes with its content
@@ -277,16 +414,34 @@ export async function generateMultipleSectionsUnified(
     // Track accumulated content for this section to pass to streaming callback
     let sectionContent = ''
     
-    const result = await generateWithUnifiedTemplate({
-      context: contexts[i],
-      options: sectionOptions,
-      onStreamEvent: onStreamChunk ? (event) => {
-        if (event.type === 'sentence') {
-          sectionContent += event.data.text
-          onStreamChunk(sectionTitle, event.data.text, sectionContent)
+    const streamHandler: ((event: StreamEvent) => void) | undefined = onStreamChunk
+      ? (event) => {
+          if (event.type === 'sentence') {
+            sectionContent += event.data.text
+            onStreamChunk(sectionTitle, event.data.text, sectionContent)
+          }
         }
-      } : undefined
-    })
+      : undefined
+
+    // Route: sections WITH subsections → per-subsection generation
+    //        sections WITHOUT subsections → single-call generation
+    const hasSubsections = contexts[i].subsections && contexts[i].subsections!.length > 0
+
+    let result: UnifiedGenerationResult
+    if (hasSubsections) {
+      result = await generateSectionBySubsections(
+        contexts[i],
+        sectionOptions,
+        streamHandler
+      )
+    } else {
+      result = await generateWithUnifiedTemplate({
+        context: contexts[i],
+        options: sectionOptions,
+        onStreamEvent: streamHandler,
+      })
+    }
+
     results.push(result)
     
     // Build summary from completed section for subsequent sections

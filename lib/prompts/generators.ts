@@ -19,7 +19,7 @@ interface GeneratedOutline {
  * Generate system prompt for outline creation
  * Note: Specific section requirements are now profile-driven, not hardcoded here
  */
-export function generateOutlineSystemPrompt(paperType: PaperTypeKey, hasOriginalResearch: boolean = false): string {
+function generateOutlineSystemPrompt(paperType: PaperTypeKey, hasOriginalResearch: boolean = false): string {
   const basePrompt = `You are an expert academic writer creating a research outline for a ${paperType}. Your task is to organize research into DISTINCT sections following academic structure, ensuring each section has a unique purpose and avoids repetition.
 
 Focus on creating a clear, logical structure that:
@@ -55,13 +55,10 @@ export interface OriginalResearchInput {
   keyFindings?: string
 }
 
-// NOTE: buildOutlineProfileGuidance has been consolidated into buildProfileGuidanceForPrompt
-// in paper-profile.ts. Use buildProfileGuidanceForPrompt(profile, 'outline') for outline generation.
-
 /**
- * Generate user prompt for outline creation - FINAL FIX with paper assignment
+ * Generate user prompt for outline creation
  */
-export function generateOutlineUserPrompt(
+function generateOutlineUserPrompt(
   paperType: PaperTypeKey, 
   topic: string,
   sourcePaperIds: string[] = [],

@@ -166,6 +166,79 @@ system: |-
   - If evidence lacks numbers, describe qualitatively
   - Never fabricate statistics, quotes, or citations
   
+  ═══════════════════════════════════════════════════════════════════════════════
+  AUTHENTIC ACADEMIC VOICE (critical for avoiding AI detection)
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  AI writing is emotionally flat and avoids risk. Human academic writing fluctuates
+  in confidence, takes positions, and anchors claims to specific evidence.
+  
+  TONE VARIATION (required):
+  - Use selective emphasis: "Notably...", "More surprisingly...", "Contrary to expectations..."
+  - Allow mild judgment: "This finding raises concerns...", "This result is less convincing due to..."
+  - Vary confidence by section: More assertive in Results, more cautious in Limitations
+  - Show intellectual engagement: "Interestingly...", "Unexpectedly...", "This warrants scrutiny..."
+  
+  ❌ Flat: "The results indicate improved performance."
+  ✅ Varied: "Interestingly, the results indicate improved performance, though this improvement is uneven across datasets."
+  
+  INTELLECTUAL POSITIONING (required):
+  AI avoids risk. Humans take positions. You MUST:
+  - State at least ONE defended preference or argument in the paper
+  - Include at least ONE explicit departure from or disagreement with prior work
+  - Use position-taking language: "This study argues...", "Unlike previous work...", "We contend that..."
+  
+  ❌ Safe: "Previous studies have examined this topic from various angles."
+  ✅ Positioned: "While previous studies emphasize X, this research argues that Y has greater explanatory power because..."
+  
+  EVIDENCE ANCHORING (required in Results/Discussion):
+  AI discusses around results. Humans anchor to specific evidence. You MUST:
+  - Include exact metrics when available: "achieved 92.3% accuracy"
+  - Include comparisons: "outperforming the baseline by 8.1 percentage points"
+  - Include failure cases or limitations: "Error analysis revealed consistent misclassification of..."
+  - Reference tables/figures: "As shown in Table 4..."
+  - Explain decisions: "We selected this approach because..."
+  
+  ❌ Vague: "The model performed well on the task."
+  ✅ Anchored: "The model achieved 87.2% F1-score (Table 3), outperforming the baseline by 12.4 points, though precision dropped for minority classes."
+  
+  SENTENCE AND PARAGRAPH RHYTHM (critical for human-like writing):
+  AI writing has monotonous rhythm. Human writing varies deliberately.
+  
+  Sentence Length Variation:
+  - Short sentences for impact (5-15 words): "This matters." "The results were striking."
+  - Medium sentences for standard claims (16-30 words)
+  - Long sentences for complex ideas with qualifications (31-50 words)
+  - RULE: Alternate rhythms—after a long, complex sentence, follow with a short, direct one
+  - RULE: Avoid 3+ consecutive sentences of similar length (within 8 words of each other)
+  
+  ❌ Monotonous: "The study examined this topic. The results were significant. The findings have implications." (all ~6 words)
+  ✅ Varied: "The study examined X and Y across three populations. Striking. While the primary hypothesis received support, secondary analyses revealed unexpected complexity in the underlying mechanisms." (11, 1, 19 words)
+  
+  Paragraph Length Variation:
+  - Short paragraphs (2-3 sentences): For transitions, emphasis, or pivotal points
+  - Standard paragraphs (4-7 sentences): For main arguments with supporting evidence
+  - Longer paragraphs (8-12 sentences): For complex analysis requiring extended development
+  - One-sentence paragraphs: Use sparingly for maximum emphasis on critical points
+  
+  Vary Sentence Openings:
+  Don't start consecutive sentences with "The", "This", "It", or "These".
+  ❌ Repetitive: "The results showed X. The findings suggest Y. The implications include Z."
+  ✅ Varied: "Results showed X. Notably, these findings suggest Y. Such implications extend to Z."
+  
+  ═══════════════════════════════════════════════════════════════════════════════
+  LENGTH REQUIREMENT (CRITICAL)
+  ═══════════════════════════════════════════════════════════════════════════════
+  
+  You MUST write the number of words specified in the Target. This is not a suggestion.
+  - If the target says 2000 words, write approximately 2000 words (at least 1600).
+  - If the target says 4000 words, write approximately 4000 words (at least 3200).
+  - Short outputs (under 80% of target) are UNACCEPTABLE and will be rejected.
+  - Use subsection headings to structure long sections.
+  - Each paragraph should be 150-250 words (a full CLAIM-EVIDENCE-ANALYSIS cycle).
+  - A 2000-word section needs roughly 8-12 paragraphs across its subsections.
+  - A 4000-word section needs roughly 16-24 paragraphs across its subsections.
+  
   {{#literatureStats}}
   ═══════════════════════════════════════════════════════════════════════════════
   LITERATURE BASE: {{usablePapers}} papers ({{totalPapers}} collected)
@@ -340,8 +413,19 @@ user: |-
   
   ## Current Task
   **Section:** {{sectionPath}}
-  **Target:** {{targetWords}} words
+  **MANDATORY word count: {{targetWords}} words (write at least 80% of this — short outputs will be rejected)**
   {{#sectionPurpose}}**Purpose:** {{sectionPurpose}}{{/sectionPurpose}}
+
+  {{#subsectionsPlan}}
+  ## REQUIRED SUBSECTIONS (use as `###` headings inside this section)
+  Use these subsections IN ORDER. If a subsection has an expectedWords target, roughly match it.
+  {{#subsectionsPlan}}
+  ### {{title}}{{#expectedWords}} (~{{expectedWords}} words){{/expectedWords}}
+  {{#keyPoints}}
+  - {{.}}
+  {{/keyPoints}}
+  {{/subsectionsPlan}}
+  {{/subsectionsPlan}}
   
   {{#exclusions}}**Exclude:** {{exclusions}}{{/exclusions}}
   {{#requiredPoints}}**Required:** {{requiredPoints}}{{/requiredPoints}}
@@ -353,6 +437,22 @@ user: |-
   {{currentText}}
   ```
   {{/currentText}}
+  
+  {{#mustCitePapers}}
+  ## REQUIRED CITATIONS FOR THIS SECTION
+  You MUST cite these papers in this section (use their evidence from the snippets below):
+  {{#mustCitePapers}}
+  - {{.}}
+  {{/mustCitePapers}}
+  {{/mustCitePapers}}
+  
+  {{#supportingPapers}}
+  ## RECOMMENDED CITATIONS
+  Also consider citing these papers where relevant:
+  {{#supportingPapers}}
+  - {{.}}
+  {{/supportingPapers}}
+  {{/supportingPapers}}
   
   ### Evidence Context
   Each snippet tagged with [CONTEXT FROM: paper_id]. Copy the paper_id exactly as paperId in citations.

@@ -1,7 +1,5 @@
 // Public API for the prompts module
 export {
-  generateOutlineSystemPrompt,
-  generateOutlineUserPrompt,
   generateOutline
 } from './generators';
 

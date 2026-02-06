@@ -178,8 +178,15 @@ Your conclusion must answer: **"So what? Why does this matter?"**
 
 ### Required Elements:
 
-**Contribution Statement:**
-What new knowledge, insight, or practical value does your capstone provide? Be specific.
+**Contribution Statement (REQUIRED):**
+
+Even in a capstone project, explicitly name what this work contributes:
+
+> "This capstone contributes by:
+> 1. [What new insight, application, or analysis it provides]
+> 2. [How it advances understanding or practice in this area]"
+
+Don't be modest—tell the reader what's valuable about your work. Examiners want to know what you accomplished.
 
 **Implications:**
 - For theory: How does this extend or challenge existing understanding?
@@ -188,13 +195,22 @@ What new knowledge, insight, or practical value does your capstone provide? Be s
 **Limitations:**
 Acknowledge constraints honestly (sample size, scope, methodology, time). This demonstrates scholarly maturity, not weakness.
 
+**Reflexive Note (Recommended for Capstones):**
+
+Consider including acknowledgment of key methodological decisions:
+
+> "This project involved trade-offs between [X] and [Y]. The decision to prioritize [choice] was made because [rationale]."
+
+This shows ownership and critical thinking about your own work.
+
 **Future Directions:**
-What questions remain? What would you recommend for future research or development?
+What questions remain? What would you recommend for future research or development? Be specific, not generic.
 
 **Anti-patterns to avoid:**
 - Introducing new information not discussed earlier
 - Vague claims ("More research is needed")
 - Overstating implications beyond what evidence supports
+- Failing to name your contribution explicitly
 
 ---
 

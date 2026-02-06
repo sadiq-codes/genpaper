@@ -56,11 +56,13 @@ export interface PromptValidationError extends Error {
 
 // TASK 3: Outline Generation Types
 export interface OutlineSection {
-  sectionKey: SectionKey;
+  sectionKey: string;
   title: string;
   candidatePaperIds: string[];
   keyPoints?: string[];
   expectedWords?: number;
+  /** Nested subsections (e.g., "1.1 Background", "1.2 Objectives") */
+  subsections?: OutlineSection[];
 }
 
 export interface GeneratedOutline {
@@ -86,7 +88,7 @@ export type EvidenceStrength = 'full_text' | 'abstract' | 'title_only';
 
 // TASK 4: Section Drafting Types
 export interface SectionContext {
-  sectionKey: SectionKey;
+  sectionKey: string;
   title: string;
   candidatePaperIds: string[];
   contextChunks: Array<{
@@ -103,6 +105,12 @@ export interface SectionContext {
   }>;
   expectedWords?: number;
   keyPoints?: string[];
+  /** Optional structured subsections to include within this section */
+  subsections?: Array<{
+    title: string;
+    expectedWords?: number;
+    keyPoints?: string[];
+  }>;
 }
 
 export interface SectionConfig {
@@ -122,7 +130,7 @@ export interface SectionConfig {
 }
 
 export interface GeneratedSection {
-  sectionKey: SectionKey;
+  sectionKey: string;
   title: string;
   content: string;
   citations: Array<{
@@ -159,7 +167,7 @@ export type ImprovementType =
   | 'quality';
 
 export interface SectionContent {
-  sectionKey: SectionKey;
+  sectionKey: string;
   title: string;
   content: string;
   wordCount: number;

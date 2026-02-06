@@ -209,6 +209,21 @@ GAPS:
 - Suggest concrete future research directions
 
 ═══════════════════════════════════════════════════════════════════════════════
+PAPER DISTRIBUTION (CRITICAL FOR CITATION DIVERSITY)
+═══════════════════════════════════════════════════════════════════════════════
+
+You MUST distribute papers across sections to maximize citation diversity:
+- Each paper should appear as "primary" in at least ONE section
+- Do NOT assign the same 5-10 papers as primary for every section
+- Different sections discuss different aspects → different papers are relevant
+- Aim for every available paper to be assigned (primary or supporting) to at least one section
+- Literature-focused sections should have the most primary papers (8-15 each)
+- Non-literature sections can have fewer (3-5 each)
+
+BAD: Same 8 papers in every section's primary list
+GOOD: Introduction cites foundational papers, Lit Review cites empirical studies, Discussion cites recent/contrasting papers
+
+═══════════════════════════════════════════════════════════════════════════════
 NARRATIVE FLOW
 ═══════════════════════════════════════════════════════════════════════════════
 
@@ -365,17 +380,17 @@ PAPERS (${papers.length}):
 ${papersText}
 ${constraintsText}
 Plan a coherent synthesis that:
-1. Creates EXACTLY the same number of sections as the outline (one section per outline section)
+1. Creates EXACTLY ${outlineSections?.length || 'the same number of'} sections - one for EACH outline section, including non-literature sections like Methodology, Results, Discussion, Conclusion
 2. Each section's outlineSectionKey MUST match an outline section key exactly
 3. Marks isLiteratureFocused correctly for each section (copy from outline)
-4. Only includes patterns/contradictions/gaps in literature-focused sections
-5. Covers all important patterns in appropriate sections
+4. For non-literature sections: leave patterns/contradictions/gaps as EMPTY ARRAYS [], but still provide keyPointsToMake, writingGuidance, and papers
+5. Covers all important patterns in literature-focused sections
 6. Addresses contradictions fairly
 7. Places gaps and future directions in Discussion/Conclusion sections
 8. Flows logically from section to section with transitions
-9. Provides clear writing guidance for each section
+9. Provides clear writing guidance for EVERY section
 
-CRITICAL: Your sections array MUST have exactly ${outlineSections?.length || 'the same number of'} elements matching the outline.`
+CRITICAL: Your sections array MUST have exactly ${outlineSections?.length || 'the same number of'} elements. Do NOT skip non-literature sections - they still need plans with key points and writing guidance.`
 }
 
 // =============================================================================
@@ -415,6 +430,7 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
       system: SYSTEM_PROMPT,
       prompt: buildPrompt(input),
       temperature: 0.3,
+      maxOutputTokens: 16000,
     })
     
     const timeMs = Date.now() - startTime
@@ -510,6 +526,108 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
         patternsFound: analysis.patterns.length,
         contradictionsFound: analysis.contradictions.length,
         gapsFound: analysis.gaps.length
+      }
+    }
+
+    // Root enforcement: ensure synthesis items are actually distributed across literature-focused sections.
+    // When the LLM under-assigns patterns/contradictions/gaps, the downstream generator becomes evidence-blind,
+    // causing low citation diversity and shallow content.
+    const litSections = plan.sections.filter(s => s.isLiteratureFocused)
+    if (litSections.length > 0) {
+      const plannedPatternIds = new Set(plan.sections.flatMap(s => s.content.patterns.map(p => p.patternId)))
+      const plannedContradictionIds = new Set(plan.sections.flatMap(s => s.content.contradictions.map(c => c.contradictionId)))
+      const plannedGapIds = new Set(plan.sections.flatMap(s => s.content.gaps.map(g => g.gapId)))
+
+      const needsPatternDistribution =
+        plannedPatternIds.size < Math.min(input.analysis.patterns.length, litSections.length)
+      const needsContradictionDistribution =
+        plannedContradictionIds.size < Math.min(input.analysis.contradictions.length, Math.max(1, Math.floor(litSections.length / 2)))
+      const needsGapDistribution =
+        plannedGapIds.size < Math.min(input.analysis.gaps.length, Math.max(1, Math.floor(litSections.length / 2)))
+
+      if (needsPatternDistribution || needsContradictionDistribution || needsGapDistribution) {
+        warn(
+          {
+            planned: {
+              patterns: plannedPatternIds.size,
+              contradictions: plannedContradictionIds.size,
+              gaps: plannedGapIds.size
+            },
+            available: {
+              patterns: input.analysis.patterns.length,
+              contradictions: input.analysis.contradictions.length,
+              gaps: input.analysis.gaps.length
+            },
+            litSections: litSections.map(s => s.outlineSectionKey)
+          },
+          'Plan under-assigned synthesis items; distributing deterministically'
+        )
+
+        const sectionOrder = [...litSections].sort((a, b) => {
+          const score = (k: string) =>
+            k.toLowerCase().includes('literature') || k.toLowerCase().includes('review') ? 0
+              : k.toLowerCase().includes('discussion') ? 1
+              : k.toLowerCase().includes('introduction') ? 2
+              : k.toLowerCase().includes('conclusion') ? 3
+              : 4
+          return score(a.outlineSectionKey) - score(b.outlineSectionKey)
+        })
+
+        const formatSupportStatement = (count: number, total: number) => {
+          const pct = total > 0 ? Math.round((count / total) * 100) : 0
+          return `${count} of ${total} papers (${pct}%) supported this pattern`
+        }
+
+        // Distribute missing patterns
+        const missingPatterns = input.analysis.patterns.filter(p => !plannedPatternIds.has(p.id))
+        for (let i = 0; i < missingPatterns.length; i++) {
+          const p = missingPatterns[i]
+          const target = sectionOrder[i % sectionOrder.length]
+          target.content.patterns.push({
+            patternId: p.id,
+            claim: p.claim,
+            importance: i < 3 ? 'central' : 'supporting',
+            presentationApproach: 'Present as a cross-study pattern, then support with representative citations and note any limitations.',
+            data: {
+              supportStatement: formatSupportStatement(p.support.count, p.support.total),
+              valuesSummary: p.values?.summary || undefined,
+              contextNotes: p.summary || undefined
+            },
+            supportingPaperIds: (p.support.papers || []).map(sp => sp.paperId).filter(Boolean)
+          })
+        }
+
+        // Distribute missing contradictions (prefer Discussion, then Literature Review)
+        const discussionSection =
+          sectionOrder.find(s => s.outlineSectionKey.toLowerCase().includes('discussion')) || sectionOrder[0]
+        const missingContradictions = input.analysis.contradictions.filter(c => !plannedContradictionIds.has(c.id))
+        for (const c of missingContradictions) {
+          discussionSection.content.contradictions.push({
+            contradictionId: c.id,
+            description: c.description,
+            presentationApproach: 'Present both sides fairly, then explain plausible reasons for disagreement (data, method, context).',
+            resolutionStrategy: undefined,
+            sides: (c.sides || []).map(s => ({
+              position: s.position,
+              paperIds: (s.papers || []).map(p => p.paperId).filter(Boolean)
+            }))
+          })
+        }
+
+        // Distribute missing gaps (prefer Conclusion, then Discussion)
+        const conclusionSection =
+          sectionOrder.find(s => s.outlineSectionKey.toLowerCase().includes('conclusion')) || discussionSection
+        const missingGaps = input.analysis.gaps.filter(g => !plannedGapIds.has(g.id))
+        for (let i = 0; i < missingGaps.length; i++) {
+          const g = missingGaps[i]
+          const target = i % 2 === 0 ? discussionSection : conclusionSection
+          target.content.gaps.push({
+            gapId: g.id,
+            description: g.description,
+            importance: g.relevance || g.priority || 'notable',
+            suggestedFutureWork: g.suggestedResearchQuestion || undefined
+          })
+        }
       }
     }
     

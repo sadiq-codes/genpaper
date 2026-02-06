@@ -2,7 +2,7 @@ import 'server-only'
 import { v4 as uuidv4 } from 'uuid'
 import { updateProjectContent, updateResearchProjectStatus, updateProjectVoiceProfile, savePartialContent } from '@/lib/db/research'
 import { collectPapers } from '@/lib/generation/discovery'
-import { generateOutline, type OriginalResearchInput } from '@/lib/prompts/generators'
+// generateOutline removed — outline now comes from paper profile
 import { generateMultipleSectionsUnified, type StructuredCitation } from '@/lib/generation/unified-generator'
 import { GenerationContextService } from '@/lib/rag/generation-context'
 import { SectionReviewer } from '@/lib/quality/section-reviewer'
@@ -15,7 +15,7 @@ import { warn, error as logError, info } from '@/lib/utils/logger'
 // cleanRemainingArtifacts removes any leaked tool syntax
 import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
 import { logSectionCitations } from '@/lib/rag/relevance-feedback'
-import { mergeAnalysisResultIntoProfile, buildAnalysisGuidanceForOutline } from '@/lib/generation/theme-extraction'
+import { mergeAnalysisResultIntoProfile } from '@/lib/generation/theme-extraction'
 import { extractThemesHybrid, enrichAndBuildContexts, type HybridThemeExtractionResult } from '@/lib/synthesis-engine/pipeline-integration'
 import type { EnrichedSectionContext } from '@/lib/synthesis-engine/outline-enricher'
 import { getServiceClient } from '@/lib/supabase/service'
@@ -54,7 +54,7 @@ export interface PipelineMetrics {
     generationMs: number
     qualityCheckMs: number
     wasRewritten: boolean
-    rewriteReason?: 'overlap' | 'citation_verification'
+    rewriteReason?: 'overlap' | 'length' | 'citation_verification'
   }>
   
   // Overlap detection stats
@@ -599,52 +599,43 @@ export async function generatePaper(
     // Check cancellation after theme extraction
     checkCancellation('theme extraction')
 
-    // Continue planning: Generate Outline (now with theme-informed profile)
+    // Continue planning: Use outline from paper profile
     const outlineStartTime = Date.now()
     
-    // Limit paper IDs passed to outline generation to prevent token overflow
-    // The outline only needs representative papers - full paper list is used during RAG
-    const MAX_PAPERS_FOR_OUTLINE = 50
     const allPaperIds = allPapers.map(p => p.id)
-    const outlinePaperIds = allPaperIds.slice(0, MAX_PAPERS_FOR_OUTLINE)
     
-    if (allPaperIds.length > MAX_PAPERS_FOR_OUTLINE) {
-      info({
-        totalPapers: allPaperIds.length,
-        usedForOutline: MAX_PAPERS_FOR_OUTLINE
-      }, 'Limiting papers for outline generation to prevent token overflow')
+    // Validate profile outline exists
+    if (!enhancedProfile.outline || !enhancedProfile.outline.sections || enhancedProfile.outline.sections.length === 0) {
+      const msg = 'Paper profile was generated without an outline. This should not happen — the profile prompt requires an outline.'
+      logError({ paperType: config.paperType, topic: sanitizedTopic.slice(0, 100) }, msg)
+      throw new Error(msg)
     }
     
-    // Build original research input if available
-    const originalResearchInput: OriginalResearchInput | undefined = 
-      config.originalResearch?.has_original_research ? {
-        researchQuestion: config.originalResearch.research_question,
-        keyFindings: config.originalResearch.key_findings
-      } : undefined
+    info({
+      source: 'paper-profile',
+      sections: enhancedProfile.outline.sections.length,
+      totalWords: enhancedProfile.outline.totalEstimatedWords,
+      subsections: enhancedProfile.outline.sections.reduce((sum, s) => sum + (s.subsections?.length || 0), 0)
+    }, 'Using outline from paper profile')
     
-    // Build analysis guidance for outline generation
-    const themeGuidance = analysisResult ? buildAnalysisGuidanceForOutline(analysisResult) : undefined
-    
-    const rawOutline = await generateOutline(
-      config.paperType,
-      sanitizedTopic,
-      outlinePaperIds,  // Use limited paper IDs for outline (prevents token overflow)
-      originalResearchInput,
-      enhancedProfile,  // Use the enhanced profile with emergent themes
-      themeGuidance     // Pass theme guidance for better outline structure
-    )
-    
-    // Build properly typed outline
-    // Note: The outline generator receives comprehensive profile guidance that tells it
-    // exactly which sections are appropriate and which are forbidden for this paper type.
-    // The prompts are designed to prevent inappropriate sections from being generated.
     const typedOutline: GeneratedOutline = {
       paperType: config.paperType,
       topic: sanitizedTopic,
-      sections: rawOutline.sections.map(section => ({
-        ...section,
-        sectionKey: section.sectionKey as any // Type assertion for flexibility
+      sections: enhancedProfile.outline.sections.map(section => ({
+        sectionKey: section.sectionKey,
+        title: section.title,
+        candidatePaperIds: allPaperIds.slice(0, 50),
+        keyPoints: section.keyPoints,
+        expectedWords: section.expectedWords,
+        subsections: section.subsections?.map(sub => ({
+          sectionKey: sub.sectionKey,
+          title: sub.title,
+          candidatePaperIds: [],
+          keyPoints: sub.keyPoints,
+          expectedWords: sub.expectedWords
+        }))
       })),
+      totalEstimatedWords: enhancedProfile.outline.totalEstimatedWords,
       localRegion: undefined
     }
     
@@ -778,10 +769,13 @@ export async function generatePaper(
     let fullContent = ''
     const allCitations: StructuredCitation[] = []
     
-    // Compute safe per-section token allocation
-    const totalMaxTokens = config.maxTokens || 16000
+    // Compute per-section token allocation based on target word count
+    // Each section's expectedWords determines its token budget
+    // Rule of thumb: 1 word ≈ 1.5 tokens for content + ~40% overhead for structured output JSON (citations with quotes)
     const sectionCount = Math.max(1, sectionContexts.length)
-    const perSectionTokens = Math.max(1000, Math.floor(totalMaxTokens / sectionCount))
+    const perSectionTokens = Math.max(2000, Math.round(
+      ((typedOutline.totalEstimatedWords || 10000) / sectionCount) * 1.5 * 1.4
+    ))
 
     // Generate all sections using unified template
     const outlineTreeText = typedOutline.sections.map(s => `• ${s.title}`).join('\n')
@@ -860,7 +854,7 @@ export async function generatePaper(
       let result = results[i]
       const sectionContext = sectionContexts[i]
       let wasRewritten = false
-      let rewriteReason: 'overlap' | 'citation_verification' | undefined
+      let rewriteReason: 'overlap' | 'length' | 'citation_verification' | undefined
       
       // Check cross-section overlap and rewrite if necessary
       const overlap = fourGramOverlapRatio(result.content, fullContent)
@@ -898,6 +892,43 @@ export async function generatePaper(
         } catch (rewriteError) {
           warn({ section: sectionContext.title, error: rewriteError }, 'Rewrite failed')
         }
+      }
+
+      // Enforce target length (root fix for chronic under-generation)
+      // Skip if an overlap rewrite already fired — avoid double-rewriting in the same iteration.
+      try {
+        const targetWords = sectionContext.expectedWords || 300
+        const actualWords = result.content.split(/\s+/).filter(w => w.length > 0).length
+
+        // Only enforce for substantial sections; keep short sections flexible
+        if (!wasRewritten && targetWords >= 800 && actualWords < targetWords * 0.7) {
+          warn(
+            { section: sectionContext.title, actualWords, targetWords },
+            'Section too short vs target words, triggering rewrite'
+          )
+          const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
+          wasRewritten = true
+          rewriteReason = 'length'
+
+          // Do NOT pass the short draft as rewriteText — the model will anchor on it
+          // and just lightly edit. Instead, regenerate from scratch with stronger instructions.
+          result = await generateWithUnifiedTemplate({
+            context: sectionContext,
+            options: {
+              temperature: config.temperature || 0.2,
+              maxTokens: perSectionTokens,
+              previousSectionsSummary: `IMPORTANT: Your previous attempt for "${sectionContext.title}" was only ${actualWords} words (target: ${targetWords}). This time you MUST write at least ${Math.round(targetWords * 0.8)} words. Use ALL subsections, write 150-250 words per paragraph, and ensure thorough coverage of every key point with evidence from the provided snippets.`,
+              outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n'),
+              profileGuidance,
+              paperType: config.paperType,
+              topic: sanitizedTopic,
+              voiceConfig: paperProfile.voice,
+              profileCriteria: paperProfile.qualityCriteria
+            }
+          })
+        }
+      } catch (lenErr) {
+        warn({ section: sectionContext.title, error: lenErr }, 'Length-based rewrite failed')
       }
       
       // NOTE: Evidence tracking removed to allow all sections access to all chunks
@@ -1098,7 +1129,11 @@ export async function generatePaper(
     const avgQualityScore = totalQualityScore / results.length
     
     // Paper type validation - use profile-based validation for contextual accuracy
-    const profileValidation = validatePaperWithProfile(fullContent, paperProfile)
+    const validPaperIdsForValidation = new Set(allPapers.map(p => p.id))
+    const citedPaperIdsForValidation = Array.from(
+      new Set(allCitations.map(c => c.paperId).filter(id => validPaperIdsForValidation.has(id)))
+    )
+    const profileValidation = validatePaperWithProfile(fullContent, paperProfile, citedPaperIdsForValidation)
     
     if (!profileValidation.valid) {
       warn({ 

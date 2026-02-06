@@ -566,6 +566,11 @@ export class GenerationContextService {
         sectionKey: section.sectionKey,
         title: section.title,
         keyPoints: section.keyPoints || [],
+        subsections: section.subsections?.map(sub => ({
+          title: sub.title,
+          expectedWords: sub.expectedWords,
+          keyPoints: sub.keyPoints || []
+        })),
         candidatePaperIds: section.candidatePaperIds || [],
         contextChunks: contextChunks.map(c => ({
           id: c.id,

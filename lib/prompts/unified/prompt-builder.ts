@@ -259,6 +259,13 @@ async function generatePromptData(
     requiredPoints,
     qualityCriteria,
     targetWords,
+    subsectionsPlan: (context.subsections && context.subsections.length > 0)
+      ? context.subsections.map(s => ({
+          title: s.title,
+          expectedWords: s.expectedWords,
+          keyPoints: s.keyPoints || []
+        }))
+      : undefined,
     // minCitations removed - using semantic citation guidance instead of quantitative enforcement
     isRewrite: Boolean(currentText) || Boolean(options.forceRewrite),
     currentText: currentText || undefined,
@@ -344,6 +351,12 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
   
   if (synthesisGaps.length > 0) {
     result.synthesisGaps = synthesisGaps
+  }
+  
+  // Add paper citation priorities if available
+  if (enriched.paperPriority) {
+    ;(result as Record<string, unknown>).mustCitePapers = enriched.paperPriority.primary
+    ;(result as Record<string, unknown>).supportingPapers = enriched.paperPriority.supporting
   }
   
   // Add writing guidance if available

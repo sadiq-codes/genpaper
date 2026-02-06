@@ -242,6 +242,18 @@ This section must explicitly articulate what NEW knowledge this dissertation pro
 - **Empirical:** New evidence, tested relationships, documented phenomena, replicated findings
 - **Practical:** Applications, recommendations, interventions, policy implications
 
+### Contribution Statement (REQUIRED - use this exact format):
+
+A doctoral dissertation MUST include an explicit, numbered contribution list:
+
+> "This dissertation contributes to knowledge in [N] ways:
+> 1. [Theoretical contribution - new framework, challenged assumption, extended theory]
+> 2. [Methodological contribution - new approach, validated method, innovative design]
+> 3. [Empirical contribution - new evidence, documented phenomena, tested relationships]
+> 4. [Practical contribution, if applicable - applications, policy implications]"
+
+Be specific and confident. You are becoming an expert—claim your contribution explicitly.
+
 ### Requirements:
 1. State the contribution explicitly—do not leave it for readers to infer
 2. Explain how this advances the field beyond existing knowledge
@@ -270,6 +282,17 @@ Brief synthesis of main findings in relation to research questions.
 **Limitations:**
 Acknowledge constraints without undermining your contribution. Frame as scope boundaries, not fatal flaws.
 
+**Reflexive Statement (REQUIRED for Doctoral Work):**
+
+Doctoral work requires explicit acknowledgment of methodological decisions and their implications:
+
+> "This research involved deliberate methodological choices with inherent trade-offs. 
+> [Choice 1] was selected over [alternative] because [rationale], accepting that this 
+> [limitation]. Similarly, [Choice 2] prioritized [X] at the cost of [Y], a decision 
+> aligned with [study's epistemological stance/practical constraints]."
+
+This reflexivity demonstrates scholarly maturity and ownership of the research process. Examiners specifically look for this—AI never writes it naturally.
+
 **Future Research:**
 Specific directions arising directly from your findings—not generic "more research is needed."
 
@@ -279,6 +302,7 @@ Specific directions arising directly from your findings—not generic "more rese
 - Overstating implications beyond what findings support
 - Excessive hedging that undermines your contribution
 - Generic future directions without specificity
+- Missing reflexive acknowledgment of trade-offs
 
 ---
 

@@ -22,7 +22,7 @@ import {
 } from './voice-profiles'
 
 /** Maximum retry attempts for profile generation */
-const MAX_PROFILE_RETRIES = 2
+const MAX_PROFILE_RETRIES = 3
 
 /** Delay between retries in ms */
 const RETRY_DELAY_MS = 1000
@@ -63,18 +63,25 @@ export async function generatePaperProfile(
         warn({ attempt, maxRetries: MAX_PROFILE_RETRIES }, 'Retrying paper profile generation')
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
       }
+
+      // If we're retrying, tell the model what failed so it can correct it.
+      // This is critical for failures originating from post-generation validation.
+      const retryFeedback =
+        attempt > 0 && lastError
+          ? `\n\nRETRY FEEDBACK (you must fix this):\n- Previous output failed validation with error: ${String(lastError.message).slice(0, 800)}\n\nReturn valid JSON matching the schema exactly.`
+          : ''
       
       const response = await model.doGenerate({
         prompt: [
           { role: 'system', content: prompt.system },
-          { role: 'user', content: [{ type: 'text', text: prompt.user }] }
+          { role: 'user', content: [{ type: 'text', text: prompt.user + retryFeedback }] }
         ],
         responseFormat: {
           type: 'json',
           schema: PAPER_PROFILE_JSON_SCHEMA
         },
         temperature: 0.3,  // Lower temperature for consistency
-        maxOutputTokens: 4000
+        maxOutputTokens: 8000  // Increased to accommodate outline with subsections
       })
       
       // In v3, response has content array with text parts
@@ -125,8 +132,14 @@ export async function generatePaperProfile(
         paperType 
       }, 'Paper profile generation attempt failed')
       
-      // Don't retry on certain errors (e.g., invalid input)
-      if (lastError.message.includes('Invalid') || lastError.message.includes('400')) {
+      // Don't retry on API-level errors (bad request, invalid schema).
+      // IMPORTANT: Only match API/HTTP errors — NOT our own validation throws
+      // (e.g., "Profile outline invalid: ...") which should trigger retry with feedback.
+      const isApiError =
+        lastError.message.includes('Invalid schema') ||
+        lastError.message.includes('HTTP 400') ||
+        lastError.message.includes('status code 400')
+      if (isApiError) {
         break
       }
     }
@@ -224,6 +237,86 @@ function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
         rationale: 'Scholarly writing requires formal, objective language'
       }
     ]
+  }
+  
+  // Validate outline if present
+  if (profile.outline && profile.outline.sections) {
+    // CRITICAL: Ensure outline covers ALL sections from structure.appropriateSections.
+    // The LLM sometimes generates 6 appropriate sections but only puts 2 in the outline.
+    const structureSections = profile.structure?.appropriateSections || []
+    if (structureSections.length > 0) {
+      const outlineKeys = new Set(profile.outline.sections.map(s => s.sectionKey.toLowerCase()))
+      const outlineTitles = new Set(profile.outline.sections.map(s => s.title.toLowerCase()))
+      const missingSections = structureSections.filter(
+        s => !outlineKeys.has(s.key.toLowerCase()) && !outlineTitles.has(s.title.toLowerCase())
+      )
+      if (missingSections.length > 0) {
+        const missingNames = missingSections.map(s => `"${s.title}" (key: ${s.key})`).join(', ')
+        throw new Error(
+          `Profile outline incomplete: structure.appropriateSections has ${structureSections.length} sections but outline only has ${profile.outline.sections.length}. Missing: ${missingNames}. The outline MUST contain one entry for every section in structure.appropriateSections.`
+        )
+      }
+    }
+
+    const requiresSubsectionsForLongSections =
+      profile.paperType === 'mastersThesis' ||
+      profile.paperType === 'phdDissertation' ||
+      profile.paperType === 'capstoneProject'
+
+    // Ensure all sections have required fields
+    const subsectionViolations: string[] = []
+    for (const section of profile.outline.sections) {
+      if (!section.expectedWords || section.expectedWords < 100) {
+        section.expectedWords = 300
+      }
+      if (!section.keyPoints || section.keyPoints.length === 0) {
+        section.keyPoints = [`Cover key aspects of ${section.title}`]
+      }
+
+      // For thesis-type papers, every section must have subsections.
+      if (requiresSubsectionsForLongSections) {
+        const subCount = Array.isArray(section.subsections) ? section.subsections.length : 0
+        if (subCount < 2) {
+          subsectionViolations.push(`"${section.title}" (expectedWords=${section.expectedWords}, got ${subCount} subsections)`)
+        }
+      }
+
+      // Normalize subsections: schema requires the field, but downstream prefers undefined when empty
+      if (section.subsections && section.subsections.length > 0) {
+        for (const sub of section.subsections) {
+          if (!sub.expectedWords || sub.expectedWords < 50) {
+            sub.expectedWords = Math.round(section.expectedWords / section.subsections.length)
+          }
+          if (!sub.keyPoints || sub.keyPoints.length === 0) {
+            sub.keyPoints = [`Address ${sub.title}`]
+          }
+        }
+      } else {
+        section.subsections = undefined
+      }
+    }
+
+    // Throw all subsection violations at once so retry feedback covers every failing section.
+    if (subsectionViolations.length > 0) {
+      throw new Error(
+        `Profile outline invalid: these sections need at least 2 subsections each: ${subsectionViolations.join('; ')}`
+      )
+    }
+    
+    // Recalculate totalEstimatedWords from sections if missing
+    if (!profile.outline.totalEstimatedWords) {
+      profile.outline.totalEstimatedWords = profile.outline.sections.reduce(
+        (sum, s) => sum + (s.expectedWords || 0), 0
+      )
+    }
+    
+    info({
+      outlineSections: profile.outline.sections.length,
+      totalSubsections: profile.outline.sections.reduce((sum, s) => sum + (s.subsections?.length || 0), 0),
+      totalEstimatedWords: profile.outline.totalEstimatedWords
+    }, 'Profile outline validated')
+  } else {
+    warn({ paperType: profile.paperType }, 'Profile generated without outline - pipeline will need fallback')
   }
   
   // Ensure voice configuration exists
@@ -911,48 +1004,13 @@ Note: Detailed voice rules are provided in a separate AUTHORIAL VOICE section be
 }
 
 /**
- * Build a condensed version of profile guidance for section-level prompts.
- * This is a shorter version suitable for including in individual section generation.
- */
-export function buildCondensedProfileGuidance(
-  profile: PaperProfile, 
-  currentSectionKey: string
-): string {
-  const currentSection = profile.structure.appropriateSections.find(s => s.key === currentSectionKey)
-  
-  // Get relevant quality criteria (limit to 3 most relevant)
-  const relevantCriteria = profile.qualityCriteria.slice(0, 3)
-    .map(q => q.criterion)
-    .join(', ')
-  
-  // Get relevant genre rules
-  const relevantRules = profile.genreRules.slice(0, 2)
-    .map(r => r.rule)
-    .join('; ')
-  
-  let guidance = `**Discipline:** ${profile.discipline.primary}\n**Quality Focus:** ${relevantCriteria}\n**Key Rules:** ${relevantRules}`
-  
-  if (currentSection) {
-    guidance += `\n\n**This Section (${currentSection.title}):**\n- Purpose: ${currentSection.purpose}\n- Target: ${currentSection.minWords}-${currentSection.maxWords} words\n- Citations: ${currentSection.citationExpectation}\n- Key elements: ${currentSection.keyElements.join(', ')}`
-  }
-  
-  // Add warnings about inappropriate content if relevant
-  const inappropriate = profile.structure.inappropriateSections
-  if (inappropriate.length > 0) {
-    const warnings = inappropriate.map(i => `${i.name} (${i.reason})`).join(', ')
-    guidance += `\n\n**Avoid:** ${warnings}`
-  }
-  
-  return guidance
-}
-
-/**
  * Validate paper content against the profile.
  * This is the profile-based replacement for hardcoded validation rules.
  */
 export function validatePaperWithProfile(
   content: string,
-  profile: PaperProfile
+  profile: PaperProfile,
+  citedPaperIds?: string[]
 ): ProfileValidationResult {
   const issues: string[] = []
   const warnings: string[] = []
@@ -981,18 +1039,15 @@ export function validatePaperWithProfile(
   
   // Check for required sections
   for (const section of profile.structure.appropriateSections) {
-    const patterns = [
-      new RegExp(`^#{1,2}\\s*${escapeRegex(section.title)}\\b`, 'im'),
-      new RegExp(`^#{1,2}\\s*${escapeRegex(section.key)}\\b`, 'im')
-    ]
-    
-    const sectionFound = patterns.some(pattern => pattern.test(content))
+    // Use robust extraction rather than simple heading regex.
+    // This avoids matching only a table-of-contents / outline header list.
+    const sectionContent = extractSectionContent(content, section.title, section.key)
+    const sectionFound = sectionContent.length > 0
     
     if (sectionFound) {
       found.push(section.title)
       
-      // Check word count
-      const sectionContent = extractSectionContent(content, section.title)
+      // Check word count - try both title and key since headings may use either
       const wordCount = countWords(sectionContent)
       
       if (wordCount < section.minWords * 0.7) {  // Allow some flexibility
@@ -1007,7 +1062,10 @@ export function validatePaperWithProfile(
   }
   
   // Check citation count against profile expectations
-  const uniqueSources = countUniqueCitations(content)
+  // Prefer pipeline-provided paper IDs (more reliable than [N] markers which often reset per section).
+  const uniqueSources = citedPaperIds && citedPaperIds.length > 0
+    ? new Set(citedPaperIds).size
+    : countUniqueCitations(content)
   const citationAdequate = uniqueSources >= profile.sourceExpectations.minimumUniqueSources
   
   if (!citationAdequate) {
@@ -1125,14 +1183,76 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function extractSectionContent(content: string, sectionTitle: string): string {
+function normalizeHeadingTitle(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function extractSectionContent(content: string, sectionTitle: string, sectionKey?: string): string {
+  const targetTitles = [sectionTitle, sectionKey].filter(Boolean) as string[]
+  const normalizedTargets = new Set(targetTitles.map(normalizeHeadingTitle))
+
+  // Parse all markdown headings, then choose the best (longest) matching slice.
+  // This avoids false matches in a table-of-contents or outline-only header list.
+  const headingRe = /^(#{1,6})\s*(?:\d+(?:\.\d+)*)?\s*[:.\-–)]?\s*(.+?)\s*$/gm
+  const headings: Array<{ idx: number; level: number; title: string; raw: string }> = []
+  let m: RegExpExecArray | null
+  while ((m = headingRe.exec(content)) !== null) {
+    const raw = m[0]
+    const level = m[1].length
+    const title = (m[2] || '').trim()
+    headings.push({ idx: m.index, level, title, raw })
+  }
+
+  let bestSlice = ''
+  let bestWords = 0
+
+  for (let i = 0; i < headings.length; i++) {
+    const h = headings[i]
+    const normalized = normalizeHeadingTitle(h.title)
+    if (!normalizedTargets.has(normalized)) continue
+
+    // End at the next heading of same-or-higher rank (e.g., next ## when current is ##).
+    let end = content.length
+    for (let j = i + 1; j < headings.length; j++) {
+      if (headings[j].level <= h.level) {
+        end = headings[j].idx
+        break
+      }
+    }
+
+    const slice = content.slice(h.idx, end).trim()
+    const wc = countWords(slice)
+    if (wc > bestWords) {
+      bestWords = wc
+      bestSlice = slice
+    }
+  }
+
+  if (bestSlice) return bestSlice
+
+  // Fallback: simple regex matching (handles non-standard heading formats).
+  // Uses a lookahead for the next heading OR true end-of-string (not end-of-line).
+  // We split the logic: find the heading line with multiline, then grab content until next heading.
   const escapedTitle = escapeRegex(sectionTitle)
-  const pattern = new RegExp(
-    `^#{1,2}\\s*${escapedTitle}\\b[\\s\\S]*?(?=^#{1,2}\\s|$)`,
+  const headingStartRe = new RegExp(
+    `^#{1,6}\\s*(?:\\d+(?:\\.\\d+)*)?\\s*[:.\\-–)]?\\s*${escapedTitle}\\b`,
     'im'
   )
-  const match = content.match(pattern)
-  return match ? match[0] : ''
+  const headingMatch = headingStartRe.exec(content)
+  if (!headingMatch) return ''
+
+  // From the heading position, grab everything up to the next heading of any level or end of string.
+  const rest = content.slice(headingMatch.index)
+  const nextHeadingRe = /\n#{1,6}\s/
+  const nextMatch = nextHeadingRe.exec(rest.slice(headingMatch[0].length))
+  if (nextMatch) {
+    return rest.slice(0, headingMatch[0].length + nextMatch.index).trim()
+  }
+  return rest.trim()
 }
 
 function countWords(text: string): number {
@@ -1140,20 +1260,46 @@ function countWords(text: string): number {
 }
 
 function countUniqueCitations(content: string): number {
-  // Match citation markers like [CITE: uuid] or (Author, Year) patterns
+  // Match citation markers like [CITE: uuid]
   const citeMarkers = content.match(/\[CITE:\s*([^\]]+)\]/g) || []
-  const uniqueIds = new Set(
+  const uniqueCiteIds = new Set(
     citeMarkers.map(marker => {
       const match = marker.match(/\[CITE:\s*([^\]]+)\]/)
       return match ? match[1].trim() : null
     }).filter(Boolean)
   )
   
+  // Match storage format citations like [@paperId#instanceId]
+  const storageMarkers = content.match(/\[@([^\]#]+)#[^\]]*\]/g) || []
+  const uniqueStorageIds = new Set(
+    storageMarkers.map(marker => {
+      const match = marker.match(/\[@([^\]#]+)/)
+      return match ? match[1].trim() : null
+    }).filter(Boolean)
+  )
+  
+  // Match numbered citation markers like [1], [2], [3] (generated by LLM)
+  const numberedMarkers = content.match(/\[(\d{1,3})\]/g) || []
+  const uniqueNumbers = new Set(
+    numberedMarkers.map(marker => {
+      const match = marker.match(/\[(\d{1,3})\]/)
+      return match ? match[1] : null
+    }).filter(Boolean)
+  )
+  
   // Also check for already-formatted citations like (Smith et al., 2023)
   const formattedCitations = content.match(/\([^)]*\d{4}[^)]*\)/g) || []
   
-  // Combine unique counts (rough estimate)
-  return uniqueIds.size + Math.floor(formattedCitations.length * 0.7)  // Assume some overlap
+  // Return the highest count from any format detected
+  // Content may be at different pipeline stages using different marker formats
+  const counts = [
+    uniqueCiteIds.size,
+    uniqueStorageIds.size,
+    uniqueNumbers.size,
+    Math.floor(formattedCitations.length * 0.7)  // Assume some overlap
+  ]
+  
+  return Math.max(...counts)
 }
 
 function contentMentionsTheme(content: string, theme: string): boolean {

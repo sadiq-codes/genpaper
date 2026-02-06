@@ -166,16 +166,30 @@ For Secondary Analysis: More extensive engagement with the literature you're syn
 - Rigor measures (how you ensured validity)
 
 ### Results / Findings
+
+**Evidence Anchoring (REQUIRED):**
+
+Research articles must anchor all claims to specific evidence. Avoid vague statements:
+
+❌ Vague: "The model performed well on the task."
+✅ Anchored: "The model achieved 87.2% F1-score (Table 3), outperforming the baseline by 12.4 percentage points."
+
+❌ Vague: "Results showed improvement across conditions."
+✅ Anchored: "Results showed significant improvement in Condition A (M = 4.2, SD = 0.8) compared to Condition B (M = 3.1, SD = 0.9), t(58) = 4.12, p < .001."
+
 **For Quantitative Research:**
-- Present YOUR data with appropriate statistics
-- Use tables and figures
-- Report results without interpretation
+- Present YOUR data with exact statistics (means, SDs, test statistics, p-values, effect sizes)
+- Include confidence intervals where appropriate
+- Use tables and figures with clear labels
+- Reference tables in text: "As shown in Table 2..."
+- Report failures and unexpected results: "Error analysis revealed..."
 - Minimal to no citations (this is YOUR data)
 
 **For Qualitative Research:**
 - Present themes/categories with illustrative quotes
+- Include participant identifiers: "As P12 explained..."
 - Use data excerpts as evidence
-- Balance description with initial interpretation
+- Report disconfirming cases: "However, three participants offered contrasting views..."
 - Minimal citations (your analysis of your data)
 
 **For Secondary Analysis:**

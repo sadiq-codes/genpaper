@@ -6,7 +6,7 @@
  */
 
 import Mustache from 'mustache'
-import type { PaperTypeKey, SectionKey } from '@/lib/prompts/types'
+import type { PaperTypeKey } from '@/lib/prompts/types'
 import type { ChatCOStarContext, CompleteCOStarContext } from '@/lib/prompts/costar-context'
 import type { ChatAUTOMATContext } from '@/lib/prompts/automat-context'
 
@@ -74,6 +74,13 @@ export interface PromptData {
   minCitations?: number  // Optional - using semantic citation guidance instead of quantitative enforcement
   isRewrite: boolean
   currentText?: string
+
+  // Optional subsection plan (for long-form sections)
+  subsectionsPlan?: Array<{
+    title: string
+    expectedWords?: number
+    keyPoints?: string[]
+  }>
   
   // Evidence and context (pre-formatted)
   evidenceSnippets: string
@@ -222,7 +229,7 @@ export class PromptBuilder {
    */
   static buildPlanningPrompt(
     paperType: PaperTypeKey,
-    section: SectionKey,
+    section: string,
     topic: string,
     expectedWords: number,
     availablePapers: string[] = [],
@@ -272,7 +279,7 @@ Return a JSON plan with:
   static buildCritiquePrompt(
     content: string,
     paperType: PaperTypeKey,
-    section: SectionKey,
+    section: string,
     topic: string,
     qualityCriteria: string[] = []
   ): BuiltPrompt {

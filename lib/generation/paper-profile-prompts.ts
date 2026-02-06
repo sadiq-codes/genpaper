@@ -175,15 +175,11 @@ Create a comprehensive paper profile by analyzing:
 
 2. STRUCTURE GUIDANCE
    
-   WORD COUNT TARGETS BY PAPER TYPE (CRITICAL - follow these ranges):
-   - Literature Review: 3,000-8,000 words total (sections: 400-1,500 words each)
-   - Research Article: 4,000-8,000 words total (sections: 500-1,500 words each)
-   - Capstone Project: 5,000-10,000 words total (sections: 600-2,000 words each)
-   - Master's Thesis: 15,000-25,000 words total (sections: 1,500-4,000 words each)
-   - PhD Dissertation: 40,000-80,000 words total (sections: 3,000-10,000 words each)
+   WORD COUNT TARGET FOR THIS PAPER (CRITICAL - follow this range):
+   - ${getWordCountTarget(paperType)}
    
-   Your minWords and maxWords for each section MUST sum to the appropriate total for this paper type.
-   For a ${formatPaperType(paperType)}, ensure total word count falls within the expected range.
+   Your minWords and maxWords for each section MUST sum to the appropriate total.
+   Ensure total word count falls within the expected range above.
    
    - What sections are APPROPRIATE for this specific ${formatPaperType(paperType)} on this topic?
    - For each section provide: key (camelCase), title, purpose, word range (min/max), citation expectation (none/light/moderate/heavy), key elements, and isLiteratureFocused
@@ -242,7 +238,23 @@ Create a comprehensive paper profile by analyzing:
    - Provide a rationale explaining why this voice is appropriate given the title's requirements
    - Available profiles: conservative-reviewer, confident-researcher, senior-scholar, balanced-academic
 
-8. PAPER SUBTYPE SELECTION (CRITICAL)
+8. DETAILED OUTLINE
+   Generate an outline for this paper. The outline MUST contain ONE entry for EVERY section listed in your structure.appropriateSections above. If you listed 6 sections in appropriateSections, the outline MUST have exactly 6 sections. Missing sections will cause a validation error and force a retry.
+   
+   SUBSECTIONS (CRITICAL — read carefully):
+   - For Master's Thesis, PhD Dissertation, Capstone Project: EVERY section MUST have at least 2 subsections. No exceptions. This follows the academic standard of structured chapters with headings every ~2000-2500 words. Returning an empty subsections array for ANY section will cause a validation error and force a retry.
+   - For Literature Review, Research Article: subsections are optional — only add them if a section exceeds ~1500 words and the topic naturally divides
+   - Subsection titles must be descriptive and topic-specific (NOT generic like "Section 1.1")
+   - Each subsection needs its own sectionKey, title, expectedWords, and keyPoints
+   
+   OTHER REQUIREMENTS:
+   - Word counts per section must sum to the total expected for this paper type
+   - Each section must have specific keyPoints describing what to cover
+   - Subsections should reflect how this specific topic would be organized in a real ${formatPaperType(paperType)}
+   
+   ${getOutlineExample(paperType)}
+
+9. PAPER SUBTYPE SELECTION (CRITICAL)
    Based on the topic and the guidance provided for this paper type, EXPLICITLY select the most appropriate subtype/mode.
    
    The guidance document for this paper type defines specific types or modes. You MUST:
@@ -250,12 +262,8 @@ Create a comprehensive paper profile by analyzing:
    - State the type identifier and its full name
    - Explain WHY this type is most appropriate for this specific topic
    
-   Examples by paper type:
-   - Literature Review: Type A (Standalone), Type B (Background Chapter), Type C (Systematic), Type D (Scoping)
-   - Capstone Project: Type A (Empirical), Type B (Secondary Analysis), Type C (Applied/Professional), Type D (Creative)
-   - Master's Thesis: Type A (Empirical), Type B (Theoretical/Secondary), Type C (Applied/Professional)
-   - PhD Dissertation: Type A (Empirical/Scientific), Type B (Theoretical/Philosophical), Type C (Humanities/Interpretive), Type D (Practice-Based)
-   - Research Article: Mode A (Primary Research), Mode B (Secondary Analysis), Mode C (Mixed)
+   Available subtypes for ${formatPaperType(paperType)}:
+   - ${getSubtypeExamples(paperType)}
    
    Your structure and section choices should ALIGN with the selected subtype.
 
@@ -330,6 +338,31 @@ Return a JSON object with this exact structure:
     "type": "string - the type identifier (e.g., 'A', 'B', 'C', 'D' or mode name)",
     "name": "string - the full name (e.g., 'Standalone Literature Review', 'Applied Capstone')",
     "rationale": "string - why this type/mode was selected based on the topic"
+  },
+  "outline": {
+    "sections": [
+      {
+        "sectionKey": "string (camelCase, matching structure.appropriateSections keys)",
+        "title": "string",
+        "expectedWords": 2000,
+        "keyPoints": ["string - specific objectives for this section"],
+        "subsections": [
+          {
+            "sectionKey": "subKey1",
+            "title": "Descriptive Subsection Title",
+            "expectedWords": 800,
+            "keyPoints": ["specific objective"]
+          },
+          {
+            "sectionKey": "subKey2",
+            "title": "Another Descriptive Subsection Title",
+            "expectedWords": 1200,
+            "keyPoints": ["specific objective"]
+          }
+        ]
+      }
+    ],
+    "totalEstimatedWords": 15000
   }
 }`
 
@@ -382,6 +415,94 @@ function formatPaperType(paperType: string): string {
     'capstoneProject': 'Capstone Project'
   }
   return formatMap[paperType] || paperType
+}
+
+/**
+ * Return the word count target line for the current paper type only.
+ */
+function getWordCountTarget(paperType: string): string {
+  const targets: Record<string, string> = {
+    'literatureReview': 'Literature Review: 3,000-8,000 words total (sections: 400-1,500 words each)',
+    'researchArticle': 'Research Article: 4,000-8,000 words total (sections: 500-1,500 words each)',
+    'capstoneProject': 'Capstone Project: 5,000-10,000 words total (sections: 600-2,000 words each)',
+    'mastersThesis': "Master's Thesis: 15,000-25,000 words total (sections: 1,500-4,000 words each)",
+    'phdDissertation': 'PhD Dissertation: 40,000-80,000 words total (sections: 3,000-10,000 words each)'
+  }
+  return targets[paperType] || `${formatPaperType(paperType)}: Follow standard academic expectations`
+}
+
+/**
+ * Return the outline example relevant to the current paper type.
+ */
+function getOutlineExample(paperType: string): string {
+  if (paperType === 'mastersThesis' || paperType === 'phdDissertation' || paperType === 'capstoneProject') {
+    return `EXAMPLE outline for a ${formatPaperType(paperType)} (FULL outline — all sections need subsections):
+   - Introduction (2000 words)
+     - Background and Motivation (700 words)
+     - Research Objectives and Questions (700 words)
+     - Thesis Structure and Contributions (600 words)
+   - Literature Review (4000 words)
+     - Sentiment Analysis Approaches (1400 words)
+     - NLP for Social Media Text (1400 words)
+     - Prior Work on Sentiment Trends + Open Gaps (1200 words)
+   - Methodology (2500 words)
+     - Data Sources and Collection Strategy (900 words)
+     - Preprocessing and Feature/Representation Choices (800 words)
+     - Model Design + Training/Evaluation Protocol (800 words)
+   - Results (2000 words)
+     - Quantitative Performance and Baselines (700 words)
+     - Error Analysis and Robustness Checks (700 words)
+     - Trend Findings / Key Observations (600 words)
+   - Discussion (2500 words)
+     - Interpretation of Results and Link to Prior Work (900 words)
+     - Practical Implications / Stakeholders (800 words)
+     - Limitations and Threats to Validity (800 words)
+   - Conclusion (1000 words)
+     - Summary of Findings (400 words)
+     - Recommendations and Future Work (600 words)`
+  }
+
+  if (paperType === 'literatureReview') {
+    return `EXAMPLE outline for a Literature Review (subsections only where needed):
+   - Introduction (500 words) — NO subsections (too short)
+   - Theoretical Framework (800 words) — NO subsections
+   - Empirical Evidence on Productivity (1500 words)
+     - Quantitative Studies (800 words)
+     - Qualitative Studies (700 words)
+   - Methodological Approaches (1200 words)
+     - Systematic Review Methods (600 words)
+     - Meta-Analytic Techniques (600 words)
+   - Conclusion (400 words) — NO subsections`
+  }
+
+  // researchArticle or unknown
+  return `EXAMPLE outline for a Research Article (subsections where sections are long):
+   - Introduction (800 words) — NO subsections
+   - Literature Review (1500 words)
+     - Prior Work on the Topic (800 words)
+     - Identified Gaps (700 words)
+   - Methodology (1200 words)
+     - Data Collection (600 words)
+     - Analysis Approach (600 words)
+   - Results (1000 words) — NO subsections
+   - Discussion (1200 words)
+     - Key Findings (600 words)
+     - Limitations (600 words)
+   - Conclusion (500 words) — NO subsections`
+}
+
+/**
+ * Return the subtype examples for the current paper type only.
+ */
+function getSubtypeExamples(paperType: string): string {
+  const subtypes: Record<string, string> = {
+    'literatureReview': 'Type A (Standalone), Type B (Background Chapter), Type C (Systematic), Type D (Scoping)',
+    'capstoneProject': 'Type A (Empirical), Type B (Secondary Analysis), Type C (Applied/Professional), Type D (Creative)',
+    'mastersThesis': 'Type A (Empirical), Type B (Theoretical/Secondary), Type C (Applied/Professional)',
+    'phdDissertation': 'Type A (Empirical/Scientific), Type B (Theoretical/Philosophical), Type C (Humanities/Interpretive), Type D (Practice-Based)',
+    'researchArticle': 'Mode A (Primary Research), Mode B (Secondary Analysis), Mode C (Mixed)'
+  }
+  return subtypes[paperType] || 'Select the most appropriate subtype for this paper'
 }
 
 /**
@@ -538,8 +659,44 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
       },
       required: ['type', 'name', 'rationale'],
       additionalProperties: false
+    },
+    outline: {
+      type: 'object' as const,
+      properties: {
+        sections: {
+          type: 'array' as const,
+          items: {
+            type: 'object' as const,
+            properties: {
+              sectionKey: { type: 'string' as const },
+              title: { type: 'string' as const },
+              expectedWords: { type: 'number' as const },
+              keyPoints: { type: 'array' as const, items: { type: 'string' as const } },
+              subsections: {
+                type: 'array' as const,
+                items: {
+                  type: 'object' as const,
+                  properties: {
+                    sectionKey: { type: 'string' as const },
+                    title: { type: 'string' as const },
+                    expectedWords: { type: 'number' as const },
+                    keyPoints: { type: 'array' as const, items: { type: 'string' as const } }
+                  },
+                  required: ['sectionKey', 'title', 'expectedWords', 'keyPoints'],
+                  additionalProperties: false
+                }
+              }
+            },
+            required: ['sectionKey', 'title', 'expectedWords', 'keyPoints', 'subsections'],
+            additionalProperties: false
+          }
+        },
+        totalEstimatedWords: { type: 'number' as const }
+      },
+      required: ['sections', 'totalEstimatedWords'],
+      additionalProperties: false
     }
   },
-  required: ['titleContract', 'discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules', 'voice', 'paperSubtype'],
+  required: ['titleContract', 'discipline', 'structure', 'sourceExpectations', 'qualityCriteria', 'coverage', 'genreRules', 'voice', 'paperSubtype', 'outline'],
   additionalProperties: false
 }

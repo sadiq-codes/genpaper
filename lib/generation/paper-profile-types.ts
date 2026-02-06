@@ -237,6 +237,34 @@ export interface PaperProfile {
    * was chosen and why, enabling debugging and transparency.
    */
   paperSubtype?: PaperSubtype
+  
+  // Detailed outline with subsections
+  /**
+   * Industry-standard outline generated as part of the profile.
+   * Includes subsections for each major section, based on discipline conventions,
+   * paper type, and topic context.
+   */
+  outline?: {
+    sections: ProfileOutlineSection[]
+    totalEstimatedWords: number
+  }
+}
+
+/**
+ * Outline section generated as part of the paper profile.
+ * Supports nested subsections for proper academic structure.
+ */
+export interface ProfileOutlineSection {
+  /** Machine-readable key (camelCase, e.g., "introduction", "literatureReview") */
+  sectionKey: string
+  /** Human-readable title (e.g., "Introduction") */
+  title: string
+  /** Target word count for this section */
+  expectedWords: number
+  /** Key objectives or questions this section should address */
+  keyPoints: string[]
+  /** Nested subsections (e.g., "1.1 Background", "1.2 Objectives") */
+  subsections?: ProfileOutlineSection[]
 }
 
 /**
