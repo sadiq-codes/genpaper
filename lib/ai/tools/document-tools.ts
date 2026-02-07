@@ -243,6 +243,129 @@ Attach to specific content using blockId or nearPhrase.`,
   }),
 })
 
+/**
+ * Move a block from one location to another in a single atomic operation.
+ */
+export const moveBlock = tool({
+  description: `Move a block from one location to another. This is atomic — content won't be lost if something fails.
+
+The block is identified by blockId or searchPhrase.
+The destination is specified by targetLocation.
+
+Examples:
+- Move paragraph after another: { blockId: "par_abc", targetLocation: "after:par_xyz" }
+- Move to end of section: { blockId: "par_abc", targetLocation: "endOfSection:Methods" }
+- Move to start of section: { blockId: "par_abc", targetLocation: "startOfSection:Introduction" }
+- Move to end of document: { blockId: "par_abc", targetLocation: "end" }`,
+  inputSchema: z.object({
+    blockId: z.string().optional().describe('Block ID of the content to move'),
+    searchPhrase: z.string().optional().describe('Text to find the block to move'),
+    section: z.string().optional().describe('Section to scope the search'),
+    targetLocation: z.string().describe('Where to move: "after:blockId", "endOfSection:Name", "startOfSection:Name", "end"'),
+    reason: z.string().describe('Why this content should be moved'),
+  }),
+})
+
+/**
+ * Merge two adjacent blocks into one.
+ */
+export const mergeBlocks = tool({
+  description: `Merge two adjacent paragraphs into a single paragraph. Use when content is fragmented into too many short paragraphs.
+
+Specify either two block IDs or a searchPhrase that spans the boundary.
+
+Examples:
+- Merge by IDs: { firstBlockId: "par_abc", secondBlockId: "par_def" }
+- Merge by text: { searchPhrase: "end of first paragraph", section: "Introduction" }`,
+  inputSchema: z.object({
+    firstBlockId: z.string().optional().describe('Block ID of the first block'),
+    secondBlockId: z.string().optional().describe('Block ID of the second block (must be adjacent)'),
+    searchPhrase: z.string().optional().describe('Text at the boundary of the two blocks to merge'),
+    section: z.string().optional().describe('Section to scope the search'),
+  }),
+})
+
+/**
+ * Split a block into two at a specified point.
+ */
+export const splitBlock = tool({
+  description: `Split a paragraph into two at a specific point. Use when a paragraph is too long and should be broken into separate paragraphs.
+
+Specify where to split using splitAfterPhrase — the text before this phrase stays in the first paragraph, the rest becomes a new paragraph.
+
+Example:
+- { blockId: "par_abc", splitAfterPhrase: "first topic conclusion." }`,
+  inputSchema: z.object({
+    blockId: z.string().optional().describe('Block ID of the block to split'),
+    splitAfterPhrase: z.string().describe('Split the block after this exact text'),
+    section: z.string().optional().describe('Section to scope the search'),
+  }),
+})
+
+/**
+ * Apply inline formatting to specific text.
+ */
+export const formatText = tool({
+  description: `Apply or remove inline formatting (bold, italic, underline, strikethrough, code) on specific text WITHOUT changing the text itself.
+
+Examples:
+- Bold a term: { searchPhrase: "important finding", format: "bold" }
+- Italicize: { searchPhrase: "p < 0.05", format: "italic" }
+- Remove bold: { searchPhrase: "not important", format: "bold", remove: true }`,
+  inputSchema: z.object({
+    searchPhrase: z.string().describe('The exact text to format'),
+    blockId: z.string().optional().describe('Block ID to scope the search'),
+    section: z.string().optional().describe('Section to scope the search'),
+    format: z.enum(['bold', 'italic', 'underline', 'strikethrough', 'code']).describe('The formatting to apply'),
+    remove: z.boolean().optional().describe('If true, removes the formatting instead of applying it'),
+  }),
+})
+
+/**
+ * Insert a structured table.
+ */
+export const insertTable = tool({
+  description: `Insert a table into the document with specified headers and rows. More reliable than inserting markdown tables.
+
+Example:
+{
+  "headers": ["Method", "Accuracy", "F1 Score"],
+  "rows": [
+    ["Baseline", "0.82", "0.79"],
+    ["Our model", "0.91", "0.88"]
+  ],
+  "caption": "Table 1: Model comparison results",
+  "afterBlockId": "par_abc"
+}`,
+  inputSchema: z.object({
+    headers: z.array(z.string()).describe('Column header labels'),
+    rows: z.array(z.array(z.string())).describe('Table rows, each an array of cell values'),
+    caption: z.string().optional().describe('Optional table caption'),
+    afterBlockId: z.string().optional().describe('Insert table after this block'),
+    location: z.string().optional().describe('General location: "cursor", "end", "after:SectionName"'),
+  }),
+})
+
+/**
+ * Find and replace across the entire document.
+ */
+export const searchAndReplace = tool({
+  description: `Find and replace text across the entire document (or within a section). Replaces ALL occurrences.
+
+Use this when the user asks to rename a term, fix a typo everywhere, or change terminology consistently.
+
+Examples:
+- Global rename: { find: "machine learning", replaceWith: "ML", matchCase: false }
+- Section-scoped: { find: "Fig.", replaceWith: "Figure", section: "Results" }
+- Case-sensitive: { find: "CNN", replaceWith: "convolutional neural network", matchCase: true }`,
+  inputSchema: z.object({
+    find: z.string().describe('The text to search for'),
+    replaceWith: z.string().describe('The replacement text'),
+    section: z.string().optional().describe('Limit replacement to this section'),
+    matchCase: z.boolean().optional().describe('Case-sensitive matching (default: true)'),
+  }),
+})
+
 // =============================================================================
 // TOOL COLLECTION
 // =============================================================================
@@ -267,6 +390,12 @@ export const documentTools = {
   addCitation: addCitationTool,
   highlightText,
   addComment,
+  moveBlock,
+  mergeBlocks,
+  splitBlock,
+  formatText,
+  insertTable,
+  searchAndReplace,
 }
 
 // =============================================================================
@@ -279,9 +408,15 @@ export const toolConfirmationLevels: Record<string, ToolConfirmationLevel> = {
   replaceInSection: 'preview',
   rewriteSection: 'confirm',
   deleteContent: 'confirm',
-  addCitation: 'none',  // Kept for backwards compat if tool is used directly
+  addCitation: 'none',
   highlightText: 'none',
   addComment: 'none',
+  moveBlock: 'confirm',
+  mergeBlocks: 'preview',
+  splitBlock: 'preview',
+  formatText: 'none',
+  insertTable: 'preview',
+  searchAndReplace: 'confirm',
 }
 
 export function requiresConfirmation(toolName: string): boolean {
@@ -430,6 +565,57 @@ export function validateToolCall(
     case 'addComment':
       if (!args.comment || typeof args.comment !== 'string') {
         return { valid: false, error: 'addComment requires comment text' }
+      }
+      break
+
+    case 'moveBlock':
+      if (!args.blockId && !args.searchPhrase) {
+        return { valid: false, error: 'moveBlock requires blockId or searchPhrase' }
+      }
+      if (!args.targetLocation || typeof args.targetLocation !== 'string') {
+        return { valid: false, error: 'moveBlock requires targetLocation' }
+      }
+      break
+
+    case 'mergeBlocks':
+      if (!args.firstBlockId && !args.searchPhrase) {
+        return { valid: false, error: 'mergeBlocks requires firstBlockId+secondBlockId or searchPhrase' }
+      }
+      if (args.firstBlockId && !args.secondBlockId) {
+        return { valid: false, error: 'mergeBlocks requires secondBlockId when firstBlockId is provided' }
+      }
+      break
+
+    case 'splitBlock':
+      if (!args.splitAfterPhrase || typeof args.splitAfterPhrase !== 'string') {
+        return { valid: false, error: 'splitBlock requires splitAfterPhrase' }
+      }
+      break
+
+    case 'formatText':
+      if (!args.searchPhrase || typeof args.searchPhrase !== 'string') {
+        return { valid: false, error: 'formatText requires searchPhrase' }
+      }
+      if (!args.format || typeof args.format !== 'string') {
+        return { valid: false, error: 'formatText requires format' }
+      }
+      break
+
+    case 'insertTable':
+      if (!Array.isArray(args.headers) || args.headers.length === 0) {
+        return { valid: false, error: 'insertTable requires non-empty headers array' }
+      }
+      if (!Array.isArray(args.rows)) {
+        return { valid: false, error: 'insertTable requires rows array' }
+      }
+      break
+
+    case 'searchAndReplace':
+      if (!args.find || typeof args.find !== 'string') {
+        return { valid: false, error: 'searchAndReplace requires find text' }
+      }
+      if (typeof args.replaceWith !== 'string') {
+        return { valid: false, error: 'searchAndReplace requires replaceWith text' }
       }
       break
   }

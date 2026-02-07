@@ -18,6 +18,25 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { CalculatedEdit } from '../services/edit-calculator'
 
 // =============================================================================
+// UTILS
+// =============================================================================
+
+/**
+ * Clean raw citation markers from preview text.
+ * Converts [@paperId#instanceId] → [citation] for human-readable display.
+ * Also handles [N] numbered markers.
+ */
+function cleanCitationMarkers(text: string): string {
+  // Replace [@uuid#uuid] format with readable placeholder
+  let cleaned = text.replace(/\[@[0-9a-f-]+#[0-9a-f-]+\]/gi, '[citation]')
+  // Replace [@uuid] format (without instance) 
+  cleaned = cleaned.replace(/\[@[0-9a-f-]+\]/gi, '[citation]')
+  // Collapse consecutive [citation][citation] into [citations]
+  cleaned = cleaned.replace(/(\[citation\]\s*){2,}/g, '[citations]')
+  return cleaned
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -148,7 +167,7 @@ function createDiffBlockElement(
   container.setAttribute('role', 'region')
   container.setAttribute('aria-label', `${getEditTypeLabel(edit.type)} edit`)
 
-  // Content wrapper
+  // Content wrapper — vertical stack: old then new
   const contentWrapper = document.createElement('div')
   contentWrapper.className = 'diff-block__content-wrapper'
 
@@ -157,33 +176,29 @@ function createDiffBlockElement(
   const showNew = edit.type === 'insert' || edit.type === 'replace'
 
   if (showOld && edit.oldContent) {
-    const oldText = document.createElement('span')
+    const oldText = document.createElement('div')
     oldText.className = 'diff-block__text diff-block__text--old'
     oldText.textContent = edit.oldContent
     contentWrapper.appendChild(oldText)
   }
 
   if (showNew && edit.newContent) {
-    const newText = document.createElement('span')
+    const newText = document.createElement('div')
     newText.className = 'diff-block__text diff-block__text--new'
-    newText.textContent = edit.newContent
+    // Clean raw citation markers [@paperId#instanceId] → [citation] for readability
+    newText.textContent = cleanCitationMarkers(edit.newContent)
     contentWrapper.appendChild(newText)
   }
 
-  // Active indicator dot
-  const indicator = document.createElement('span')
-  indicator.className = 'diff-block__indicator'
-  contentWrapper.appendChild(indicator)
-
   container.appendChild(contentWrapper)
 
-  // Floating action bar - minimal style
+  // Action bar at bottom
   const actions = document.createElement('div')
   actions.className = 'diff-block__actions'
 
   const acceptBtn = document.createElement('button')
   acceptBtn.className = 'diff-block__btn diff-block__btn--accept'
-  acceptBtn.innerHTML = 'Accept <span class="diff-block__btn-arrow">→</span>'
+  acceptBtn.textContent = 'Accept'
   acceptBtn.onclick = (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -193,13 +208,19 @@ function createDiffBlockElement(
 
   const rejectBtn = document.createElement('button')
   rejectBtn.className = 'diff-block__btn diff-block__btn--reject'
-  rejectBtn.innerHTML = 'Reject'
+  rejectBtn.textContent = 'Reject'
   rejectBtn.onclick = (e) => {
     e.preventDefault()
     e.stopPropagation()
     onReject(edit.id)
   }
   actions.appendChild(rejectBtn)
+
+  // Keyboard hint
+  const hint = document.createElement('span')
+  hint.className = 'diff-block__hint'
+  hint.textContent = 'Enter to accept · Esc to reject'
+  actions.appendChild(hint)
 
   container.appendChild(actions)
 

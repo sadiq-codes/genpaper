@@ -66,8 +66,15 @@ export function calculateEdit(
         return calculateDelete(editor, args, editId, toolName)
       case 'rewriteSection':
         return calculateRewriteSection(editor, args, editId, toolName)
+      case 'mergeBlocks':
+        return calculateMergeBlocks(editor, args, editId, toolName)
+      case 'splitBlock':
+        return calculateSplitBlock(editor, args, editId, toolName)
+      case 'insertTable':
+        return calculateInsertTable(editor, args, editId, toolName)
       default:
-        // Non-visual tools (addCitation, highlightText, addComment) don't need ghost preview
+        // Non-visual tools (addCitation, highlightText, addComment, formatText,
+        // moveBlock, searchAndReplace) don't need ghost preview
         return { 
           success: false, 
           error: `Tool "${toolName}" does not support ghost preview` 
@@ -497,8 +504,153 @@ function calculateRewriteSection(
 }
 
 // =============================================================================
-// NOTES
+// MERGE BLOCKS CALCULATOR
 // =============================================================================
 
-// Note: findTipTapPosition removed - now using structure-aware search via 
-// findTextInStructure() which returns document positions directly
+function calculateMergeBlocks(
+  editor: Editor,
+  args: Record<string, unknown>,
+  editId: string,
+  toolName: string
+): CalculationResult {
+  const firstBlockId = args.firstBlockId as string | undefined
+  const secondBlockId = args.secondBlockId as string | undefined
+  const searchPhrase = args.searchPhrase as string | undefined
+  const section = args.section as string | undefined
+
+  if (firstBlockId && secondBlockId) {
+    const firstBlock = findBlockById(editor, firstBlockId)
+    const secondBlock = findBlockById(editor, secondBlockId)
+    if (!firstBlock) return { success: false, error: `First block not found: ${firstBlockId}` }
+    if (!secondBlock) return { success: false, error: `Second block not found: ${secondBlockId}` }
+
+    const from = firstBlock.pos
+    const to = secondBlock.pos + secondBlock.node.nodeSize
+    const oldContent = firstBlock.node.textContent + '\n\n' + secondBlock.node.textContent
+    const newContent = firstBlock.node.textContent + ' ' + secondBlock.node.textContent
+
+    return {
+      success: true,
+      edit: { id: editId, type: 'replace', toolName, toolArgs: args, from, to, oldContent, newContent, description: 'Merge two paragraphs' }
+    }
+  }
+
+  if (searchPhrase) {
+    const match = findTextInStructure(editor, searchPhrase, { section })
+    if (!match.found) return { success: false, error: `Text not found: "${searchPhrase.slice(0, 50)}..."` }
+
+    const $pos = editor.state.doc.resolve(match.pos + match.startOffset)
+    const parentStart = $pos.before($pos.depth)
+    const parentNode = $pos.node($pos.depth)
+    const parentEnd = parentStart + parentNode.nodeSize
+    const nextNode = editor.state.doc.nodeAt(parentEnd)
+    if (!nextNode) return { success: false, error: 'No adjacent block to merge with' }
+
+    const from = parentStart
+    const to = parentEnd + nextNode.nodeSize
+    const oldContent = parentNode.textContent + '\n\n' + nextNode.textContent
+    const newContent = parentNode.textContent + ' ' + nextNode.textContent
+
+    return {
+      success: true,
+      edit: { id: editId, type: 'replace', toolName, toolArgs: args, from, to, oldContent, newContent, description: 'Merge two paragraphs' }
+    }
+  }
+
+  return { success: false, error: 'Provide firstBlockId+secondBlockId or searchPhrase' }
+}
+
+// =============================================================================
+// SPLIT BLOCK CALCULATOR
+// =============================================================================
+
+function calculateSplitBlock(
+  editor: Editor,
+  args: Record<string, unknown>,
+  editId: string,
+  toolName: string
+): CalculationResult {
+  const splitAfterPhrase = args.splitAfterPhrase as string
+  const blockId = args.blockId as string | undefined
+  const section = args.section as string | undefined
+
+  if (!splitAfterPhrase) return { success: false, error: 'Missing splitAfterPhrase' }
+
+  const match = findTextInStructure(editor, splitAfterPhrase, { blockId, section })
+  if (!match.found) return { success: false, error: `Text not found: "${splitAfterPhrase.slice(0, 50)}..."` }
+
+  const range = matchToRange(match)
+  if (!range) return { success: false, error: 'Failed to calculate split position' }
+
+  // Get the parent block content
+  const $pos = editor.state.doc.resolve(range.to)
+  const parentStart = $pos.before($pos.depth)
+  const parentNode = $pos.node($pos.depth)
+  const parentEnd = parentStart + parentNode.nodeSize
+  const fullText = parentNode.textContent
+  const splitIndex = fullText.indexOf(splitAfterPhrase) + splitAfterPhrase.length
+  const firstPart = fullText.slice(0, splitIndex).trim()
+  const secondPart = fullText.slice(splitIndex).trim()
+
+  return {
+    success: true,
+    edit: {
+      id: editId, type: 'replace', toolName, toolArgs: args,
+      from: parentStart, to: parentEnd,
+      oldContent: fullText,
+      newContent: firstPart + '\n\n' + secondPart,
+      description: 'Split paragraph into two',
+    }
+  }
+}
+
+// =============================================================================
+// INSERT TABLE CALCULATOR
+// =============================================================================
+
+function calculateInsertTable(
+  editor: Editor,
+  args: Record<string, unknown>,
+  editId: string,
+  toolName: string
+): CalculationResult {
+  const headers = args.headers as string[]
+  const rows = args.rows as string[][]
+  const caption = args.caption as string | undefined
+  const afterBlockId = args.afterBlockId as string | undefined
+  const location = args.location as string | undefined
+
+  if (!headers || headers.length === 0) return { success: false, error: 'No headers provided' }
+
+  // Build a text preview of the table
+  const headerLine = '| ' + headers.join(' | ') + ' |'
+  const separatorLine = '| ' + headers.map(() => '---').join(' | ') + ' |'
+  const rowLines = (rows || []).map(row => '| ' + headers.map((_, i) => row[i] || '').join(' | ') + ' |')
+  const tablePreview = [caption || '', headerLine, separatorLine, ...rowLines].filter(Boolean).join('\n')
+
+  let insertPos = editor.state.selection.from
+
+  if (afterBlockId) {
+    const block = findBlockById(editor, afterBlockId)
+    if (block) insertPos = block.pos + block.node.nodeSize
+  } else if (location === 'end') {
+    insertPos = editor.state.doc.content.size
+  } else if (location) {
+    const afterMatch = location.match(/^after:(.+)$/i)
+    if (afterMatch) {
+      const bounds = findSectionBounds(editor, afterMatch[1])
+      if (bounds.found) insertPos = bounds.contentEndPos
+    }
+  }
+
+  return {
+    success: true,
+    edit: {
+      id: editId, type: 'insert', toolName, toolArgs: args,
+      from: insertPos, to: insertPos,
+      oldContent: '',
+      newContent: tablePreview,
+      description: caption || 'Insert table',
+    }
+  }
+}

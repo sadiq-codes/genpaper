@@ -845,15 +845,15 @@ kbd {
    - CSS variables for automatic dark mode support
    ============================================================================= */
 
-/* Main diff block container - minimal inline style */
+/* Main diff block container — no border, clean inline */
 .diff-block {
-  @apply my-2 relative;
-  animation: diffBlockSlideIn 0.3s ease-out;
+  @apply my-2 relative rounded-md overflow-hidden;
+  animation: diffBlockSlideIn 0.25s ease-out;
 }
 
-/* Active state - subtle highlight */
+/* Active state */
 .diff-block--active {
-  @apply bg-muted/20 rounded-lg -mx-2 px-2 py-1;
+  @apply bg-muted/15;
 }
 
 /* Highlight animation when scrolling to an edit */
@@ -861,95 +861,89 @@ kbd {
   animation: diffBlockHighlight 0.6s ease-out;
 }
 
-/* Content wrapper - inline display */
+/* Content wrapper - vertical stack for old → new */
 .diff-block__content-wrapper {
-  @apply relative inline;
+  @apply relative flex flex-col gap-0;
 }
 
 /* Text styles for old/new content */
 .diff-block__text {
-  @apply text-base leading-relaxed;
+  @apply text-sm leading-relaxed px-3 py-1.5 whitespace-pre-wrap;
 }
 
 .diff-block__text--old {
-  @apply text-muted-foreground;
+  @apply bg-red-500/8 text-muted-foreground;
   text-decoration: line-through;
-  text-decoration-color: var(--destructive);
-  text-decoration-thickness: 1.5px;
+  text-decoration-color: oklch(0.6 0.15 25 / 0.4);
+  text-decoration-thickness: 1px;
 }
 
 .diff-block__text--new {
-  color: var(--diff-insert);
+  @apply bg-green-500/8;
+  color: var(--diff-insert, oklch(0.55 0.15 145));
 }
 
-/* Replace: show both with spacing */
-.diff-block--replace .diff-block__text--old {
-  @apply mr-2;
-}
-
-/* Active indicator dot */
+/* Active indicator dot - hidden */
 .diff-block__indicator {
-  @apply inline-block w-2 h-2 rounded-full bg-primary ml-2;
-  vertical-align: middle;
+  @apply hidden;
 }
 
-/* Floating action bar - minimal card style */
+/* Action bar — flush, no border */
 .diff-block__actions {
-  @apply flex items-center gap-2 mt-2 p-1.5 rounded-full bg-background border border-border shadow-sm w-fit;
-  animation: diffBlockActionsSlideIn 0.2s ease-out 0.1s both;
+  @apply flex items-center gap-2 px-3 py-1.5;
+  animation: diffBlockActionsSlideIn 0.15s ease-out 0.05s both;
 }
 
 @keyframes diffBlockActionsSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-/* Button base */
+/* Button base — text-only, no fill */
 .diff-block__btn {
-  @apply inline-flex items-center justify-center px-3 py-1.5 rounded-full text-sm font-medium transition-all cursor-pointer border-none;
+  @apply inline-flex items-center justify-center text-xs font-medium transition-colors cursor-pointer border-none bg-transparent;
 }
 
 .diff-block__btn:hover {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .diff-block__btn:active {
-  transform: translateY(0);
+  @apply opacity-70;
 }
 
-/* Accept button - primary filled style */
+/* Accept — green text link */
 .diff-block__btn--accept {
-  @apply bg-primary text-primary-foreground;
+  @apply text-green-600 dark:text-green-400;
 }
 
 .diff-block__btn--accept:hover {
-  @apply bg-primary/90;
+  @apply underline;
 }
 
 .diff-block__btn-arrow {
-  @apply ml-1.5;
+  @apply ml-0.5;
 }
 
-/* Reject button - ghost style */
+/* Reject — muted text link */
 .diff-block__btn--reject {
-  @apply bg-transparent text-muted-foreground;
+  @apply text-muted-foreground;
 }
 
 .diff-block__btn--reject:hover {
-  @apply text-foreground bg-muted;
+  @apply text-foreground underline;
+}
+
+/* Keyboard hint */
+.diff-block__hint {
+  @apply text-[10px] text-muted-foreground/50 ml-auto hidden sm:inline;
 }
 
 /* Animations */
 @keyframes diffBlockSlideIn {
   from {
     opacity: 0;
-    transform: translateY(-8px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
@@ -962,7 +956,7 @@ kbd {
     box-shadow: 0 0 0 0 var(--ring);
   }
   50% {
-    box-shadow: 0 0 0 6px color-mix(in oklch, var(--ring) 30%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in oklch, var(--ring) 30%, transparent);
   }
   100% {
     box-shadow: 0 0 0 0 transparent;
@@ -973,32 +967,27 @@ kbd {
 @keyframes diffBlockAccept {
   0% {
     opacity: 1;
-    transform: scale(1);
     background-color: color-mix(in oklch, var(--diff-insert) 15%, transparent);
-  }
-  50% {
-    transform: scale(1.01);
   }
   100% {
     opacity: 0;
-    transform: scale(0.98);
+    transform: scale(0.99);
   }
 }
 
 .diff-block--accepted {
-  animation: diffBlockAccept 0.4s ease-out forwards;
+  animation: diffBlockAccept 0.35s ease-out forwards;
 }
 
 /* Rejection animation */
 @keyframes diffBlockReject {
   0% {
     opacity: 1;
-    transform: scale(1);
     background-color: color-mix(in oklch, var(--destructive) 10%, transparent);
   }
   100% {
     opacity: 0;
-    transform: scale(0.95) translateX(-10px);
+    transform: scale(0.98) translateX(-4px);
   }
 }
 

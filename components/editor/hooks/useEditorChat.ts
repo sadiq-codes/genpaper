@@ -102,6 +102,18 @@ function getToolSummary(toolName: string, args: Record<string, unknown>, accepte
       return `${action} highlight`
     case 'addComment':
       return `${action} comment`
+    case 'moveBlock':
+      return `${action} move to ${preview(args.targetLocation)}`
+    case 'mergeBlocks':
+      return `${action} merge of blocks`
+    case 'splitBlock':
+      return `${action} split after "${preview(args.splitAfterPhrase)}"`
+    case 'formatText':
+      return `${action} ${args.format} formatting`
+    case 'insertTable':
+      return `${action} table insertion`
+    case 'searchAndReplace':
+      return `${action} replace "${preview(args.find)}" → "${preview(args.replaceWith)}"`
     default:
       return `${action} ${toolName}`
   }
@@ -639,7 +651,8 @@ export function useEditorChat({
   const executeToolCall = useCallback((
     toolName: string, 
     args: Record<string, unknown>,
-    ghostEditId?: string
+    ghostEditId?: string,
+    suppressHistory?: boolean
   ) => {
     const ed = editorRef.current
     if (!ed) {
@@ -649,7 +662,23 @@ export function useEditorChat({
 
     // Import and execute with optional ghostEditId to preserve other previews
     import('../services/tool-executor').then(({ executeDocumentTool }) => {
-      executeDocumentTool(ed, toolName, args, { ghostEditId })
+      if (suppressHistory) {
+        // Wrap dispatch to suppress undo history entry (will be grouped with other edits)
+        const originalDispatch = ed.view.dispatch.bind(ed.view)
+        ed.view.dispatch = (tr) => {
+          if (tr.docChanged) {
+            tr.setMeta('addToHistory', false)
+          }
+          return originalDispatch(tr)
+        }
+        try {
+          executeDocumentTool(ed, toolName, args, { ghostEditId })
+        } finally {
+          ed.view.dispatch = originalDispatch
+        }
+      } else {
+        executeDocumentTool(ed, toolName, args, { ghostEditId })
+      }
     })
   }, [])
 
@@ -711,6 +740,8 @@ export function useEditorChat({
     
     // Track tool signatures we've seen in THIS batch to deduplicate
     const seenInBatch = new Set<string>()
+    // Queue auto-executed tools for undo grouping
+    const autoExecQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string }> = []
 
     for (const invocation of invocations) {
       const toolName = invocation.toolName
@@ -760,8 +791,8 @@ export function useEditorChat({
       const confirmLevel = getConfirmationLevel(toolName)
 
       if (confirmLevel === 'none') {
-        // Execute immediately
-        executeToolCall(toolName, args)
+        // Execute immediately — collect for undo grouping below
+        autoExecQueue.push({ toolName, args, toolId })
         executedTools.current.add(toolId)
       } else {
         // Calculate edit positions for ghost preview
@@ -789,6 +820,20 @@ export function useEditorChat({
           messageId,
           calculatedEdit: calcEdit,
         })
+      }
+    }
+
+    // Execute auto-exec tools as a single undo group
+    if (autoExecQueue.length > 0) {
+      if (autoExecQueue.length === 1) {
+        // Single tool — normal execution (creates one undo entry)
+        executeToolCall(autoExecQueue[0].toolName, autoExecQueue[0].args)
+      } else {
+        // Multiple tools — suppress history on all but the last
+        for (let i = 0; i < autoExecQueue.length; i++) {
+          const isLast = i === autoExecQueue.length - 1
+          executeToolCall(autoExecQueue[i].toolName, autoExecQueue[i].args, undefined, !isLast)
+        }
       }
     }
 
@@ -835,6 +880,21 @@ export function useEditorChat({
         return `Replace ${getTarget()}:\nNew content: "${(args.newContent as string)?.slice(0, 150)}..."`
       case 'replaceInSection':
         return `Replace in "${args.section}":\nFind: "${(args.searchPhrase as string)?.slice(0, 80)}..."\nReplace with: "${(args.newContent as string)?.slice(0, 80)}..."`
+      case 'moveBlock':
+        return `Move ${getTarget()} to ${args.targetLocation}${args.reason ? `\nReason: ${args.reason}` : ''}`
+      case 'mergeBlocks':
+        return args.firstBlockId 
+          ? `Merge block ${args.firstBlockId} with ${args.secondBlockId}`
+          : `Merge blocks near "${(args.searchPhrase as string)?.slice(0, 50)}..."`
+      case 'splitBlock':
+        return `Split block after "${(args.splitAfterPhrase as string)?.slice(0, 60)}..."`
+      case 'insertTable': {
+        const headers = args.headers as string[]
+        const rows = args.rows as string[][]
+        return `Insert ${headers?.length || 0}-column table with ${rows?.length || 0} rows${args.caption ? `\n${args.caption}` : ''}`
+      }
+      case 'searchAndReplace':
+        return `Replace all "${args.find}" → "${args.replaceWith}"${args.section ? ` in ${args.section}` : ''}`
       default:
         return JSON.stringify(args, null, 2)
     }

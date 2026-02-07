@@ -62,6 +62,10 @@ export interface ToolExecutionOptions {
   papers?: ProjectPaper[]
   /** Project ID for saving citations to database */
   projectId?: string
+  /** If true, suppresses individual undo history entries so this edit
+   *  can be grouped with other AI edits into a single undo step. 
+   *  Call finalizeUndoGroup(editor) after the last edit to commit the group. */
+  groupUndo?: boolean
 }
 
 /** Citation instance for saving to database */
@@ -228,19 +232,76 @@ export function executeDocumentTool(
   const projectId = options.projectId || _globalProjectId
   
   try {
+    let result: ToolExecutionResult
+
     // If we have a ghost edit ID, wrap execution to set the meta
     if (options.ghostEditId) {
-      // Use a chain to ensure the meta is set on the same transaction
-      return executeWithGhostMeta(editor, toolName, args, options.ghostEditId, papers, projectId)
+      result = executeWithGhostMeta(editor, toolName, args, options.ghostEditId, papers, projectId)
+    } else {
+      result = dispatchTool(editor, toolName, args, papers, projectId)
     }
-    
-    return dispatchTool(editor, toolName, args, papers, projectId)
+
+    return result
   } catch (error) {
     console.error(`[ToolExecutor] Error in ${toolName}:`, error)
     const message = error instanceof Error ? error.message : 'Unknown error'
     toast.error(`Edit failed: ${message}`)
     return { success: false, message }
   }
+}
+
+/**
+ * Execute multiple tool calls as a single undo group.
+ * All edits will be undone/redone together with one Cmd+Z.
+ * 
+ * @param editor - TipTap editor instance
+ * @param toolCalls - Array of { toolName, args } to execute
+ * @param options - Shared execution options
+ * @returns Array of results, one per tool call
+ */
+export function executeToolsAsUndoGroup(
+  editor: Editor,
+  toolCalls: Array<{ toolName: string; args: Record<string, unknown> }>,
+  options: ToolExecutionOptions = {}
+): ToolExecutionResult[] {
+  if (toolCalls.length === 0) return []
+  if (toolCalls.length === 1) {
+    return [executeDocumentTool(editor, toolCalls[0].toolName, toolCalls[0].args, options)]
+  }
+
+  const results: ToolExecutionResult[] = []
+  const originalDispatch = editor.view.dispatch.bind(editor.view)
+
+  // Wrap dispatch to suppress individual undo entries for all but the last edit
+  let editIndex = 0
+  const totalEdits = toolCalls.length
+
+  editor.view.dispatch = (tr) => {
+    if (tr.docChanged && editIndex < totalEdits - 1) {
+      // Suppress intermediate history entries — they'll be grouped with the final one
+      tr.setMeta('addToHistory', false)
+    }
+    // Ghost edit meta if applicable
+    if (tr.docChanged && options.ghostEditId) {
+      tr.setMeta('ghostEditAccepted', options.ghostEditId)
+    }
+    return originalDispatch(tr)
+  }
+
+  try {
+    const papers = options.papers || _globalPapersContext
+    const projectId = options.projectId || _globalProjectId
+
+    for (const call of toolCalls) {
+      const result = dispatchTool(editor, call.toolName, call.args, papers, projectId)
+      results.push(result)
+      editIndex++
+    }
+  } finally {
+    editor.view.dispatch = originalDispatch
+  }
+
+  return results
 }
 
 /**
@@ -271,6 +332,18 @@ function dispatchTool(
       return executeHighlightText(editor, args)
     case 'addComment':
       return executeAddComment(editor, args)
+    case 'moveBlock':
+      return executeMoveBlock(editor, args)
+    case 'mergeBlocks':
+      return executeMergeBlocks(editor, args)
+    case 'splitBlock':
+      return executeSplitBlock(editor, args)
+    case 'formatText':
+      return executeFormatText(editor, args)
+    case 'insertTable':
+      return executeInsertTable(editor, args)
+    case 'searchAndReplace':
+      return executeSearchAndReplace(editor, args)
     default:
       return { success: false, message: `Unknown tool: ${toolName}` }
   }
@@ -1467,6 +1540,471 @@ function executeAddComment(
 
   toast.info(`AI Comment: ${comment}`, { duration: 8000 })
   return { success: true, message: 'Comment added' }
+}
+
+// =============================================================================
+// NEW TOOL IMPLEMENTATIONS
+// =============================================================================
+
+/**
+ * Move a block from one location to another atomically.
+ * Extracts the content first, then deletes + inserts in one chain.
+ */
+function executeMoveBlock(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const blockId = args.blockId as string | undefined
+  const searchPhrase = args.searchPhrase as string | undefined
+  const section = args.section as string | undefined
+  const targetLocation = args.targetLocation as string
+
+  if (!targetLocation) {
+    return { success: false, message: 'No target location specified' }
+  }
+
+  // Find the source block
+  const source = findTargetBlock(editor, { blockId, section, searchPhrase })
+  if (!source.found) {
+    const message = getNotFoundMessage({ blockId, section, searchPhrase })
+    toast.error(message)
+    return { success: false, message }
+  }
+
+  // Extract the content before deleting
+  const sourceSlice = editor.state.doc.slice(source.pos, source.endPos)
+
+  // Determine target insertion position
+  let insertPos: number | null = null
+
+  const afterBlockMatch = targetLocation.match(/^after:(.+)$/i)
+  const endOfSectionMatch = targetLocation.match(/^endOfSection:(.+)$/i)
+  const startOfSectionMatch = targetLocation.match(/^startOfSection:(.+)$/i)
+
+  if (afterBlockMatch) {
+    const targetBlockId = afterBlockMatch[1]
+    const targetBlock = findBlockById(editor, targetBlockId)
+    if (targetBlock) {
+      insertPos = targetBlock.pos + targetBlock.node.nodeSize
+    } else {
+      toast.error(`Target block not found: ${targetBlockId}`)
+      return { success: false, message: `Target block not found: ${targetBlockId}` }
+    }
+  } else if (endOfSectionMatch) {
+    const sectionBounds = findSectionBounds(editor, endOfSectionMatch[1])
+    if (sectionBounds.found) {
+      insertPos = sectionBounds.contentEndPos
+    } else {
+      toast.error(`Section not found: ${endOfSectionMatch[1]}`)
+      return { success: false, message: `Section not found: ${endOfSectionMatch[1]}` }
+    }
+  } else if (startOfSectionMatch) {
+    const sectionBounds = findSectionBounds(editor, startOfSectionMatch[1])
+    if (sectionBounds.found) {
+      insertPos = sectionBounds.contentStartPos
+    } else {
+      toast.error(`Section not found: ${startOfSectionMatch[1]}`)
+      return { success: false, message: `Section not found: ${startOfSectionMatch[1]}` }
+    }
+  } else if (targetLocation === 'end') {
+    insertPos = editor.state.doc.content.size
+  }
+
+  if (insertPos === null) {
+    toast.error(`Invalid target location: ${targetLocation}`)
+    return { success: false, message: `Invalid target location: ${targetLocation}` }
+  }
+
+  // Atomic move: delete source, then insert at target
+  // If target is after source, adjust position for the deletion
+  const adjustedInsertPos = insertPos > source.endPos
+    ? insertPos - (source.endPos - source.pos)
+    : insertPos
+
+  const { state, view } = editor
+  const tr = state.tr
+
+  // Delete the source block first
+  tr.delete(source.pos, source.endPos)
+  // Insert the content at the adjusted position
+  tr.insert(adjustedInsertPos, sourceSlice.content)
+
+  view.dispatch(tr)
+
+  toast.success('Content moved')
+  return { success: true, message: `Moved content to ${targetLocation}` }
+}
+
+/**
+ * Merge two adjacent blocks into a single block.
+ */
+function executeMergeBlocks(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const firstBlockId = args.firstBlockId as string | undefined
+  const secondBlockId = args.secondBlockId as string | undefined
+  const searchPhrase = args.searchPhrase as string | undefined
+  const section = args.section as string | undefined
+
+  if (firstBlockId && secondBlockId) {
+    // Merge by block IDs
+    const firstBlock = findBlockById(editor, firstBlockId)
+    const secondBlock = findBlockById(editor, secondBlockId)
+
+    if (!firstBlock) {
+      toast.error(`First block not found: ${firstBlockId}`)
+      return { success: false, message: `First block not found: ${firstBlockId}` }
+    }
+    if (!secondBlock) {
+      toast.error(`Second block not found: ${secondBlockId}`)
+      return { success: false, message: `Second block not found: ${secondBlockId}` }
+    }
+
+    // Verify they are adjacent (second starts where first ends)
+    const firstEnd = firstBlock.pos + firstBlock.node.nodeSize
+    if (Math.abs(firstEnd - secondBlock.pos) > 2) {
+      toast.error('Blocks are not adjacent')
+      return { success: false, message: 'Blocks are not adjacent — they must be next to each other to merge' }
+    }
+
+    // Get text content of both blocks
+    const firstText = firstBlock.node.textContent
+    const secondText = secondBlock.node.textContent
+    const mergedText = firstText + ' ' + secondText
+
+    // Replace both blocks with a single paragraph
+    const from = firstBlock.pos
+    const to = secondBlock.pos + secondBlock.node.nodeSize
+
+    editor.chain()
+      .focus()
+      .setTextSelection({ from, to })
+      .insertContent(`<p>${mergedText}</p>`)
+      .run()
+
+    toast.success('Blocks merged')
+    return { success: true, message: 'Merged two blocks into one', affectedRange: { from, to } }
+  }
+
+  if (searchPhrase) {
+    // Find the text, then merge its parent block with the next block
+    const match = findTextInStructure(editor, searchPhrase, { section })
+    if (!match.found) {
+      toast.error(`Could not find text: "${searchPhrase.slice(0, 50)}..."`)
+      return { success: false, message: `Could not find text: "${searchPhrase.slice(0, 50)}..."` }
+    }
+
+    // Find the paragraph boundary
+    const $pos = editor.state.doc.resolve(match.pos + match.startOffset)
+    const parentStart = $pos.before($pos.depth)
+    const parentNode = $pos.node($pos.depth)
+    const parentEnd = parentStart + parentNode.nodeSize
+
+    // Find the next block node
+    const nextPos = parentEnd
+    if (nextPos >= editor.state.doc.content.size) {
+      toast.error('No block after this one to merge with')
+      return { success: false, message: 'No block after this one to merge with' }
+    }
+
+    const nextNode = editor.state.doc.nodeAt(nextPos)
+    if (!nextNode) {
+      toast.error('No block after this one to merge with')
+      return { success: false, message: 'No block after this one to merge with' }
+    }
+
+    const firstText = parentNode.textContent
+    const secondText = nextNode.textContent
+    const mergedText = firstText + ' ' + secondText
+
+    editor.chain()
+      .focus()
+      .setTextSelection({ from: parentStart, to: nextPos + nextNode.nodeSize })
+      .insertContent(`<p>${mergedText}</p>`)
+      .run()
+
+    toast.success('Blocks merged')
+    return { success: true, message: 'Merged two blocks into one', affectedRange: { from: parentStart, to: nextPos + nextNode.nodeSize } }
+  }
+
+  return { success: false, message: 'Provide firstBlockId+secondBlockId or searchPhrase' }
+}
+
+/**
+ * Split a block into two at a specified phrase.
+ */
+function executeSplitBlock(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const blockId = args.blockId as string | undefined
+  const splitAfterPhrase = args.splitAfterPhrase as string
+  const section = args.section as string | undefined
+
+  if (!splitAfterPhrase) {
+    return { success: false, message: 'Missing splitAfterPhrase' }
+  }
+
+  // Find the phrase in the document
+  const match = findTextInStructure(editor, splitAfterPhrase, { blockId, section })
+  if (!match.found) {
+    toast.error(`Could not find text: "${splitAfterPhrase.slice(0, 50)}..."`)
+    return { success: false, message: `Could not find text: "${splitAfterPhrase.slice(0, 50)}..."` }
+  }
+
+  const range = matchToRange(match)
+  if (!range) {
+    return { success: false, message: 'Failed to calculate split position' }
+  }
+
+  // Set cursor at the end of the phrase, then split the block
+  editor.chain()
+    .focus()
+    .setTextSelection(range.to)
+    .splitBlock()
+    .run()
+
+  toast.success('Block split into two')
+  return { success: true, message: 'Split block into two paragraphs', affectedRange: { from: range.to, to: range.to } }
+}
+
+/**
+ * Apply inline formatting to specific text.
+ */
+function executeFormatText(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const searchPhrase = args.searchPhrase as string
+  const blockId = args.blockId as string | undefined
+  const section = args.section as string | undefined
+  const format = args.format as string
+  const remove = args.remove as boolean | undefined
+
+  if (!searchPhrase || !format) {
+    return { success: false, message: 'Missing searchPhrase or format' }
+  }
+
+  // Find the text
+  const match = findTextInStructure(editor, searchPhrase, { blockId, section })
+  if (!match.found) {
+    toast.error(`Could not find text: "${searchPhrase.slice(0, 50)}..."`)
+    return { success: false, message: `Could not find text: "${searchPhrase.slice(0, 50)}..."` }
+  }
+
+  const range = matchToRange(match)
+  if (!range) {
+    return { success: false, message: 'Failed to calculate format range' }
+  }
+
+  // Map format name to TipTap command
+  const chain = editor.chain().focus().setTextSelection({ from: range.from, to: range.to })
+
+  if (remove) {
+    switch (format) {
+      case 'bold': chain.unsetBold(); break
+      case 'italic': chain.unsetItalic(); break
+      case 'underline': chain.unsetUnderline(); break
+      case 'strikethrough': chain.unsetStrike(); break
+      case 'code': chain.unsetCode(); break
+      default:
+        return { success: false, message: `Unknown format: ${format}` }
+    }
+  } else {
+    switch (format) {
+      case 'bold': chain.setBold(); break
+      case 'italic': chain.setItalic(); break
+      case 'underline': chain.setUnderline(); break
+      case 'strikethrough': chain.setStrike(); break
+      case 'code': chain.setCode(); break
+      default:
+        return { success: false, message: `Unknown format: ${format}` }
+    }
+  }
+
+  chain.run()
+
+  const action = remove ? 'Removed' : 'Applied'
+  toast.success(`${action} ${format} formatting`)
+  return { success: true, message: `${action} ${format}`, affectedRange: { from: range.from, to: range.to } }
+}
+
+/**
+ * Insert a structured table.
+ */
+function executeInsertTable(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const headers = args.headers as string[]
+  const rows = args.rows as string[][]
+  const caption = args.caption as string | undefined
+  const afterBlockId = args.afterBlockId as string | undefined
+  const location = args.location as string | undefined
+
+  if (!headers || headers.length === 0) {
+    return { success: false, message: 'No headers provided' }
+  }
+
+  // Build TipTap table JSON
+  const headerCells = headers.map(h => ({
+    type: 'tableHeader',
+    content: [{ type: 'paragraph', content: [{ type: 'text', text: h }] }]
+  }))
+
+  const bodyRows = (rows || []).map(row => ({
+    type: 'tableRow',
+    content: headers.map((_, colIdx) => ({
+      type: 'tableCell',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: row[colIdx] || '' }] }]
+    }))
+  }))
+
+  const tableContent: unknown[] = [
+    { type: 'tableRow', content: headerCells },
+    ...bodyRows,
+  ]
+
+  const contentToInsert: unknown[] = []
+
+  // Add caption before the table if provided
+  if (caption) {
+    contentToInsert.push({
+      type: 'paragraph',
+      content: [{ type: 'text', text: caption, marks: [{ type: 'bold' }] }]
+    })
+  }
+
+  contentToInsert.push({ type: 'table', content: tableContent })
+
+  // Determine insertion position
+  if (afterBlockId) {
+    const block = findBlockById(editor, afterBlockId)
+    if (block) {
+      editor.chain()
+        .focus()
+        .setTextSelection(block.pos + block.node.nodeSize)
+        .insertContent(contentToInsert)
+        .run()
+      toast.success('Table inserted')
+      return { success: true, message: 'Table inserted', blockId: afterBlockId }
+    }
+    console.warn(`[ToolExecutor] Block ${afterBlockId} not found for table insert`)
+  }
+
+  // Location-based insertion
+  if (location) {
+    const afterMatch = location.match(/^after:(.+)$/i)
+    if (afterMatch) {
+      const sectionBounds = findSectionBounds(editor, afterMatch[1])
+      if (sectionBounds.found) {
+        editor.chain()
+          .focus()
+          .setTextSelection(sectionBounds.contentEndPos)
+          .insertContent(contentToInsert)
+          .run()
+        toast.success('Table inserted')
+        return { success: true, message: `Table inserted in ${afterMatch[1]}` }
+      }
+    }
+
+    if (location === 'end') {
+      editor.chain()
+        .focus()
+        .setTextSelection(editor.state.doc.content.size)
+        .insertContent(contentToInsert)
+        .run()
+      toast.success('Table appended')
+      return { success: true, message: 'Table appended to document' }
+    }
+  }
+
+  // Default: insert at cursor
+  editor.chain().focus().insertContent(contentToInsert).run()
+  toast.success('Table inserted at cursor')
+  return { success: true, message: 'Table inserted at cursor' }
+}
+
+/**
+ * Search and replace across the document (or within a section).
+ */
+function executeSearchAndReplace(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const findText = args.find as string
+  const replaceWith = args.replaceWith as string
+  const section = args.section as string | undefined
+  const matchCase = args.matchCase !== false // default true
+
+  if (!findText) {
+    return { success: false, message: 'No search text provided' }
+  }
+
+  // Determine the search range
+  let searchFrom = 0
+  let searchTo = editor.state.doc.content.size
+
+  if (section) {
+    const sectionBounds = findSectionBounds(editor, section)
+    if (!sectionBounds.found) {
+      toast.error(`Section not found: ${section}`)
+      return { success: false, message: `Section not found: ${section}` }
+    }
+    searchFrom = sectionBounds.contentStartPos
+    searchTo = sectionBounds.contentEndPos
+  }
+
+  // Collect all matches (positions) by walking the document text nodes
+  const matches: { from: number; to: number }[] = []
+
+  editor.state.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
+    if (!node.isText || !node.text) return
+
+    const text = node.text
+    const searchStr = matchCase ? findText : findText.toLowerCase()
+    const nodeText = matchCase ? text : text.toLowerCase()
+
+    let idx = 0
+    while (true) {
+      const found = nodeText.indexOf(searchStr, idx)
+      if (found === -1) break
+
+      const matchFrom = pos + found
+      const matchTo = matchFrom + findText.length
+
+      // Only include matches within our search bounds
+      if (matchFrom >= searchFrom && matchTo <= searchTo) {
+        matches.push({ from: matchFrom, to: matchTo })
+      }
+      idx = found + 1
+    }
+  })
+
+  if (matches.length === 0) {
+    toast.info(`No matches found for "${findText}"`)
+    return { success: false, message: `No matches found for "${findText}"` }
+  }
+
+  // Apply replacements in reverse order to avoid position drift
+  const { state, view } = editor
+  let tr = state.tr
+
+  const sortedMatches = [...matches].sort((a, b) => b.from - a.from)
+
+  for (const match of sortedMatches) {
+    tr = tr.replaceWith(match.from, match.to, replaceWith ? state.schema.text(replaceWith) : state.schema.text(''))
+  }
+
+  view.dispatch(tr)
+
+  const scopeMsg = section ? ` in ${section}` : ''
+  toast.success(`Replaced ${matches.length} occurrence${matches.length > 1 ? 's' : ''}${scopeMsg}`)
+  return {
+    success: true,
+    message: `Replaced ${matches.length} occurrence${matches.length > 1 ? 's' : ''} of "${findText}" with "${replaceWith}"${scopeMsg}`,
+  }
 }
 
 // =============================================================================
