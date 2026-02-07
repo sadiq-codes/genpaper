@@ -706,20 +706,21 @@ export function DocumentEditor({
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Editor toolbar */}
-      <div className="flex items-center justify-end gap-0.5 px-1 py-0.5 sm:px-2 sm:py-1 border-b border-border/30 overflow-x-auto scrollbar-none shrink-0 sticky top-0 z-10 bg-background">
-        {/* Mobile sidebar toggle */}
-        {isMobile && onToggleMobileMenu && (
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground mr-auto"
-              onClick={onToggleMobileMenu}
-            >
-              {mobileMenuOpen ? <ChevronsLeft className="h-3.5 w-3.5" /> : <ChevronsRight className="h-3.5 w-3.5" />}
-            </Button>
-          </>
+      <div className="flex items-center border-b border-border/30 shrink-0 sticky top-0 z-10 bg-background">
+        {/* Sidebar toggle - pinned outside scroll area */}
+        {onToggleMobileMenu && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground ml-1 sm:ml-2"
+            onClick={onToggleMobileMenu}
+          >
+            {mobileMenuOpen ? <ChevronsLeft className="h-3.5 w-3.5" /> : <ChevronsRight className="h-3.5 w-3.5" />}
+          </Button>
         )}
+
+        {/* Scrollable formatting buttons */}
+        <div className="flex items-center justify-end flex-1 gap-0.5 px-1 py-0.5 sm:px-2 sm:py-1 overflow-x-auto scrollbar-none">
 
         {/* Heading dropdown */}
         <DropdownMenu>
@@ -791,6 +792,7 @@ export function DocumentEditor({
         <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()}>
           <Redo className="h-3.5 w-3.5" />
         </Button>
+        </div>
       </div>
       
       <div className="flex-1 overflow-auto relative">

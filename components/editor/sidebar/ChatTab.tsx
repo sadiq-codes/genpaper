@@ -531,16 +531,16 @@ export function ChatTab({
                 />
               ))}
               {isLoading && (
-                <div className="flex items-end gap-2 pr-4">
+                <div className="flex items-center justify-between pr-4">
                   <LoadingBubble />
                   {onStop && (
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      className="h-7 text-xs mb-4 shrink-0"
+                      className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground shrink-0"
                       onClick={onStop}
                     >
-                      <Square className="h-3 w-3 mr-1 fill-current" />
+                      <Square className="h-2.5 w-2.5 mr-1 fill-current" />
                       Stop
                     </Button>
                   )}

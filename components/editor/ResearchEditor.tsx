@@ -566,20 +566,6 @@ export function ResearchEditor({
 
         {/* Document Editor Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Sidebar toggle - Desktop only */}
-          {!isMobile && (
-            <div className="relative">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute left-2 top-2 z-10 h-7 w-7"
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-              >
-                {sidebarOpen ? <ChevronsLeft className="h-4 w-4" /> : <ChevronsRight className="h-4 w-4" />}
-              </Button>
-            </div>
-          )}
-
           {/* Editor */}
           <div className="flex-1 overflow-hidden">
             <DocumentEditor
@@ -601,8 +587,8 @@ export function ResearchEditor({
               onAcceptAllEdits={confirmAllTools}
               onRejectAllEdits={rejectAllTools}
               isMobile={isMobile}
-              mobileMenuOpen={mobileMenuOpen}
-              onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
+              mobileMenuOpen={isMobile ? mobileMenuOpen : sidebarOpen}
+              onToggleMobileMenu={() => isMobile ? setMobileMenuOpen(!mobileMenuOpen) : setSidebarOpen(!sidebarOpen)}
             />
           </div>
         </div>
