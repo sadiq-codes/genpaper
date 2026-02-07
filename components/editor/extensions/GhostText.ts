@@ -349,8 +349,8 @@ export const GhostText = Extension.create({
                   acceptKey = 'ctrlEnter'
                 }
               }
-            } catch {
-              // Use default (tab)
+            } catch (e) {
+              console.warn('[GhostText] Failed to read autocomplete prefs from localStorage:', e)
             }
 
             // Accept ghost text - Tab or Ctrl+Enter based on preference

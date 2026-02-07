@@ -20,7 +20,7 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
-import { Undo, Redo, ChevronsRight, ChevronsLeft } from 'lucide-react'
+import { Undo, Redo, ChevronsRight, ChevronsLeft, Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Quote, Code, Minus, ChevronDown } from 'lucide-react'
 import { FloatingToolbar } from './FloatingToolbar'
 import { InlineEditBar } from './InlineEditBar'
 import { InlineCitationPicker } from './InlineCitationPicker'
@@ -96,7 +96,15 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Separator } from '@/components/ui/separator'
 import katex from 'katex'
+import { cn } from '@/lib/utils'
 
 interface DocumentEditorProps {
   initialContent?: string
@@ -163,29 +171,12 @@ export function DocumentEditor({
     to: number
   } | null>(null)
 
-  const handleAiEdit = useCallback((text: string) => {
-    if (!editor) return
-    const { from, to } = editor.state.selection
-    setInlineEdit({ selectedText: text, from, to })
-  }, [editor])
-
   const handleCloseInlineEdit = useCallback(() => {
     setInlineEdit(null)
   }, [])
 
   // Citation picker state
   const [citationPickerPos, setCitationPickerPos] = useState<number | null>(null)
-
-  const handleOpenCitationPicker = useCallback(() => {
-    if (!editor) return
-    const { to } = editor.state.selection
-    setCitationPickerPos(to)
-  }, [editor])
-
-  const handleInsertCitationFromPicker = useCallback((citation: { id: string; authors: string[]; title: string; year: number; journal?: string; doi?: string }) => {
-    if (!editor) return
-    editor.chain().focus().insertCitation(citation).run()
-  }, [editor])
 
   const handleCloseCitationPicker = useCallback(() => {
     setCitationPickerPos(null)
@@ -359,6 +350,24 @@ export function DocumentEditor({
       onEditorReady?.(editor)
     },
   })
+
+  // Callbacks that depend on editor (must be after useEditor)
+  const handleAiEdit = useCallback((text: string) => {
+    if (!editor) return
+    const { from, to } = editor.state.selection
+    setInlineEdit({ selectedText: text, from, to })
+  }, [editor])
+
+  const handleOpenCitationPicker = useCallback(() => {
+    if (!editor) return
+    const { to } = editor.state.selection
+    setCitationPickerPos(to)
+  }, [editor])
+
+  const handleInsertCitationFromPicker = useCallback((citation: { id: string; authors: string[]; title: string; year: number; journal?: string; doi?: string }) => {
+    if (!editor) return
+    editor.chain().focus().insertCitation(citation).run()
+  }, [editor])
 
   // Track the papers count we used for initial content processing
   const [processedWithPapersCount, setProcessedWithPapersCount] = useState<number>(-1)
@@ -696,44 +705,92 @@ export function DocumentEditor({
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Minimal undo/redo bar - Notion-like */}
-      <div className="flex items-center justify-between px-2 py-0.5 sm:px-4 sm:py-1 border-b border-border/30">
-        {/* Left: mobile sidebar toggle */}
-        <div className="flex items-center">
-          {isMobile && onToggleMobileMenu && (
+      {/* Editor toolbar */}
+      <div className="flex items-center justify-end gap-0.5 px-1 py-0.5 sm:px-2 sm:py-1 border-b border-border/30 overflow-x-auto scrollbar-none shrink-0 sticky top-0 z-10 bg-background">
+        {/* Mobile sidebar toggle */}
+        {isMobile && onToggleMobileMenu && (
+          <>
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6 text-muted-foreground hover:text-foreground"
+              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground mr-auto"
               onClick={onToggleMobileMenu}
             >
               {mobileMenuOpen ? <ChevronsLeft className="h-3.5 w-3.5" /> : <ChevronsRight className="h-3.5 w-3.5" />}
             </Button>
-          )}
-        </div>
-        {/* Center: wordmark */}
-        <span className="text-[11px] font-medium tracking-wide text-muted-foreground/50 select-none">GenPaper</span>
-        {/* Right: undo/redo */}
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 sm:h-7 sm:w-7 text-muted-foreground hover:text-foreground"
-            onClick={() => editor.chain().focus().undo().run()}
-            disabled={!editor.can().undo()}
-          >
-            <Undo className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 sm:h-7 sm:w-7 text-muted-foreground hover:text-foreground"
-            onClick={() => editor.chain().focus().redo().run()}
-            disabled={!editor.can().redo()}
-          >
-            <Redo className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-          </Button>
-        </div>
+          </>
+        )}
+
+        {/* Heading dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 shrink-0 text-muted-foreground hover:text-foreground">
+              {editor.isActive('heading', { level: 1 }) ? 'H1' :
+               editor.isActive('heading', { level: 2 }) ? 'H2' :
+               editor.isActive('heading', { level: 3 }) ? 'H3' : 'P'}
+              <ChevronDown className="h-3 w-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => editor.chain().focus().setParagraph().run()} className={cn(editor.isActive('paragraph') && 'bg-accent')}>
+              Paragraph
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} className={cn(editor.isActive('heading', { level: 1 }) && 'bg-accent')}>
+              Heading 1
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} className={cn(editor.isActive('heading', { level: 2 }) && 'bg-accent')}>
+              Heading 2
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} className={cn(editor.isActive('heading', { level: 3 }) && 'bg-accent')}>
+              Heading 3
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Separator orientation="vertical" className="h-4 mx-0.5" />
+
+        {/* Inline formatting */}
+        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('bold') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBold().run()}>
+          <Bold className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('italic') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleItalic().run()}>
+          <Italic className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('underline') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleUnderline().run()}>
+          <UnderlineIcon className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('strike') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleStrike().run()}>
+          <Strikethrough className="h-3.5 w-3.5" />
+        </Button>
+
+        <Separator orientation="vertical" className="h-4 mx-0.5" />
+
+        {/* Block formatting */}
+        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('bulletList') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBulletList().run()}>
+          <List className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('orderedList') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
+          <ListOrdered className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('blockquote') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
+          <Quote className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('codeBlock') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleCodeBlock().run()}>
+          <Code className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().setHorizontalRule().run()}>
+          <Minus className="h-3.5 w-3.5" />
+        </Button>
+
+        <Separator orientation="vertical" className="h-4 mx-0.5" />
+
+        {/* Undo / Redo */}
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()}>
+          <Undo className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()}>
+          <Redo className="h-3.5 w-3.5" />
+        </Button>
       </div>
       
       <div className="flex-1 overflow-auto relative">

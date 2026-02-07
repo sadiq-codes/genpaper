@@ -294,7 +294,9 @@ export async function DELETE(request: NextRequest) {
         .delete()
         .eq('paper_id', paperId)
 
-      if (!claimDeleteError) {
+      if (claimDeleteError) {
+        console.error('Error deleting paper claims (citation already removed):', claimDeleteError)
+      } else {
         claimsDeleted = claimCount
       }
     }

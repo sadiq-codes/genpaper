@@ -112,7 +112,6 @@ export function executeBatchEdits(
   )
 
   if (hasMultiBlockContent) {
-    console.log('[BatchExecutor] Multi-block content detected, using sequential execution')
     return executeSequentially(editor, validEdits)
   }
 
@@ -310,7 +309,8 @@ function createTextNode(
   
   try {
     return schema.text(content)
-  } catch {
+  } catch (e) {
+    console.warn('[BatchExecutor] Failed to create text node:', e)
     return null
   }
 }

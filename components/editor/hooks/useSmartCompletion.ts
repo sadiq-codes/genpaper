@@ -249,7 +249,6 @@ function shouldTriggerCompletion(context: EditorContext): boolean {
   const filterResult = contextualFilter(context)
   
   if (!filterResult.shouldRequest) {
-    console.log('[Autocomplete] Contextual filter blocked:', filterResult.reason)
     return false
   }
   
@@ -402,7 +401,6 @@ export function useSmartCompletion({
           const firstSentence = entry.sentences[0].displayText.trim()
           // If what user typed matches the beginning of our suggestion, reuse it
           if (firstSentence.toLowerCase().startsWith(newlyTypedText.toLowerCase())) {
-            console.log('[Autocomplete] Cache hit! User typed matches suggestion prefix:', newlyTypedText)
             // Adjust the sentence to exclude what user already typed
             const adjustedSentences = entry.sentences.map((s, i) => {
               if (i === 0) {
@@ -443,14 +441,12 @@ export function useSmartCompletion({
       timestamp: Date.now(),
       section
     })
-    console.log('[Autocomplete] Stored completion in cache, size:', cache.size)
   }, [])
 
   // Cancel any pending API request (not the debounce timer)
   const cancelPendingRequest = useCallback(() => {
     const controller = abortControllerRef.current
     if (controller) {
-      console.log('[Autocomplete] cancelPendingRequest called')
       abortControllerRef.current = null
       // Only abort if not already aborted
       if (!controller.signal.aborted) {
@@ -484,26 +480,18 @@ export function useSmartCompletion({
   const generateCompletion = useCallback(async (
     context: EditorContext
   ) => {
-    console.log('[Autocomplete] generateCompletion called', { 
-      hasEditor: !!editor, 
-      projectId
-    })
-    
     if (!editor || !projectId) {
-      console.log('[Autocomplete] generateCompletion: no editor or projectId')
       return
     }
 
     // Don't generate if already showing ghost text
     if (hasGhostText(editor)) {
-      console.log('[Autocomplete] generateCompletion: ghost text already showing')
       return
     }
 
     // Don't start a new request if one is already in flight
     // This prevents rapid successive calls from aborting each other
     if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
-      console.log('[Autocomplete] generateCompletion: request already in progress, skipping')
       return
     }
 
@@ -514,14 +502,12 @@ export function useSmartCompletion({
     
     // Check for duplicate context (same content already requested)
     if (contextKey === lastContextKeyRef.current) {
-      console.log('[Autocomplete] generateCompletion: duplicate context key')
       return
     }
     
     // CHECK CACHE: Try to reuse a prior completion if user continued typing
     const cachedSentences = checkCompletionCache(context)
     if (cachedSentences && cachedSentences.length > 0) {
-      console.log('[Autocomplete] Using cached completion:', cachedSentences.length, 'sentences')
       const currentPapers = papersRef.current
       const firstSentence = prependSpaceIfNeeded(editor, cachedSentences[0])
       editor.commands.setGhostText(
@@ -539,7 +525,6 @@ export function useSmartCompletion({
     // Check for in-flight request with same key (request deduplication)
     const existingRequest = inFlightRequestRef.current.get(contextKey)
     if (existingRequest) {
-      console.log('[Autocomplete] generateCompletion: reusing in-flight request')
       return existingRequest
     }
     
@@ -550,7 +535,6 @@ export function useSmartCompletion({
     abortControllerRef.current = controller
     const signal = controller.signal
     
-    console.log('[Autocomplete] Starting API request...', { signalAborted: signal.aborted })
     setIsGenerating(true)
     setLoadingMessage('AI is thinking...')
 
@@ -559,7 +543,6 @@ export function useSmartCompletion({
     try {
       // Early exit if already aborted or unmounted (race condition protection)
       if (signal.aborted || !mountedRef.current) {
-        console.log('[Autocomplete] Early exit: already aborted or unmounted', { signalAborted: signal.aborted, mounted: mountedRef.current })
         if (mountedRef.current) {
           setIsGenerating(false)
           setLoadingMessage(null)
@@ -567,13 +550,11 @@ export function useSmartCompletion({
         return
       }
       const currentPapers = papersRef.current
-      console.log('[Autocomplete] Making fetch with paperIds:', currentPapers.length)
       
       // Send only paper IDs - the API will retrieve chunks/claims via RAG
       // Simple fetch with proper abort handling
       let response: Response | null = null
       try {
-        console.log('[Autocomplete] Initiating fetch...')
         response = await fetch('/api/editor/complete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -594,12 +575,9 @@ export function useSmartCompletion({
           }),
           signal
         })
-        console.log('[Autocomplete] Fetch completed:', response.status, response.ok)
       } catch (fetchError: unknown) {
         // Handle fetch errors (including abort)
-        console.log('[Autocomplete] Fetch threw error:', fetchError)
         if (signal.aborted) {
-          console.log('[Autocomplete] Signal was aborted, returning')
           return
         }
         // Check if it's an abort error
@@ -607,7 +585,6 @@ export function useSmartCompletion({
           (fetchError instanceof DOMException && fetchError.name === 'AbortError') ||
           (fetchError instanceof Error && fetchError.name === 'AbortError')
         ) {
-          console.log('[Autocomplete] AbortError, returning')
           return
         }
         // Network error - show toast
@@ -622,14 +599,12 @@ export function useSmartCompletion({
 
       // Check if aborted or no response (abort resolved to null)
       if (!response || signal.aborted) {
-        console.log('[Autocomplete] Request aborted or no response')
         return
       }
 
       if (!response.ok) {
         // Read the actual error message from the API
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-        console.log('[Autocomplete] API error response:', response.status, errorData)
         
         // Show appropriate error toast
         if (response.status === 404) {
@@ -650,7 +625,6 @@ export function useSmartCompletion({
       // to avoid displaying raw JSON or unformatted citations
       const reader = response.body?.getReader()
       if (!reader) {
-        console.log('[Autocomplete] No response body reader')
         return
       }
 
@@ -725,17 +699,11 @@ export function useSmartCompletion({
                       0  // No queue yet
                     )
                     setLoadingMessage(null)  // Hide "AI is thinking" once we have preview
-                    console.log('[Autocomplete] Showing interim preview:', previewText.slice(0, 50))
                   }
                 } else if (data.type === 'done') {
                   // Final data with sentences array - replace preview with final version
                   finalData = data
-                  console.log('[Autocomplete] Stream complete:', {
-                    sentencesCount: data.sentences?.length || 0,
-                    firstSentencePreview: data.sentences?.[0]?.displayText?.slice(0, 50)
-                  })
                 } else if (data.type === 'error') {
-                  console.log('[Autocomplete] Stream error:', data.error)
                   showErrorToast(data.error || 'Failed to generate suggestions')
                   throw new Error(data.error)
                 }
@@ -751,7 +719,6 @@ export function useSmartCompletion({
 
       // Final check before updating editor with complete data
       if (signal.aborted || !editor || editor.isDestroyed) {
-        console.log('[Autocomplete] Aborted after stream or editor destroyed')
         return
       }
 
@@ -796,7 +763,6 @@ export function useSmartCompletion({
         // CACHE: Store this completion for potential reuse
         storeInCache(context.precedingText, context.currentSection, queuedSentences)
         
-        console.log('[Autocomplete] Showing first sentence, queued:', sentenceQueueRef.current.length)
         
         // Reset context key after successful ghost text display
         lastContextKeyRef.current = ''
@@ -860,51 +826,29 @@ export function useSmartCompletion({
     const timeSinceLastKeystroke = now - lastKeystrokeTimeRef.current
     lastKeystrokeTimeRef.current = now
     
-    console.log('[Autocomplete] scheduleAutoTrigger called', { 
-      hasEditor: !!editor, 
-      enabled, 
-      autoSuggestions: prefs?.autoSuggestions,
-      isGenerating,
-      isFocused: editor?.isFocused,
-      timeSinceLastKeystroke
-    })
-    
     if (!editor || !enabled || isGenerating) {
-      console.log('[Autocomplete] Early return: basic checks failed')
       return
     }
     
     // Only auto-trigger if autoSuggestions is enabled
     if (!prefs?.autoSuggestions) {
-      console.log('[Autocomplete] Early return: autoSuggestions disabled')
       return
     }
     
     if (hasGhostText(editor)) {
-      console.log('[Autocomplete] Early return: ghost text already showing')
       return
     }
     if (!editor.isFocused) {
-      console.log('[Autocomplete] Early return: editor not focused')
       return
     }
 
     const context = extractEditorContext(editor)
     if (!context) {
-      console.log('[Autocomplete] Early return: no context extracted')
       return
     }
-    
-    console.log('[Autocomplete] Context:', {
-      precedingText: context.precedingText.slice(-50),
-      isEmptyParagraph: context.isEmptyParagraph,
-      hasHeadingAbove: context.hasHeadingAbove,
-      currentSection: context.currentSection
-    })
 
     // Check if we should trigger completion (has enough context)
     if (!shouldTriggerCompletion(context)) {
-      console.log('[Autocomplete] Early return: not enough context for completion')
       return
     }
 
@@ -914,46 +858,37 @@ export function useSmartCompletion({
     }
 
     // Schedule the completion with fixed delay (no longer varies by suggestion type)
-    console.log('[Autocomplete] Scheduling with delay:', AUTO_TRIGGER_DEBOUNCE_MS)
     
     debounceTimeoutRef.current = setTimeout(() => {
-      console.log('[Autocomplete] Timeout fired, checking conditions...')
       
       // Check if user is still rapidly typing (keystroke within MIN_PAUSE threshold)
       const timeSinceLastKeystroke = Date.now() - lastKeystrokeTimeRef.current
       if (timeSinceLastKeystroke < MIN_PAUSE_BETWEEN_KEYSTROKES_MS) {
-        console.log('[Autocomplete] Timeout: user still typing rapidly', { timeSinceLastKeystroke })
         return
       }
       
       // Re-check conditions before firing (use ref for isGenerating to avoid stale closure)
       if (!editor || !enabled || isGeneratingRef.current || editor.isDestroyed) {
-        console.log('[Autocomplete] Timeout: basic checks failed', { isGenerating: isGeneratingRef.current })
         return
       }
       if (hasGhostText(editor)) {
-        console.log('[Autocomplete] Timeout: ghost text already showing')
         return
       }
       if (!editor.isFocused) {
-        console.log('[Autocomplete] Timeout: editor not focused')
         return
       }
       
       // Re-extract context to ensure it's still valid
       const freshContext = extractEditorContext(editor)
       if (!freshContext) {
-        console.log('[Autocomplete] Timeout: no fresh context')
         return
       }
       
       // Check again that we have enough context (includes contextual filter)
       if (!shouldTriggerCompletion(freshContext)) {
-        console.log('[Autocomplete] Timeout: contextual filter blocked')
         return
       }
       
-      console.log('[Autocomplete] Calling generateCompletion')
       generateCompletion(freshContext)
     }, AUTO_TRIGGER_DEBOUNCE_MS)
   }, [editor, enabled, isGenerating, prefs?.autoSuggestions, generateCompletion])
@@ -979,7 +914,6 @@ export function useSmartCompletion({
     
     const queue = sentenceQueueRef.current
     if (queue.length === 0) {
-      console.log('[Autocomplete] No queued sentences')
       return false
     }
     
@@ -987,7 +921,6 @@ export function useSmartCompletion({
     const rawNextSentence = queue.shift()!
     sentenceQueueRef.current = queue
     
-    console.log('[Autocomplete] Showing queued sentence, remaining:', queue.length)
     
     // Apply smart spacing (cursor position may have changed since fetch)
     const nextSentence = prependSpaceIfNeeded(editor, rawNextSentence)
@@ -1003,7 +936,6 @@ export function useSmartCompletion({
     
     // If queue is getting low (1 or 0 left), trigger background refetch
     if (queue.length <= 1 && enabled && prefs?.autoSuggestions) {
-      console.log('[Autocomplete] Queue low, scheduling background refetch')
       // Delay slightly to let the current sentence be processed
       setTimeout(() => {
         if (!editor || editor.isDestroyed || !mountedRef.current) return
@@ -1035,7 +967,6 @@ export function useSmartCompletion({
     if (!editor || !enabled) return
 
     const handleGhostTextAccepted = () => {
-      console.log('[Autocomplete] Ghost text accepted, checking for queued sentences')
       // Small delay to let the accepted text be inserted first
       setTimeout(() => {
         if (!editor || editor.isDestroyed || !mountedRef.current) return
@@ -1070,12 +1001,10 @@ export function useSmartCompletion({
       const isInitialLoadPeriod = timeSinceSetup < 1000
       
       if (isInitialLoadPeriod) {
-        console.log('[Autocomplete] In initial load period, not cancelling request', { timeSinceSetup })
         return
       }
       
       // After initial period, any doc change should cancel pending requests (user is typing)
-      console.log('[Autocomplete] User edit detected, cancelling pending request')
       cancelPendingRequestRef.current()
       
       // Auto-trigger if enabled in preferences
@@ -1150,7 +1079,6 @@ export function useSmartCompletion({
       if (document.hidden) {
         // Page is hidden - cancel pending autocomplete requests and clear debounce
         // Generation continues server-side, but we don't need to fetch new completions
-        console.log('[Autocomplete] Page hidden, pausing autocomplete')
         cancelPendingRequestRef.current()
         if (debounceTimeoutRef.current) {
           clearTimeout(debounceTimeoutRef.current)
@@ -1160,7 +1088,6 @@ export function useSmartCompletion({
         sentenceQueueRef.current = []
         queueContextRef.current = ''
       } else {
-        console.log('[Autocomplete] Page visible again')
         // Don't auto-trigger on return - let user action trigger it
       }
     }

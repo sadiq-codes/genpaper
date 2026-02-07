@@ -739,9 +739,9 @@ export async function POST(request: NextRequest) {
               })
             }
             
-            // Save all citation instances to database (async, don't block)
+            // Save all citation instances to database
             if (allInstancesToCreate.length > 0) {
-              void saveCitationInstances(supabase, projectId, allInstancesToCreate)
+              await saveCitationInstances(supabase, projectId, allInstancesToCreate)
             }
 
             // Log final timing

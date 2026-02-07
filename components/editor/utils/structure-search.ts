@@ -367,7 +367,6 @@ function pickBestMatch(matches: StructureMatch[]): StructureMatch {
   
   // Log disambiguation if multiple high-quality matches
   if (scored.length > 1 && scored[1].score > 0.7) {
-    console.log(`[StructureSearch] Multiple matches found, picked ${best.nodeType} over ${scored[1].match.nodeType}`)
   }
   
   return best

@@ -260,7 +260,6 @@ export function GenerationProgress({
     isStartingRef.current = true
 
     try {
-      console.log('[Generation] Starting generation for project:', projectId)
       
       const response = await fetch('/api/generate/start', {
         method: 'POST',
@@ -290,14 +289,12 @@ export function GenerationProgress({
       
       // Handle already complete case
       if (data.status === 'already_complete' && data.content) {
-        console.log('[Generation] Project already complete')
         hasCompletedRef.current = true
         dispatch({ type: 'COMPLETE' })
         onComplete(data.content)
         return
       }
 
-      console.log('[Generation] Started run:', data.runId)
       setConnectionState(prev => ({
         ...prev,
         runId: data.runId,
@@ -321,7 +318,6 @@ export function GenerationProgress({
       eventSourceRef.current = null
     }
 
-    console.log('[Generation] Connecting to events stream, runId:', runId, 'lastEventId:', lastEventId)
     
     // Create EventSource with Last-Event-ID support
     const url = `/api/generate/${runId}/events`
@@ -442,7 +438,6 @@ export function GenerationProgress({
     }
 
     eventSource.onopen = () => {
-      console.log('[Generation] EventSource connected')
       setConnectionState(prev => ({ 
         ...prev, 
         isConnected: true,
@@ -451,13 +446,11 @@ export function GenerationProgress({
     }
 
     eventSource.onerror = () => {
-      console.log('[Generation] EventSource error, hasCompleted:', hasCompletedRef.current)
       setConnectionState(prev => ({ ...prev, isConnected: false }))
       
       if (!hasCompletedRef.current) {
         // If page is hidden, mark for reconnect when visible
         if (!isPageVisibleRef.current) {
-          console.log('[Generation] Page hidden during disconnect, will reconnect on visibility')
           setConnectionState(prev => ({ ...prev, wasDisconnectedWhileHidden: true }))
           eventSource.close()
           return
@@ -467,7 +460,6 @@ export function GenerationProgress({
         // The event stream supports Last-Event-ID, so we'll get missed events
         setTimeout(() => {
           if (!hasCompletedRef.current && isPageVisibleRef.current && runId) {
-            console.log('[Generation] Attempting reconnect with lastEventId:', lastEventIdRef.current)
             connectToEvents(runId, lastEventIdRef.current)
           }
         }, 2000)
@@ -486,7 +478,6 @@ export function GenerationProgress({
     if (isStartingRef.current || hasCompletedRef.current) return
     
     try {
-      console.log('[Generation] Checking for existing run for project:', projectId)
       
       // Check for existing active generation
       const statusResponse = await fetch(`/api/generate/status/${projectId}`)
@@ -497,11 +488,9 @@ export function GenerationProgress({
       }
       
       const status = await statusResponse.json()
-      console.log('[Generation] Status check result:', status)
       
       // Case 1: Active run exists - resume watching it
       if (status.hasActiveRun && status.runId) {
-        console.log('[Generation] Resuming existing run:', status.runId)
         
         // Restore progress from localStorage if available
         const storedProgress = localStorage.getItem(`generation-progress-${status.runId}`)
@@ -523,7 +512,6 @@ export function GenerationProgress({
             if (parsed.lastEventId) {
               lastEventIdRef.current = parsed.lastEventId
             }
-            console.log('[Generation] Restored progress from localStorage:', parsed)
           } catch (e) {
             console.warn('[Generation] Failed to parse stored progress:', e)
           }
@@ -548,7 +536,6 @@ export function GenerationProgress({
       
       // Case 2: Generation already completed
       if (status.status === 'completed' && status.content) {
-        console.log('[Generation] Project already complete')
         hasCompletedRef.current = true
         dispatch({ type: 'COMPLETE' })
         onComplete(status.content)
@@ -559,7 +546,6 @@ export function GenerationProgress({
       
       // Case 3: Previous generation failed
       if (status.status === 'failed') {
-        console.log('[Generation] Previous generation failed, starting new')
         // Clean up localStorage for failed run
         if (status.runId) {
           localStorage.removeItem(`generation-progress-${status.runId}`)
@@ -569,7 +555,6 @@ export function GenerationProgress({
       }
       
       // Case 4: No active run - start new generation
-      console.log('[Generation] No active run, starting new generation')
       startGeneration()
       
     } catch (err) {
@@ -635,23 +620,19 @@ export function GenerationProgress({
     const handleVisibilityChange = async () => {
       const isVisible = !document.hidden
       isPageVisibleRef.current = isVisible
-      console.log('[Generation] Visibility changed:', isVisible ? 'visible' : 'hidden')
       
       if (isVisible && !hasCompletedRef.current && connectionState.runId) {
         // Page became visible - check status and reconnect
         if (connectionState.wasDisconnectedWhileHidden || !connectionState.isConnected) {
-          console.log('[Generation] Page visible after disconnect, checking status...')
           
           try {
             // Check current run status
             const response = await fetch(`/api/generate/${connectionState.runId}/status`)
             if (response.ok) {
               const status = await response.json()
-              console.log('[Generation] Server status:', status)
               
               if (status.status === 'completed' && status.content) {
                 // Generation completed while we were away
-                console.log('[Generation] Generation completed while hidden')
                 hasCompletedRef.current = true
                 dispatch({ type: 'COMPLETE' })
                 onComplete(status.content)
@@ -668,7 +649,6 @@ export function GenerationProgress({
                 return
               } else if (status.status === 'running' || status.status === 'pending') {
                 // Still running - reconnect EventSource
-                console.log('[Generation] Generation still running, reconnecting...')
                 setConnectionState(prev => ({
                   ...prev,
                   wasDisconnectedWhileHidden: false,

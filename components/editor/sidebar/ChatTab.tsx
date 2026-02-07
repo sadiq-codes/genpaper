@@ -59,20 +59,29 @@ function ChatCitationSpan({ paper, instanceId }: { paper: ProjectPaper; instance
   const label = getCitationLabel(paper)
   const url = paper.pdfUrl || (paper.doi ? `https://doi.org/${paper.doi}` : null)
 
+  const sharedAttrs = {
+    'data-citation': paper.id,
+    'data-instance-id': instanceId || '',
+    'data-type': 'citation',
+    'data-authors': JSON.stringify(paper.authors || []),
+    'data-title': paper.title || '',
+    'data-year': paper.year?.toString() || '',
+    'data-journal': paper.journal || '',
+    'data-doi': paper.doi || '',
+    title: paper.title || '',
+    className: 'citation-inline text-primary/80 hover:text-primary hover:underline transition-colors',
+  }
+
+  if (url) {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" {...sharedAttrs}>
+        ({label})
+      </a>
+    )
+  }
+
   return (
-    <span
-      data-citation={paper.id}
-      data-instance-id={instanceId || ''}
-      data-type="citation"
-      data-authors={JSON.stringify(paper.authors || [])}
-      data-title={paper.title || ''}
-      data-year={paper.year?.toString() || ''}
-      data-journal={paper.journal || ''}
-      data-doi={paper.doi || ''}
-      title={paper.title || ''}
-      className="citation-inline cursor-pointer text-primary/80 hover:text-primary hover:underline transition-colors"
-      onClick={url ? () => window.open(url, '_blank', 'noopener,noreferrer') : undefined}
-    >
+    <span {...sharedAttrs} role="text">
       ({label})
     </span>
   )
@@ -178,8 +187,6 @@ interface ChatTabProps {
    */
   onSendMessage: (content: string | ChatSendOptions) => void
   isLoading?: boolean
-  /** Is chat history being loaded */
-  isLoadingHistory?: boolean
   /** Error from chat API (used to show rate limit banners) */
   error?: Error | null
   // Papers for @ mentions
@@ -189,8 +196,6 @@ interface ChatTabProps {
   pendingTools?: PendingToolCall[]
   onConfirmTool?: (toolId: string) => void
   onRejectTool?: (toolId: string) => void
-  onConfirmAllTools?: () => void
-  onRejectAllTools?: () => void
   onClearHistory?: () => void
   /** Stop the current AI generation */
   onStop?: () => void
@@ -398,15 +403,10 @@ export function ChatTab({
   messages, 
   onSendMessage, 
   isLoading = false,
-  isLoadingHistory: _isLoadingHistory = false, // Kept for API compatibility
   error,
   papers = [],
   projectId,
   pendingTools = [],
-  onConfirmTool: _onConfirmTool,
-  onRejectTool: _onRejectTool,
-  onConfirmAllTools: _onConfirmAllTools,
-  onRejectAllTools: _onRejectAllTools,
   onClearHistory,
   onStop,
 }: ChatTabProps) {

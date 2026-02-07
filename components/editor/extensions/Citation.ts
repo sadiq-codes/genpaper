@@ -156,7 +156,6 @@ export const Citation = Node.create<CitationOptions>({
         // Check if this is a numeric style (IEEE, Vancouver, Nature, etc.)
         const isNumericStyle = isNumericCitationStyle(style)
         
-        console.log(`[Citation] setCitationStyle: ${style}, isNumeric: ${isNumericStyle}`)
         
         // Build citation numbers for numeric styles
         if (isNumericStyle) {
@@ -169,13 +168,11 @@ export const Citation = Node.create<CitationOptions>({
               const id = node.attrs.id
               if (id && !numbers.has(id)) {
                 numbers.set(id, counter++)
-                console.log(`[Citation] Assigned number ${counter - 1} to paper ${id}`)
               }
             }
           })
           
           this.storage.citationNumbers = numbers
-          console.log(`[Citation] Built citation numbers map with ${numbers.size} entries`)
         } else {
           // Clear numbers for non-numeric styles
           this.storage.citationNumbers = new Map<string, number>()

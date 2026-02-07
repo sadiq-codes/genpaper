@@ -233,21 +233,25 @@ async function saveMessages(
   try {
     const supabase = await createClient()
     
-    // Save user message
-    await supabase.from('chat_messages').insert({
-      project_id: projectId,
-      role: 'user',
-      content: userMessageContent,
-      tool_invocations: [],
-    })
+    // Insert both messages in a single batch to avoid partial saves
+    const { error } = await supabase.from('chat_messages').insert([
+      {
+        project_id: projectId,
+        role: 'user',
+        content: userMessageContent,
+        tool_invocations: [],
+      },
+      {
+        project_id: projectId,
+        role: 'assistant',
+        content: assistantResponse.content,
+        tool_invocations: assistantResponse.toolInvocations || [],
+      },
+    ])
 
-    // Save assistant message
-    await supabase.from('chat_messages').insert({
-      project_id: projectId,
-      role: 'assistant',
-      content: assistantResponse.content,
-      tool_invocations: assistantResponse.toolInvocations || [],
-    })
+    if (error) {
+      console.error('Failed to save chat messages:', error)
+    }
   } catch (error) {
     console.error('Failed to save chat messages:', error)
     // Don't throw - saving is not critical to the chat flow
@@ -302,15 +306,28 @@ export async function POST(request: NextRequest) {
       documentContent = '', 
       selectedText, 
       documentStructure,
-      mentionedPaperIds = [],
-      attachedImages = [],
       isToolResultMessage = false,
-      isInlineEdit = false,
-    } = body as ChatRequest & { isInlineEdit?: boolean }
+    } = body as ChatRequest
 
-    if (!projectId || !messages || messages.length === 0) {
-      console.log('[Chat API] Missing required fields:', { projectId: !!projectId, messagesLength: messages?.length })
-      return new Response(JSON.stringify({ error: 'Missing required fields' }), { 
+    const isInlineEdit = typeof (body as Record<string, unknown>).isInlineEdit === 'boolean' 
+      ? (body as Record<string, unknown>).isInlineEdit as boolean 
+      : false
+    const mentionedPaperIds = Array.isArray((body as Record<string, unknown>).mentionedPaperIds)
+      ? (body as Record<string, unknown>).mentionedPaperIds as string[]
+      : []
+    const attachedImages = Array.isArray((body as Record<string, unknown>).attachedImages)
+      ? (body as Record<string, unknown>).attachedImages as string[]
+      : []
+
+    if (!projectId || typeof projectId !== 'string') {
+      return new Response(JSON.stringify({ error: 'Missing or invalid projectId' }), { 
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return new Response(JSON.stringify({ error: 'Missing or invalid messages' }), { 
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       })

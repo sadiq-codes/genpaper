@@ -101,7 +101,7 @@ export function processAIContent(
     const doc = markdownToTipTap(markdown, papers)
 
     if (process.env.NODE_ENV === 'development') {
-      console.log('[content-processor] processAIContent result:', {
+      console.log('[content-processor] markdownToTipTap:', {
         inputLength: markdown.length,
         outputType: doc.type,
         outputNodes: doc.content?.length || 0,

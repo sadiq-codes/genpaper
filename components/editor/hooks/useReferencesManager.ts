@@ -52,7 +52,6 @@ export function useReferencesManager(editor: Editor | null) {
         
         // Case 1: Has citations but no references block -> Insert at end
         if (citationCount > 0 && !hasReferencesBlock) {
-          console.log('[ReferencesManager] Adding references block (citations found)')
           
           // Use setTimeout to avoid transaction conflicts
           setTimeout(() => {
@@ -73,7 +72,6 @@ export function useReferencesManager(editor: Editor | null) {
         
         // Case 2: No citations but has references block -> Remove it
         if (citationCount === 0 && hasReferencesBlock && referencesPos >= 0) {
-          console.log('[ReferencesManager] Removing references block (no citations)')
           
           setTimeout(() => {
             if (!editor.isDestroyed) {
@@ -92,7 +90,6 @@ export function useReferencesManager(editor: Editor | null) {
           
           // If not at the end (with some tolerance for paragraph spacing)
           if (referencesPos < expectedPos - 2) {
-            console.log('[ReferencesManager] Moving references block to end')
             
             setTimeout(() => {
               if (!editor.isDestroyed) {

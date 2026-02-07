@@ -109,7 +109,6 @@ export const ReferencesBlock = Node.create({
             const isSelectionOnly = tr.selectionSet && tr.steps.length === 0
             
             if (!isSelectionOnly) {
-              console.log('[ReferencesBlock] Blocked user modification of references block')
               return false
             }
           }

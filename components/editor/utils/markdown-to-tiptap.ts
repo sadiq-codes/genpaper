@@ -551,7 +551,7 @@ export function markdownToTipTap(
     const doc = rootToTipTap(ast, ctx)
 
     if (process.env.NODE_ENV === 'development') {
-      console.log('[markdown-to-tiptap] Conversion complete:', {
+      console.log('[markdown-to-tiptap] Converted:', {
         inputLength: markdown.length,
         astNodes: ast.children.length,
         outputNodes: doc.content?.length || 0,
