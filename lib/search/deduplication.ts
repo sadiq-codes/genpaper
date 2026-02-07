@@ -23,7 +23,7 @@ export interface DeduplicatablePaper {
 }
 
 // Extended result type with preprint linking
-export interface DeduplicatedPaper<T extends DeduplicatablePaper> extends DeduplicatablePaper {
+export interface DeduplicatedPaper<_T extends DeduplicatablePaper> extends DeduplicatablePaper {
   preprint_id?: string
   siblings?: string[]
 }

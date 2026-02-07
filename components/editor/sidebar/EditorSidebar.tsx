@@ -143,7 +143,6 @@ export function EditorSidebar({
             messages={chatMessages}
             onSendMessage={onSendMessage}
             isLoading={isChatLoading}
-            isLoadingHistory={isChatLoadingHistory}
             error={chatError}
             papers={papers}
             projectId={projectId}

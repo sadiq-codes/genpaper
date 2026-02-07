@@ -455,7 +455,7 @@ function isInsideSpecialContext(prevContext: string, _current: string): boolean 
  * Create token-based overlap from the end of a chunk (async version)
  * @deprecated Use createTokenOverlapSync with a TokenCounter for better performance
  */
-async function createTokenOverlap(text: string, targetOverlapTokens: number): Promise<string> {
+async function _createTokenOverlap(text: string, targetOverlapTokens: number): Promise<string> {
   if (targetOverlapTokens <= 0 || !text.trim()) {
     return ''
   }

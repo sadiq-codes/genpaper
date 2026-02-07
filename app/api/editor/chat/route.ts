@@ -297,9 +297,10 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const body: ChatRequest = await request.json()
-    console.log('[Chat API] Request body keys:', Object.keys(body))
+    const raw: Record<string, unknown> = await request.json()
+    console.log('[Chat API] Request body keys:', Object.keys(raw))
     
+    const body = raw as unknown as ChatRequest
     const { 
       projectId, 
       messages, 
@@ -307,16 +308,16 @@ export async function POST(request: NextRequest) {
       selectedText, 
       documentStructure,
       isToolResultMessage = false,
-    } = body as ChatRequest
+    } = body
 
-    const isInlineEdit = typeof (body as Record<string, unknown>).isInlineEdit === 'boolean' 
-      ? (body as Record<string, unknown>).isInlineEdit as boolean 
+    const isInlineEdit = typeof raw.isInlineEdit === 'boolean' 
+      ? raw.isInlineEdit as boolean 
       : false
-    const mentionedPaperIds = Array.isArray((body as Record<string, unknown>).mentionedPaperIds)
-      ? (body as Record<string, unknown>).mentionedPaperIds as string[]
+    const mentionedPaperIds = Array.isArray(raw.mentionedPaperIds)
+      ? raw.mentionedPaperIds as string[]
       : []
-    const attachedImages = Array.isArray((body as Record<string, unknown>).attachedImages)
-      ? (body as Record<string, unknown>).attachedImages as string[]
+    const attachedImages = Array.isArray(raw.attachedImages)
+      ? raw.attachedImages as string[]
       : []
 
     if (!projectId || typeof projectId !== 'string') {

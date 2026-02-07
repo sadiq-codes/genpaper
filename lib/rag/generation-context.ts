@@ -16,7 +16,6 @@ import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
 import { 
   ContentRetrievalError, 
   NoRelevantContentError, 
-  ContentQualityError 
 } from '@/lib/content/errors'
 import type { PaperWithAuthors } from '@/types/simplified'
 import type { GeneratedOutline, SectionContext } from '@/lib/prompts/types'
