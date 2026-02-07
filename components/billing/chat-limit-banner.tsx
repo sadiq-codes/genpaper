@@ -56,7 +56,7 @@ export function ChatLimitBanner({
             size="sm"
             className="h-8 gap-1.5 bg-gradient-to-r from-primary to-primary/80"
             onClick={() => {
-              window.location.href = getCheckoutUrl('starter')
+              window.location.href = getCheckoutUrl('starter', { interval: 'yearly' })
             }}
           >
             <Sparkles className="h-3.5 w-3.5" />
@@ -115,7 +115,7 @@ export function ChatLimitBanner({
           size="sm"
           className="h-6 text-xs px-2"
           onClick={() => {
-            window.location.href = getCheckoutUrl('starter')
+            window.location.href = getCheckoutUrl('starter', { interval: 'yearly' })
           }}
         >
           <Sparkles className="h-3 w-3 mr-1" />

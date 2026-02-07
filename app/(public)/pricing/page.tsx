@@ -44,17 +44,12 @@ export default function PricingPage() {
       return
     }
     
-    if (user) {
-      // Redirect to checkout with user info
-      window.location.href = getCheckoutUrl(tier as 'starter' | 'pro', {
-        email: user.email || '',
-        userId: user.id,
-        interval: billingInterval,
-      })
-    } else {
-      // Redirect to signup, they can upgrade after
-      window.location.href = '/signup'
-    }
+    // Go directly to checkout (Polar handles auth)
+    window.location.href = getCheckoutUrl(tier as 'starter' | 'pro', {
+      email: user?.email || undefined,
+      userId: user?.id || undefined,
+      interval: billingInterval,
+    })
   }
 
   return (

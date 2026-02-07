@@ -44,10 +44,11 @@ export function UpgradePrompt({
   
   const handleUpgrade = () => {
     onUpgradeClick?.()
-    // Navigate to checkout
+    // Navigate to checkout (default to yearly for better value)
     const checkoutUrl = getCheckoutUrl(requiredTier as 'starter' | 'pro', {
       email: userEmail,
       userId,
+      interval: 'yearly',
     })
     window.location.href = checkoutUrl
   }
@@ -80,7 +81,7 @@ export function UpgradePrompt({
           <CardTitle className="text-lg">
             Upgrade to {requiredConfig.name}
           </CardTitle>
-          <Badge variant="secondary">${requiredConfig.price}/mo</Badge>
+          <Badge variant="secondary">${Math.round(requiredConfig.yearlyPrice / 12)}/mo</Badge>
         </div>
         <CardDescription>
           {message || (blockedFeature 

@@ -38,7 +38,7 @@ export function BlurredReferences({
   const hasBlurred = blurredRefs.length > 0
   
   const handleUpgrade = () => {
-    window.location.href = getCheckoutUrl('starter', { email: userEmail, userId })
+    window.location.href = getCheckoutUrl('starter', { email: userEmail, userId, interval: 'yearly' })
   }
   
   return (
