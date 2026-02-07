@@ -23,9 +23,15 @@ import {
   RefreshCw,
   Upload,
   Search,
+  ArrowLeft,
+  Calendar,
+  Users,
+  Eye,
+  Copy,
 } from 'lucide-react'
 import type { ProjectPaper } from '../types'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 import type { ProcessingStatus } from '../hooks/usePaperProcessingStatus'
 
 // =============================================================================
@@ -150,12 +156,14 @@ const PaperCard = memo(function PaperCard({
   paper,
   onInsertCitation,
   onRemove,
+  onViewDetail,
   processingStatus,
   onRetry,
 }: { 
   paper: ProjectPaper
   onInsertCitation: () => void
   onRemove: () => void
+  onViewDetail: () => void
   processingStatus?: ProcessingStatus
   onRetry?: () => void
 }) {
@@ -167,9 +175,15 @@ const PaperCard = memo(function PaperCard({
       "rounded-lg border bg-card p-3 transition-colors",
       "hover:bg-muted/30"
     )}>
-      {/* Title + Processing status (only when not ready) */}
+      {/* Title - clickable to view detail */}
       <div className="flex items-start gap-2">
-        <h4 className="flex-1 text-sm font-medium leading-snug line-clamp-2 min-w-0">
+        <h4 
+          className="flex-1 text-sm font-medium leading-snug line-clamp-2 min-w-0 cursor-pointer hover:text-primary transition-colors"
+          onClick={onViewDetail}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onViewDetail() } }}
+        >
           {paper.title}
         </h4>
         {processingStatus && processingStatus !== 'processed' && (
@@ -187,6 +201,22 @@ const PaperCard = memo(function PaperCard({
       
       {/* Actions Row */}
       <div className="flex items-center gap-1 mt-3 pt-2 border-t">
+        {/* Open Button - opens PDF if available, otherwise DOI */}
+        {(paper.pdfUrl || paper.doi) && (
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-7 px-2 text-xs text-muted-foreground"
+            onClick={() => {
+              const url = paper.pdfUrl || (paper.doi ? `https://doi.org/${paper.doi}` : null)
+              if (url) window.open(url, '_blank')
+            }}
+          >
+            <ExternalLink className="h-3 w-3 mr-1" aria-hidden="true" />
+            Open
+          </Button>
+        )}
+
         {/* Cite Button */}
         <Button 
           variant="secondary" 
@@ -198,19 +228,6 @@ const PaperCard = memo(function PaperCard({
           <Quote className="h-3 w-3 mr-1" aria-hidden="true" />
           Cite
         </Button>
-
-        {/* Open/DOI Button */}
-        {paper.doi && (
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="h-7 px-2 text-xs text-muted-foreground"
-            onClick={() => window.open(`https://doi.org/${paper.doi}`, '_blank')}
-          >
-            <ExternalLink className="h-3 w-3 mr-1" aria-hidden="true" />
-            Open
-          </Button>
-        )}
 
         {/* Abstract Toggle */}
         {paper.abstract && (
@@ -295,6 +312,7 @@ interface PaperListItemProps {
   paper: ProjectPaper
   onInsertCitation: (paper: ProjectPaper) => void
   onRemovePaper: (paperId: string) => void
+  onViewDetail: (paper: ProjectPaper) => void
   processingStatus?: ProcessingStatus
   onRetryPaper?: (paperId: string) => void
 }
@@ -303,6 +321,7 @@ const PaperListItem = memo(function PaperListItem({
   paper,
   onInsertCitation,
   onRemovePaper,
+  onViewDetail,
   processingStatus,
   onRetryPaper,
 }: PaperListItemProps) {
@@ -314,6 +333,10 @@ const PaperListItem = memo(function PaperListItem({
     onRemovePaper(paper.id)
   }, [onRemovePaper, paper.id])
   
+  const handleViewDetail = useCallback(() => {
+    onViewDetail(paper)
+  }, [onViewDetail, paper])
+  
   const handleRetry = useCallback(() => {
     onRetryPaper?.(paper.id)
   }, [onRetryPaper, paper.id])
@@ -323,11 +346,158 @@ const PaperListItem = memo(function PaperListItem({
       paper={paper}
       onInsertCitation={handleInsertCitation}
       onRemove={handleRemove}
+      onViewDetail={handleViewDetail}
       processingStatus={processingStatus}
       onRetry={onRetryPaper ? handleRetry : undefined}
     />
   )
 })
+
+// =============================================================================
+// PAPER DETAIL VIEW
+// =============================================================================
+
+function PaperDetailView({
+  paper,
+  onBack,
+  onInsertCitation,
+  onRemove,
+}: {
+  paper: ProjectPaper
+  onBack: () => void
+  onInsertCitation: () => void
+  onRemove: () => void
+}) {
+  const allAuthors = paper.authors?.length ? paper.authors.join(', ') : 'Unknown'
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header with back button */}
+      <div className="shrink-0 px-4 py-3 border-b flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0"
+          onClick={onBack}
+          aria-label="Back to papers list"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <span className="font-medium text-sm truncate">Paper Details</span>
+      </div>
+
+      {/* Scrollable content */}
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="p-4 space-y-4">
+          {/* Title */}
+          <h3 className="text-sm font-semibold leading-snug">{paper.title}</h3>
+
+          {/* Meta */}
+          <div className="space-y-2">
+            {paper.authors && paper.authors.length > 0 && (
+              <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                <Users className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                <span>{allAuthors}</span>
+              </div>
+            )}
+            {paper.year && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>{paper.year}</span>
+              </div>
+            )}
+            {paper.journal && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <BookOpen className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>{paper.journal}</span>
+              </div>
+            )}
+            {paper.doi && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded shrink-0">DOI</span>
+                <button
+                  className="truncate hover:text-foreground transition-colors text-left"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`https://doi.org/${paper.doi}`)
+                    toast.success('DOI copied')
+                  }}
+                  title="Click to copy"
+                >
+                  {paper.doi}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex flex-wrap gap-2 pt-1">
+            {paper.pdfUrl && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => window.open(paper.pdfUrl, '_blank')}
+              >
+                <Eye className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+                View PDF
+              </Button>
+            )}
+            {paper.doi && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => window.open(`https://doi.org/${paper.doi}`, '_blank')}
+              >
+                <ExternalLink className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+                DOI
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={onInsertCitation}
+            >
+              <Quote className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+              Cite
+            </Button>
+          </div>
+
+          {/* Abstract */}
+          {paper.abstract && (
+            <div className="pt-2">
+              <h4 className="text-xs font-medium mb-2">Abstract</h4>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {paper.abstract}
+              </p>
+            </div>
+          )}
+
+          {/* Source badge */}
+          <div className="flex items-center gap-2 pt-2 border-t">
+            <Badge variant="secondary" className="text-[10px]">
+              {paper.source === 'upload' ? 'Uploaded PDF' : 'From search'}
+            </Badge>
+          </div>
+
+          {/* Remove button */}
+          <div className="pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 w-full justify-center"
+              onClick={onRemove}
+            >
+              <Trash2 className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+              Remove from project
+            </Button>
+          </div>
+        </div>
+      </ScrollArea>
+    </div>
+  )
+}
 
 // =============================================================================
 // MAIN COMPONENT
@@ -342,6 +512,8 @@ export function ResearchTab({
   processingSummary,
   onRetryPaper,
 }: ResearchTabProps) {
+  const [selectedPaper, setSelectedPaper] = useState<ProjectPaper | null>(null)
+
   const uploadedPapers = papers.filter(p => p.source === 'upload')
   const hasUploadedPapers = uploadedPapers.length > 0
   
@@ -360,6 +532,25 @@ export function ResearchTab({
   const handleRetryPaper = useCallback((paperId: string) => {
     onRetryPaper?.(paperId)
   }, [onRetryPaper])
+
+  const handleViewDetail = useCallback((paper: ProjectPaper) => {
+    setSelectedPaper(paper)
+  }, [])
+
+  // Detail view
+  if (selectedPaper) {
+    return (
+      <PaperDetailView
+        paper={selectedPaper}
+        onBack={() => setSelectedPaper(null)}
+        onInsertCitation={() => onInsertCitation(selectedPaper)}
+        onRemove={() => {
+          onRemovePaper(selectedPaper.id, 0)
+          setSelectedPaper(null)
+        }}
+      />
+    )
+  }
   
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -418,6 +609,7 @@ export function ResearchTab({
                     paper={paper}
                     onInsertCitation={handleInsertCitation}
                     onRemovePaper={handleRemovePaper}
+                    onViewDetail={handleViewDetail}
                     processingStatus={isUploadedPaper ? getProcessingStatus?.(paper.id) : undefined}
                     onRetryPaper={isUploadedPaper ? handleRetryPaper : undefined}
                   />

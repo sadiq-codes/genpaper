@@ -22,6 +22,7 @@ export interface ProjectPaper {
   abstract?: string
   journal?: string
   doi?: string
+  pdfUrl?: string
   content?: string
   source?: PaperSource
 }

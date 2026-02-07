@@ -459,6 +459,100 @@ function prepareContent(
   return { content: contentWithCitations, instances }
 }
 
+// =============================================================================
+// INLINE-AWARE CONTENT HELPERS
+// =============================================================================
+
+/**
+ * Check if a position is inside a paragraph (inline context) vs. at a block boundary.
+ * If from/to are within the same paragraph, the edit is inline.
+ */
+function isInlineContext(editor: Editor, from: number, to: number): boolean {
+  const $from = editor.state.doc.resolve(from)
+  const $to = editor.state.doc.resolve(to)
+
+  // Both positions inside the same paragraph = inline edit
+  if ($from.parent.type.name === 'paragraph' && $from.parent === $to.parent) {
+    return true
+  }
+
+  // Selection doesn't span the full parent node = inline edit
+  if ($from.parent.type.name === 'paragraph') {
+    const parentStart = $from.start($from.depth)
+    const parentEnd = $from.end($from.depth)
+    if (from > parentStart || to < parentEnd) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Flatten block-level TipTap JSON content to inline nodes.
+ * Strips paragraph/heading wrappers and returns just the inline content array.
+ * 
+ * For a single paragraph like { type: 'paragraph', content: [{ type: 'text', text: '...' }] },
+ * returns [{ type: 'text', text: '...' }].
+ * 
+ * For multiple paragraphs, joins their inline content with space separators.
+ * Preserves non-paragraph blocks as-is (lists, tables, etc.) — those are truly block-level.
+ */
+function flattenToInline(content: unknown): unknown {
+  if (!content) return content
+  if (typeof content === 'string') return content
+
+  const nodes = Array.isArray(content) ? content : [content]
+  
+  // Check if all nodes are paragraph/heading (pure text blocks)
+  const allParagraphLike = nodes.every(
+    (n: any) => n.type === 'paragraph' || n.type === 'heading'
+  )
+
+  if (!allParagraphLike) {
+    // Has real block content (lists, tables, etc.) — can't flatten, return as-is
+    return content
+  }
+
+  // Extract inline content from each paragraph, join with spaces
+  const inlineNodes: any[] = []
+
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i] as any
+    if (node.content && Array.isArray(node.content)) {
+      if (inlineNodes.length > 0) {
+        // Add space separator between paragraphs
+        inlineNodes.push({ type: 'text', text: ' ' })
+      }
+      inlineNodes.push(...node.content)
+    }
+  }
+
+  return inlineNodes.length > 0 ? inlineNodes : content
+}
+
+/**
+ * Prepare content with inline awareness.
+ * If the target is mid-paragraph, strips paragraph wrappers to prevent sentence breaks.
+ */
+function prepareContentForContext(
+  editor: Editor,
+  rawContent: string,
+  from: number,
+  to: number,
+  papers: ProjectPaper[],
+  citations?: CitationInput[]
+): PreparedContent {
+  const prepared = prepareContent(rawContent, papers, citations)
+  const inline = isInlineContext(editor, from, to)
+
+  if (inline && typeof prepared.content !== 'string') {
+    prepared.content = flattenToInline(prepared.content) as any
+  }
+
+  return prepared
+}
+
 /**
  * Save citation instances to database with retry logic
  * Uses exponential backoff for network failures
@@ -622,19 +716,8 @@ function executeInsertContent(
     return { success: false, message: 'No content provided' }
   }
 
-  // Prepare content - convert markdown to TipTap JSON if needed
-  const { content, instances } = prepareContent(rawContent, papers, citations)
-  const isMarkdown = typeof content !== 'string'
-  
-  if (isMarkdown) {
-    console.log('[ToolExecutor] Detected markdown content, converted to TipTap JSON')
-  }
-  
-  // Save citation instances to database (async, don't block)
+  // Save citation instances after preparing content (handled below per path)
   const effectiveProjectId = projectId || _globalProjectId
-  if (effectiveProjectId && instances.length > 0) {
-    saveCitationInstancesToDatabase(effectiveProjectId, instances)
-  }
 
   // Priority 1: Insert after specific phrase (most precise)
   if (afterPhrase) {
@@ -645,8 +728,13 @@ function executeInsertContent(
       if (range) {
         const insertPos = range.to
         
+        // Prepare content with inline awareness for phrase insertions
+        const { content, instances } = prepareContentForContext(
+          editor, rawContent, insertPos, insertPos, papers, citations
+        )
+        const isMarkdown = typeof content !== 'string'
+        
         // Determine if we need a space before the content
-        // Don't add space if content is markdown (TipTap handles spacing)
         let contentToInsert = content
         if (!isMarkdown && typeof content === 'string' && match.node) {
           const nodeText = match.node.textContent
@@ -664,11 +752,23 @@ function executeInsertContent(
           .setTextSelection(insertPos)
           .insertContent(contentToInsert)
           .run()
+
+        if (effectiveProjectId && instances.length > 0) {
+          saveCitationInstancesToDatabase(effectiveProjectId, instances)
+        }
+
         toast.success('Content inserted after phrase')
         return { success: true, message: 'Inserted after phrase' }
       }
     }
     console.warn(`[ToolExecutor] Phrase not found: "${afterPhrase.slice(0, 30)}..."`)
+  }
+
+  // For block-level insertions below, use standard prepareContent (not inline-aware)
+  const { content, instances } = prepareContent(rawContent, papers, citations)
+
+  if (effectiveProjectId && instances.length > 0) {
+    saveCitationInstancesToDatabase(effectiveProjectId, instances)
   }
 
   // Priority 2: Insert after specific block
@@ -768,11 +868,6 @@ function executeReplaceBlock(
     return { success: false, message: 'No new content provided' }
   }
 
-  // Prepare content - convert markdown to TipTap JSON if needed
-  const { content: newContent, instances } = prepareContent(rawContent, papers, citations)
-  // Note: isMarkdown available for future logging/debugging
-  const _isMarkdown = typeof newContent !== 'string'
-
   // If searchPhrase is provided, do text-level replacement
   if (searchPhrase) {
     // Use structure-aware search - can scope to blockId if provided
@@ -804,6 +899,11 @@ function executeReplaceBlock(
     }
     const { from, to } = validated
 
+    // Prepare content with inline awareness — prevents mid-sentence paragraph splits
+    const { content: newContent, instances } = prepareContentForContext(
+      editor, rawContent, from, to, papers, citations
+    )
+
     editor.chain()
       .focus()
       .setTextSelection({ from, to })
@@ -824,7 +924,9 @@ function executeReplaceBlock(
     }
   }
 
-  // No searchPhrase → replace entire block
+  // No searchPhrase → replace entire block (block-level, no inline flattening)
+  const { content: blockContent, instances: blockInstances } = prepareContent(rawContent, papers, citations)
+
   const target = findTargetBlock(editor, { blockId, section })
 
   if (!target.found) {
@@ -843,13 +945,13 @@ function executeReplaceBlock(
   editor.chain()
     .focus()
     .setTextSelection({ from: validated.from, to: validated.to })
-    .insertContent(newContent)
+    .insertContent(blockContent)
     .run()
   
   // Save citation instances (async, don't block)
   const effectiveProjectId2 = projectId || _globalProjectId
-  if (instances.length > 0 && effectiveProjectId2) {
-    saveCitationInstancesToDatabase(effectiveProjectId2, instances)
+  if (blockInstances.length > 0 && effectiveProjectId2) {
+    saveCitationInstancesToDatabase(effectiveProjectId2, blockInstances)
   }
 
   const methodNote = target.method === 'blockId' ? ' (entire block)' : ` (found via ${target.method})`
@@ -882,9 +984,6 @@ function executeReplaceInSection(
     return { success: false, message: 'Missing search phrase or new content' }
   }
 
-  // Prepare content - convert markdown to TipTap JSON if needed
-  const { content: newContent, instances } = prepareContent(rawContent, papers, citations)
-
   const target = findTargetBlock(editor, { section, searchPhrase })
 
   if (!target.found) {
@@ -899,6 +998,11 @@ function executeReplaceInSection(
     toast.error(validated.error)
     return { success: false, message: validated.error }
   }
+
+  // Prepare content with inline awareness — prevents mid-sentence paragraph splits
+  const { content: newContent, instances } = prepareContentForContext(
+    editor, rawContent, validated.from, validated.to, papers, citations
+  )
 
   editor.chain()
     .focus()

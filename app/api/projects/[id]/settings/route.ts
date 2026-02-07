@@ -124,14 +124,12 @@ export async function PATCH(
       )
     }
     
-    // Get updated effective style
-    const effectiveStyle = await getProjectCitationStyle(projectId, user.id)
-    
+    // The effective style is the one we just saved (no need for an extra RPC)
     return NextResponse.json({
       success: true,
       settings: {
         citation_style: citationStyle,
-        effective_citation_style: effectiveStyle
+        effective_citation_style: citationStyle
       }
     })
   } catch (error) {

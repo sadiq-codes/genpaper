@@ -252,9 +252,45 @@ export async function checkCanStartGeneration(
 /**
  * Record that a paper was generated (increments usage counter)
  * Call this after successful paper generation
+ * @deprecated Use recordProjectGenerated instead for accurate billing
  */
 export async function recordPaperGenerated(userId: string): Promise<boolean> {
   return incrementPaperUsage(userId)
+}
+
+/**
+ * Mark a project as generated and increment billing counter
+ * This is the correct way to track billing - it uses the project's has_generated flag
+ * to ensure we only count the first successful generation.
+ * 
+ * @returns true if this was the first generation (billing incremented)
+ * @returns false if already generated or project not found
+ */
+export async function recordProjectGenerated(projectId: string, userId: string): Promise<boolean> {
+  const { getServiceClient } = await import('@/lib/supabase/service')
+  const { info, error: logError } = await import('@/lib/utils/logger')
+  
+  const supabase = getServiceClient()
+  
+  const { data, error } = await supabase.rpc('mark_project_generated_and_bill', {
+    p_project_id: projectId,
+    p_user_id: userId,
+  })
+  
+  if (error) {
+    logError({ projectId, userId, error }, 'Failed to mark project as generated')
+    return false
+  }
+  
+  const wasFirstGeneration = data as boolean
+  
+  if (wasFirstGeneration) {
+    info({ projectId, userId }, 'Project marked as generated, billing incremented')
+  } else {
+    info({ projectId, userId }, 'Project was already generated, no billing change')
+  }
+  
+  return wasFirstGeneration
 }
 
 // =============================================================================

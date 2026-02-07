@@ -305,7 +305,8 @@ export async function POST(request: NextRequest) {
       mentionedPaperIds = [],
       attachedImages = [],
       isToolResultMessage = false,
-    } = body
+      isInlineEdit = false,
+    } = body as ChatRequest & { isInlineEdit?: boolean }
 
     if (!projectId || !messages || messages.length === 0) {
       console.log('[Chat API] Missing required fields:', { projectId: !!projectId, messagesLength: messages?.length })
@@ -603,8 +604,8 @@ export async function POST(request: NextRequest) {
       abortSignal: request.signal,
       onFinish: async ({ text, toolCalls }) => {
         // Save messages to Supabase after completion
-        // Don't save tool result messages to avoid polluting history
-        if (ragQuery && !isToolResultMessage) {
+        // Don't save tool result messages or inline edit requests to avoid polluting history
+        if (ragQuery && !isToolResultMessage && !isInlineEdit) {
           await saveMessages(projectId, ragQuery, {
             content: text,
             toolInvocations: toolCalls?.map(tc => ({

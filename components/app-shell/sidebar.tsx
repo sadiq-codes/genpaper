@@ -25,6 +25,7 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { useEffect, useCallback, useState } from 'react'
 import Image from 'next/image'
+import { useUsageAlerts } from '@/lib/hooks/use-usage-alerts'
 
 const navigation = [
   {
@@ -50,6 +51,9 @@ export function AppSidebar() {
   const supabase = createClient()
   const { state } = useSidebar()
   const [prefetchedRoutes, setPrefetchedRoutes] = useState<Set<string>>(new Set())
+  
+  // Enable usage threshold alerts (shows toasts when approaching limits)
+  useUsageAlerts()
 
   // Persist sidebar state in cookies
   useEffect(() => {

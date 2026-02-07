@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
     // Fetch papers
     const { data: papersData } = await supabase
       .from('papers')
-      .select('id, title, authors, publication_date, venue, doi, source')
+      .select('id, title, authors, publication_date, venue, doi, source, pdf_url')
       .in('id', paperIds)
 
     // Build CSL fallback map
@@ -70,6 +70,7 @@ export async function GET(request: NextRequest) {
           : new Date().getFullYear(),
         journal: paper.venue || undefined,
         doi: paper.doi || undefined,
+        pdfUrl: paper.pdf_url || undefined,
         source: paper.source === 'upload' ? 'upload' : 'search',
       })
     }

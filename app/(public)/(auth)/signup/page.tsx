@@ -185,7 +185,7 @@ function SignupContent() {
 
             <div className="text-center mb-8">
               <h3 className="text-2xl font-semibold text-foreground mb-2">Create your account</h3>
-              <p className="text-muted-foreground">Start your free trial today</p>
+              <p className="text-muted-foreground">Get started with GenPaper</p>
             </div>
 
 
@@ -312,7 +312,7 @@ function SignupContent() {
                 className="w-full h-11 bg-primary hover:bg-primary/90 text-white"
               >
                 {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {loading ? "Creating account..." : "Start Free Trial"}
+                {loading ? "Creating account..." : "Create Account"}
               </Button>
             </form>
 

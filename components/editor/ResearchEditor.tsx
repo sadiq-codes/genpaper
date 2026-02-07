@@ -74,7 +74,7 @@ export function ResearchEditor({
   // ============================================================================
   
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<"chat" | "research">("research")
   const [isMobile, setIsMobile] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -186,6 +186,7 @@ export function ResearchEditor({
   const rejectAllTools = chat.rejectAllTools
   const activeEditIndex = chat.activeEditIndex
   const navigateEdit = chat.navigateEdit
+  const stopGeneration = chat.stopGeneration
 
   // ============================================================================
   // Effects
@@ -271,16 +272,6 @@ export function ResearchEditor({
   // ============================================================================
   // Handlers
   // ============================================================================
-
-  // Handle AI edit from floating toolbar
-  const handleAiEdit = useCallback(
-    (selectedText: string) => {
-      setActiveTab("chat")
-      if (isMobile) setMobileMenuOpen(true)
-      handleSendMessage(`Please help me improve this text: "${selectedText}"`)
-    },
-    [handleSendMessage, isMobile]
-  )
 
   // Handle chat from floating toolbar
   const handleChatFromToolbar = useCallback(
@@ -495,6 +486,7 @@ export function ResearchEditor({
       processingSummary={processingStatus.summary}
       onRetryPaper={processingStatus.retryPaper}
       isProcessingPolling={processingStatus.isPolling}
+      onStopGeneration={stopGeneration}
     />
   )
 
@@ -528,18 +520,6 @@ export function ResearchEditor({
 
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Mobile Menu Button */}
-        {isMobile && (
-          <Button
-            variant="outline"
-            size="icon"
-            className="absolute top-2 left-2 z-20 md:hidden bg-transparent"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          >
-            {mobileMenuOpen ? <ChevronsLeft className="h-4 w-4" /> : <ChevronsRight className="h-4 w-4" />}
-          </Button>
-        )}
-
         {/* Left Sidebar - Desktop */}
         {!isMobile && (
           <div
@@ -601,15 +581,13 @@ export function ResearchEditor({
           )}
 
           {/* Editor */}
-          <div className={cn("flex-1 overflow-hidden", isMobile && "pt-12")}>
+          <div className="flex-1 overflow-hidden">
             <DocumentEditor
               initialContent={initialContent}
               onUpdate={(newContent) => {
                 setContent(newContent)
               }}
               onEditorReady={setEditor}
-              onInsertCitation={() => setActiveTab("research")}
-              onAiEdit={handleAiEdit}
               onChat={handleChatFromToolbar}
               onPaperUpdated={handlePaperUpdated}
               projectId={projectId}
@@ -622,6 +600,9 @@ export function ResearchEditor({
               onNavigateEdit={navigateEdit}
               onAcceptAllEdits={confirmAllTools}
               onRejectAllEdits={rejectAllTools}
+              isMobile={isMobile}
+              mobileMenuOpen={mobileMenuOpen}
+              onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
             />
           </div>
         </div>

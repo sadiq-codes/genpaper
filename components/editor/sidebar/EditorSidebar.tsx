@@ -1,7 +1,6 @@
 'use client'
 
-import dynamic from 'next/dynamic'
-import { Clock, FlaskConical, MessageSquare, Loader2 } from 'lucide-react'
+import { Clock, FlaskConical, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -17,29 +16,8 @@ import type {
 import type { PendingToolCall } from '../hooks/useEditorChat'
 import type { ProcessingStatus } from '../hooks/usePaperProcessingStatus'
 import { cn } from '@/lib/utils'
-
-// Re-export type for external use
-export type { ChatSendOptions } from './ChatTab'
-
-// Code split the heavy tab components - only load when active
-// This reduces initial bundle size significantly
-const ChatTab = dynamic(() => import('./ChatTab').then(mod => ({ default: mod.ChatTab })), {
-  ssr: false,
-  loading: () => <TabLoadingSkeleton />,
-})
-
-const ResearchTab = dynamic(() => import('./ResearchTab').then(mod => ({ default: mod.ResearchTab })), {
-  ssr: false,
-  loading: () => <TabLoadingSkeleton />,
-})
-
-// Minimal loading skeleton for tabs — intentionally empty to avoid flash-of-spinner
-function TabLoadingSkeleton() {
-  return null
-}
-
-// Import type for ChatSendOptions
-import type { ChatSendOptions } from './ChatTab'
+import { ChatTab, type ChatSendOptions } from './ChatTab'
+import { ResearchTab } from './ResearchTab'
 
 interface ProcessingSummary {
   total: number
@@ -80,6 +58,8 @@ interface EditorSidebarProps {
   isProcessingPolling?: boolean
   // History
   onOpenHistory?: () => void
+  // Stop generation
+  onStopGeneration?: () => void
 }
 
 export function EditorSidebar({
@@ -104,6 +84,7 @@ export function EditorSidebar({
   onRetryPaper,
   isProcessingPolling,
   onOpenHistory,
+  onStopGeneration,
 }: EditorSidebarProps) {
   return (
     <div className="flex flex-col h-full rounded-2xl border-2 border-foreground/10 bg-background overflow-hidden">
@@ -170,6 +151,7 @@ export function EditorSidebar({
             onConfirmTool={onConfirmTool}
             onRejectTool={onRejectTool}
             onClearHistory={onClearHistory}
+            onStop={onStopGeneration}
           />
         ) : (
           <ResearchTab 

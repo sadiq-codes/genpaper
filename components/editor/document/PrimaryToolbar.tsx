@@ -28,8 +28,10 @@ import {
   Undo,
   Redo,
   ChevronDown,
+  Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useSubscription } from '@/lib/hooks/use-subscription'
 
 interface PrimaryToolbarProps {
   editor: Editor | null
@@ -65,18 +67,29 @@ export function PrimaryToolbar({
     editor?.chain().focus().toggleCodeBlock().run()
   }, [editor])
 
+  // Get daily usage for autocomplete indicator (free tier only)
+  const { dailyUsage, isPaid } = useSubscription()
+  
+  // Calculate autocomplete remaining for free tier
+  const autocompleteRemaining = dailyUsage && !dailyUsage.autocomplete.isUnlimited
+    ? Math.max(0, dailyUsage.autocomplete.limit - dailyUsage.autocomplete.used)
+    : null
+  const autocompleteIsLow = autocompleteRemaining !== null && autocompleteRemaining <= 3
+  const autocompleteIsOut = autocompleteRemaining === 0
+
   if (!editor) return null
 
   return (
     <div className="flex items-center justify-between px-4 py-2 border-b border-border/50 bg-muted/30">
       <div className="flex items-center gap-3">
-        {/* Autocomplete toggle */}
+        {/* Autocomplete toggle with usage indicator */}
         <div className="flex items-center gap-2">
           <Switch
             id="autocomplete"
             checked={autocompleteEnabled}
             onCheckedChange={onAutocompleteChange}
             className="data-[state=checked]:bg-primary"
+            disabled={autocompleteIsOut}
           />
           <label 
             htmlFor="autocomplete" 
@@ -84,6 +97,17 @@ export function PrimaryToolbar({
           >
             Autocomplete
           </label>
+          {/* Usage indicator for free tier */}
+          {!isPaid && autocompleteRemaining !== null && (
+            <span className={cn(
+              "text-xs px-1.5 py-0.5 rounded-full",
+              autocompleteIsOut && "bg-destructive/10 text-destructive",
+              autocompleteIsLow && !autocompleteIsOut && "bg-yellow-500/10 text-yellow-600 dark:text-yellow-500",
+              !autocompleteIsLow && "bg-muted text-muted-foreground"
+            )}>
+              {autocompleteRemaining} left
+            </span>
+          )}
         </div>
 
         <Separator orientation="vertical" className="h-6" />

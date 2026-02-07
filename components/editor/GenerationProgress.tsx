@@ -3,6 +3,7 @@
 import { useEffect, useCallback, useRef, useReducer, useState } from "react"
 import { Loader2, Search, FileText, Sparkles, CheckCircle2, FileStack } from "lucide-react"
 import { GenerationLoadingUI, type ProgressStage, type CompletedSection } from "./GenerationLoadingUI"
+import { LimitReachedModal, type LimitType } from "@/components/billing/limit-modal"
 
 interface GenerationProgressProps {
   projectId: string
@@ -248,6 +249,10 @@ export function GenerationProgress({
     wasDisconnectedWhileHidden: false,
   })
   const isPageVisibleRef = useRef(true)
+  
+  // Limit modal state
+  const [limitModalOpen, setLimitModalOpen] = useState(false)
+  const [limitType, setLimitType] = useState<LimitType>('papers')
 
   // Start generation and get runId
   const startGeneration = useCallback(async () => {
@@ -270,6 +275,14 @@ export function GenerationProgress({
 
       if (!response.ok) {
         const errorData = await response.json()
+        
+        // Check for limit exceeded error and show modal
+        if (errorData.code === 'LIMIT_EXCEEDED') {
+          setLimitType('papers')
+          setLimitModalOpen(true)
+          throw new Error(errorData.error || 'Paper limit reached')
+        }
+        
         throw new Error(errorData.error || 'Failed to start generation')
       }
 
@@ -716,20 +729,29 @@ export function GenerationProgress({
   }
 
   return (
-    <GenerationLoadingUI
-      topic={topic}
-      progress={progress}
-      currentStage={currentStage}
-      message={message}
-      stages={stages}
-      papersFound={papersFound}
-      currentSection={currentSection}
-      currentSectionContent={currentSectionContent}
-      completedSections={completedSections}
-      error={error}
-      timeEstimate={getTimeEstimate()}
-      onCancel={handleCancel}
-      onRetry={handleRetry}
-    />
+    <>
+      <GenerationLoadingUI
+        topic={topic}
+        progress={progress}
+        currentStage={currentStage}
+        message={message}
+        stages={stages}
+        papersFound={papersFound}
+        currentSection={currentSection}
+        currentSectionContent={currentSectionContent}
+        completedSections={completedSections}
+        error={error}
+        timeEstimate={getTimeEstimate()}
+        onCancel={handleCancel}
+        onRetry={handleRetry}
+      />
+      
+      {/* Limit reached modal */}
+      <LimitReachedModal
+        open={limitModalOpen}
+        onOpenChange={setLimitModalOpen}
+        limitType={limitType}
+      />
+    </>
   )
 }

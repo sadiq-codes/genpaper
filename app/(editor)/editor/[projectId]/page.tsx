@@ -51,12 +51,13 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     venue: string | null
     doi: string | null
     source: string | null
+    pdf_url: string | null
   }> = []
 
   if (paperIds.length > 0) {
     const { data: fetchedPapers, error: papersError } = await supabase
       .from('papers')
-      .select('id, title, authors, publication_date, venue, doi, source')
+      .select('id, title, authors, publication_date, venue, doi, source, pdf_url')
       .in('id', paperIds)
     
     if (papersError) {
@@ -108,6 +109,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         : new Date().getFullYear(),
       journal: paper.venue || undefined,
       doi: paper.doi || undefined,
+      pdfUrl: paper.pdf_url || undefined,
       // Map old source values to new simplified types
       source: paper.source === 'upload' ? 'upload' : 'search',
     })

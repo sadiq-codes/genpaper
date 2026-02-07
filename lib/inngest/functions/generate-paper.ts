@@ -22,7 +22,7 @@ import {
   emitCancelled,
   getRun,
 } from "@/lib/generation/run-manager";
-import { recordPaperGenerated } from "@/lib/billing/gates";
+import { recordProjectGenerated } from "@/lib/billing/gates";
 import type { PaperTypeKey } from "@/lib/prompts/types";
 
 export const generatePaperFunction = inngest.createFunction(
@@ -45,7 +45,7 @@ export const generatePaperFunction = inngest.createFunction(
   },
   { event: "paper/generation.start" },
   async ({ event, step }) => {
-    const { runId, projectId, userId, isNewProject, config, baseUrl } = event.data;
+    const { runId, projectId, userId, config, baseUrl } = event.data;
 
     // Step 1: Mark run as started
     await step.run("mark-started", async () => {
@@ -156,12 +156,13 @@ export const generatePaperFunction = inngest.createFunction(
         return { status: "cancelled" };
       }
 
-      // Record paper generation for billing (only for new projects, not regenerations)
-      if (isNewProject) {
-        const recorded = await recordPaperGenerated(userId);
-        if (!recorded) {
-          console.warn(`[Billing] Failed to record paper generation for user ${userId}`);
-        }
+      // Record paper generation for billing
+      // Uses has_generated flag on project to ensure we only count first generation
+      const recorded = await recordProjectGenerated(projectId, userId);
+      if (recorded) {
+        console.log(`[Billing] Recorded first generation for project ${projectId}`);
+      } else {
+        console.log(`[Billing] Project ${projectId} was already generated (regeneration)`);
       }
 
       // Emit completion event

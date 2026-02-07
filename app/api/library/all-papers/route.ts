@@ -25,16 +25,25 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url)
     const projectFilter = url.searchParams.get('projectId') // Optional: filter by project
 
-    // OPTIMIZATION: Run all 3 queries in parallel (they're independent)
-    // We'll filter project_citations by projectIds after the queries complete
-    const [projectsResult, libraryResult, citationsResult] = await Promise.all([
-      // Step 1: Get user's projects
-      supabase
-        .from('research_projects')
-        .select('id, topic')
-        .eq('user_id', user.id),
-      
-      // Step 2: Get papers from library_papers
+    // Step 1: Get user's projects first (needed to scope citations query)
+    const { data: userProjects, error: projectsError } = await supabase
+      .from('research_projects')
+      .select('id, topic')
+      .eq('user_id', user.id)
+
+    if (projectsError) {
+      console.error('Failed to fetch projects:', projectsError)
+      return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 })
+    }
+
+    const projectIds = (userProjects || []).map(p => p.id)
+    const projectMap = new Map((userProjects || []).map(p => [p.id, p.topic]))
+
+    // Step 2: Fetch library papers and project citations in parallel
+    // Citations are now filtered at the DB level using the user's project IDs
+    const citationProjectIds = projectFilter ? [projectFilter] : projectIds
+
+    const [libraryResult, citationsResult] = await Promise.all([
       supabase
         .from('library_papers')
         .select(`
@@ -57,37 +66,34 @@ export async function GET(request: NextRequest) {
           )
         `)
         .eq('user_id', user.id),
-      
-      // Step 3: Get ALL project_citations - we'll filter by user's projects in memory
-      // This is still efficient because project_citations are indexed by project_id
-      supabase
-        .from('project_citations')
-        .select(`
-          paper_id,
-          project_id,
-          created_at,
-          papers:paper_id (
-            id,
-            title,
-            abstract,
-            authors,
-            publication_date,
-            venue,
-            doi,
-            pdf_url,
-            source,
-            citation_count,
-            processing_status,
-            owner_id
-          )
-        `),
+
+      // Only fetch citations for the user's own projects
+      citationProjectIds.length > 0
+        ? supabase
+            .from('project_citations')
+            .select(`
+              paper_id,
+              project_id,
+              created_at,
+              papers:paper_id (
+                id,
+                title,
+                abstract,
+                authors,
+                publication_date,
+                venue,
+                doi,
+                pdf_url,
+                source,
+                citation_count,
+                processing_status,
+                owner_id
+              )
+            `)
+            .in('project_id', citationProjectIds)
+        : Promise.resolve({ data: [], error: null }),
     ])
 
-    // Handle errors
-    if (projectsResult.error) {
-      console.error('Failed to fetch projects:', projectsResult.error)
-      return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 })
-    }
     if (libraryResult.error) {
       console.error('Failed to fetch library papers:', libraryResult.error)
       return NextResponse.json({ error: 'Failed to fetch library papers' }, { status: 500 })
@@ -97,19 +103,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch project papers' }, { status: 500 })
     }
 
-    const userProjects = projectsResult.data || []
     const libraryPapers = libraryResult.data || []
-    const allCitations = citationsResult.data || []
-
-    const projectIds = new Set(userProjects.map(p => p.id))
-    const projectMap = new Map(userProjects.map(p => [p.id, p.topic]))
-
-    // Filter citations to only user's projects (and optionally by projectFilter)
-    const projectCitations = allCitations.filter(c => {
-      if (!projectIds.has(c.project_id)) return false
-      if (projectFilter && c.project_id !== projectFilter) return false
-      return true
-    })
+    const projectCitations = citationsResult.data || []
 
     // Step 4: Build unified paper map
     interface UnifiedPaper {

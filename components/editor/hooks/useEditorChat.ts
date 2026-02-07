@@ -194,6 +194,8 @@ export interface UseEditorChatReturn {
   activeEditIndex: number
   /** Navigate to next/prev edit in the editor */
   navigateEdit: (direction: 'next' | 'prev') => void
+  /** Stop the current AI generation */
+  stopGeneration: () => void
 }
 
 // =============================================================================
@@ -486,11 +488,53 @@ export function useEditorChat({
     },
     onError: (error) => {
       console.error('[useEditorChat] Chat error:', error)
+      // Show user-visible feedback so the chat doesn't appear silently stuck
+      const message = error?.message || 'Something went wrong'
+      if (message.includes('rate limit') || message.includes('429')) {
+        // Rate limit errors are handled by ChatLimitBanner
+      } else {
+        toast.error('Chat error', {
+          description: message.length > 120 ? message.slice(0, 120) + '...' : message,
+          duration: 5000,
+        })
+      }
     },
   })
 
-  const { messages, setMessages, sendMessage: chatSendMessage, status, error } = chat
+  const { messages, setMessages, sendMessage: chatSendMessage, status, error, stop: chatStop } = chat
   const isLoading = status === 'streaming' || status === 'submitted'
+
+  // Timeout mechanism: detect hung/stalled streams and reset.
+  // If isLoading stays true for 90 seconds with no new content, stop the stream.
+  const lastActivityRef = useRef<number>(Date.now())
+  
+  // Track activity: update timestamp whenever messages change while loading
+  useEffect(() => {
+    if (isLoading) {
+      lastActivityRef.current = Date.now()
+    }
+  }, [isLoading, messages])
+
+  useEffect(() => {
+    if (!isLoading) return
+
+    const TIMEOUT_MS = 90_000 // 90 seconds
+    const CHECK_INTERVAL_MS = 10_000 // Check every 10 seconds
+
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - lastActivityRef.current
+      if (elapsed > TIMEOUT_MS) {
+        console.warn('[useEditorChat] Stream appears hung, stopping after', Math.round(elapsed / 1000), 'seconds of inactivity')
+        chatStop()
+        toast.error('Response timed out', {
+          description: 'The AI stopped responding. Please try again.',
+          duration: 5000,
+        })
+      }
+    }, CHECK_INTERVAL_MS)
+
+    return () => clearInterval(interval)
+  }, [isLoading, chatStop])
 
   /**
    * Send tool results back to AI for a follow-up response.
@@ -1163,7 +1207,7 @@ export function useEditorChat({
    */
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim()) return
+    if (!input.trim() || isLoading) return
     
     // Get fresh context right before sending
     const context = getEditorContext()
@@ -1178,13 +1222,15 @@ export function useEditorChat({
     })
     
     setInput('')
-  }, [chatSendMessage, input, projectId, getEditorContext])
+  }, [chatSendMessage, input, projectId, getEditorContext, isLoading])
 
   /**
    * Send a message programmatically.
    * Accepts either a string or an options object with content, mentionedPaperIds, and attachedImages.
    */
   const sendMessage = useCallback((contentOrOptions: string | SendMessageOptions) => {
+    if (isLoading) return
+    
     const context = getEditorContext()
     
     // Normalize input to options object
@@ -1212,7 +1258,7 @@ export function useEditorChat({
         attachedImages: options.attachedImages || [],
       },
     })
-  }, [chatSendMessage, projectId, getEditorContext])
+  }, [chatSendMessage, projectId, getEditorContext, isLoading])
 
   // Track if we should start prefetching (after initial render settles)
   // Fetch chat history with React Query - cached per project
@@ -1294,5 +1340,6 @@ export function useEditorChat({
     hasGhostPreviews,
     activeEditIndex,
     navigateEdit,
+    stopGeneration: chatStop,
   }
 }

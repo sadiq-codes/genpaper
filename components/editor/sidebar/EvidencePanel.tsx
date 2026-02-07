@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, memo } from 'react'
-import { ChevronDown, ChevronRight, FileText } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import type { ProjectPaper } from '@/components/editor/types'
+import { cn } from '@/lib/utils'
 
 /**
  * Evidence chunk from RAG retrieval.
- * Matches the EvidenceChunk type exported from the chat route.
  */
 interface EvidenceChunk {
   paperId: string
@@ -19,8 +19,8 @@ interface RAGMetadata {
   papersCovered: number
   skipped: boolean
   fallbackUsed: boolean
-  intent?: string           // Detected intent: research, editing, chat, meta
-  intentConfidence?: number // 0-1, how confident the classifier was
+  intent?: string
+  intentConfidence?: number
 }
 
 interface EvidencePanelProps {
@@ -30,12 +30,8 @@ interface EvidencePanelProps {
 }
 
 /**
- * EvidencePanel - Shows what sources were used to generate an assistant response.
- * Collapsed by default, expands to show paper titles and excerpt snippets.
- * 
- * Hidden completely when:
- * - RAG was skipped (chat, editing, meta intents)
- * - No evidence was retrieved
+ * EvidencePanel - Minimal source attribution below assistant messages.
+ * Shows which papers were referenced, expandable for details.
  */
 export const EvidencePanel = memo(function EvidencePanel({ 
   evidence, 
@@ -44,21 +40,13 @@ export const EvidencePanel = memo(function EvidencePanel({
 }: EvidencePanelProps) {
   const [isExpanded, setIsExpanded] = useState(false)
 
-  // Hide completely when RAG was skipped - no need to tell users about internal routing
-  if (ragMetadata?.skipped) {
-    return null
-  }
+  if (ragMetadata?.skipped) return null
+  if (!evidence || evidence.length === 0) return null
 
-  // No evidence to show
-  if (!evidence || evidence.length === 0) {
-    return null
-  }
-
-  // Group evidence by paper for cleaner display
+  // Group by paper
   const byPaper = evidence.reduce((acc, chunk) => {
     const key = chunk.paperId
     if (!acc[key]) {
-      // Try to get title from evidence, fall back to papers prop
       const paperFromList = papers.find(p => p.id === key)
       acc[key] = {
         title: chunk.paperTitle || paperFromList?.title || 'Unknown paper',
@@ -70,43 +58,34 @@ export const EvidencePanel = memo(function EvidencePanel({
   }, {} as Record<string, { title: string; chunks: EvidenceChunk[] }>)
 
   const paperCount = Object.keys(byPaper).length
-  const chunkCount = evidence.length
 
   return (
-    <div className="mt-2 border-t border-border/40 pt-2">
+    <div className="mt-2">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors w-full text-left"
+        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
       >
-        {isExpanded ? (
-          <ChevronDown className="h-3 w-3 shrink-0" />
-        ) : (
-          <ChevronRight className="h-3 w-3 shrink-0" />
-        )}
-        <FileText className="h-3 w-3 shrink-0" />
-        <span>
-          {chunkCount} excerpt{chunkCount !== 1 ? 's' : ''} from {paperCount} paper{paperCount !== 1 ? 's' : ''}
-          {ragMetadata?.fallbackUsed && (
-            <span className="text-muted-foreground/50 ml-1">(expanded search)</span>
-          )}
-        </span>
+        <ChevronDown className={cn(
+          "h-3 w-3 transition-transform",
+          !isExpanded && "-rotate-90"
+        )} />
+        <span>{paperCount} source{paperCount !== 1 ? 's' : ''} used</span>
       </button>
 
       {isExpanded && (
-        <div className="mt-2 space-y-3 pl-5">
+        <div className="mt-1.5 space-y-2 pl-4 border-l-2 border-border/30">
           {Object.entries(byPaper).map(([paperId, { title, chunks }]) => (
-            <div key={paperId} className="space-y-1.5">
-              <div className="text-[11px] font-medium text-foreground/70 truncate" title={title}>
+            <div key={paperId}>
+              <p className="text-[11px] font-medium text-foreground/60 leading-snug line-clamp-1">
                 {title}
-              </div>
+              </p>
               {chunks.map((chunk, i) => (
-                <div 
+                <p
                   key={i}
-                  className="text-[10px] text-muted-foreground bg-muted/30 rounded px-2 py-1.5 line-clamp-3"
-                  title={chunk.content}
+                  className="text-[10px] text-muted-foreground/50 leading-relaxed mt-0.5 line-clamp-2 italic"
                 >
-                  &ldquo;{chunk.content}&rdquo;
-                </div>
+                  {chunk.content}
+                </p>
               ))}
             </div>
           ))}

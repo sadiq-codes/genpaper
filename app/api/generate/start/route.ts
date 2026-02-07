@@ -223,14 +223,13 @@ export async function POST(request: NextRequest) {
     const baseUrl = url.origin;
 
     // Trigger Inngest function
-    const isNewProject = !existingProjectId;
+    // Note: isNewProject is deprecated - billing now uses has_generated flag on project
     await inngest.send({
       name: "paper/generation.start",
       data: {
         runId: run.id,
         projectId,
         userId: user.id,
-        isNewProject,
         config: {
           topic,
           paperType: finalPaperType,

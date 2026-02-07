@@ -4,6 +4,7 @@ import type React from "react"
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
+import { useQueryClient } from "@tanstack/react-query"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -68,6 +69,7 @@ interface ProjectCardProps {
 
 export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [_isPending, startTransition] = useTransition()
   const [isDeleting, setIsDeleting] = useState(false)
 
@@ -98,6 +100,7 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
         console.error("Failed to delete project:", result.error)
       }
       setIsDeleting(false)
+      queryClient.invalidateQueries({ queryKey: ["projects"] })
     })
   }
 

@@ -24,6 +24,7 @@ import { TIER_CONFIG } from "@/types/subscription"
 import type { SubscriptionTier, BillingInterval } from "@/types/subscription"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
+import { getCheckoutUrl } from "@/lib/hooks/use-subscription"
 import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
@@ -206,7 +207,7 @@ export default function LandingPage() {
                       asChild
                     >
                       <Link href="/signup">
-                        Start Free Trial
+                        Get Started
                         <ArrowRight className="ml-2 h-5 w-5" />
                       </Link>
                     </Button>
@@ -596,9 +597,17 @@ function PricingCard({
         text: user ? 'Current Plan' : 'Get Started Free',
       }
     }
+    
+    // For paid tiers, go directly to checkout (works for both logged in and out)
+    const checkoutUrl = getCheckoutUrl(tier as 'starter' | 'pro', {
+      email: user?.email || undefined,
+      userId: user?.id || undefined,
+      interval: billingInterval,
+    })
+    
     return {
-      href: user ? '/settings#billing' : '/signup',
-      text: user ? `Upgrade to ${config.name}` : `Get ${config.name}`,
+      href: checkoutUrl,
+      text: `Get ${config.name}`,
     }
   }
   

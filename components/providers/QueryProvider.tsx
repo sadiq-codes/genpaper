@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
+import { LimitModalProvider } from '@/components/billing/limit-modal'
 
 interface QueryProviderProps {
   children: ReactNode
@@ -69,7 +70,9 @@ export function QueryProvider({ children }: QueryProviderProps) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {children}
+      <LimitModalProvider>
+        {children}
+      </LimitModalProvider>
     </QueryClientProvider>
   )
 }

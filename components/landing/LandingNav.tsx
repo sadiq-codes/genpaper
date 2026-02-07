@@ -169,7 +169,7 @@ export function LandingCTA({ variant }: LandingCTAProps) {
               asChild
             >
               <Link href="/signup">
-                Start Free Trial
+                Get Started
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Link>
             </Button>

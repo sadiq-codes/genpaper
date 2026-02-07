@@ -16,13 +16,16 @@ import {
   Library,
   FileText,
   ChevronDown,
-  Loader2
+  Loader2,
+  Upload,
+  Eye
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 
 interface LibraryDrawerProps {
   isOpen: boolean
@@ -47,6 +50,7 @@ interface SearchResult {
   abstract?: string
   doi?: string
   url?: string
+  pdfUrl?: string
   citationCount?: number
   relevanceScore?: number
   source: string
@@ -80,6 +84,7 @@ async function fetchLibraryPapers({
     abstract: item.paper.abstract,
     doi: item.paper.doi,
     url: item.paper.pdf_url || (item.paper.doi ? `https://doi.org/${item.paper.doi}` : undefined),
+    pdfUrl: item.paper.pdf_url || undefined,
     citationCount: item.paper.citation_count,
     source: item.paper.source || 'library',
     type: 'library' as const
@@ -487,6 +492,74 @@ export default function LibraryDrawer({
     })
   }, [onSelectForProject, addToLibraryMutation])
 
+  // Upload PDF for an existing paper
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const uploadTargetRef = useRef<string | null>(null)
+
+  const handleUploadPdf = useCallback((paperId: string) => {
+    uploadTargetRef.current = paperId
+    fileInputRef.current?.click()
+  }, [])
+
+  const handleFileSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    const paperId = uploadTargetRef.current
+    if (!file || !paperId) return
+
+    // Reset input so the same file can be re-selected
+    e.target.value = ''
+
+    if (!file.type.includes('pdf') && !file.name.toLowerCase().endsWith('.pdf')) {
+      toast.error('Only PDF files are allowed')
+      return
+    }
+
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('File too large. Maximum size is 20MB')
+      return
+    }
+
+    const toastId = toast.loading('Uploading PDF...')
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const res = await fetch(`/api/papers/${paperId}/upload-pdf`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Upload failed')
+      }
+
+      const data = await res.json()
+
+      // Update the paper's pdfUrl in the cached library data
+      queryClient.setQueriesData(
+        { queryKey: ['library', 'papers'] },
+        (old: any) => {
+          if (!old?.pages) return old
+          return {
+            ...old,
+            pages: old.pages.map((page: SearchResult[]) =>
+              page.map((p: SearchResult) =>
+                p.id === paperId ? { ...p, pdfUrl: data.pdfUrl, url: data.pdfUrl } : p
+              )
+            ),
+          }
+        }
+      )
+
+      toast.success('PDF uploaded', { id: toastId })
+    } catch (error) {
+      console.error('PDF upload error:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to upload PDF', { id: toastId })
+    }
+  }, [queryClient])
+
   if (!isOpen) return null
 
   const showEmptyLibrary = searchMode === 'library' && libraryPapers.length === 0 && !query && !isLoadingLibrary
@@ -498,6 +571,14 @@ export default function LibraryDrawer({
 
   return (
     <div className="fixed inset-0 z-50">
+      {/* Hidden file input for PDF upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,application/pdf"
+        className="hidden"
+        onChange={handleFileSelected}
+      />
       {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-in fade-in-0 duration-200"
@@ -687,6 +768,7 @@ export default function LibraryDrawer({
                     onToggleExpand={() => setExpandedAbstract(
                       expandedAbstract === paper.id ? null : paper.id
                     )}
+                    onUploadPdf={handleUploadPdf}
                   />
                 ))}
                 
@@ -758,6 +840,7 @@ interface PaperCardProps {
   showSelectForProjectButton: boolean
   isExpanded: boolean
   onToggleExpand: () => void
+  onUploadPdf?: (paperId: string) => void
 }
 
 const PaperCard = memo(function PaperCard({ 
@@ -772,7 +855,8 @@ const PaperCard = memo(function PaperCard({
   showSaveToLibraryButton,
   showSelectForProjectButton,
   isExpanded,
-  onToggleExpand
+  onToggleExpand,
+  onUploadPdf,
 }: PaperCardProps) {
   const authorDisplay = useMemo(() => {
     if (!paper.authors.length) return null
@@ -886,7 +970,28 @@ const PaperCard = memo(function PaperCard({
               {isExpanded ? 'Less' : 'More'}
             </Button>
           )}
-          {paper.url && (
+          {paper.pdfUrl ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open(paper.pdfUrl, '_blank')}
+              className="h-7 px-2 text-xs text-muted-foreground"
+            >
+              <Eye className="h-3 w-3 mr-1" aria-hidden="true" />
+              PDF
+            </Button>
+          ) : paper.type === 'library' && onUploadPdf ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onUploadPdf(paper.id)}
+              className="h-7 px-2 text-xs text-muted-foreground"
+            >
+              <Upload className="h-3 w-3 mr-1" aria-hidden="true" />
+              PDF
+            </Button>
+          ) : null}
+          {paper.url && !paper.pdfUrl && (
             <Button
               variant="ghost"
               size="sm"

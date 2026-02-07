@@ -10,15 +10,16 @@ import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu'
+import { cn } from '@/lib/utils'
 import {
   Popover,
-  PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import * as PopoverPrimitive from '@radix-ui/react-popover'
 import {
   AtSign,
   MessageSquare,
@@ -31,7 +32,6 @@ import {
   Code,
   Settings,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { useAutocompletePrefs } from '../hooks/useAutocompletePrefs'
 
 interface FloatingToolbarProps {
@@ -188,7 +188,15 @@ export function FloatingToolbar({
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-72 p-4" align="start" side="bottom" sideOffset={8}>
+        <PopoverPrimitive.Content
+          className={cn(
+            "bg-popover text-popover-foreground z-50 w-72 rounded-md border p-4 shadow-md outline-hidden",
+            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
+          )}
+          align="start"
+          side="bottom"
+          sideOffset={8}
+        >
           <div className="space-y-4">
             <h4 className="font-medium text-sm">AI Suggestions</h4>
             
@@ -247,7 +255,7 @@ export function FloatingToolbar({
               </RadioGroup>
             </div>
           </div>
-        </PopoverContent>
+        </PopoverPrimitive.Content>
       </Popover>
 
       <Separator orientation="vertical" className="h-6 mx-0.5" />
@@ -287,13 +295,17 @@ export function FloatingToolbar({
             <ChevronDown className="h-3.5 w-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent 
-          align="end" 
-          side="bottom" 
-          sideOffset={4} 
+        <DropdownMenuPrimitive.Content
+          align="end"
+          side="bottom"
+          sideOffset={4}
           alignOffset={0}
           collisionPadding={8}
           avoidCollisions={true}
+          className={cn(
+            "bg-popover text-popover-foreground z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-32 overflow-x-hidden overflow-y-auto rounded-md border p-1 shadow-md",
+            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
+          )}
         >
           {/* Heading options - using memoized handlers wrapped with applyTextStyle */}
           <DropdownMenuItem 
@@ -372,7 +384,7 @@ export function FloatingToolbar({
               {color.name}
             </DropdownMenuItem>
           ))}
-        </DropdownMenuContent>
+        </DropdownMenuPrimitive.Content>
       </DropdownMenu>
     </BubbleMenu>
   )

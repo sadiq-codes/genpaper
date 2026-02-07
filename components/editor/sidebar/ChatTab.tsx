@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { Bot, User, Wrench, Trash2 } from 'lucide-react'
+import { Bot, User, Wrench, Trash2, Square } from 'lucide-react'
 import { RichChatInput } from './RichChatInput'
 import { EvidencePanel } from './EvidencePanel'
 import { ChatLimitBanner, ChatUsageIndicator } from '@/components/billing/chat-limit-banner'
@@ -20,54 +20,62 @@ import { useChatImageUpload } from '../hooks/useChatImageUpload'
 // CITATION FORMATTING FOR CHAT
 // =============================================================================
 
+/** Citation marker regex: [@paperId#instanceId] or [@paperId] */
+const CITATION_MARKER_RE = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
+
 /**
- * Format a paper citation for display in chat.
- * Uses simple (Author, Year) format - no need for full CSL processing in chat.
+ * Build the display label for a citation (e.g. "Smith et al., 2024").
  */
-function formatChatCitation(paper: ProjectPaper): string {
+function getCitationLabel(paper: ProjectPaper): string {
   const authors = paper.authors || []
   const year = paper.year || 'n.d.'
-  
+
   if (authors.length === 0) {
-    // Fallback to title snippet if no authors
     const titleSnippet = paper.title?.split(' ').slice(0, 3).join(' ') || 'Unknown'
-    return `(${titleSnippet}..., ${year})`
+    return `${titleSnippet}..., ${year}`
   }
-  
-  // Extract last name from first author
+
   const firstAuthor = authors[0]
   const lastName = firstAuthor.includes(',')
     ? firstAuthor.split(',')[0].trim()
     : firstAuthor.split(' ').pop() || firstAuthor
-  
-  if (authors.length === 1) {
-    return `(${lastName}, ${year})`
-  } else if (authors.length === 2) {
+
+  if (authors.length === 1) return `${lastName}, ${year}`
+  if (authors.length === 2) {
     const secondAuthor = authors[1]
     const lastName2 = secondAuthor.includes(',')
       ? secondAuthor.split(',')[0].trim()
       : secondAuthor.split(' ').pop() || secondAuthor
-    return `(${lastName} & ${lastName2}, ${year})`
+    return `${lastName} & ${lastName2}, ${year}`
   }
-  
-  return `(${lastName} et al., ${year})`
+  return `${lastName} et al., ${year}`
 }
 
 /**
- * Process content to replace citation markers with formatted citations.
- * Supports [@paperId#instanceId] and [@paperId] formats
+ * Inline citation span that mirrors the editor's Citation extension HTML.
+ * Copy-pasting from chat into the editor will produce a proper citation node.
  */
-function processChatCitations(content: string, papers: ProjectPaper[]): string {
-  if (!content || papers.length === 0) return content
-  
-  // Create a lookup map for quick paper access
-  const paperMap = new Map(papers.map(p => [p.id, p]))
-  
-  // Pattern: [@paperId#instanceId] or [@paperId]
-  return content.replace(/\[@([a-f0-9-]+)(?:#[a-f0-9-]+)?\]/gi, (match, paperId) => {
-    const paper = paperMap.get(paperId)
-    return paper ? formatChatCitation(paper) : match
-  })
+function ChatCitationSpan({ paper, instanceId }: { paper: ProjectPaper; instanceId?: string }) {
+  const label = getCitationLabel(paper)
+  const url = paper.pdfUrl || (paper.doi ? `https://doi.org/${paper.doi}` : null)
+
+  return (
+    <span
+      data-citation={paper.id}
+      data-instance-id={instanceId || ''}
+      data-type="citation"
+      data-authors={JSON.stringify(paper.authors || [])}
+      data-title={paper.title || ''}
+      data-year={paper.year?.toString() || ''}
+      data-journal={paper.journal || ''}
+      data-doi={paper.doi || ''}
+      title={paper.title || ''}
+      className="citation-inline cursor-pointer text-primary/80 hover:text-primary hover:underline transition-colors"
+      onClick={url ? () => window.open(url, '_blank', 'noopener,noreferrer') : undefined}
+    >
+      ({label})
+    </span>
+  )
 }
 
 // =============================================================================
@@ -75,9 +83,9 @@ function processChatCitations(content: string, papers: ProjectPaper[]): string {
 // =============================================================================
 
 /**
- * Memoized markdown renderer that only re-renders when content changes.
- * During streaming, this prevents expensive markdown parsing on every character.
- * Now also processes citation markers into formatted citations.
+ * Memoized markdown renderer that splits content around citation markers,
+ * renders markdown for text segments, and injects interactive citation spans
+ * that are copy-paste compatible with the editor.
  */
 const MemoizedMarkdown = memo(function MemoizedMarkdown({ 
   content, 
@@ -86,12 +94,68 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
   content: string
   papers?: ProjectPaper[]
 }) {
-  // Process citations before rendering markdown
-  const processedContent = useMemo(
-    () => processChatCitations(content, papers),
-    [content, papers]
-  )
-  return <ReactMarkdown>{processedContent}</ReactMarkdown>
+  const paperMap = useMemo(() => new Map(papers.map(p => [p.id, p])), [papers])
+
+  const rendered = useMemo(() => {
+    if (!content) return null
+
+    // Split content into text segments and citation markers
+    const parts: { type: 'text' | 'citation'; value: string; paperId?: string; instanceId?: string }[] = []
+    let lastIndex = 0
+    CITATION_MARKER_RE.lastIndex = 0
+    let match: RegExpExecArray | null
+
+    while ((match = CITATION_MARKER_RE.exec(content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({ type: 'text', value: content.slice(lastIndex, match.index) })
+      }
+      parts.push({ type: 'citation', value: match[0], paperId: match[1], instanceId: match[2] })
+      lastIndex = match.index + match[0].length
+    }
+    if (lastIndex < content.length) {
+      parts.push({ type: 'text', value: content.slice(lastIndex) })
+    }
+
+    // If no citations found, render as plain markdown
+    if (parts.length === 1 && parts[0].type === 'text') {
+      return (
+        <ReactMarkdown
+          components={{
+            a: ({ href, children, ...props }) => (
+              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+            ),
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      )
+    }
+
+    return parts.map((part, i) => {
+      if (part.type === 'citation' && part.paperId) {
+        const paper = paperMap.get(part.paperId)
+        if (paper) {
+          return <ChatCitationSpan key={i} paper={paper} instanceId={part.instanceId} />
+        }
+        return <span key={i}>{part.value}</span>
+      }
+      // Render text segment as markdown
+      return (
+        <ReactMarkdown
+          key={i}
+          components={{
+            a: ({ href, children, ...props }) => (
+              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+            ),
+          }}
+        >
+          {part.value}
+        </ReactMarkdown>
+      )
+    })
+  }, [content, paperMap])
+
+  return <>{rendered}</>
 })
 
 // =============================================================================
@@ -128,6 +192,8 @@ interface ChatTabProps {
   onConfirmAllTools?: () => void
   onRejectAllTools?: () => void
   onClearHistory?: () => void
+  /** Stop the current AI generation */
+  onStop?: () => void
 }
 
 // =============================================================================
@@ -294,43 +360,10 @@ const MessageBubble = memo(function MessageBubble({
 })
 
 /**
- * LoadingBubble with action-oriented status labels.
- * Shows what the assistant is DOING, not internal system states.
- * 
- * Simplified phases to avoid misleading "Searching..." when RAG is skipped:
- * 1. "Thinking..." (optimistic, shown until metadata arrives)
- * 2. Real status from metadata: "Found X excerpts" or nothing (if skipped)
+ * LoadingBubble - simple thinking indicator.
+ * No RAG status — that's shown after the response via EvidencePanel.
  */
-function LoadingBubble({ 
-  latestMessageMetadata 
-}: { 
-  latestMessageMetadata?: ChatMessageMetadata 
-}) {
-  // Determine status text based on actual state from metadata
-  const statusText = useMemo(() => {
-    // If we have real metadata from streaming, show actual info
-    if (latestMessageMetadata?.ragMetadata) {
-      const { chunksRetrieved, skipped } = latestMessageMetadata.ragMetadata
-      
-      // RAG was skipped - no text needed for simple/fast responses
-      if (skipped) {
-        return null
-      }
-      
-      // RAG completed with results - show count
-      if (chunksRetrieved > 0) {
-        return `Found ${chunksRetrieved} relevant excerpt${chunksRetrieved !== 1 ? 's' : ''}`
-      }
-      
-      // RAG completed but nothing found
-      return null
-    }
-    
-    // Before metadata arrives, just show "Thinking..."
-    // This avoids showing "Searching..." for requests that won't search
-    return 'Thinking...'
-  }, [latestMessageMetadata])
-
+function LoadingBubble() {
   return (
     <div className="flex gap-3 px-4 py-4">
       <Avatar className="h-6 w-6 shrink-0">
@@ -338,15 +371,10 @@ function LoadingBubble({
           <Bot className="h-3.5 w-3.5" />
         </AvatarFallback>
       </Avatar>
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-1.5 py-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.3s]" />
-          <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.15s]" />
-          <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" />
-        </div>
-        {statusText && (
-          <span className="text-[11px] text-muted-foreground">{statusText}</span>
-        )}
+      <div className="flex items-center gap-1.5 py-1">
+        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.3s]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.15s]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" />
       </div>
     </div>
   )
@@ -355,21 +383,9 @@ function LoadingBubble({
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center h-full text-center p-6">
-      <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
-        <Bot className="h-6 w-6 text-muted-foreground" />
-      </div>
-      <h3 className="font-medium text-sm mb-1">Research Assistant</h3>
-      <p className="text-xs text-muted-foreground max-w-[200px]">
-        Ask me to help with your research, find citations, or edit your document.
+      <p className="text-sm text-muted-foreground max-w-[220px]">
+        Ask anything about your paper or research.
       </p>
-      <div className="mt-4 text-xs text-muted-foreground">
-        <p className="font-medium mb-1">Try asking:</p>
-        <ul className="space-y-1 text-left">
-          <li>&ldquo;Add a citation after the claim about...&rdquo;</li>
-          <li>&ldquo;Rewrite the introduction to be more concise&rdquo;</li>
-          <li>&ldquo;What gaps exist in my literature review?&rdquo;</li>
-        </ul>
-      </div>
     </div>
   )
 }
@@ -392,6 +408,7 @@ export function ChatTab({
   onConfirmAllTools: _onConfirmAllTools,
   onRejectAllTools: _onRejectAllTools,
   onClearHistory,
+  onStop,
 }: ChatTabProps) {
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const scrollRafRef = useRef<number | null>(null)
@@ -514,12 +531,20 @@ export function ChatTab({
                 />
               ))}
               {isLoading && (
-                <LoadingBubble 
-                  latestMessageMetadata={
-                    // Get metadata from the latest assistant message (if streaming)
-                    messages.filter(m => m.role === 'assistant').pop()?.metadata as ChatMessageMetadata | undefined
-                  }
-                />
+                <div className="flex items-end gap-2 pr-4">
+                  <LoadingBubble />
+                  {onStop && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs mb-4 shrink-0"
+                      onClick={onStop}
+                    >
+                      <Square className="h-3 w-3 mr-1 fill-current" />
+                      Stop
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -550,19 +575,16 @@ export function ChatTab({
 
 const QUICK_ACTIONS = [
   {
-    label: 'Extract Claims',
-    icon: '📋',
-    prompt: 'Extract the key claims and findings from my papers. For each claim, cite the source paper.',
+    label: 'Key findings',
+    prompt: 'What are the key findings across my papers?',
   },
   {
-    label: 'Find Gaps',
-    icon: '🔍',
-    prompt: 'Analyze my papers and identify research gaps - what questions remain unanswered? What areas need more investigation?',
+    label: 'Research gaps',
+    prompt: 'What gaps or unanswered questions remain in my research?',
   },
   {
     label: 'Summarize',
-    icon: '📝',
-    prompt: 'Provide a comprehensive summary of my papers, highlighting the main themes and how they relate to each other.',
+    prompt: 'Summarize my papers and how they connect to each other.',
   },
 ]
 
@@ -581,11 +603,10 @@ function QuickActions({
             key={action.label}
             variant="outline"
             size="sm"
-            className="h-7 text-xs gap-1 px-2.5 rounded-full bg-background shadow-sm hover:bg-muted border-border/60"
+            className="h-7 text-xs px-2.5 rounded-full bg-background shadow-sm hover:bg-muted border-border/60"
             onClick={() => onSend(action.prompt)}
             disabled={disabled}
           >
-            <span>{action.icon}</span>
             {action.label}
           </Button>
         ))}

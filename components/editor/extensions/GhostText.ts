@@ -306,6 +306,18 @@ export const GhostText = Extension.create({
                   pluginState.loadingMessage
                 )
                 
+                // Tap/click on ghost text to accept (essential for mobile)
+                span.addEventListener('pointerdown', (e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  requestAnimationFrame(() => {
+                    if (!editor.isDestroyed) {
+                      editor.commands.acceptGhostText()
+                    }
+                  })
+                })
+                span.style.cursor = 'pointer'
+
                 return span
               },
               { side: 1 } // Render after cursor

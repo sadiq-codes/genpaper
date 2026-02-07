@@ -221,7 +221,7 @@ function LoginPageContent() {
               <p className="text-sm text-muted-foreground">
                 Don&apos;t have an account?{" "}
                 <Link href="/signup" className="text-primary hover:text-primary/80 font-medium">
-                  Start free trial
+                  Sign up
                 </Link>
               </p>
             </div>

@@ -20,8 +20,10 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
-import { Undo, Redo } from 'lucide-react'
+import { Undo, Redo, ChevronsRight, ChevronsLeft } from 'lucide-react'
 import { FloatingToolbar } from './FloatingToolbar'
+import { InlineEditBar } from './InlineEditBar'
+import { InlineCitationPicker } from './InlineCitationPicker'
 import { CitationPopover } from '../CitationPopover'
 import { ReviewToolbar } from '../ReviewToolbar'
 import { Citation } from '../extensions/Citation'
@@ -39,7 +41,7 @@ import { editorToMarkdown } from '../utils/tiptap-to-markdown'
 import type { InstanceQuotesMap } from '../utils/markdown-to-tiptap'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
-import { isNumericStyle, clearCaches as clearCitationCaches } from '@/lib/citations/local-formatter'
+import { isNumericStyle, clearCaches as clearCitationCaches, resolveStyleId, isStyleAvailable, loadStyle } from '@/lib/citations/local-formatter'
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
@@ -101,8 +103,6 @@ interface DocumentEditorProps {
   onUpdate?: (content: string) => void
   onEditorReady?: (editor: Editor) => void
   autocompleteEnabled?: boolean
-  onInsertCitation: () => void
-  onAiEdit: (text: string) => void
   onChat: (text: string) => void
   onInsertMath?: () => void
   /** Called when a paper's citation metadata is edited (title/authors/year/etc.) */
@@ -119,6 +119,10 @@ interface DocumentEditorProps {
   onNavigateEdit?: (direction: 'next' | 'prev') => void
   onAcceptAllEdits?: () => void
   onRejectAllEdits?: () => void
+  // Mobile sidebar toggle
+  isMobile?: boolean
+  mobileMenuOpen?: boolean
+  onToggleMobileMenu?: () => void
 }
 
 const DEFAULT_CONTENT = `<h1></h1><p></p>`
@@ -128,8 +132,6 @@ export function DocumentEditor({
   onUpdate,
   onEditorReady,
   autocompleteEnabled = true,
-  onInsertCitation,
-  onAiEdit,
   onChat,
   onInsertMath: _onInsertMath,
   onPaperUpdated,
@@ -142,6 +144,9 @@ export function DocumentEditor({
   onNavigateEdit,
   onAcceptAllEdits,
   onRejectAllEdits,
+  isMobile = false,
+  mobileMenuOpen = false,
+  onToggleMobileMenu,
 }: DocumentEditorProps) {
   // Ref for debouncing markdown conversion - prevents typing lag in large documents
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -150,6 +155,41 @@ export function DocumentEditor({
   const [mathLatex, setMathLatex] = useState('')
   const [mathDisplayMode, setMathDisplayMode] = useState(false)
   const [toolbarMinimized, setToolbarMinimized] = useState(false)
+
+  // Inline edit state
+  const [inlineEdit, setInlineEdit] = useState<{
+    selectedText: string
+    from: number
+    to: number
+  } | null>(null)
+
+  const handleAiEdit = useCallback((text: string) => {
+    if (!editor) return
+    const { from, to } = editor.state.selection
+    setInlineEdit({ selectedText: text, from, to })
+  }, [editor])
+
+  const handleCloseInlineEdit = useCallback(() => {
+    setInlineEdit(null)
+  }, [])
+
+  // Citation picker state
+  const [citationPickerPos, setCitationPickerPos] = useState<number | null>(null)
+
+  const handleOpenCitationPicker = useCallback(() => {
+    if (!editor) return
+    const { to } = editor.state.selection
+    setCitationPickerPos(to)
+  }, [editor])
+
+  const handleInsertCitationFromPicker = useCallback((citation: { id: string; authors: string[]; title: string; year: number; journal?: string; doi?: string }) => {
+    if (!editor) return
+    editor.chain().focus().insertCitation(citation).run()
+  }, [editor])
+
+  const handleCloseCitationPicker = useCallback(() => {
+    setCitationPickerPos(null)
+  }, [])
   
   // Process content helper function - converts markdown to TipTap JSON
   const processInitialContent = useCallback((content: string, papersList: ProjectPaper[]) => {
@@ -374,7 +414,24 @@ export function DocumentEditor({
     if (prevCitationStyleRef.current === citationStyle) return
     
     prevCitationStyleRef.current = citationStyle
+    
+    // Clear cached inline citation text so it regenerates with the new style
+    clearCitationCaches()
+    
+    // Apply the style immediately (uses fallback for non-loaded styles)
     editor.commands.setCitationStyle(citationStyle)
+    
+    // Load the CSL style from CDN if not already available,
+    // then re-apply so citations render with the proper style formatting
+    const resolved = resolveStyleId(citationStyle)
+    if (!isStyleAvailable(resolved)) {
+      loadStyle(resolved).then(success => {
+        if (success && editor && !editor.isDestroyed) {
+          clearCitationCaches()
+          editor.commands.setCitationStyle(citationStyle)
+        }
+      })
+    }
   }, [editor, citationStyle])
 
   // Rebuild numeric citation numbers map when citations are added/removed.
@@ -640,7 +697,23 @@ export function DocumentEditor({
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Minimal undo/redo bar - Notion-like */}
-      <div className="flex items-center justify-end px-2 py-0.5 sm:px-4 sm:py-1 border-b border-border/30">
+      <div className="flex items-center justify-between px-2 py-0.5 sm:px-4 sm:py-1 border-b border-border/30">
+        {/* Left: mobile sidebar toggle */}
+        <div className="flex items-center">
+          {isMobile && onToggleMobileMenu && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
+              onClick={onToggleMobileMenu}
+            >
+              {mobileMenuOpen ? <ChevronsLeft className="h-3.5 w-3.5" /> : <ChevronsRight className="h-3.5 w-3.5" />}
+            </Button>
+          )}
+        </div>
+        {/* Center: wordmark */}
+        <span className="text-[11px] font-medium tracking-wide text-muted-foreground/50 select-none">GenPaper</span>
+        {/* Right: undo/redo */}
         <div className="flex items-center gap-0.5">
           <Button
             variant="ghost"
@@ -679,10 +752,29 @@ export function DocumentEditor({
         
         <FloatingToolbar
           editor={editor}
-          onAiEdit={onAiEdit}
-          onInsertCitation={onInsertCitation}
+          onAiEdit={handleAiEdit}
+          onInsertCitation={handleOpenCitationPicker}
           onChat={onChat}
         />
+        {inlineEdit && (
+          <InlineEditBar
+            editor={editor}
+            projectId={projectId}
+            selectedText={inlineEdit.selectedText}
+            selectionFrom={inlineEdit.from}
+            selectionTo={inlineEdit.to}
+            onClose={handleCloseInlineEdit}
+          />
+        )}
+        {citationPickerPos !== null && (
+          <InlineCitationPicker
+            editor={editor}
+            papers={papers}
+            selectionTo={citationPickerPos}
+            onInsertCitation={handleInsertCitationFromPicker}
+            onClose={handleCloseCitationPicker}
+          />
+        )}
         <EditorContent editor={editor} className="h-full" />
         <CitationPopover
           editor={editor}

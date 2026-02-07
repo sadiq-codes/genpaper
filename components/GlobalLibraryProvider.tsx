@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import dynamic from 'next/dynamic'
 
 // Lazy load heavy components - only load when opened
@@ -30,10 +31,38 @@ interface GlobalLibraryProviderProps {
 }
 
 export default function GlobalLibraryProvider({ children }: GlobalLibraryProviderProps) {
+  const queryClient = useQueryClient()
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [showLibraryDrawer, setShowLibraryDrawer] = useState(false)
   const [libraryQuery, setLibraryQuery] = useState('')
   const [currentProjectId, setCurrentProjectId] = useState<string>()
+
+  // Prefetch library papers so the drawer opens instantly
+  useEffect(() => {
+    queryClient.prefetchInfiniteQuery({
+      queryKey: ['library', 'papers'],
+      queryFn: async () => {
+        const res = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=25&offset=0')
+        if (!res.ok) return []
+        const data = await res.json()
+        return data.papers.map((item: any) => ({
+          id: item.paper.id,
+          title: item.paper.title,
+          authors: item.paper.author_names || [],
+          year: item.paper.publication_date ? new Date(item.paper.publication_date).getFullYear() : null,
+          journal: item.paper.venue,
+          abstract: item.paper.abstract,
+          doi: item.paper.doi,
+          url: item.paper.pdf_url || (item.paper.doi ? `https://doi.org/${item.paper.doi}` : undefined),
+          citationCount: item.paper.citation_count,
+          source: item.paper.source || 'library',
+          type: 'library' as const,
+        }))
+      },
+      initialPageParam: 0,
+      staleTime: 5 * 60 * 1000,
+    })
+  }, [queryClient])
 
   // Handle Cmd+K keyboard shortcut
   useEffect(() => {
