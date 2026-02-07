@@ -21,7 +21,9 @@ import {
   Crown,
 } from "lucide-react"
 import { TIER_CONFIG } from "@/types/subscription"
-import type { SubscriptionTier } from "@/types/subscription"
+import type { SubscriptionTier, BillingInterval } from "@/types/subscription"
+import { Switch } from "@/components/ui/switch"
+import { Badge } from "@/components/ui/badge"
 import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
@@ -29,6 +31,7 @@ import type { User } from "@supabase/supabase-js"
 export default function LandingPage() {
   const [user, setUser] = useState<User | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>('yearly')
   const supabase = createClient()
 
   useEffect(() => {
@@ -408,22 +411,39 @@ export default function LandingPage() {
       {/* Pricing Section */}
       <section id="pricing" className="py-24 bg-muted/30 scroll-mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
+          <div className="text-center mb-12">
             <h2 className="text-4xl font-bold text-foreground mb-4">Simple, transparent pricing</h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
               Choose the plan that fits your research needs. Start free, upgrade anytime.
             </p>
+            
+            {/* Billing Interval Toggle */}
+            <div className="flex items-center justify-center gap-3">
+              <span className={`text-sm font-medium ${billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                Monthly
+              </span>
+              <Switch
+                checked={billingInterval === 'yearly'}
+                onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
+              />
+              <span className={`text-sm font-medium ${billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                Yearly
+              </span>
+              <Badge variant="secondary" className="ml-2">
+                Save 33%
+              </Badge>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
             {/* Free Tier */}
-            <PricingCard tier="free" icon={<Sparkles className="h-6 w-6" />} user={user} />
+            <PricingCard tier="free" icon={<Sparkles className="h-6 w-6" />} user={user} billingInterval={billingInterval} />
             
             {/* Starter Tier */}
-            <PricingCard tier="starter" icon={<Zap className="h-6 w-6" />} user={user} />
+            <PricingCard tier="starter" icon={<Zap className="h-6 w-6" />} user={user} billingInterval={billingInterval} />
             
             {/* Pro Tier */}
-            <PricingCard tier="pro" icon={<Crown className="h-6 w-6" />} user={user} recommended />
+            <PricingCard tier="pro" icon={<Crown className="h-6 w-6" />} user={user} billingInterval={billingInterval} recommended />
           </div>
 
           <div className="text-center mt-8">
@@ -547,14 +567,27 @@ function PricingCard({
   tier,
   icon,
   user,
+  billingInterval,
   recommended,
 }: {
   tier: SubscriptionTier
   icon: React.ReactNode
   user: User | null
+  billingInterval: BillingInterval
   recommended?: boolean
 }) {
   const config = TIER_CONFIG[tier]
+  
+  // Calculate display price based on billing interval
+  const isYearly = billingInterval === 'yearly'
+  const displayPrice = tier === 'free' 
+    ? 0 
+    : isYearly 
+      ? Math.round(config.yearlyPrice / 12) // Effective monthly price
+      : config.price
+  const yearlyTotal = config.yearlyPrice
+  const monthlyTotal = config.price * 12
+  const savings = monthlyTotal - yearlyTotal
   
   const getButtonProps = () => {
     if (tier === 'free') {
@@ -591,9 +624,19 @@ function PricingCard({
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="text-center">
-          <span className="text-4xl font-bold">${config.price}</span>
-          {config.price > 0 && (
+          <span className="text-4xl font-bold">${displayPrice}</span>
+          {displayPrice > 0 && (
             <span className="text-muted-foreground">/month</span>
+          )}
+          {tier !== 'free' && isYearly && (
+            <div className="mt-1">
+              <span className="text-sm text-muted-foreground">
+                ${yearlyTotal}/yr
+              </span>
+              <span className="text-xs text-green-600 ml-2">
+                Save ${savings}
+              </span>
+            </div>
           )}
         </div>
         

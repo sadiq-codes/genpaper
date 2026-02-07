@@ -45,7 +45,7 @@ export async function extractPdfMetadataTiered(
 ): Promise<TieredExtractionResult> {
   const startTime = Date.now()
   const { 
-    grobidUrl = process.env.GROBID_URL || 'http://localhost:8070',
+    grobidUrl = process.env.GROBID_URL, // No fallback - GROBID is optional
     enableOcr = true,
     maxTimeoutMs = 120000 // Increased to 2 minutes for large PDFs
   } = options
@@ -54,7 +54,7 @@ export async function extractPdfMetadataTiered(
 
   try {
     // Guardrail: decide if we should attempt GROBID at all
-    const tryGrobid = await shouldUseGrobid(grobidUrl)
+    const tryGrobid = grobidUrl ? await shouldUseGrobid(grobidUrl) : false
 
     // 0️⃣ Fast DOI lookup shortcut (if DOI found in first page)
     const doi = await findDoiInFirstPage(pdfBuffer)
@@ -83,7 +83,7 @@ export async function extractPdfMetadataTiered(
         throw new Error('GROBID disabled')
       }
       info('Attempting GROBID extraction')
-      const grobidResult = await grobidParse(pdfBuffer, grobidUrl, maxTimeoutMs)
+      const grobidResult = await grobidParse(pdfBuffer, grobidUrl!, maxTimeoutMs)
       if (grobidResult && grobidResult.title && grobidResult.fullText) {
         return {
           ...grobidResult,

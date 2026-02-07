@@ -20,6 +20,8 @@ export interface UsageCheckResult {
   resetsAt: Date
   /** Whether the user has unlimited access */
   isUnlimited: boolean
+  /** Error message if usage check failed */
+  errorMessage?: string
 }
 
 export interface DailyUsageStats {
@@ -58,13 +60,16 @@ export async function checkAndIncrementChatUsage(userId: string): Promise<UsageC
   })
   
   if (error || !data || data.length === 0) {
-    warn({ userId, error }, 'Failed to check chat usage, allowing by default')
+    // SECURITY: Fail closed - deny access when we can't verify usage
+    // This prevents abuse if the database is unavailable
+    warn({ userId, error }, 'Failed to check chat usage, denying for safety')
     return {
-      allowed: true,
+      allowed: false,
       currentUses: 0,
       dailyLimit: chatLimit,
       resetsAt: getNextMidnightUTC(),
-      isUnlimited: chatLimit === -1,
+      isUnlimited: false,
+      errorMessage: 'Unable to verify usage limits. Please try again.',
     }
   }
   

@@ -373,11 +373,28 @@ export function ResearchEditor({
 
   // Handle generation completion
   const handleGenerationComplete = useCallback(
-    (generatedContent: string) => {
+    async (generatedContent: string) => {
       setIsGenerating(false)
 
+      // Fetch fresh papers from the API so citations and references render immediately
+      let freshPapers = papers
+      if (projectId) {
+        try {
+          const res = await fetch(`/api/editor/papers?projectId=${projectId}`)
+          if (res.ok) {
+            const data = await res.json()
+            if (Array.isArray(data.papers) && data.papers.length > 0) {
+              freshPapers = data.papers
+              setPapers(freshPapers)
+            }
+          }
+        } catch (err) {
+          console.warn('[Generation] Failed to fetch papers after generation:', err)
+        }
+      }
+
       if (editor && !editor.isDestroyed) {
-        const { json, isFullDoc } = processContent(generatedContent, papers)
+        const { json, isFullDoc } = processContent(generatedContent, freshPapers)
 
         if (isFullDoc && json) {
           editor.commands.setContent(json)
@@ -407,15 +424,18 @@ export function ResearchEditor({
 
       toast.success("Paper generated successfully!")
 
+      // Collapse sidebar so the user sees the full generated document
+      setSidebarOpen(false)
+
       // Remove ?created=1 from URL without reload
       const url = new URL(window.location.href)
       url.searchParams.delete("created")
       window.history.replaceState({}, "", url.toString())
 
-      // Refresh server data to load new papers/citations
+      // Refresh server data for any remaining state
       router.refresh()
     },
-    [editor, papers, setContentSilent, markAsEdited, router]
+    [editor, papers, projectId, setPapers, setContentSilent, markAsEdited, router]
   )
 
   // Handle generation error

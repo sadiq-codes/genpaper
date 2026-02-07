@@ -23,8 +23,15 @@ const caveat = Caveat({
 })
 
 export const metadata: Metadata = {
-  title: "GenPaper - AI Research Assistant",
-  description: "Generate research papers with AI assistance",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://genpaper.app'),
+  title: {
+    default: "GenPaper - AI Research Paper Generator",
+    template: "%s | GenPaper",
+  },
+  description: "Generate high-quality research papers with AI assistance. Create literature reviews, theses, dissertations, and academic articles with intelligent writing support.",
+  keywords: ["AI writing", "research paper generator", "academic writing", "literature review", "thesis writing", "dissertation", "citation management"],
+  authors: [{ name: "GenPaper" }],
+  creator: "GenPaper",
   icons: {
     icon: [
       { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
@@ -39,6 +46,39 @@ export const metadata: Metadata = {
     ],
   },
   manifest: '/site.webmanifest',
+  openGraph: {
+    type: 'website',
+    locale: 'en_US',
+    url: 'https://genpaper.app',
+    siteName: 'GenPaper',
+    title: 'GenPaper - AI Research Paper Generator',
+    description: 'Generate high-quality research papers with AI assistance. Create literature reviews, theses, dissertations, and academic articles.',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'GenPaper - AI Research Paper Generator',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'GenPaper - AI Research Paper Generator',
+    description: 'Generate high-quality research papers with AI assistance.',
+    images: ['/og-image.png'],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-video-preview': -1,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
+  },
 }
 
 export default async function RootLayout({

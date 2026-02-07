@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import type { SubscriptionTier } from '@/types/subscription'
+import type { SubscriptionTier, BillingInterval } from '@/types/subscription'
 
 // =============================================================================
 // Types
@@ -156,18 +156,29 @@ export function useSubscription(): UseSubscriptionResult {
 // =============================================================================
 
 /**
- * Get checkout URL for a specific tier
+ * Get checkout URL for a specific tier and billing interval
  */
 export function getCheckoutUrl(
   tier: 'starter' | 'pro',
   options?: {
     email?: string
     userId?: string
+    interval?: BillingInterval
   }
 ): string {
-  const productId = tier === 'pro' 
-    ? process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO 
-    : process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER
+  const interval = options?.interval || 'monthly'
+  
+  // Map tier + interval to product ID
+  let productId: string | undefined
+  if (tier === 'pro') {
+    productId = interval === 'yearly'
+      ? process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_YEARLY
+      : process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO
+  } else {
+    productId = interval === 'yearly'
+      ? process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_YEARLY
+      : process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER
+  }
   
   const params = new URLSearchParams()
   params.set('products', productId || '')

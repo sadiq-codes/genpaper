@@ -19,8 +19,9 @@ import {
 } from 'lucide-react'
 import { useSubscription, getCheckoutUrl, getPortalUrl } from '@/lib/hooks/use-subscription'
 import { TIER_CONFIG } from '@/types/subscription'
-import type { SubscriptionTier } from '@/types/subscription'
+import type { SubscriptionTier, BillingInterval } from '@/types/subscription'
 import { toast } from 'sonner'
+import { Switch } from '@/components/ui/switch'
 
 interface BillingSectionProps {
   user: {
@@ -32,6 +33,7 @@ interface BillingSectionProps {
 export function BillingSection({ user }: BillingSectionProps) {
   const { subscription, isLoading, refresh } = useSubscription()
   const [redirectingTier, setRedirectingTier] = useState<'starter' | 'pro' | 'manage' | null>(null)
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>('yearly')
   const searchParams = useSearchParams()
   
   // Show success toast after checkout
@@ -59,6 +61,7 @@ export function BillingSection({ user }: BillingSectionProps) {
     window.location.href = getCheckoutUrl(tier, {
       email: user.email,
       userId: user.id,
+      interval: billingInterval,
     })
   }
   
@@ -168,7 +171,24 @@ export function BillingSection({ user }: BillingSectionProps) {
         {/* Upgrade Options */}
         {currentTier === 'free' && (
           <div className="space-y-4">
-            <h4 className="font-medium">Upgrade your plan</h4>
+            <div className="flex items-center justify-between">
+              <h4 className="font-medium">Upgrade your plan</h4>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs ${billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                  Monthly
+                </span>
+                <Switch
+                  checked={billingInterval === 'yearly'}
+                  onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
+                />
+                <span className={`text-xs ${billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                  Yearly
+                </span>
+                {billingInterval === 'yearly' && (
+                  <Badge variant="secondary" className="text-xs">Save 33%</Badge>
+                )}
+              </div>
+            </div>
             <div className="grid gap-4 md:grid-cols-2">
               {/* Starter */}
               <PlanCard
@@ -177,6 +197,7 @@ export function BillingSection({ user }: BillingSectionProps) {
                 onUpgrade={() => handleUpgrade('starter')}
                 isRedirecting={redirectingTier === 'starter'}
                 isDisabled={redirectingTier !== null}
+                billingInterval={billingInterval}
               />
               {/* Pro */}
               <PlanCard
@@ -185,6 +206,7 @@ export function BillingSection({ user }: BillingSectionProps) {
                 onUpgrade={() => handleUpgrade('pro')}
                 isRedirecting={redirectingTier === 'pro'}
                 isDisabled={redirectingTier !== null}
+                billingInterval={billingInterval}
                 recommended
               />
             </div>
@@ -193,13 +215,31 @@ export function BillingSection({ user }: BillingSectionProps) {
         
         {currentTier === 'starter' && (
           <div className="space-y-4">
-            <h4 className="font-medium">Upgrade to Pro</h4>
+            <div className="flex items-center justify-between">
+              <h4 className="font-medium">Upgrade to Pro</h4>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs ${billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                  Monthly
+                </span>
+                <Switch
+                  checked={billingInterval === 'yearly'}
+                  onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
+                />
+                <span className={`text-xs ${billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                  Yearly
+                </span>
+                {billingInterval === 'yearly' && (
+                  <Badge variant="secondary" className="text-xs">Save 33%</Badge>
+                )}
+              </div>
+            </div>
             <PlanCard
               tier="pro"
               isCurrentTier={false}
               onUpgrade={() => handleUpgrade('pro')}
               isRedirecting={redirectingTier === 'pro'}
               isDisabled={redirectingTier !== null}
+              billingInterval={billingInterval}
               recommended
             />
           </div>
@@ -222,6 +262,7 @@ function PlanCard({
   onUpgrade,
   isRedirecting,
   isDisabled,
+  billingInterval,
   recommended,
 }: {
   tier: SubscriptionTier
@@ -229,9 +270,19 @@ function PlanCard({
   onUpgrade: () => void
   isRedirecting: boolean
   isDisabled?: boolean
+  billingInterval: BillingInterval
   recommended?: boolean
 }) {
   const config = TIER_CONFIG[tier]
+  
+  // Calculate display price based on billing interval
+  const isYearly = billingInterval === 'yearly'
+  const displayPrice = tier === 'free' 
+    ? 0 
+    : isYearly 
+      ? Math.round(config.yearlyPrice / 12) // Effective monthly price
+      : config.price
+  const yearlyTotal = config.yearlyPrice
   
   return (
     <div className={`relative p-4 rounded-lg border ${recommended ? 'border-primary' : ''}`}>
@@ -242,8 +293,13 @@ function PlanCard({
         <div>
           <h5 className="font-semibold">{config.name}</h5>
           <p className="text-2xl font-bold">
-            ${config.price}<span className="text-sm font-normal text-muted-foreground">/mo</span>
+            ${displayPrice}<span className="text-sm font-normal text-muted-foreground">/mo</span>
           </p>
+          {tier !== 'free' && isYearly && (
+            <p className="text-xs text-muted-foreground">
+              ${yearlyTotal} billed yearly
+            </p>
+          )}
         </div>
         <ul className="space-y-1.5 text-sm">
           {config.features.slice(0, 4).map((feature, i) => (

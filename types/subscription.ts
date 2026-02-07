@@ -15,6 +15,8 @@ export type SubscriptionTier = 'free' | 'starter' | 'pro'
 
 export type SubscriptionStatus = 'active' | 'canceled' | 'past_due' | 'trialing'
 
+export type BillingInterval = 'monthly' | 'yearly'
+
 export interface UserSubscription {
   tier: SubscriptionTier
   status: SubscriptionStatus
@@ -62,6 +64,7 @@ export interface TierInfo {
   name: string
   description: string
   price: number // Monthly price in USD, 0 for free
+  yearlyPrice: number // Yearly price in USD, 0 for free
   limits: TierLimits
   features: string[] // Marketing feature list
 }
@@ -75,6 +78,7 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     name: 'Free',
     description: 'Try GenPaper with limited features',
     price: 0,
+    yearlyPrice: 0,
     limits: {
       papersPerMonth: 1,
       allowedPaperTypes: ['literatureReview'],
@@ -99,7 +103,8 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
   starter: {
     name: 'Starter',
     description: 'For students and casual users',
-    price: 15,
+    price: 19,
+    yearlyPrice: 156, // $13/mo effective (33% off, 4 months free)
     limits: {
       papersPerMonth: 5,
       allowedPaperTypes: ['literatureReview', 'researchArticle', 'capstoneProject'],
@@ -125,7 +130,8 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
   pro: {
     name: 'Pro',
     description: 'For researchers and professionals',
-    price: 39,
+    price: 49,
+    yearlyPrice: 396, // $33/mo effective (33% off, 4 months free)
     limits: {
       papersPerMonth: 15,
       allowedPaperTypes: 'all',

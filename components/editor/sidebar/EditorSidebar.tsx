@@ -33,13 +33,9 @@ const ResearchTab = dynamic(() => import('./ResearchTab').then(mod => ({ default
   loading: () => <TabLoadingSkeleton />,
 })
 
-// Minimal loading skeleton for tabs
+// Minimal loading skeleton for tabs — intentionally empty to avoid flash-of-spinner
 function TabLoadingSkeleton() {
-  return (
-    <div className="flex items-center justify-center h-full">
-      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-    </div>
-  )
+  return null
 }
 
 // Import type for ChatSendOptions

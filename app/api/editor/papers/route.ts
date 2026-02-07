@@ -3,6 +3,111 @@ import { NextRequest, NextResponse } from 'next/server'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 
 /**
+ * GET /api/editor/papers?projectId=xxx
+ * Fetch all papers linked to a project via project_citations
+ */
+export async function GET(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const projectId = request.nextUrl.searchParams.get('projectId')
+    if (!projectId) {
+      return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
+    }
+
+    // Verify ownership
+    const { data: project, error: projectError } = await supabase
+      .from('research_projects')
+      .select('id')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (projectError || !project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    }
+
+    // Fetch citation records
+    const { data: citations } = await supabase
+      .from('project_citations')
+      .select('paper_id, csl_json')
+      .eq('project_id', projectId)
+
+    const paperIds = citations?.map(c => c.paper_id).filter(Boolean) || []
+
+    if (paperIds.length === 0) {
+      return NextResponse.json({ papers: [] })
+    }
+
+    // Fetch papers
+    const { data: papersData } = await supabase
+      .from('papers')
+      .select('id, title, authors, publication_date, venue, doi, source')
+      .in('id', paperIds)
+
+    // Build CSL fallback map
+    const cslJsonById = new Map(
+      (citations || [])
+        .filter(c => c.csl_json)
+        .map(c => [c.paper_id, c.csl_json])
+    )
+
+    // Build papers array (same logic as page.tsx)
+    const paperMap = new Map()
+
+    for (const paper of (papersData || [])) {
+      paperMap.set(paper.id, {
+        id: paper.id,
+        title: paper.title || 'Untitled',
+        authors: paper.authors || [],
+        year: paper.publication_date
+          ? new Date(paper.publication_date).getFullYear()
+          : new Date().getFullYear(),
+        journal: paper.venue || undefined,
+        doi: paper.doi || undefined,
+        source: paper.source === 'upload' ? 'upload' : 'search',
+      })
+    }
+
+    // Fallback to CSL JSON for papers not in DB
+    for (const paperId of paperIds) {
+      if (!paperMap.has(paperId) && cslJsonById.has(paperId)) {
+        try {
+          const csl = cslJsonById.get(paperId) as Record<string, unknown>
+          const authors = Array.isArray(csl.author)
+            ? (csl.author as Array<{ literal?: string; given?: string; family?: string }>).map(a => {
+                if (a.literal) return a.literal
+                if (a.given && a.family) return `${a.given} ${a.family}`
+                return a.family || 'Unknown'
+              })
+            : []
+          paperMap.set(paperId, {
+            id: paperId,
+            title: (csl.title as string) || 'Untitled',
+            authors,
+            year: ((csl.issued as { ['date-parts']?: number[][] })?.['date-parts']?.[0]?.[0]) || new Date().getFullYear(),
+            journal: csl['container-title'] as string | undefined,
+            doi: csl.DOI as string | undefined,
+          })
+        } catch {
+          // Skip malformed CSL
+        }
+      }
+    }
+
+    return NextResponse.json({ papers: Array.from(paperMap.values()) })
+  } catch (error) {
+    console.error('Fetch papers error:', error)
+    return NextResponse.json({ error: 'Failed to fetch papers' }, { status: 500 })
+  }
+}
+
+/**
  * POST /api/editor/papers
  * Add a paper to a research project
  * 

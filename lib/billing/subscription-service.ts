@@ -277,13 +277,18 @@ export async function logSubscriptionEvent(params: LogEventParams): Promise<void
 /**
  * Determine the tier from a Polar product ID
  * Maps Polar product IDs to our internal tier names
+ * Supports both monthly and yearly products
  */
 export function getTierFromPolarProduct(productId: string): SubscriptionTier {
+  // Monthly products
   const starterProductId = process.env.POLAR_PRODUCT_STARTER
   const proProductId = process.env.POLAR_PRODUCT_PRO
+  // Yearly products
+  const starterYearlyProductId = process.env.POLAR_PRODUCT_STARTER_YEARLY
+  const proYearlyProductId = process.env.POLAR_PRODUCT_PRO_YEARLY
   
-  if (productId === proProductId) return 'pro'
-  if (productId === starterProductId) return 'starter'
+  if (productId === proProductId || productId === proYearlyProductId) return 'pro'
+  if (productId === starterProductId || productId === starterYearlyProductId) return 'starter'
   
   // Default to starter if unknown product
   warn({ productId }, 'Unknown Polar product ID, defaulting to starter')

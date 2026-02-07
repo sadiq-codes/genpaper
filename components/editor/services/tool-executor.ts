@@ -414,9 +414,13 @@ function convertNumberedCitations(
 
 /**
  * Result of preparing content for insertion
+ * content can be:
+ * - string: raw text content
+ * - Record<string, unknown>: TipTap doc content object
+ * - unknown[]: array of TipTap nodes (from processPlainTextWithCitations)
  */
 interface PreparedContent {
-  content: string | Record<string, unknown>
+  content: string | Record<string, unknown> | unknown[]
   instances: ExtractedCitationInstance[]
 }
 

@@ -1,0 +1,18 @@
+# GenPaper Robots.txt
+# https://genpaper.app
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /editor/
+Disallow: /settings/
+Disallow: /projects/
+
+# Allow search engines to index public pages
+Allow: /terms
+Allow: /privacy
+Allow: /pricing
+
+# Sitemap
+Sitemap: https://genpaper.app/sitemap.xml

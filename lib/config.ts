@@ -6,6 +6,7 @@ import z from 'zod'
 const clientSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url({ message: 'NEXT_PUBLIC_SUPABASE_URL must be a URL' }),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1, 'NEXT_PUBLIC_SUPABASE_ANON_KEY is required'),
+  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
   NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
   VERCEL_URL: z.string().optional(),
 })
@@ -21,6 +22,12 @@ const serverSchema = z.object({
   CORE_API_KEY: z.string().optional(),
   CONTACT_EMAIL: z.string().email().optional(),
   SEMANTIC_API_KEY: z.string().optional(),
+  // Polar billing
+  POLAR_ACCESS_TOKEN: z.string().optional(),
+  POLAR_WEBHOOK_SECRET: z.string().optional(),
+  POLAR_PRODUCT_STARTER: z.string().optional(),
+  POLAR_PRODUCT_RESEARCHER: z.string().optional(),
+  POLAR_PRODUCT_INSTITUTION: z.string().optional(),
 })
 
 function parseEnv<T extends z.ZodTypeAny>(schema: T) {
@@ -38,6 +45,45 @@ function parseEnv<T extends z.ZodTypeAny>(schema: T) {
 export const clientEnv = parseEnv(clientSchema)
 export const serverEnv = parseEnv(serverSchema)
 
+/**
+ * Validate required environment variables at startup
+ * Call this in server startup or middleware to fail fast
+ */
+export function validateProductionEnv(): { valid: boolean; errors: string[] } {
+  const errors: string[] = []
+  
+  // Always required
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    errors.push('NEXT_PUBLIC_SUPABASE_URL is required')
+  }
+  if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    errors.push('NEXT_PUBLIC_SUPABASE_ANON_KEY is required')
+  }
+  
+  // Required in production
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_SITE_URL) {
+      errors.push('NEXT_PUBLIC_APP_URL or NEXT_PUBLIC_SITE_URL is required in production')
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      errors.push('SUPABASE_SERVICE_ROLE_KEY is required in production')
+    }
+    if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+      errors.push('At least one AI provider API key is required (OPENAI_API_KEY or ANTHROPIC_API_KEY)')
+    }
+  }
+  
+  // Warn about billing if configured partially
+  const polarVars = ['POLAR_ACCESS_TOKEN', 'POLAR_WEBHOOK_SECRET']
+  const hasSomePolar = polarVars.some(v => process.env[v])
+  const hasAllPolar = polarVars.every(v => process.env[v])
+  if (hasSomePolar && !hasAllPolar) {
+    errors.push('Polar billing is partially configured. Set all POLAR_* variables or none.')
+  }
+  
+  return { valid: errors.length === 0, errors }
+}
+
 // Build an absolute URL for server contexts, preferring request headers
 export function getAbsoluteUrlFromHeaders(h: Headers | null | undefined, path = '/') {
   const inputPath = path.startsWith('/') ? path : `/${path}`
@@ -48,9 +94,14 @@ export function getAbsoluteUrlFromHeaders(h: Headers | null | undefined, path = 
     return `${proto}://${host}${inputPath}`
   }
 
-  const base = clientEnv.NEXT_PUBLIC_SITE_URL
+  const base = clientEnv.NEXT_PUBLIC_APP_URL
+    || clientEnv.NEXT_PUBLIC_SITE_URL
     || (clientEnv.VERCEL_URL ? `https://${clientEnv.VERCEL_URL}` : undefined)
-    || 'http://localhost:3000'
+    || (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : undefined)
+  
+  if (!base) {
+    throw new Error('NEXT_PUBLIC_APP_URL or NEXT_PUBLIC_SITE_URL must be set in production')
+  }
 
   return new URL(inputPath, base).toString()
 }
