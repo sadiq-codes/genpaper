@@ -13,25 +13,12 @@ import { Checkout } from '@polar-sh/nextjs'
  * Example: /api/billing/checkout?products=xxx&customerEmail=user@example.com
  */
 
-function getAppUrl(): string {
-  const url = process.env.NEXT_PUBLIC_APP_URL
-  if (!url && process.env.NODE_ENV === 'production') {
-    throw new Error('NEXT_PUBLIC_APP_URL is required in production')
-  }
-  return url || 'http://localhost:3000'
-}
-
-function getPolarAccessToken(): string {
-  const token = process.env.POLAR_ACCESS_TOKEN
-  if (!token) {
-    throw new Error('POLAR_ACCESS_TOKEN is required for billing')
-  }
-  return token
-}
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+const polarToken = process.env.POLAR_ACCESS_TOKEN || ''
 
 export const GET = Checkout({
-  accessToken: getPolarAccessToken(),
+  accessToken: polarToken,
   // Note: Query params must come before hash fragment for proper parsing
-  successUrl: `${getAppUrl()}/settings?checkout=success#billing`,
+  successUrl: `${appUrl}/settings?checkout=success#billing`,
   server: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox',
 })
