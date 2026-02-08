@@ -61,7 +61,6 @@ function generateSafeToolId(messageId: string, toolName: string, args: Record<st
  * Argument names match the actual tool schemas in document-tools.ts:
  * - insertContent: content, afterBlockId, afterPhrase, location
  * - replaceBlock: blockId, section, searchPhrase, newContent
- * - replaceInSection: section, searchPhrase, newContent
  * - rewriteSection: section, newContent, reason
  * - deleteContent: blockId, section, searchPhrase, reason
  */
@@ -82,11 +81,6 @@ function getToolSummary(toolName: string, args: Record<string, unknown>, accepte
     case 'replaceBlock': {
       const target = args.searchPhrase || args.blockId || args.section || 'block'
       return `${action} replacement of "${preview(target)}"`
-    }
-    case 'replaceInSection': {
-      const section = args.section || 'section'
-      const phrase = args.searchPhrase
-      return `${action} replacement in ${section}${phrase ? `: "${preview(phrase)}"` : ''}`
     }
     case 'rewriteSection': {
       const section = args.section || 'section'
@@ -753,15 +747,15 @@ export function useEditorChat({
       // Skip if already executed
       if (executedTools.current.has(toolId)) continue
       
-      // DEDUPLICATION: Create a signature based on tool name and key args
-      // This catches cases where AI calls the same tool twice with identical intent
+      // DEDUPLICATION: Create a signature based on tool name and content/intent
+      // Intentionally EXCLUDES blockId so that identical replacements targeting
+      // different blocks (same searchPhrase + same newContent) are caught as duplicates
       const argsSignature = JSON.stringify({
         toolName,
-        // Use key identifying args (content/section/location)
         content: args.content ? String(args.content).slice(0, 100) : undefined,
+        newContent: args.newContent ? String(args.newContent).slice(0, 100) : undefined,
         section: args.section,
         location: args.location,
-        blockId: args.blockId || args.afterBlockId,
         searchPhrase: args.searchPhrase ? String(args.searchPhrase).slice(0, 50) : undefined,
       })
       
@@ -774,13 +768,11 @@ export function useEditorChat({
       // Also check if a very similar tool is already pending
       const isDuplicateOfPending = pendingToolsRef.current.some(existing => {
         if (existing.toolName !== toolName) return false
-        // Check for same target location
         const existingArgs = existing.args
-        return (
-          existingArgs.section === args.section &&
-          existingArgs.location === args.location &&
-          (existingArgs.blockId || existingArgs.afterBlockId) === (args.blockId || args.afterBlockId)
-        )
+        // Same search target + same replacement = duplicate
+        const sameSearch = existingArgs.searchPhrase === args.searchPhrase
+        const sameContent = (existingArgs.newContent || existingArgs.content) === (args.newContent || args.content)
+        return sameSearch && sameContent
       })
       
       if (isDuplicateOfPending) {
@@ -878,8 +870,6 @@ export function useEditorChat({
         return `Delete ${getTarget()}${args.reason ? `\nReason: ${args.reason}` : ''}`
       case 'replaceBlock':
         return `Replace ${getTarget()}:\nNew content: "${(args.newContent as string)?.slice(0, 150)}..."`
-      case 'replaceInSection':
-        return `Replace in "${args.section}":\nFind: "${(args.searchPhrase as string)?.slice(0, 80)}..."\nReplace with: "${(args.newContent as string)?.slice(0, 80)}..."`
       case 'moveBlock':
         return `Move ${getTarget()} to ${args.targetLocation}${args.reason ? `\nReason: ${args.reason}` : ''}`
       case 'mergeBlocks':

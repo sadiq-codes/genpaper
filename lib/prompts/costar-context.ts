@@ -271,7 +271,7 @@ export function buildChatContext(params: {
     papersContext,
     ragContext,
     mentionedPapersContext,
-    maxContentLength = 3000,
+    maxContentLength = 6000, // ~1.5-2 pages of context
   } = params
   
   const base = buildBaseContext(topic, paperType, currentSection, documentContent)

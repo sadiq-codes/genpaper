@@ -319,9 +319,8 @@ function dispatchTool(
     case 'insertContent':
       return executeInsertContent(editor, args, papers, projectId)
     case 'replaceBlock':
+    case 'replaceInSection': // Legacy fallback — routes to replaceBlock
       return executeReplaceBlock(editor, args, papers, projectId)
-    case 'replaceInSection':
-      return executeReplaceInSection(editor, args, papers, projectId)
     case 'rewriteSection':
       return executeRewriteSection(editor, args, papers, projectId)
     case 'deleteContent':
@@ -676,6 +675,12 @@ async function saveCitationInstancesToDatabase(
   
   // All retries failed - queue for later or log
   console.error(`[ToolExecutor] Failed to save citation instances after ${maxRetries} attempts:`, lastError)
+  
+  // Notify user of failure
+  toast.error('Failed to save citation data', {
+    description: 'Your citations are preserved in the document but metadata may be incomplete.',
+    duration: 5000,
+  })
   
   // Store failed instances in localStorage for recovery on next page load
   try {

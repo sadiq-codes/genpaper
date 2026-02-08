@@ -208,7 +208,6 @@ interface ChatTabProps {
 function ToolCallBadge({ toolName }: { toolName: string }) {
   const toolLabels: Record<string, string> = {
     insertContent: 'Insert',
-    replaceInSection: 'Replace',
     rewriteSection: 'Rewrite',
     deleteContent: 'Delete',
     addCitation: 'Cite',
@@ -421,6 +420,18 @@ export function ChatTab({
   const lastMessage = messages[messages.length - 1]
   const lastMessageContent = lastMessage ? getMessageText(lastMessage) : ''
   
+  // Scroll to bottom on mount (when chat panel is opened)
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (scrollAreaRef.current) {
+        const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight
+        }
+      }
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Throttled auto-scroll using requestAnimationFrame
   // Scrolls when: message count changes, loading starts, OR streaming content grows
   useEffect(() => {

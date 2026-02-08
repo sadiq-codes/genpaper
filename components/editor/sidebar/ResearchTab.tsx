@@ -83,7 +83,7 @@ function formatMeta(authors: string[] | undefined, year?: number, journal?: stri
 
 function SourceIcon({ source }: { source?: 'upload' | 'search' }) {
   const Icon = source === 'upload' ? Upload : Search
-  const label = source === 'upload' ? 'Uploaded PDF' : 'From search'
+  const label = source === 'upload' ? 'Uploaded' : 'From Search'
   
   return (
     <TooltipProvider delayDuration={400}>

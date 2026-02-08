@@ -133,12 +133,9 @@ export function useBackgroundPaperSearch({
     // Mark as searched to prevent re-runs
     hasSearchedRef.current = true
     
-    // Delay slightly to allow UI to settle
-    const timer = setTimeout(() => {
-      searchAndAddPapers()
-    }, 1500)
-    
-    return () => clearTimeout(timer)
+    // Start search immediately — autocomplete works without papers (Tier 1)
+    // so no need to delay; faster search = faster upgrade to Tier 2/3
+    searchAndAddPapers()
   }, [enabled, projectId, topic, searchAndAddPapers])
 
   return {

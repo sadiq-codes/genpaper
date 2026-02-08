@@ -113,7 +113,7 @@ export function EditorSidebar({
             )}
           >
             <FlaskConical className="h-4 w-4" />
-            <span>Research</span>
+            <span>Papers</span>
           </button>
         </div>
         

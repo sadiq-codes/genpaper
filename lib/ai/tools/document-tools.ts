@@ -82,10 +82,12 @@ Examples:
  * Replace content - supports both block-level and text-level replacement.
  */
 export const replaceBlock = tool({
-  description: `Replace content in the document.
+  description: `Replace content in the document. Only replaces the FIRST match found.
 
 For ENTIRE BLOCK replacement: Use blockId alone
 For PARTIAL replacement (specific text): Use searchPhrase (with optional blockId to scope)
+
+⚠️ IMPORTANT: This tool replaces only ONE occurrence. Do NOT call replaceBlock multiple times for the same text. If the same text appears in multiple places and all need changing, use searchAndReplace instead.
 
 CITATIONS: If newContent has [1], [2], [3] markers, include citations array.
 PRESERVE existing [@...] markers when editing - they are existing citations.
@@ -103,22 +105,6 @@ Examples:
     section: z.string().optional().describe('Section name to scope the search'),
     searchPhrase: z.string().optional().describe('Specific text to find and replace'),
     newContent: z.string().describe('The replacement content (use [1], [2], [3] for new citations)'),
-    citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker'),
-  }),
-})
-
-/**
- * Replace content in a specific section (legacy - kept for compatibility).
- */
-export const replaceInSection = tool({
-  description: `Replace specific text within a section. Use searchPhrase to find and replace.
-
-This always does TEXT-LEVEL replacement (not block-level).
-If newContent has [1], [2], [3] markers, include citations array.`,
-  inputSchema: z.object({
-    section: z.string().describe('Section name (e.g., "Introduction", "Methods")'),
-    searchPhrase: z.string().describe('The specific text to find and replace'),
-    newContent: z.string().describe('The replacement text (use [1], [2], [3] for citations)'),
     citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker'),
   }),
 })
@@ -143,10 +129,12 @@ If newContent has [1], [2], [3] markers, include citations array.`,
  * Delete content - supports both block-level and text-level deletion.
  */
 export const deleteContent = tool({
-  description: `Delete content from the document.
+  description: `Delete content from the document. Only deletes the FIRST match found.
 
 For ENTIRE BLOCK deletion: Use blockId alone
 For PARTIAL deletion (sentence/phrase): Use searchPhrase (with optional blockId to scope)
+
+⚠️ Do NOT call deleteContent multiple times for the same text. If the same text appears in multiple places, use searchAndReplace with an empty replaceWith string instead.
 
 Examples:
 - Delete whole paragraph: { blockId: "par_abc123", reason: "..." }
@@ -232,7 +220,7 @@ Examples:
  * Add a comment to the document.
  */
 export const addComment = tool({
-  description: `Add a comment without modifying text.
+  description: `Add a comment without modifying text. Shows as a temporary notification to the user (not a persistent annotation).
 
 Attach to specific content using blockId or nearPhrase.`,
   inputSchema: z.object({
@@ -384,7 +372,6 @@ Examples:
 export const documentTools = {
   insertContent,
   replaceBlock,
-  replaceInSection,
   rewriteSection,
   deleteContent,
   addCitation: addCitationTool,
@@ -405,7 +392,6 @@ export const documentTools = {
 export const toolConfirmationLevels: Record<string, ToolConfirmationLevel> = {
   insertContent: 'preview',  // Show ghost preview before inserting
   replaceBlock: 'preview',
-  replaceInSection: 'preview',
   rewriteSection: 'confirm',
   deleteContent: 'confirm',
   addCitation: 'none',
@@ -503,23 +489,6 @@ export function validateToolCall(
       const replaceCitationWarning = checkCitationFormat(args.newContent as string, citations)
       if (replaceCitationWarning) {
         console.warn(`[validateToolCall] ⚠️ replaceBlock: ${replaceCitationWarning}`)
-      }
-      break
-      
-    case 'replaceInSection':
-      if (!args.section || typeof args.section !== 'string') {
-        return { valid: false, error: 'replaceInSection requires section name' }
-      }
-      if (!args.searchPhrase || typeof args.searchPhrase !== 'string') {
-        return { valid: false, error: 'replaceInSection requires searchPhrase' }
-      }
-      if (!args.newContent || typeof args.newContent !== 'string') {
-        return { valid: false, error: 'replaceInSection requires newContent' }
-      }
-      // Check citation format
-      const replaceInSectionWarning = checkCitationFormat(args.newContent, citations)
-      if (replaceInSectionWarning) {
-        console.warn(`[validateToolCall] ⚠️ replaceInSection: ${replaceInSectionWarning}`)
       }
       break
       

@@ -182,7 +182,7 @@ export function getPreferredTools(
       return ['insertContent', 'replaceBlock']
     case 'edit':
       return hasSelection 
-        ? ['replaceBlock', 'replaceInSection'] 
+        ? ['replaceBlock'] 
         : ['replaceBlock', 'rewriteSection']
     case 'cite':
       // addCitation for single citations to existing text
@@ -237,11 +237,6 @@ export const DEFAULT_CHAT_TOOLS: ToolDefinition[] = [
     name: 'replaceBlock',
     description: 'Replace a block\'s content entirely (use blockId). Use [N] markers AND `citations` array for new citations. Preserve existing [@...] markers.',
     preferredFor: 'Rewriting paragraphs with citations, editing content',
-  },
-  {
-    name: 'replaceInSection',
-    description: 'Replace content using text search within a section. Include `citations` array if adding citations.',
-    preferredFor: 'When blockId is not available, use text matching',
   },
   {
     name: 'rewriteSection',
@@ -313,7 +308,7 @@ export function buildChatAUTOMATContext(params: {
     papersContext,
     ragContext,
     mentionedPapersContext,
-    maxContentLength = 3000,
+    maxContentLength = 6000, // ~1.5-2 pages of context
     tools = DEFAULT_CHAT_TOOLS,
     voiceProfileId,
     citationStyle = 'apa',

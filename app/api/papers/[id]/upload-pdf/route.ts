@@ -28,16 +28,22 @@ export async function POST(
       return NextResponse.json({ error: 'Paper ID is required' }, { status: 400 })
     }
 
-    // Verify paper exists
+    // Verify paper exists and user has access
     const serviceClient = createServiceClient()
     const { data: paper, error: paperError } = await serviceClient
       .from('papers')
-      .select('id, title, pdf_url')
+      .select('id, title, pdf_url, owner_id')
       .eq('id', paperId)
       .single()
 
     if (paperError || !paper) {
       return NextResponse.json({ error: 'Paper not found' }, { status: 404 })
+    }
+
+    // Check ownership - only allow upload if user owns the paper
+    // Public papers (owner_id = null) can only be modified by the system, not users
+    if (paper.owner_id !== user.id) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
     // Parse form data

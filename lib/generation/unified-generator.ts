@@ -416,10 +416,10 @@ export async function generateMultipleSectionsUnified(
     
     const streamHandler: ((event: StreamEvent) => void) | undefined = onStreamChunk
       ? (event) => {
-          if (event.type === 'sentence') {
-            sectionContent += event.data.text
-            onStreamChunk(sectionTitle, event.data.text, sectionContent)
-          }
+        if (event.type === 'sentence') {
+          sectionContent += event.data.text
+          onStreamChunk(sectionTitle, event.data.text, sectionContent)
+        }
         }
       : undefined
 

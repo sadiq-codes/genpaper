@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import {
@@ -33,6 +34,8 @@ interface EditorTopNavProps {
   onHistory?: () => void
   onSettings?: () => void
   projectTitle?: string
+  projectId?: string
+  onTitleChange?: (newTitle: string) => void
   saveStatus?: 'saved' | 'saving' | 'unsaved'
 }
 
@@ -42,8 +45,44 @@ export function EditorTopNav({
   onHistory,
   onSettings,
   projectTitle = 'Untitled Document',
+  projectId,
+  onTitleChange,
   saveStatus = 'saved',
 }: EditorTopNavProps) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [editValue, setEditValue] = useState(projectTitle)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Sync editValue when projectTitle changes externally
+  useEffect(() => {
+    if (!isEditing) setEditValue(projectTitle)
+  }, [projectTitle, isEditing])
+
+  const handleStartEditing = useCallback(() => {
+    if (!onTitleChange) return
+    setEditValue(projectTitle)
+    setIsEditing(true)
+    // Focus after render
+    requestAnimationFrame(() => inputRef.current?.select())
+  }, [projectTitle, onTitleChange])
+
+  const handleSave = useCallback(() => {
+    const trimmed = editValue.trim()
+    setIsEditing(false)
+    if (trimmed && trimmed !== projectTitle) {
+      onTitleChange?.(trimmed)
+    }
+  }, [editValue, projectTitle, onTitleChange])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSave()
+    } else if (e.key === 'Escape') {
+      setIsEditing(false)
+      setEditValue(projectTitle)
+    }
+  }, [handleSave, projectTitle])
   return (
     <header className="h-14 border-b border-border/50 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       {/* Left: Sidebar Trigger + Title */}
@@ -60,12 +99,28 @@ export function EditorTopNav({
 
         <div className="h-6 w-px bg-border mx-1" />
 
-        {/* Project Title */}
+        {/* Project Title — click to rename */}
         <div className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-muted-foreground hidden sm:block" />
-          <span className="font-medium text-sm text-foreground/80 truncate max-w-[150px] sm:max-w-[250px]">
-            {projectTitle}
-          </span>
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={handleSave}
+              onKeyDown={handleKeyDown}
+              className="font-medium text-sm text-foreground bg-transparent border-b border-primary/50 outline-none max-w-[150px] sm:max-w-[250px] px-0 py-0"
+              autoFocus
+            />
+          ) : (
+            <button
+              onClick={handleStartEditing}
+              className="font-medium text-sm text-foreground/80 truncate max-w-[150px] sm:max-w-[250px] hover:text-foreground transition-colors cursor-text text-left"
+              title="Click to rename"
+            >
+              {projectTitle}
+            </button>
+          )}
         </div>
 
         {/* Save Status Indicator */}

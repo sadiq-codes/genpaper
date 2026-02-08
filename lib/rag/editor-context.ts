@@ -78,6 +78,8 @@ export interface EditorRetrievalOptions {
   maxClaims?: number
   minChunkScore?: number
   minClaimScore?: number
+  /** Paper IDs to boost in search results (e.g. user library papers) */
+  boostedPaperIds?: string[]
 }
 
 export interface EditorContext extends BaseRetrievalResult {
@@ -113,23 +115,16 @@ export async function retrieveEditorContext(
 ): Promise<EditorContext> {
   const startTime = Date.now()
   const {
-    // INCREASED from 10 to 15: More chunks for better autocomplete context
     maxChunks = 15,
-    // INCREASED from 7 to 10: More claims for richer grounding
     maxClaims = 10,
-    // REDUCED from 0.3 to 0.2: Allow more papers through, especially for niche topics
     minChunkScore = 0.2,
-    // REDUCED from 0.3 to 0.2: Consistent with chunk threshold
-    minClaimScore = 0.2
+    minClaimScore = 0.2,
+    boostedPaperIds,
   } = options
 
-  // Early return if no papers
-  if (!paperIds || paperIds.length === 0) {
-    return {
-      ...createEmptyResult(),
-      claims: []
-    }
-  }
+  // When paperIds is empty, search ALL papers (global corpus)
+  // Pass null to match_paper_chunks to disable paper filtering
+  const globalSearch = !paperIds || paperIds.length === 0
 
   // Check RAG cache first
   const cacheKey = getRagCacheKey(query, paperIds, options)
@@ -150,18 +145,19 @@ export async function retrieveEditorContext(
   // Run chunk and claim searches in parallel
   const searchStartTime = Date.now()
   const [chunksResult, claimsResult] = await Promise.all([
-    // Search paper chunks
+    // Search paper chunks (null paper_ids = search all papers)
     supabase.rpc('match_paper_chunks', {
       query_embedding: queryEmbedding,
       match_count: maxChunks * 2,
       min_score: minChunkScore,
-      paper_ids: paperIds
+      paper_ids: globalSearch ? null : paperIds,
+      boosted_paper_ids: boostedPaperIds?.length ? boostedPaperIds : null,
     }),
     // Search paper claims (skip if maxClaims is 0)
     maxClaims > 0 
       ? supabase.rpc('match_paper_claims', {
           query_embedding: queryEmbedding,
-          paper_ids: paperIds,
+          paper_ids: globalSearch ? null : paperIds,
           match_count: maxClaims * 2
         })
       : Promise.resolve({ data: [], error: null })

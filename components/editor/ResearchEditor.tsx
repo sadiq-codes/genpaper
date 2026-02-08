@@ -35,7 +35,6 @@ import {
   useEditorState,
   usePaperManagement,
   useEditorChat,
-  useBackgroundPaperSearch,
 } from "./hooks"
 import { useResizablePanel } from "./hooks/useResizablePanel"
 import { usePaperProcessingStatus } from "./hooks/usePaperProcessingStatus"
@@ -82,7 +81,28 @@ export function ResearchEditor({
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
+  const [currentTitle, setCurrentTitle] = useState(projectTitle)
   const router = useRouter()
+
+  // Rename project title (optimistic update + persist to API)
+  const handleTitleChange = useCallback(async (newTitle: string) => {
+    if (!projectId) return
+    setCurrentTitle(newTitle)
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: newTitle }),
+      })
+      if (!res.ok) {
+        setCurrentTitle(projectTitle)
+        toast.error('Failed to rename project')
+      }
+    } catch {
+      setCurrentTitle(projectTitle)
+      toast.error('Failed to rename project')
+    }
+  }, [projectId, projectTitle])
   
   // Resizable sidebar
   const { width: sidebarWidth, isDragging, handleProps } = useResizablePanel({
@@ -129,18 +149,6 @@ export function ResearchEditor({
       prev.map(p => (p.id === paperId ? { ...p, ...updates } : p))
     )
   }, [setPapers])
-
-  // Background paper search for write mode
-  // Note: isSearching could be used for sidebar loading indicator in future
-  const { isSearching: _isSearchingPapers } = useBackgroundPaperSearch({
-    projectId,
-    topic: projectTopic || projectTitle,
-    enabled: isWriteMode && papers.length === 0,
-    maxPapers: 10,
-    onPapersFound: (foundPapers) => {
-      setPapers(prev => [...prev, ...foundPapers])
-    },
-  })
 
   // Paper processing status tracking
   // Polls for status updates when papers are being processed
@@ -498,7 +506,9 @@ export function ResearchEditor({
     <div className="h-screen w-full flex flex-col rounded-xl border border-border overflow-hidden bg-background">
       {/* Top Navigation */}
       <EditorTopNav
-        projectTitle={projectTitle}
+        projectTitle={currentTitle}
+        projectId={projectId}
+        onTitleChange={handleTitleChange}
         onExport={handleExport}
         onPublish={() => toast.info("Publish feature coming soon")}
         onHistory={() => toast.info("History feature coming soon")}

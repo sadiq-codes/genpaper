@@ -538,10 +538,12 @@ export default function LibraryDrawer({
       const data = await res.json()
 
       // Update the paper's pdfUrl in the cached library data
+      let cacheUpdated = false
       queryClient.setQueriesData(
         { queryKey: ['library', 'papers'] },
         (old: any) => {
           if (!old?.pages) return old
+          cacheUpdated = true
           return {
             ...old,
             pages: old.pages.map((page: SearchResult[]) =>
@@ -552,6 +554,11 @@ export default function LibraryDrawer({
           }
         }
       )
+
+      // If cache wasn't updated (unexpected structure), invalidate to force refetch
+      if (!cacheUpdated) {
+        queryClient.invalidateQueries({ queryKey: ['library', 'papers'] })
+      }
 
       toast.success('PDF uploaded', { id: toastId })
     } catch (error) {

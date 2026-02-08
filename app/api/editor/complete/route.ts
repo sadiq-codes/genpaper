@@ -16,7 +16,6 @@ import {
 import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 import { PromptService } from '@/lib/prompts/prompt-service'
 import { buildCompleteContext, formatPapersForContext } from '@/lib/prompts/costar-context'
-import { getUserLibraryPapers } from '@/lib/db/library'
 import { checkAndIncrementAutocompleteUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
 
 // Note: SuggestionType removed - the unified prompt now handles all cases
@@ -358,7 +357,7 @@ export async function POST(request: NextRequest) {
     // OPTIMIZATION: Fetch project and determine paper IDs in parallel when possible
     const projectFetchStart = Date.now()
     
-    // Start project fetch (include generation_config for voice profile)
+    // Start project fetch + library paper IDs fetch in parallel
     const projectPromise = supabase
       .from('research_projects')
       .select('id, topic, paper_type, generation_config')
@@ -366,47 +365,40 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .single()
     
+    // Fetch user's library paper IDs (lightweight — IDs only, max 50)
+    // Used to boost library papers in global search results
+    const libraryIdsPromise = supabase
+      .from('library_papers')
+      .select('paper_id')
+      .eq('user_id', user.id)
+      .limit(50)
+    
+    // Use project paper IDs if provided; otherwise search global corpus
     let effectivePaperIds = paperIds || []
-    let libraryFallbackUsed = false
     
     // FAST MODE: Skip RAG entirely when citations are disabled
-    // This avoids the expensive library fallback + relevance RAG pass
     if (skipRAG) {
       console.log('[Autocomplete] skipRAG=true - skipping RAG for fast completion')
       effectivePaperIds = []
     }
-    // If no paper IDs provided AND RAG not skipped, we need library fallback
+    // No project papers → search the global pre-indexed corpus (empty array = global search)
     else if (effectivePaperIds.length === 0) {
-      console.log('[Autocomplete] No project papers, falling back to user library')
-      libraryFallbackUsed = true
-      
-      // OPTIMIZATION: Fetch only 12 recent papers instead of 50
-      // The actual RAG retrieval (4 chunks) will filter to relevant content anyway
-      // This saves ~200-400ms by skipping the separate relevance check pass
-      const libraryStartTime = Date.now()
-      const libraryPapers = await getUserLibraryPapers(user.id, {}, 12, 0)
-      timings.libraryFetch = Date.now() - libraryStartTime
-      
-      if (libraryPapers.length === 0) {
-        return NextResponse.json({ 
-          error: 'No papers available',
-          message: 'Add papers to your library to enable AI-assisted writing.'
-        }, { status: 422 })
-      }
-      
-      // OPTIMIZATION: Skip the separate relevance check - just use recent papers directly
-      // The main RAG retrieval (4 chunks with 0.25 min score) handles relevance filtering
-      effectivePaperIds = libraryPapers.map(lp => lp.paper.id)
-      console.log(`[Autocomplete] Using ${effectivePaperIds.length} recent library papers (fast mode)`)
+      console.log('[Autocomplete] No project papers — using global corpus search')
     }
 
-    // Wait for project fetch (may already be done)
-    const { data: project, error: projectError } = await projectPromise
+    // Wait for project + library fetches (both started in parallel above)
+    const [{ data: project, error: projectError }, { data: libraryRows }] = await Promise.all([
+      projectPromise,
+      libraryIdsPromise,
+    ])
     timings.projectFetch = Date.now() - projectFetchStart
 
     if (projectError || !project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
+    
+    // Extract library paper IDs for search boosting
+    const boostedPaperIds = libraryRows?.map((r: { paper_id: string }) => r.paper_id) || []
     
     // Extract voice profile from generation config
     const generationConfig = (project as { generation_config?: { voiceProfileId?: string } | null }).generation_config
@@ -416,32 +408,33 @@ export async function POST(request: NextRequest) {
       console.log('[Autocomplete] Using project voice profile:', voiceProfileId)
     }
     
-    // OPTIMIZATION: Parallel RAG + citation style fetch
-    // OPTIMIZATION: Reduced chunks (4) and skip claims for autocomplete
+    // RAG + citation style fetch in parallel
+    // effectivePaperIds=[] triggers global corpus search in retrieveEditorContext
     const ragStartTime = Date.now()
     
-    // When skipRAG is true, don't retrieve any context - just fetch citation style
     let ragContext: Awaited<ReturnType<typeof retrieveEditorContext>>
     let citationStyle: CitationStyle | null = null
+    let usesFastModel = false
     
     if (skipRAG) {
-      // Fast mode: no RAG, no citation style fetch (nothing to cite)
+      // No RAG, no citation style fetch (citations disabled)
       ragContext = {
-        hasContent: true, // Pretend we have content so we don't error out
+        hasContent: true,
         chunks: [],
         claims: [],
         papers: new Map(),
       }
+      usesFastModel = true
       timings.rag = Date.now() - ragStartTime
-      console.log('[Autocomplete] RAG skipped - fast mode enabled')
+      console.log('[Autocomplete] RAG skipped — citations disabled')
     } else {
-      // Normal mode: retrieve context + citation style in parallel
       const [retrievedContext, style] = await Promise.all([
         retrieveEditorContext(queryText, effectivePaperIds, {
-          maxChunks: 4,   // Reduced from 8 - 4 chunks is enough for 1-2 sentences
-          maxClaims: 0,   // Skip claims for autocomplete - chunks have the evidence
+          maxChunks: 4,
+          maxClaims: 0,
           minChunkScore: 0.25,
-          minClaimScore: 0.25
+          minClaimScore: 0.25,
+          boostedPaperIds,
         }),
         getProjectCitationStyle(projectId, user.id) as Promise<CitationStyle>
       ])
@@ -449,11 +442,13 @@ export async function POST(request: NextRequest) {
       citationStyle = style
       timings.rag = Date.now() - ragStartTime
 
-      if (!ragContext.hasContent) {
-        return NextResponse.json({ 
-          error: 'No relevant content found',
-          message: 'The papers in your project don\'t have processed content yet. Try processing the papers first, or add papers with more relevant content.'
-        }, { status: 422 })
+      if (ragContext.hasContent) {
+        console.log(`[Autocomplete] RAG context: ${ragContext.chunks.length} chunks, ${ragContext.papers.size} papers`)
+      } else {
+        // No chunks found — use fast model for topic-only completion
+        usesFastModel = true
+        ragContext = { hasContent: true, chunks: [], claims: [], papers: new Map() }
+        console.log('[Autocomplete] No RAG chunks found — topic-only mode')
       }
     }
     
@@ -461,7 +456,7 @@ export async function POST(request: NextRequest) {
     console.log('[Autocomplete] Timing breakdown (ms):', {
       ...timings,
       skipRAG: !!skipRAG,
-      libraryFallback: libraryFallbackUsed,
+      globalSearch: effectivePaperIds.length === 0,
       chunksRetrieved: ragContext.chunks.length,
       papersUsed: ragContext.papers.size
     })
@@ -509,20 +504,19 @@ export async function POST(request: NextRequest) {
     const llmStartTime = Date.now()
     
     try {
-      // Use ultra-fast model when RAG is skipped (no citations mode)
-      // This provides much lower latency for simple prose completions
-      const model = skipRAG 
+      // Fast model when no RAG context (no citations to generate)
+      // Standard model when RAG context available (grounded completions)
+      const model = usesFastModel
         ? getFastAutocompleteLanguageModel() 
         : getAutocompleteLanguageModel()
       
-      console.log('[Autocomplete] Using model:', skipRAG ? 'fast (gpt-4o-mini)' : 'standard')
+      console.log(`[Autocomplete] model: ${usesFastModel ? 'fast' : 'standard'}, chunks: ${ragContext.chunks.length}`)
       
       const result = streamText({
         model,
         system,
         prompt: userPrompt,
-        // Reduced tokens when RAG skipped since no citations needed
-        maxOutputTokens: skipRAG ? 150 : 250,
+        maxOutputTokens: usesFastModel ? 150 : 250,
         temperature: 0.5,
         abortSignal: abortController.signal,
       })
@@ -794,6 +788,7 @@ export async function POST(request: NextRequest) {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
+          'X-Global-Search': effectivePaperIds.length === 0 ? '1' : '0',
         },
       })
     } catch (err) {

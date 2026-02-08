@@ -5,14 +5,12 @@
  * - useEditorState: Content, auto-save, persistence
  * - usePaperManagement: Add/remove papers
  * - useEditorChat: AI chat with streaming + tools
- * - useBackgroundPaperSearch: Background paper search for write mode
  */
 
 export { useEditorState } from './useEditorState'
 export { usePaperManagement } from './usePaperManagement'
 export { useEditorChat } from './useEditorChat'
 export type { PendingToolCall, UseEditorChatReturn, SendMessageOptions } from './useEditorChat'
-export { useBackgroundPaperSearch } from './useBackgroundPaperSearch'
 export { usePaperSearch, searchPapers } from './usePaperSearch'
 export { useChatImageUpload } from './useChatImageUpload'
 

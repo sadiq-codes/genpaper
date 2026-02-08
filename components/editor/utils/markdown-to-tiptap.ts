@@ -18,7 +18,10 @@ import type { ProjectPaper } from '../types'
 // Group 1 = paperId, Group 2 = instanceId (optional)
 // NOTE: instanceId is not always a UUID; older content may use base36 suffixes.
 // We accept any non-']' characters after '#'.
-const CITATION_PATTERN = /\[@([a-f0-9-]{36})(?:#([^\]]+))?\]/gi
+// 
+// Using non-global pattern for .test() to avoid regex state bugs.
+// Functions that need iteration (like splitTextWithCitations) create local regexes.
+const CITATION_PATTERN_TEST = /\[@([a-f0-9-]{36})(?:#([^\]]+))?\]/i
 
 interface PaperLookup {
   [paperId: string]: ProjectPaper
@@ -212,9 +215,8 @@ function phrasingToTipTap(
   switch (node.type) {
     case 'text': {
       const textNode = node as Text
-      // Check for citation markers in text
-      CITATION_PATTERN.lastIndex = 0
-      if (CITATION_PATTERN.test(textNode.value)) {
+      // Check for citation markers in text (use non-global pattern to avoid state bugs)
+      if (CITATION_PATTERN_TEST.test(textNode.value)) {
         return splitTextWithCitations(textNode.value, marks, ctx)
       }
       return [{
@@ -578,8 +580,7 @@ export function markdownToTipTap(
  * Check if text contains citation markers
  */
 export function hasCitationMarkers(text: string): boolean {
-  CITATION_PATTERN.lastIndex = 0
-  return CITATION_PATTERN.test(text)
+  return CITATION_PATTERN_TEST.test(text)
 }
 
 /**

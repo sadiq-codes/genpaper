@@ -42,6 +42,7 @@ import type { InstanceQuotesMap } from '../utils/markdown-to-tiptap'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
 import { isNumericStyle, clearCaches as clearCitationCaches, resolveStyleId, isStyleAvailable, loadStyle } from '@/lib/citations/local-formatter'
+import { toast } from 'sonner'
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
@@ -643,6 +644,10 @@ export function DocumentEditor({
           })
         } catch (error) {
           console.error('[DocumentEditor] Failed to save citation quote:', error)
+          toast.error('Failed to save citation metadata', {
+            description: 'The citation is in your document but hover preview may be unavailable.',
+            duration: 4000,
+          })
         }
       }
     }

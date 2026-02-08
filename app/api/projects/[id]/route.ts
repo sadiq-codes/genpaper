@@ -105,7 +105,12 @@ export async function GET(
   }
 }
 
-const PatchBody = z.object({ content: z.string().min(0) })
+const PatchBody = z.object({
+  content: z.string().min(0).optional(),
+  topic: z.string().min(1).max(500).optional(),
+}).refine(data => data.content !== undefined || data.topic !== undefined, {
+  message: 'At least one of content or topic is required',
+})
 
 export async function PATCH(
   request: NextRequest,
@@ -135,10 +140,14 @@ export async function PATCH(
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
 
-    // Update only content; do not change status here
+    // Build update payload (only include provided fields)
+    const updateData: Record<string, string> = {}
+    if (parsed.data.content !== undefined) updateData.content = parsed.data.content
+    if (parsed.data.topic !== undefined) updateData.topic = parsed.data.topic
+
     const { error } = await supabase
       .from('research_projects')
-      .update({ content: parsed.data.content })
+      .update(updateData)
       .eq('id', projectId)
 
     if (error) {

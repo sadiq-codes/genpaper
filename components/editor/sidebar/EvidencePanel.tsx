@@ -69,7 +69,7 @@ export const EvidencePanel = memo(function EvidencePanel({
           "h-3 w-3 transition-transform",
           !isExpanded && "-rotate-90"
         )} />
-        <span>{paperCount} source{paperCount !== 1 ? 's' : ''} used</span>
+        <span>{paperCount} paper{paperCount !== 1 ? 's' : ''} referenced</span>
       </button>
 
       {isExpanded && (
