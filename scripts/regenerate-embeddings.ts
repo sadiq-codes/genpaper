@@ -1,180 +1,186 @@
 #!/usr/bin/env tsx
 
 /**
- * Regenerate ALL embeddings with correct 384 dimensions
+ * Regenerate ALL embeddings with correct 1024 dimensions
  * 
- * This fixes the corrupted embeddings caused by dimension truncation during migration
+ * Uses OpenAI text-embedding-3-small with dimensions=1024
+ * Run after the 20260208 migration to regenerate embeddings
  */
 
-import { getSB } from '../lib/supabase/server'
+import { createClient } from '@supabase/supabase-js'
 import { generateEmbeddings } from '../lib/utils/embedding'
 
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
 async function main() {
-  console.log('🔄 REGENERATING ALL EMBEDDINGS (384 dimensions)')
+  console.log('🔄 REGENERATING ALL EMBEDDINGS (1024 dimensions)')
+  console.log('   Using OpenAI text-embedding-3-small')
   console.log('='.repeat(60))
-  
-  const supabase = await getSB()
   
   // 1. Check current state
   console.log('\n📊 1. CHECKING CURRENT STATE')
   console.log('-'.repeat(40))
   
-  const { data: paperStats } = await supabase
+  const { count: totalPapers } = await supabase
     .from('papers')
-    .select('id', { count: 'exact' })
+    .select('*', { count: 'exact', head: true })
   
-  const { data: chunkStats } = await supabase
+  const { count: totalChunks } = await supabase
     .from('paper_chunks')  
-    .select('id', { count: 'exact' })
-    
-  console.log(`📄 Total papers: ${paperStats?.length || 0}`)
-  console.log(`📄 Total chunks: ${chunkStats?.length || 0}`)
-  
-  // 2. Note about clearing embeddings
-  console.log('\n🧹 2. EMBEDDINGS SHOULD BE CLEARED VIA SQL')
-  console.log('-'.repeat(40))
-  console.log('⚠️  Run the fix-embeddings-with-constraints.sql script first!')
-  console.log('    This handles NOT NULL constraints properly.')
-  console.log('    Then run this script to regenerate embeddings.')
-  
-  // Check if embeddings are already cleared
-  const { data: existingEmbeddings } = await supabase
+    .select('*', { count: 'exact', head: true })
+
+  const { count: papersNeedingEmbeddings } = await supabase
     .from('papers')
-    .select('id', { count: 'exact' })
-    .not('embedding', 'is', null)
-    
-  if (existingEmbeddings && existingEmbeddings.length > 0) {
-    console.log(`❌ Found ${existingEmbeddings.length} papers with existing embeddings`)
-    console.log('   Please run fix-embeddings-with-constraints.sql first to clear them.')
-    return
-  }
-  
-  console.log('✅ Embeddings are cleared, proceeding with regeneration')
-  
-  // 3. Regenerate paper embeddings
-  console.log('\n🧠 3. REGENERATING PAPER EMBEDDINGS')
-  console.log('-'.repeat(40))
-  
-  const { data: papers, error: papersError } = await supabase
-    .from('papers')
-    .select('id, title, abstract')
+    .select('*', { count: 'exact', head: true })
     .is('embedding', null)
-    .limit(100) // Process in larger batches
+
+  const { count: chunksNeedingEmbeddings } = await supabase
+    .from('paper_chunks')
+    .select('*', { count: 'exact', head: true })
+    .is('embedding', null)
+    
+  console.log(`📄 Total papers: ${totalPapers}`)
+  console.log(`📄 Papers needing embeddings: ${papersNeedingEmbeddings}`)
+  console.log(`📝 Total chunks: ${totalChunks}`)
+  console.log(`📝 Chunks needing embeddings: ${chunksNeedingEmbeddings}`)
   
-  if (papersError) {
-    console.log(`❌ Error fetching papers: ${papersError.message}`)
+  if (papersNeedingEmbeddings === 0 && chunksNeedingEmbeddings === 0) {
+    console.log('\n✅ All embeddings are already generated!')
     return
   }
   
-  if (!papers || papers.length === 0) {
-    console.log('✅ No papers need embedding regeneration')
-  } else {
-    console.log(`📄 Processing ${papers.length} papers...`)
+  // 2. Regenerate paper embeddings
+  console.log('\n🧠 2. REGENERATING PAPER EMBEDDINGS')
+  console.log('-'.repeat(40))
+  
+  const BATCH_SIZE = 50
+  let processed = 0
+  let hasMore = true
+  
+  while (hasMore) {
+    const { data: papers, error: papersError } = await supabase
+      .from('papers')
+      .select('id, title, abstract')
+      .is('embedding', null)
+      .limit(BATCH_SIZE)
     
-    for (let i = 0; i < papers.length; i++) {
-      const paper = papers[i]
-      const text = `${paper.title}\n${paper.abstract || ''}`
+    if (papersError) {
+      console.log(`❌ Error fetching papers: ${papersError.message}`)
+      return
+    }
+    
+    if (!papers || papers.length === 0) {
+      hasMore = false
+      break
+    }
+    
+    // Generate embeddings in batch
+    const texts = papers.map(p => `${p.title}\n${p.abstract || ''}`)
+    
+    try {
+      const embeddings = await generateEmbeddings(texts)
       
-      try {
-        const [embedding] = await generateEmbeddings([text])
-        
+      // Update each paper
+      for (let i = 0; i < papers.length; i++) {
         const { error: updateError } = await supabase
           .from('papers')
-          .update({ embedding })
-          .eq('id', paper.id)
+          .update({ embedding: embeddings[i] })
+          .eq('id', papers[i].id)
         
         if (updateError) {
-          console.log(`❌ Failed to update paper ${paper.id}: ${updateError.message}`)
-        } else {
-          const progress = Math.round(((i + 1) / papers.length) * 100)
-          console.log(`   ${i + 1}/${papers.length} (${progress}%) - ${paper.title?.substring(0, 50)}...`)
+          console.log(`❌ Failed to update paper ${papers[i].id}: ${updateError.message}`)
         }
-      } catch (error) {
-        console.log(`❌ Failed to generate embedding for ${paper.id}: ${error}`)
       }
-    }
-    
-    console.log('✅ Paper embeddings regenerated')
-  }
-  
-  // 4. Regenerate chunk embeddings  
-  console.log('\n📝 4. REGENERATING CHUNK EMBEDDINGS')
-  console.log('-'.repeat(40))
-  
-  const { data: chunks, error: chunksError } = await supabase
-    .from('paper_chunks')
-    .select('id, paper_id, content')
-    .is('embedding', null)
-    .limit(100) // Process in smaller batches for chunks
-  
-  if (chunksError) {
-    console.log(`❌ Error fetching chunks: ${chunksError.message}`)
-    return
-  }
-  
-  if (!chunks || chunks.length === 0) {
-    console.log('✅ No chunks need embedding regeneration')
-  } else {
-    console.log(`📝 Processing ${chunks.length} chunks...`)
-    
-    // Process chunks in batches of 10
-    const batchSize = 10
-    for (let i = 0; i < chunks.length; i += batchSize) {
-      const batch = chunks.slice(i, i + batchSize)
-      const contents = batch.map(chunk => chunk.content)
       
-      try {
-        const embeddings = await generateEmbeddings(contents)
-        
-        // Update each chunk in the batch
-        for (let j = 0; j < batch.length; j++) {
-          const chunk = batch[j]
-          const embedding = embeddings[j]
-          
-          const { error: updateError } = await supabase
-            .from('paper_chunks')
-            .update({ embedding })
-            .eq('id', chunk.id)
-          
-          if (updateError) {
-            console.log(`❌ Failed to update chunk ${chunk.id}: ${updateError.message}`)
-          }
-        }
-        
-        const progress = Math.round(((i + batch.length) / chunks.length) * 100)
-        console.log(`   ${Math.min(i + batchSize, chunks.length)}/${chunks.length} (${progress}%) chunks processed`)
-        
-      } catch (error) {
-        console.log(`❌ Failed to generate embeddings for batch: ${error}`)
-      }
+      processed += papers.length
+      console.log(`   ${processed}/${papersNeedingEmbeddings} papers (${Math.round(processed/papersNeedingEmbeddings!*100)}%)`)
+      
+    } catch (error) {
+      console.log(`❌ Batch failed: ${error}`)
+      // Small delay on error
+      await new Promise(r => setTimeout(r, 2000))
     }
     
-    console.log('✅ Chunk embeddings regenerated')
+    // Small delay between batches to avoid rate limits
+    await new Promise(r => setTimeout(r, 500))
   }
   
-  // 5. Verify results
-  console.log('\n✅ 5. VERIFICATION')
+  console.log(`✅ Paper embeddings complete: ${processed} papers`)
+  
+  // 3. Regenerate chunk embeddings  
+  console.log('\n📝 3. REGENERATING CHUNK EMBEDDINGS')
   console.log('-'.repeat(40))
   
-  const { data: finalPaperStats } = await supabase
+  processed = 0
+  hasMore = true
+  
+  while (hasMore) {
+    const { data: chunks, error: chunksError } = await supabase
+      .from('paper_chunks')
+      .select('id, content')
+      .is('embedding', null)
+      .limit(BATCH_SIZE)
+    
+    if (chunksError) {
+      console.log(`❌ Error fetching chunks: ${chunksError.message}`)
+      return
+    }
+    
+    if (!chunks || chunks.length === 0) {
+      hasMore = false
+      break
+    }
+    
+    try {
+      const embeddings = await generateEmbeddings(chunks.map(c => c.content))
+      
+      // Update each chunk
+      for (let i = 0; i < chunks.length; i++) {
+        const { error: updateError } = await supabase
+          .from('paper_chunks')
+          .update({ embedding: embeddings[i] })
+          .eq('id', chunks[i].id)
+        
+        if (updateError) {
+          console.log(`❌ Failed to update chunk ${chunks[i].id}: ${updateError.message}`)
+        }
+      }
+      
+      processed += chunks.length
+      console.log(`   ${processed}/${chunksNeedingEmbeddings} chunks (${Math.round(processed/chunksNeedingEmbeddings!*100)}%)`)
+      
+    } catch (error) {
+      console.log(`❌ Batch failed: ${error}`)
+      await new Promise(r => setTimeout(r, 2000))
+    }
+    
+    await new Promise(r => setTimeout(r, 500))
+  }
+  
+  console.log(`✅ Chunk embeddings complete: ${processed} chunks`)
+  
+  // 4. Verify results
+  console.log('\n✅ 4. VERIFICATION')
+  console.log('-'.repeat(40))
+  
+  const { count: finalPapers } = await supabase
     .from('papers')
-    .select('id', { count: 'exact' })
+    .select('*', { count: 'exact', head: true })
     .not('embedding', 'is', null)
   
-  const { data: finalChunkStats } = await supabase
+  const { count: finalChunks } = await supabase
     .from('paper_chunks')
-    .select('id', { count: 'exact' })
+    .select('*', { count: 'exact', head: true })
     .not('embedding', 'is', null)
   
-  console.log(`📄 Papers with embeddings: ${finalPaperStats?.length || 0}`)
-  console.log(`📝 Chunks with embeddings: ${finalChunkStats?.length || 0}`)
+  console.log(`📄 Papers with embeddings: ${finalPapers}/${totalPapers}`)
+  console.log(`📝 Chunks with embeddings: ${finalChunks}/${totalChunks}`)
   
   console.log('\n🎉 EMBEDDING REGENERATION COMPLETE!')
-  console.log('Your vector search should now work properly with 384-dimension embeddings.')
-  console.log('\nNext steps:')
-  console.log('1. Run restore-constraints.sql to restore NOT NULL constraints')
-  console.log('2. Run test-embeddings.ts to verify functionality')
-  console.log('3. Test your chunk search - it should have much better recall now!')
+  console.log('Vector search now uses 1024-dimension OpenAI embeddings.')
 }
 
 main().catch(console.error)
