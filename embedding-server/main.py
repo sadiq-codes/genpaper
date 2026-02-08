@@ -1,8 +1,12 @@
 """
-Self-hosted embedding server using all-MiniLM-L6-v2.
+Self-hosted embedding server using BAAI/bge-large-en-v1.5.
 Exposes an OpenAI-compatible /v1/embeddings endpoint.
 
-Deploy on a Hetzner CX22 ($4.5/mo) or similar VPS.
+Model: BAAI/bge-large-en-v1.5 (1024 dimensions)
+- High quality English embeddings
+- State-of-the-art retrieval performance
+
+Deploy on Azure Container Instance or similar.
 Run: uvicorn main:app --host 0.0.0.0 --port 8787
 """
 
@@ -14,6 +18,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 
+# Model configuration
+MODEL_NAME = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
+EMBEDDING_DIM = 1024  # bge-large-en-v1.5 dimension
+
 # Load model at startup
 model = None
 
@@ -23,9 +31,10 @@ async def lifespan(app: FastAPI):
     global model
     from sentence_transformers import SentenceTransformer
 
-    print("Loading all-MiniLM-L6-v2...")
-    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-    print(f"Model loaded. Embedding dimension: {model.get_sentence_embedding_dimension()}")
+    print(f"Loading {MODEL_NAME}...")
+    model = SentenceTransformer(MODEL_NAME)
+    actual_dim = model.get_sentence_embedding_dimension()
+    print(f"Model loaded. Embedding dimension: {actual_dim}")
     yield
 
 
@@ -39,8 +48,8 @@ API_TOKEN = os.environ.get("EMBEDDING_API_TOKEN", "")
 
 class EmbeddingRequest(BaseModel):
     input: Union[str, list[str]]
-    model: str = "all-MiniLM-L6-v2"
-    dimensions: int | None = None  # ignored, always 384
+    model: str = "bge-large-en-v1.5"
+    dimensions: int | None = None  # ignored, always 1024
 
 
 class EmbeddingData(BaseModel):
@@ -57,7 +66,7 @@ class UsageInfo(BaseModel):
 class EmbeddingResponse(BaseModel):
     object: str = "list"
     data: list[EmbeddingData]
-    model: str = "all-MiniLM-L6-v2"
+    model: str = "bge-large-en-v1.5"
     usage: UsageInfo
 
 
@@ -82,6 +91,10 @@ async def create_embeddings(
     if len(texts) > 2048:
         raise HTTPException(status_code=400, detail="Max 2048 inputs per request")
 
+    # BGE models benefit from instruction prefix for retrieval
+    # Add "Represent this sentence for searching relevant passages: " for queries
+    # For documents/passages, no prefix needed
+    
     start = time.time()
     embeddings = model.encode(texts, normalize_embeddings=True)
     duration_ms = (time.time() - start) * 1000
@@ -95,11 +108,11 @@ async def create_embeddings(
 
     return EmbeddingResponse(
         data=data,
-        model="all-MiniLM-L6-v2",
+        model="bge-large-en-v1.5",
         usage=UsageInfo(prompt_tokens=sum(len(t.split()) for t in texts)),
     )
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": "all-MiniLM-L6-v2", "dimensions": 384}
+    return {"status": "ok", "model": MODEL_NAME, "dimensions": EMBEDDING_DIM}
