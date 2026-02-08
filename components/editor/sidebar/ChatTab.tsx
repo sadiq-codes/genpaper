@@ -192,10 +192,10 @@ interface ChatTabProps {
   // Papers for @ mentions
   papers?: ProjectPaper[]
   projectId?: string
-  // Tool support props (actions now handled in editor, these are for status only)
+  /** Insert a citation into the document editor from the @ mention dropdown */
+  onCitePaper?: (paper: ProjectPaper) => void
+  // Tool support props (actions handled in editor, this is for status display only)
   pendingTools?: PendingToolCall[]
-  onConfirmTool?: (toolId: string) => void
-  onRejectTool?: (toolId: string) => void
   onClearHistory?: () => void
   /** Stop the current AI generation */
   onStop?: () => void
@@ -405,6 +405,7 @@ export function ChatTab({
   error,
   papers = [],
   projectId,
+  onCitePaper,
   pendingTools = [],
   onClearHistory,
   onStop,
@@ -471,6 +472,13 @@ export function ChatTab({
       }
     }
   }, [messages.length, isLoading, lastMessageContent.length])
+
+  // Handle cite from @ mention dropdown — look up full paper and forward
+  const handleCitePaper = useCallback((mentioned: { id: string }) => {
+    if (!onCitePaper) return
+    const paper = papers.find(p => p.id === mentioned.id)
+    if (paper) onCitePaper(paper)
+  }, [onCitePaper, papers])
 
   // Handle send from RichChatInput
   const handleSend = useCallback((
@@ -572,6 +580,7 @@ export function ChatTab({
           disabled={isLoading}
           papers={papers}
           projectId={projectId}
+          onCitePaper={onCitePaper ? handleCitePaper : undefined}
           onImageUpload={uploadImage}
           isUploadingImage={isUploading}
         />

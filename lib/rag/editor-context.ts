@@ -1,17 +1,17 @@
 import 'server-only'
 import { LRUCache } from 'lru-cache'
 import { getSB } from '@/lib/supabase/server'
-import { getCachedQueryEmbedding, getEmbeddingsWithCache } from './embedding-cache'
+import { getEmbeddingsWithCache } from './embedding-cache'
 import { 
   fetchPaperMetadata, 
   cosineSimilarity,
   getFirstAuthorLastName,
-  createEmptyResult,
   formatChunksForPrompt,
   formatPapersForPrompt,
   type RetrievedChunk,
   type BaseRetrievalResult
 } from './base-retrieval'
+import { searchChunks as qdrantSearchChunks, isQdrantConfigured } from '@/lib/qdrant/client'
 
 /**
  * Editor Context Retrieval Service
@@ -116,10 +116,9 @@ export async function retrieveEditorContext(
   const startTime = Date.now()
   const {
     maxChunks = 15,
-    maxClaims = 10,
     minChunkScore = 0.2,
-    minClaimScore = 0.2,
     boostedPaperIds,
+    // maxClaims and minClaimScore are no longer used - claims search disabled (pgvector deprecated)
   } = options
 
   // When paperIds is empty, search ALL papers (global corpus)
@@ -144,69 +143,39 @@ export async function retrieveEditorContext(
 
   // Run chunk and claim searches in parallel
   const searchStartTime = Date.now()
-  const [chunksResult, claimsResult] = await Promise.all([
-    // Search paper chunks (null paper_ids = search all papers)
-    supabase.rpc('match_paper_chunks', {
-      query_embedding: queryEmbedding,
-      match_count: maxChunks * 2,
-      min_score: minChunkScore,
-      paper_ids: globalSearch ? null : paperIds,
-      boosted_paper_ids: boostedPaperIds?.length ? boostedPaperIds : null,
-    }),
-    // Search paper claims (skip if maxClaims is 0)
-    maxClaims > 0 
-      ? supabase.rpc('match_paper_claims', {
-          query_embedding: queryEmbedding,
-          paper_ids: globalSearch ? null : paperIds,
-          match_count: maxClaims * 2
-        })
-      : Promise.resolve({ data: [], error: null })
-  ])
+  
+  // Chunk search: Qdrant only (embeddings are only stored in Qdrant)
+  const chunkSearchPromise = (async (): Promise<RetrievedChunk[]> => {
+    if (!isQdrantConfigured()) {
+      console.warn('[Editor RAG] Qdrant not configured - cannot search chunks')
+      return []
+    }
+    
+    try {
+      const results = await qdrantSearchChunks(queryEmbedding, {
+        limit: maxChunks * 2,
+        minScore: minChunkScore,
+        paperIds: globalSearch ? undefined : paperIds,
+        boostPaperIds: boostedPaperIds?.length ? boostedPaperIds : undefined,
+      })
+      return results.map(r => ({
+        paper_id: r.paper_id,
+        content: r.content,
+        score: r.score,
+        chunk_index: r.chunk_index,
+      }))
+    } catch (err) {
+      console.error('[Editor RAG] Qdrant search failed:', err)
+      return []
+    }
+  })()
+
+  const chunks = await chunkSearchPromise.then(results => results.slice(0, maxChunks))
   const searchTime = Date.now() - searchStartTime
 
-  // Process chunks
-  let chunks: RetrievedChunk[] = []
-  if (!chunksResult.error && chunksResult.data) {
-    chunks = (chunksResult.data as Array<{
-      paper_id: string
-      content: string
-      score: number
-      chunk_index: number
-    }>)
-      .filter(c => c.score >= minChunkScore)
-      .slice(0, maxChunks)
-      .map(c => ({
-        paper_id: c.paper_id,
-        content: c.content,
-        score: c.score,
-        chunk_index: c.chunk_index
-      }))
-  } else if (chunksResult.error) {
-    console.warn('Chunk search failed:', chunksResult.error)
-  }
-
-  // Process claims (RPC returns 'similarity' not 'score')
-  let claims: RetrievedClaim[] = []
-  if (!claimsResult.error && claimsResult.data) {
-    claims = (claimsResult.data as Array<{
-      id: string
-      paper_id: string
-      claim_text: string
-      evidence_quote: string
-      section: string
-      claim_type: string
-      confidence: number
-      similarity: number
-    }>)
-      .filter(c => c.similarity >= minClaimScore)
-      .slice(0, maxClaims)
-      .map(c => ({ 
-        ...c, 
-        score: c.similarity 
-      }))
-  } else if (claimsResult.error) {
-    console.warn('Claim search failed:', claimsResult.error)
-  }
+  // Claims search disabled - paper_claims table uses pgvector embeddings which have been deprecated
+  // All embeddings are now stored exclusively in Qdrant. Keeping type for backward compatibility.
+  const claims: RetrievedClaim[] = []
 
   // Get unique paper IDs from retrieved content
   const retrievedPaperIds = new Set<string>([

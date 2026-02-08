@@ -55,6 +55,7 @@ import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
 import { downloadPdfBuffer } from '@/lib/pdf/pdf-utils'
 import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
 import { chunkByTokens, normalizeText } from '@/lib/utils/text'
+import { isQdrantConfigured, upsertChunks as upsertQdrantChunks, upsertPapers as upsertQdrantPapers } from '@/lib/qdrant/client'
 import { v5 as uuidv5 } from 'uuid'
 import { z } from 'zod'
 import fs from 'fs'
@@ -595,13 +596,23 @@ async function processSinglePdf(
     // 6. Insert chunks and update paper metadata
     const supabase = getServiceClient()
     
-    // Insert chunks (text only, no PDF storage)
+    // Insert chunks to Supabase WITHOUT embeddings (Qdrant only)
+    const chunkRowsWithoutEmbedding = chunkRows.map(({ embedding, ...rest }) => rest)
     const { error: chunkError } = await supabase
       .from('paper_chunks')
-      .upsert(chunkRows, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+      .upsert(chunkRowsWithoutEmbedding, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
     
     if (chunkError) {
       return { success: false, chunksCreated: 0, error: `Chunk insert: ${chunkError.message}` }
+    }
+
+    // Insert embeddings to Qdrant only
+    if (isQdrantConfigured()) {
+      try {
+        await upsertQdrantChunks(chunkRows)
+      } catch (qdrantErr) {
+        console.warn(`  ⚠️ Qdrant PDF chunk insert failed for ${paperId}:`, qdrantErr)
+      }
     }
 
     // Update paper metadata (keep original pdf_url as external reference)
@@ -806,12 +817,13 @@ async function batchInsertPapers(
     pdf_url: string | undefined
     source: string
     citation_count: number
-    embedding: number[]
+    embedding: number[]  // Used for Qdrant only
     metadata: Record<string, unknown> | null
   }>
 ) {
   const supabase = getServiceClient()
 
+  // Insert to Supabase WITHOUT embeddings (Qdrant only)
   const rows = papers.map((p) => ({
     id: p.id,
     title: p.title,
@@ -823,7 +835,7 @@ async function batchInsertPapers(
     pdf_url: p.pdf_url,
     source: p.source,
     citation_count: p.citation_count,
-    embedding: p.embedding,
+    // embedding: removed - Qdrant only
     metadata: p.metadata,
     owner_id: null,       // Global paper
     is_public: false,
@@ -837,6 +849,22 @@ async function batchInsertPapers(
   if (error) {
     throw new Error(`Papers insert failed: ${error.message}`)
   }
+
+  // Insert embeddings to Qdrant only
+  if (isQdrantConfigured()) {
+    try {
+      await upsertQdrantPapers(papers.map(p => ({
+        id: p.id,
+        embedding: p.embedding,
+        title: p.title,
+        doi: p.doi,
+      })))
+    } catch (qdrantErr) {
+      console.warn(`  ⚠️ Qdrant paper insert failed:`, qdrantErr)
+    }
+  } else {
+    console.warn(`  ⚠️ Qdrant not configured - paper embeddings not stored!`)
+  }
 }
 
 async function batchInsertChunks(
@@ -845,17 +873,31 @@ async function batchInsertChunks(
     paper_id: string
     chunk_index: number
     content: string
-    embedding: number[]
+    embedding: number[]  // Used for Qdrant only
   }>
 ) {
   const supabase = getServiceClient()
 
+  // Insert to Supabase WITHOUT embeddings (Qdrant only)
+  const rowsWithoutEmbedding = chunks.map(({ embedding, ...rest }) => rest)
+  
   const { error } = await supabase
     .from('paper_chunks')
-    .upsert(chunks, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+    .upsert(rowsWithoutEmbedding, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
 
   if (error) {
     throw new Error(`Chunks insert failed: ${error.message}`)
+  }
+
+  // Insert embeddings to Qdrant only
+  if (isQdrantConfigured()) {
+    try {
+      await upsertQdrantChunks(chunks)
+    } catch (qdrantErr) {
+      console.warn(`  ⚠️ Qdrant chunk insert failed:`, qdrantErr)
+    }
+  } else {
+    console.warn(`  ⚠️ Qdrant not configured - chunk embeddings not stored!`)
   }
 }
 

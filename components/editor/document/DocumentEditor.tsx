@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect, useRef } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
+import { BubbleMenu } from '@tiptap/react/menus'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Link from '@tiptap/extension-link'
@@ -20,7 +21,7 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { common, createLowlight } from 'lowlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
-import { Undo, Redo, ChevronsRight, ChevronsLeft, Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Quote, Code, Minus, ChevronDown } from 'lucide-react'
+import { Undo, Redo, ChevronsRight, ChevronsLeft, Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Quote, Code, Minus, ChevronDown, Trash2, Plus, Rows3, Columns3 } from 'lucide-react'
 import { FloatingToolbar } from './FloatingToolbar'
 import { InlineEditBar } from './InlineEditBar'
 import { InlineCitationPicker } from './InlineCitationPicker'
@@ -113,6 +114,7 @@ interface DocumentEditorProps {
   onEditorReady?: (editor: Editor) => void
   autocompleteEnabled?: boolean
   onChat: (text: string) => void
+  /** @deprecated Math insertion is now handled internally via slash commands. Kept for API compatibility. */
   onInsertMath?: () => void
   /** Called when a paper's citation metadata is edited (title/authors/year/etc.) */
   onPaperUpdated?: (paperId: string, updates: Partial<ProjectPaper>) => void
@@ -364,6 +366,15 @@ export function DocumentEditor({
     const { to } = editor.state.selection
     setCitationPickerPos(to)
   }, [editor])
+
+  // Store citation picker callback in editor storage so SlashCommands can call it
+  useEffect(() => {
+    if (editor) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const storage = (editor.storage as any).slashCommands
+      if (storage) storage.onOpenCitationPicker = handleOpenCitationPicker
+    }
+  }, [editor, handleOpenCitationPicker])
 
   const handleInsertCitationFromPicker = useCallback((citation: { id: string; authors: string[]; title: string; year: number; journal?: string; doi?: string }) => {
     if (!editor) return
@@ -820,6 +831,37 @@ export function DocumentEditor({
           onInsertCitation={handleOpenCitationPicker}
           onChat={onChat}
         />
+
+        {/* Table Bubble Menu - shows when cursor is inside a table */}
+        <BubbleMenu
+          editor={editor}
+          options={{
+            placement: 'top',
+          }}
+          shouldShow={({ editor: e }) => e.isActive('table')}
+          className="flex items-center gap-0.5 p-1 bg-card border border-border rounded-lg shadow-md"
+        >
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => editor.chain().focus().addRowAfter().run()}>
+            <Rows3 className="h-3 w-3" /> Row
+            <Plus className="h-2.5 w-2.5" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => editor.chain().focus().addColumnAfter().run()}>
+            <Columns3 className="h-3 w-3" /> Col
+            <Plus className="h-2.5 w-2.5" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 text-muted-foreground" onClick={() => editor.chain().focus().deleteRow().run()}>
+            <Rows3 className="h-3 w-3" />
+            <Minus className="h-2.5 w-2.5" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 text-muted-foreground" onClick={() => editor.chain().focus().deleteColumn().run()}>
+            <Columns3 className="h-3 w-3" />
+            <Minus className="h-2.5 w-2.5" />
+          </Button>
+          <div className="w-px h-4 bg-border mx-0.5" />
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => editor.chain().focus().deleteTable().run()}>
+            <Trash2 className="h-3 w-3" /> Delete
+          </Button>
+        </BubbleMenu>
         {inlineEdit && (
           <InlineEditBar
             editor={editor}

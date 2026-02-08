@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import StarterKit from '@tiptap/starter-kit'
@@ -38,6 +38,8 @@ export interface RichChatInputProps {
   papers?: ProjectPaper[]
   /** Project ID for image uploads */
   projectId?: string
+  /** Callback to insert a citation into the document editor */
+  onCitePaper?: (paper: MentionedPaper) => void
   /** Callback for image upload */
   onImageUpload?: (file: File) => Promise<string | null>
   /** Whether an image is being uploaded */
@@ -87,10 +89,12 @@ export function RichChatInput({
   disabled = false,
   placeholder = 'Ask about your research... Use @ to mention papers',
   papers = [],
+  onCitePaper,
   onImageUpload,
   isUploadingImage = false,
 }: RichChatInputProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null)
+  const [isEmpty, setIsEmpty] = useState(true)
 
   // Create the search function for mentions
   const searchPapersCallback = useCallback(async (query: string): Promise<MentionedPaper[]> => {
@@ -103,10 +107,11 @@ export function RichChatInput({
       suggestion: {
         render: createMentionSuggestionRender({
           onSearch: searchPapersCallback,
+          onCite: onCitePaper,
         }),
       },
     })
-  }, [searchPapersCallback])
+  }, [searchPapersCallback, onCitePaper])
 
   const editor = useEditor({
     extensions: [
@@ -197,6 +202,11 @@ export function RichChatInput({
         return false
       },
     },
+    onUpdate: ({ editor: e }) => {
+      const hasText = !!e.getText().trim()
+      const hasImage = e.getHTML().includes('<img')
+      setIsEmpty(!hasText && !hasImage)
+    },
     immediatelyRender: false,
   })
 
@@ -269,15 +279,13 @@ export function RichChatInput({
     input.click()
   }, [editor, onImageUpload, handleImageUpload])
 
-  const isEmpty = !editor?.getText().trim() && !editor?.getHTML().includes('<img')
-
   return (
     <div className="px-4 py-3">
       <div 
         ref={editorContainerRef}
         className={cn(
           "rich-chat-input-container relative",
-          "rounded-xl border border-border bg-background shadow-sm",
+          "rounded-lg border border-border/60 bg-background",
           disabled && "opacity-60 cursor-not-allowed"
         )}
       >

@@ -4,6 +4,7 @@ import { generateEmbeddings } from '@/lib/utils/embedding'
 import { PaperDTO } from '@/lib/schemas/paper'
 import { debug, info, warn, error as logError } from '@/lib/utils/logger'
 import { expandWithStems } from '@/lib/utils/stemmer'
+import { searchChunks as qdrantSearchChunks, isQdrantConfigured } from '@/lib/qdrant/client'
  
 
 // Centralized embedding configuration to ensure consistency
@@ -86,19 +87,6 @@ export async function getPapersByIds(paperIds: string[]): Promise<PaperWithAutho
   return (data || []).map((paper: DatabasePaper) => transformDatabasePaper(paper))
 }
 
-// Type definitions for RPC functions
-interface HybridSearchResult {
-  id: string  // Database RPC returns 'id', not 'paper_id'
-  semantic_score: number
-  keyword_score: number
-  combined_score: number
-}
-
-interface SimilarPapersResult {
-  paper_id: string
-  score: number
-}
-
 export async function hybridSearchPapers(
   query: string,
   options: {
@@ -110,7 +98,6 @@ export async function hybridSearchPapers(
     semanticWeight?: number
   } = {}
 ): Promise<PaperWithAuthors[]> {
-  // Use service client to bypass RLS - this is called from Inngest background jobs
   const supabase = getServiceClient()
   const { 
     limit = 10, 
@@ -123,104 +110,101 @@ export async function hybridSearchPapers(
 
   debug({ query, limit, minYear, maxYear, sources, semanticWeight, excludeCount: excludePaperIds.length }, 'Hybrid search starting')
 
-  // 1. Generate embedding for the query using centralized configuration
-  const [queryEmbedding] = await generateEmbeddings([query])
-  debug({ dimensions: queryEmbedding.length }, 'Query embedding generated')
-
-  // 2. Call the hybrid search RPC function
-  
-  const { data: searchResults, error } = await supabase
-    .rpc('hybrid_search_papers', {
-      query_text: query,
-      query_embedding: queryEmbedding,
-      match_count: limit * 2,
-      min_year: minYear,
-      semantic_weight: semanticWeight
-    })
-
-  if (error) {
-    warn({ error }, 'RPC search failed, falling back to text search')
-    
-    // Fallback to basic text search if RPC fails
-    // Use stemming to match related words (e.g., "religion" matches "religious")
-    const queryWords = query.toLowerCase().split(/\s+/).filter(word => word.length > 2)
-    const expandedWords = expandWithStems(queryWords)
-    debug({ queryWords, expandedWords }, 'Fallback search with stemmed terms')
-    
-    const { data: fallbackResults, error: fallbackError } = await supabase
-      .from('papers')
-      .select('*')
-      .or(expandedWords.map(word => `title.ilike.%${word}%,abstract.ilike.%${word}%`).join(','))
-      .gte('publication_date', `${minYear}-01-01`)
-      .order('citation_count', { ascending: false })
-      .limit(limit)
-    
-    if (fallbackError) {
-      logError({ error: fallbackError }, 'Fallback search also failed')
-      throw error // Throw original RPC error
-    }
-    
-    debug({ count: fallbackResults?.length || 0 }, 'Fallback search completed')
-    
-    if (fallbackResults && fallbackResults.length > 0) {
-      const transformedResults = fallbackResults.map((paper) => ({
-        ...transformDatabasePaper(paper as DatabasePaper),
-        relevance_score: 0.1, // Low score - text match only, no semantic verification
-        semantic_score: 0.0,
-        keyword_score: 0.1
-      }))
-      
-      return transformedResults
-    }
-    
-    throw error // If both searches fail, throw original error
-  }
-
-  debug({ resultCount: searchResults?.length || 0 }, 'RPC search completed')
-  
-  if (searchResults && searchResults.length > 0) {
-    // Check for semantic search failure (all scores zero)
-    const allSemanticZero = searchResults.every((r: HybridSearchResult) => r.semantic_score === 0)
-    if (allSemanticZero) {
-      warn('All semantic scores are zero, falling back to keyword-only ranking')
-      // Re-rank by keyword score when semantic search fails
-      searchResults.sort((a: HybridSearchResult, b: HybridSearchResult) => 
-        b.keyword_score - a.keyword_score
-      )
-      searchResults.forEach((r: HybridSearchResult) => {
-        r.combined_score = r.keyword_score
-      })
-    }
-  } else {
-    warn({ queryLength: queryEmbedding.length, minYear, semanticWeight }, 'RPC returned no results')
-  }
-
-  // 3. Filter out excluded papers with meaningful relevance threshold
-  // A combined_score of 0.3 indicates reasonable semantic/keyword similarity
-  // Lower scores often indicate irrelevant papers that happen to be in the database
+  // Hybrid search: Qdrant for vector + Supabase for keyword
   const MIN_RELEVANCE_SCORE = 0.3
   
-  const filteredResults = (searchResults || []).filter(
-    (result: HybridSearchResult) => 
-      !excludePaperIds.includes(result.id) &&
-      result.combined_score >= MIN_RELEVANCE_SCORE
-  )
-
-  debug({ beforeFilter: searchResults?.length || 0, afterFilter: filteredResults.length }, 'Filtered results')
-
-  // 4. Get full paper details for the top results
-  if (filteredResults.length === 0) {
-    // No fallback to relaxed threshold - return empty instead of low-quality results
-    // This ensures only genuinely relevant papers are returned
-    debug('No papers passed relevance threshold (0.3) - returning empty results')
+  // 1. Vector search via Qdrant (if configured)
+  let vectorResults: Array<{ id: string; score: number; title: string }> = []
+  
+  if (isQdrantConfigured()) {
+    try {
+      const [queryEmbedding] = await generateEmbeddings([query])
+      debug({ dimensions: queryEmbedding.length }, 'Query embedding generated')
+      
+      const { searchPapers } = await import('@/lib/qdrant/client')
+      vectorResults = await searchPapers(queryEmbedding, {
+        limit: limit * 3, // Over-fetch for filtering
+        minScore: MIN_RELEVANCE_SCORE,
+      })
+      debug({ count: vectorResults.length }, 'Qdrant vector search completed')
+    } catch (err) {
+      warn({ error: err }, 'Qdrant vector search failed')
+    }
+  } else {
+    warn({}, 'Qdrant not configured - using keyword search only')
+  }
+  
+  // 2. Keyword search via Supabase (text matching, no embeddings needed)
+  const queryWords = query.toLowerCase().split(/\s+/).filter(word => word.length > 2)
+  const expandedWords = expandWithStems(queryWords)
+  
+  const { data: keywordResults, error: keywordError } = await supabase
+    .from('papers')
+    .select('id, title, citation_count')
+    .or(expandedWords.map(word => `title.ilike.%${word}%,abstract.ilike.%${word}%`).join(','))
+    .gte('publication_date', `${minYear}-01-01`)
+    .order('citation_count', { ascending: false })
+    .limit(limit * 2)
+  
+  if (keywordError) {
+    debug({ error: keywordError }, 'Keyword search failed')
+  }
+  
+  debug({ count: keywordResults?.length || 0 }, 'Keyword search completed')
+  
+  // 3. Merge and score results
+  const scoreMap = new Map<string, { semantic_score: number; keyword_score: number; combined_score: number }>()
+  
+  // Add vector results with semantic scores
+  for (const result of vectorResults) {
+    if (excludePaperIds.includes(result.id)) continue
+    scoreMap.set(result.id, {
+      semantic_score: result.score,
+      keyword_score: 0,
+      combined_score: result.score * semanticWeight
+    })
+  }
+  
+  // Add/merge keyword results
+  const keywordWeight = 1 - semanticWeight
+  const maxKeywordScore = 0.5 // Normalize keyword matches to max 0.5
+  
+  for (const result of (keywordResults || [])) {
+    if (excludePaperIds.includes(result.id)) continue
+    
+    const existing = scoreMap.get(result.id)
+    const keywordScore = maxKeywordScore // Simple binary match score
+    
+    if (existing) {
+      // Paper found in both - combine scores
+      existing.keyword_score = keywordScore
+      existing.combined_score = (existing.semantic_score * semanticWeight) + (keywordScore * keywordWeight)
+    } else {
+      // Keyword-only result
+      scoreMap.set(result.id, {
+        semantic_score: 0,
+        keyword_score: keywordScore,
+        combined_score: keywordScore * keywordWeight
+      })
+    }
+  }
+  
+  // 4. Filter and sort by combined score
+  const rankedResults = Array.from(scoreMap.entries())
+    .map(([id, scores]) => ({ id, ...scores }))
+    .filter(r => r.combined_score >= MIN_RELEVANCE_SCORE)
+    .sort((a, b) => b.combined_score - a.combined_score)
+    .slice(0, limit)
+  
+  debug({ beforeFilter: scoreMap.size, afterFilter: rankedResults.length }, 'Filtered and ranked results')
+  
+  if (rankedResults.length === 0) {
+    debug('No papers passed relevance threshold - returning empty results')
     return []
   }
-
-  // 5. Get full paper details for the top results
-  const topResults = filteredResults.slice(0, limit)
   
-  // Guard invalid IDs before querying
-  const topIds = topResults.map((r: HybridSearchResult) => r.id).filter(isValidUuid)
+  // 5. Get full paper details
+  const topIds = rankedResults.map(r => r.id).filter(isValidUuid)
   if (topIds.length === 0) {
     debug('No valid UUIDs in top results')
     return []
@@ -236,7 +220,6 @@ export async function hybridSearchPapers(
 
   // Apply source filter if provided
   if (sources && sources.length > 0) {
-    // Check if any papers match the source filter before applying it
     const sourceFilterTest = await supabase
       .from('papers')
       .select('id', { count: 'exact' })
@@ -257,57 +240,14 @@ export async function hybridSearchPapers(
     logError({ error: papersError }, 'Failed to fetch paper details')
     throw papersError
   }
-  
-  // If we got 0 papers due to source filtering, try without the filter
-  if ((!papers || papers.length === 0) && sources && sources.length > 0) {
-    const { data: unfilteredPapers, error: unfilteredError } = await supabase
-      .from('papers')
-      .select(`
-        *,
-        authors:paper_authors(
-          ordinal,
-          author:authors(*)
-        )
-      `)
-      .in('id', topIds)
-    
-    if (unfilteredError) {
-      logError({ error: unfilteredError }, 'Failed to fetch unfiltered paper details')
-      throw unfilteredError
-    }
-    
-    // Use the unfiltered results
-    const paperMap = new Map(unfilteredPapers?.map(p => [p.id, p]) || [])
-    
-    const finalResults = topResults
-      .map((result: HybridSearchResult) => {
-        const paper = paperMap.get(result.id)
-        if (!paper) return null
-        
-        const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
-        
-        return {
-          ...transformedPaper,
-          relevance_score: result.combined_score,
-          semantic_score: result.semantic_score,
-          keyword_score: result.keyword_score
-        }
-      })
-      .filter(Boolean) as PaperWithAuthors[]
 
-    info({ count: finalResults.length }, 'Hybrid search completed (unfiltered)')
-    return finalResults
-  }
-
-  // Transform and sort by hybrid score
+  // Transform and sort by combined score
   const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
   
-  const finalResults = topResults
-    .map((result: HybridSearchResult) => {
-        const paper = paperMap.get(result.id)
-        if (!paper) {
-          return null
-        }
+  const finalResults = rankedResults
+    .map((result) => {
+      const paper = paperMap.get(result.id)
+      if (!paper) return null
       
       const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
       
@@ -320,6 +260,7 @@ export async function hybridSearchPapers(
     })
     .filter(Boolean) as PaperWithAuthors[]
 
+  info({ count: finalResults.length }, 'Hybrid search completed')
   return finalResults
 }
 
@@ -327,59 +268,75 @@ export async function findSimilarPapers(
   paperId: string,
   limit = 5
 ): Promise<PaperWithAuthors[]> {
-  // Use service client to bypass RLS - papers table requires authenticated users
   const supabase = getServiceClient()
   
-  // Get the embedding for the reference paper
+  // Qdrant only - no pgvector fallback
+  if (!isQdrantConfigured()) {
+    warn({}, 'Qdrant not configured - cannot find similar papers')
+    return []
+  }
+  
+  // 1. Get the reference paper's title and abstract to generate embedding
   const { data: referencePaper, error: refError } = await supabase
     .from('papers')
-    .select('embedding')
+    .select('title, abstract')
     .eq('id', paperId)
     .single()
   
   if (refError) throw refError
-  if (!referencePaper?.embedding) {
-    throw new Error('Reference paper has no embedding')
+  if (!referencePaper) {
+    throw new Error('Reference paper not found')
   }
   
-  // Find similar papers using cosine similarity
-  const { data: matches, error } = await supabase
-    .rpc('find_similar_papers', {
-      query_embedding: referencePaper.embedding,
-      exclude_paper_id: paperId,
-      match_count: limit
+  // 2. Generate embedding from title + abstract
+  const textToEmbed = `${referencePaper.title}\n${referencePaper.abstract || ''}`
+  const [embedding] = await generateEmbeddings([textToEmbed])
+  
+  // 3. Search Qdrant for similar papers
+  const { searchPapers } = await import('@/lib/qdrant/client')
+  
+  try {
+    const matches = await searchPapers(embedding, {
+      limit: limit + 1, // +1 to account for excluding self
+      minScore: 0.3,
     })
-  
-  if (error) throw error
-  if (!matches || matches.length === 0) return []
-  
-  // Get full paper details
-  const { data: papers, error: papersError } = await supabase
-    .from('papers')
-    .select(`
-      *,
-      authors
-    `)
-    .in('id', (matches as SimilarPapersResult[]).map(m => m.paper_id))
-  
-  if (papersError) throw papersError
-  
-  // Transform and sort by similarity score
-  const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
-  
-  return (matches as SimilarPapersResult[])
-    .map(match => {
-      const paper = paperMap.get(match.paper_id)
-      if (!paper) return null
-      
-      const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
-      
-      return {
-        ...transformedPaper,
-        relevance_score: match.score
-      }
-    })
-    .filter(Boolean) as PaperWithAuthors[]
+    
+    // Filter out the reference paper itself
+    const filteredMatches = matches.filter(m => m.id !== paperId).slice(0, limit)
+    
+    if (filteredMatches.length === 0) return []
+    
+    // 4. Get full paper details from Supabase
+    const { data: papers, error: papersError } = await supabase
+      .from('papers')
+      .select(`
+        *,
+        authors
+      `)
+      .in('id', filteredMatches.map(m => m.id))
+    
+    if (papersError) throw papersError
+    
+    // Transform and sort by similarity score
+    const paperMap = new Map(papers?.map(p => [p.id, p]) || [])
+    
+    return filteredMatches
+      .map(match => {
+        const paper = paperMap.get(match.id)
+        if (!paper) return null
+        
+        const transformedPaper = transformDatabasePaper(paper as DatabasePaper)
+        
+        return {
+          ...transformedPaper,
+          relevance_score: match.score
+        }
+      })
+      .filter(Boolean) as PaperWithAuthors[]
+  } catch (err) {
+    logError({ error: err }, 'Qdrant similar papers search failed')
+    return []
+  }
 }
 
 export async function searchPaperChunks(
@@ -390,34 +347,36 @@ export async function searchPaperChunks(
     minScore?: number
   } = {}
 ): Promise<Array<{paper_id: string, content: string, score: number}>> {
-  // Use service client to bypass RLS - paper_chunks table requires authenticated users
-  const supabase = getServiceClient()
-  
-  // Generate embedding for the query
-  const [queryEmbedding] = await generateEmbeddings([query])
-  
   const {
     paperIds,
     limit = 50,
     minScore = 0.1
   } = options
 
-  // Single-pass RPC call (MVP): one threshold, one limit, minimal logging
-  const { data: searchResults, error } = await supabase
-    .rpc('match_paper_chunks', {
-      query_embedding: queryEmbedding,
-      match_count: limit,
-      min_score: minScore,
-      paper_ids: paperIds || null
-    })
-
-  if (error) {
-    logError({ error }, 'Chunk search failed')
+  // Qdrant only - no pgvector fallback (embeddings are only in Qdrant)
+  if (!isQdrantConfigured()) {
+    warn({}, 'Qdrant not configured - cannot search paper chunks')
     return []
   }
 
-  const results = (searchResults as Array<{paper_id: string, content: string, score: number}> | null) || []
-  return results.sort((a, b) => b.score - a.score).slice(0, limit)
+  // Generate embedding for the query
+  const [queryEmbedding] = await generateEmbeddings([query])
+
+  try {
+    const qdrantResults = await qdrantSearchChunks(queryEmbedding, {
+      limit,
+      minScore,
+      paperIds: paperIds && paperIds.length > 0 ? paperIds : undefined,
+    })
+    return qdrantResults.map(r => ({
+      paper_id: r.paper_id,
+      content: r.content,
+      score: r.score,
+    }))
+  } catch (qdrantErr) {
+    logError({ error: qdrantErr }, 'Qdrant chunk search failed')
+    return []
+  }
 }
 
 
@@ -514,11 +473,6 @@ export async function ingestPaper(
 export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string | null): Promise<string> {
   const supabase = getServiceClient()
   
-  // Generate embedding from title + abstract before inserting
-  // This is required because the database has a NOT NULL constraint on the embedding column
-  const text = `${paperData.title}\n${paperData.abstract || ''}`
-  const [embedding] = await generateEmbeddings([text])
-  
   // Store bibliographic fields in metadata JSONB column
   // These are needed for complete citation generation (volume, issue, pages, publisher)
   const metadata: Record<string, unknown> = {}
@@ -527,8 +481,8 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
   if (paperData.pages) metadata.pages = paperData.pages
   if (paperData.publisher) metadata.publisher = paperData.publisher
   
-  // Insert paper metadata with embedding, authors, and ownership
-  // processing_status starts as 'pending' - will be updated when content is processed
+  // Insert paper metadata WITHOUT embedding (embeddings are stored in Qdrant only)
+  // The papers.embedding column is nullable per migration 20260208000000
   const { data, error } = await supabase
     .from('papers')
     .insert({
@@ -541,7 +495,7 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
       pdf_url: paperData.pdf_url,
       source: paperData.source || 'unknown',
       citation_count: paperData.citation_count || 0,
-      embedding: embedding, // Generate embedding immediately to satisfy NOT NULL constraint
+      // embedding: null - column is nullable, embeddings go to Qdrant only
       metadata: Object.keys(metadata).length > 0 ? metadata : null, // Store bibliographic fields
       owner_id: ownerId || null, // NULL = global paper, UUID = user-uploaded
       is_public: false, // User papers are private by default
@@ -555,16 +509,36 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
   
   const paperId = data.id
   
-  // Seed an abstract chunk so Tier 3 RAG works immediately (before PDF processing).
-  // The paper embedding was already generated from title+abstract above — reuse it.
+  // Generate embedding from title + abstract for Qdrant
+  const text = `${paperData.title}\n${paperData.abstract || ''}`
+  const [embedding] = await generateEmbeddings([text])
+  
+  // Upsert paper embedding to Qdrant (for paper-level similarity search)
+  try {
+    const { upsertPaper, isQdrantConfigured } = await import('@/lib/qdrant/client')
+    if (isQdrantConfigured()) {
+      await upsertPaper(paperId, embedding, {
+        title: paperData.title,
+        doi: paperData.doi,
+      })
+      debug({ paperId }, 'Upserted paper embedding to Qdrant')
+    }
+  } catch (qdrantErr) {
+    // Non-fatal - paper is still usable without embedding
+    warn({ paperId, error: qdrantErr }, 'Failed to upsert paper embedding to Qdrant')
+  }
+  
+  // Seed an abstract chunk so RAG works immediately (before PDF processing).
   // When PDF processing completes, createChunksForPaper will replace this with
   // full-text chunks (it deletes existing chunks before writing new ones).
   const abstractText = paperData.abstract?.trim()
   if (abstractText && abstractText.length > 30) {
     try {
       const { createDeterministicChunkId } = await import('@/lib/utils/deterministic-id')
+      const { upsertChunks, isQdrantConfigured } = await import('@/lib/qdrant/client')
       const chunkId = createDeterministicChunkId(paperId, abstractText, 0)
       
+      // Insert chunk to Supabase WITHOUT embedding (for content storage only)
       await supabase
         .from('paper_chunks')
         .upsert({
@@ -572,13 +546,24 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
           paper_id: paperId,
           chunk_index: 0,
           content: abstractText,
-          embedding,  // Reuse the same embedding (title+abstract)
+          // embedding: null - embeddings go to Qdrant only
         }, {
           onConflict: 'paper_id,chunk_index',
           ignoreDuplicates: true,
         })
       
-      debug({ paperId }, 'Seeded abstract chunk for immediate Tier 3 RAG')
+      // Upsert chunk embedding to Qdrant (for vector search)
+      if (isQdrantConfigured()) {
+        await upsertChunks([{
+          id: chunkId,
+          paper_id: paperId,
+          chunk_index: 0,
+          content: abstractText,
+          embedding,
+        }])
+      }
+      
+      debug({ paperId }, 'Seeded abstract chunk for immediate RAG')
     } catch (chunkErr) {
       // Non-fatal — PDF processing will create proper chunks later
       warn({ paperId, error: chunkErr }, 'Failed to seed abstract chunk')

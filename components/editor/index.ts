@@ -8,7 +8,6 @@ export { ChatTab } from './sidebar/ChatTab'
 export { ResearchTab } from './sidebar/ResearchTab'
 export { ChatInput } from './sidebar/ChatInput'
 export { DocumentEditor } from './document/DocumentEditor'
-export { PrimaryToolbar } from './document/PrimaryToolbar'
 export { FloatingToolbar } from './document/FloatingToolbar'
 
 // Extensions

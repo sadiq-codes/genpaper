@@ -755,26 +755,26 @@ kbd {
 }
 
 
-/* Slash Command Menu - Notion-like styling */
+/* Slash Command Menu */
 .slash-command-menu {
-  @apply bg-background border border-border rounded-lg shadow-lg overflow-hidden min-w-[280px] max-h-[400px] overflow-y-auto;
+  @apply bg-background border border-border/60 rounded-md shadow-md overflow-hidden min-w-[200px] max-h-[320px] overflow-y-auto py-1;
 }
 
 .slash-command-item {
-  @apply flex items-center gap-3 w-full px-3 py-2 text-left transition-colors hover:bg-muted cursor-pointer;
+  @apply flex items-center gap-2 w-full px-2.5 py-1.5 text-left transition-colors hover:bg-muted/60 cursor-pointer;
 }
 
 .slash-command-item.is-selected {
-  @apply bg-muted;
+  @apply bg-muted/60;
 }
 
 .slash-command-icon {
-  @apply flex items-center justify-center w-10 h-10 rounded-md bg-muted text-muted-foreground shrink-0;
+  @apply flex items-center justify-center w-5 h-5 text-muted-foreground shrink-0;
 }
 
 .slash-command-item.is-selected .slash-command-icon,
 .slash-command-item:hover .slash-command-icon {
-  @apply bg-background text-foreground;
+  @apply text-foreground;
 }
 
 .slash-command-content {
@@ -782,11 +782,11 @@ kbd {
 }
 
 .slash-command-title {
-  @apply text-sm font-medium text-foreground;
+  @apply text-xs font-medium text-foreground;
 }
 
 .slash-command-description {
-  @apply text-xs text-muted-foreground truncate;
+  @apply text-[11px] text-muted-foreground/70 truncate leading-tight;
 }
 
 /* Tippy.js base styles for slash commands */
@@ -1123,32 +1123,45 @@ kbd {
    ============================================================================= */
 
 .mention-suggestion-menu {
-  @apply bg-background border border-border rounded-lg;
-  @apply overflow-hidden min-w-[300px] max-w-[400px] max-h-[350px] overflow-y-auto;
+  @apply bg-background border border-border/60 rounded-md shadow-md;
+  @apply overflow-hidden min-w-[240px] max-w-[360px] max-h-[280px] overflow-y-auto py-1;
 }
 
 .mention-suggestion-header {
-  @apply px-3 py-2 text-xs font-medium text-muted-foreground;
-  @apply border-b border-border;
+  @apply px-2.5 py-1 text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider;
 }
 
 .mention-suggestion-item {
-  @apply flex items-start gap-3 w-full px-3 py-2.5 text-left;
-  @apply transition-colors hover:bg-muted/50 cursor-pointer border-0 bg-transparent;
+  @apply flex items-center gap-0 w-full text-left;
+  @apply transition-colors hover:bg-muted/60 cursor-pointer border-0 bg-transparent;
 }
 
 .mention-suggestion-item.is-selected {
-  @apply bg-muted/50;
+  @apply bg-muted/60;
+}
+
+.mention-suggestion-main {
+  @apply flex items-center gap-2 flex-1 min-w-0 px-2.5 py-1.5 border-0 bg-transparent cursor-pointer;
+}
+
+.mention-suggestion-cite {
+  @apply flex items-center gap-1 shrink-0 px-2 py-1 mr-1.5 text-[11px] font-medium;
+  @apply text-primary/70 hover:text-primary hover:bg-primary/10 rounded transition-colors;
+  @apply border-0 bg-transparent cursor-pointer opacity-0;
 }
 
 .mention-suggestion-icon {
-  @apply flex items-center justify-center w-8 h-8 rounded;
-  @apply bg-muted/50 text-muted-foreground shrink-0 mt-0.5;
+  @apply flex items-center justify-center w-5 h-5 text-muted-foreground shrink-0;
 }
 
 .mention-suggestion-item.is-selected .mention-suggestion-icon,
 .mention-suggestion-item:hover .mention-suggestion-icon {
-  @apply bg-muted text-foreground;
+  @apply text-foreground;
+}
+
+.mention-suggestion-item.is-selected .mention-suggestion-cite,
+.mention-suggestion-item:hover .mention-suggestion-cite {
+  @apply opacity-100;
 }
 
 .mention-suggestion-content {
@@ -1156,16 +1169,15 @@ kbd {
 }
 
 .mention-suggestion-title {
-  @apply text-sm font-medium text-foreground leading-tight;
-  @apply line-clamp-2;
+  @apply text-xs font-medium text-foreground leading-tight line-clamp-1;
 }
 
 .mention-suggestion-meta {
-  @apply flex items-center gap-2 mt-1 text-xs text-muted-foreground;
+  @apply flex items-center gap-1.5 text-[11px] text-muted-foreground/70 leading-tight;
 }
 
 .mention-suggestion-authors {
-  @apply truncate max-w-[150px];
+  @apply truncate max-w-[120px];
 }
 
 .mention-suggestion-year {
@@ -1173,11 +1185,11 @@ kbd {
 }
 
 .mention-suggestion-loading {
-  @apply flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground;
+  @apply flex items-center gap-2 px-2.5 py-2.5 text-xs text-muted-foreground;
 }
 
 .mention-suggestion-empty {
-  @apply px-3 py-4 text-sm text-muted-foreground text-center;
+  @apply px-2.5 py-2.5 text-xs text-muted-foreground text-center;
 }
 
 /* =============================================================================
@@ -1185,15 +1197,15 @@ kbd {
    ============================================================================= */
 
 .rich-chat-input-container {
-  @apply transition-all duration-200 ease-out;
+  @apply transition-colors duration-150;
 }
 
 .rich-chat-input-container:hover:not(:focus-within) {
-  @apply border-muted-foreground/30;
+  @apply border-border;
 }
 
 .rich-chat-input-container:focus-within {
-  @apply border-primary ring-2 ring-primary/20 shadow-md;
+  @apply border-border shadow-sm;
 }
 
 /* Text field area - the actual editable zone */

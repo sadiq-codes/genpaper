@@ -36,7 +36,8 @@ export interface CommandItem {
   command: (props: { editor: SuggestionProps['editor']; range: SuggestionProps['range'] }) => void
 }
 
-const commands: CommandItem[] = [
+function getCommands(): CommandItem[] {
+  return [
   {
     title: 'Heading 1',
     description: 'Large section heading',
@@ -155,11 +156,15 @@ const commands: CommandItem[] = [
     icon: <AtSign className="h-4 w-4" />,
     command: ({ editor, range }) => {
       editor.chain().focus().deleteRange(range).run()
-      // Trigger citation picker - dispatch a custom event
-      window.dispatchEvent(new CustomEvent('openCitationPicker'))
+      // Call the callback stored in editor storage by DocumentEditor
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const storage = (editor.storage as any).slashCommands
+      const cb = storage?.onOpenCitationPicker
+      if (typeof cb === 'function') cb()
     },
   },
 ]
+}
 
 interface CommandListRef {
   onKeyDown: (props: SuggestionKeyDownProps) => boolean
@@ -259,13 +264,20 @@ export const SlashCommands = Extension.create({
     }
   },
 
+  addStorage() {
+    return {
+      onOpenCitationPicker: null as (() => void) | null,
+    }
+  },
+
   addProseMirrorPlugins() {
+    const cmds = getCommands()
     return [
       Suggestion({
         editor: this.editor,
         ...this.options.suggestion,
         items: ({ query }: { query: string }) => {
-          return commands.filter((item) =>
+          return cmds.filter((item) =>
             item.title.toLowerCase().includes(query.toLowerCase())
           )
         },

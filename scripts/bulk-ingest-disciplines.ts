@@ -315,22 +315,25 @@ async function processPdf(
       embedding: embeddings[idx],
     }))
     
-    // Insert chunks
+    // Insert chunks to Supabase (without embeddings) for text storage
+    const chunkRowsNoEmbedding = chunkRows.map(({ embedding, ...rest }) => rest)
     const { error: chunkError } = await supabase
       .from('paper_chunks')
-      .upsert(chunkRows, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+      .upsert(chunkRowsNoEmbedding, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
     
     if (chunkError) {
       return { success: false, chunks: 0, error: `DB: ${chunkError.message}` }
     }
     
-    // Also insert into Qdrant if configured
+    // Insert embeddings ONLY into Qdrant (not Supabase)
     if (isQdrantConfigured()) {
       try {
         await upsertQdrantChunks(chunkRows)
       } catch (qdrantErr) {
         console.warn(`  ⚠️ Qdrant PDF chunk insert failed for ${paperId}:`, qdrantErr)
       }
+    } else {
+      console.warn(`  ⚠️ Qdrant not configured - embeddings not stored!`)
     }
     
     // Update paper metadata
@@ -474,8 +477,8 @@ async function ingestDiscipline(
     const abstracts = papersToInsert.map(p => `${p.title}\n${p.abstract}`)
     const embeddings = await generateEmbeddings(abstracts)
     
-    // Insert papers
-    const paperRows = papersToInsert.map((p, i) => ({
+    // Insert papers to Supabase (WITHOUT embeddings - Qdrant only)
+    const paperRows = papersToInsert.map((p) => ({
       id: p.id,
       doi: p.doi,
       title: p.title,
@@ -487,7 +490,7 @@ async function ingestDiscipline(
       source: p.source,
       citation_count: p.citation_count,
       metadata: p.metadata,
-      embedding: embeddings[i],
+      // embedding: removed - Qdrant only
       processing_status: 'pending',
     }))
     
@@ -501,23 +504,32 @@ async function ingestDiscipline(
       continue
     }
     
-    // Insert abstract chunks
-    const chunkRows = papersToInsert.map((p, i) => ({
+    // Insert abstract chunks to Supabase (WITHOUT embeddings - Qdrant only)
+    const chunkRowsForSupabase = papersToInsert.map((p) => ({
       id: createDeterministicChunkId(p.id, p.abstract, 0),
       paper_id: p.id,
       chunk_index: 0,
       content: p.abstract,
-      embedding: embeddings[i],
+      // embedding: removed - Qdrant only
     }))
     
     await supabase
       .from('paper_chunks')
-      .upsert(chunkRows, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+      .upsert(chunkRowsForSupabase, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
     
-    // Also insert into Qdrant if configured
+    // Insert embeddings ONLY into Qdrant
     if (isQdrantConfigured()) {
       try {
-        // Insert paper embeddings
+        // Prepare chunks with embeddings for Qdrant
+        const chunkRowsForQdrant = papersToInsert.map((p, i) => ({
+          id: createDeterministicChunkId(p.id, p.abstract, 0),
+          paper_id: p.id,
+          chunk_index: 0,
+          content: p.abstract,
+          embedding: embeddings[i],
+        }))
+        
+        // Insert paper embeddings to Qdrant
         await upsertQdrantPapers(papersToInsert.map((p, i) => ({
           id: p.id,
           embedding: embeddings[i],
@@ -525,11 +537,13 @@ async function ingestDiscipline(
           doi: p.doi || undefined,
         })))
         
-        // Insert chunk embeddings
-        await upsertQdrantChunks(chunkRows)
+        // Insert chunk embeddings to Qdrant
+        await upsertQdrantChunks(chunkRowsForQdrant)
       } catch (qdrantErr) {
         console.warn(`  ⚠️ Qdrant insert failed:`, qdrantErr)
       }
+    } else {
+      console.warn(`  ⚠️ Qdrant not configured - embeddings not stored!`)
     }
     
     ingested += papersToInsert.length

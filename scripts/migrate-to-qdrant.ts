@@ -151,12 +151,20 @@ async function main() {
     if (papers.length < batchSize) break
   }
   
-  // Migrate chunks
+  // Migrate chunks - skip already migrated
   console.log('\n📝 Migrating chunks...')
-  let chunksMigrated = 0
-  let chunksOffset = 0
   
-  while (true) {
+  // Check how many chunks already in Qdrant
+  const chunksInfo = await qdrant.getCollection('paper_chunks')
+  const alreadyMigrated = chunksInfo.points_count || 0
+  console.log(`  Already in Qdrant: ${alreadyMigrated}`)
+  
+  let chunksMigrated = alreadyMigrated
+  let chunksOffset = alreadyMigrated // Start from where we left off
+  let retryCount = 0
+  const maxRetries = 3
+  
+  while (chunksOffset < totalChunks!) {
     const { data: chunks, error } = await supabase
       .from('paper_chunks')
       .select('id, paper_id, chunk_index, content, embedding')
@@ -186,27 +194,40 @@ async function main() {
       })
       .filter((p): p is NonNullable<typeof p> => p !== null)
     
+    if (points.length === 0) {
+      chunksOffset += batchSize
+      continue
+    }
+    
     try {
       await qdrant.upsert('paper_chunks', { wait: true, points })
-      chunksMigrated += chunks.length
+      chunksMigrated += points.length
       console.log(`  Chunks: ${chunksMigrated}/${totalChunks}`)
+      retryCount = 0 // Reset retry count on success
     } catch (err) {
       console.error(`  ❌ Failed to upsert chunks batch:`, err)
+      retryCount++
+      if (retryCount >= maxRetries) {
+        console.error(`  ❌ Max retries reached, stopping`)
+        break
+      }
+      console.log(`  ⏳ Retrying in 5s... (${retryCount}/${maxRetries})`)
+      await new Promise(r => setTimeout(r, 5000))
+      continue // Retry same batch
     }
     
     chunksOffset += batchSize
-    if (chunks.length < batchSize) break
   }
   
   // Verify
   console.log('\n✅ Migration complete!')
   
-  const papersInfo = await qdrant.getCollection('papers')
-  const chunksInfo = await qdrant.getCollection('paper_chunks')
+  const finalPapersInfo = await qdrant.getCollection('papers')
+  const finalChunksInfo = await qdrant.getCollection('paper_chunks')
   
   console.log(`\n📊 Qdrant collections:`)
-  console.log(`  papers:       ${papersInfo.points_count} points`)
-  console.log(`  paper_chunks: ${chunksInfo.points_count} points`)
+  console.log(`  papers:       ${finalPapersInfo.points_count} points`)
+  console.log(`  paper_chunks: ${finalChunksInfo.points_count} points`)
 }
 
 main().catch(err => {

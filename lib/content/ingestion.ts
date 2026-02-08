@@ -256,6 +256,7 @@ export async function createChunksForPaper(
       const [embedding] = await generateEmbeddings([normalizedContent])
       const chunkId = createDeterministicChunkId(paperId, normalizedContent, 0)
 
+      // Insert to Supabase WITHOUT embedding (Qdrant only for embeddings)
       const { error } = await serviceClient
         .from('paper_chunks')
         .upsert({
@@ -263,9 +264,7 @@ export async function createChunksForPaper(
           paper_id: paperId,
           chunk_index: 0,
           content: normalizedContent,
-          embedding
-          // Note: metadata field removed - was computing section_type, has_citations, etc.
-          // but these were never used for filtering or retrieval
+          // embedding: removed - Qdrant only
         }, {
           onConflict: 'paper_id,chunk_index',  // Match the actual unique constraint
           ignoreDuplicates: false  // Update if exists (content may have changed)
@@ -287,7 +286,7 @@ export async function createChunksForPaper(
         }
       }
       
-      // Also insert into Qdrant if configured
+      // Insert embedding into Qdrant ONLY
       if (isQdrantConfigured()) {
         try {
           await upsertQdrantChunks([{
@@ -300,6 +299,8 @@ export async function createChunksForPaper(
         } catch (qdrantErr) {
           console.warn(`Failed to insert Qdrant chunk for paper ${paperId}:`, qdrantErr)
         }
+      } else {
+        console.warn(`⚠️ Qdrant not configured - embedding for paper ${paperId} not stored!`)
       }
 
       console.log(`✅ Created 1 short-content chunk for paper ${paperId}`)
@@ -332,8 +333,8 @@ export async function createChunksForPaper(
     // has_data, has_figures, is_conclusion, complexity_score, key_terms but these were
     // never used for filtering or retrieval. Semantic search uses embeddings only.
 
-    // Insert chunks into database with embeddings
-    const chunkData = chunks.map((chunk, index) => ({
+    // Prepare chunk data with embeddings (for Qdrant)
+    const chunkDataWithEmbeddings = chunks.map((chunk, index) => ({
       id: chunk.id,
       paper_id: paperId,
       chunk_index: index,
@@ -341,9 +342,12 @@ export async function createChunksForPaper(
       embedding: embeddings[index]
     }))
     
+    // Insert to Supabase WITHOUT embeddings (Qdrant only for embeddings)
+    const chunkDataWithoutEmbeddings = chunkDataWithEmbeddings.map(({ embedding, ...rest }) => rest)
+    
     let { error } = await serviceClient
       .from('paper_chunks')
-      .upsert(chunkData, {
+      .upsert(chunkDataWithoutEmbeddings, {
         onConflict: 'paper_id,chunk_index',  // Match the actual unique constraint
         ignoreDuplicates: false  // Update if exists (content may have changed)
       })
@@ -366,14 +370,16 @@ export async function createChunksForPaper(
       console.log(`⚠️ Some chunks may have been duplicates, but ${verifyChunks.length} chunks exist for paper`)
     }
     
-    // Also insert into Qdrant if configured
+    // Insert embeddings into Qdrant ONLY
     if (isQdrantConfigured()) {
       try {
-        await upsertQdrantChunks(chunkData)
-        console.log(`✅ Inserted ${chunkData.length} chunks into Qdrant for paper ${paperId}`)
+        await upsertQdrantChunks(chunkDataWithEmbeddings)
+        console.log(`✅ Inserted ${chunkDataWithEmbeddings.length} chunks into Qdrant for paper ${paperId}`)
       } catch (qdrantErr) {
         console.warn(`Failed to insert Qdrant chunks for paper ${paperId}:`, qdrantErr)
       }
+    } else {
+      console.warn(`⚠️ Qdrant not configured - embeddings for paper ${paperId} not stored!`)
     }
 
     // Verify actual chunk count in database

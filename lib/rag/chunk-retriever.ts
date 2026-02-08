@@ -306,7 +306,13 @@ export class ChunkRetriever {
   }
   
   /**
-   * Hybrid search combining vector + keyword with RRF.
+   * Hybrid search combining vector (Qdrant) + keyword (Supabase) with client-side RRF.
+   * 
+   * This replaces the previous pgvector-based hybrid_search_chunks RPC.
+   * Now uses:
+   * - Qdrant for vector search (embeddings are only in Qdrant)
+   * - Supabase keyword_search_chunks for full-text search
+   * - Client-side Reciprocal Rank Fusion (RRF) to combine results
    */
   private async hybridSearch(
     query: string,
@@ -314,105 +320,128 @@ export class ChunkRetriever {
     config: RetrievalConfig,
     supabase: ReturnType<typeof createServiceClient>
   ): Promise<RetrievedChunk[]> {
-    const queryEmbedding = await getCachedQueryEmbedding(query)
+    // Run vector and keyword searches in parallel
+    const [vectorResults, keywordResults] = await Promise.all([
+      this.vectorSearch(query, paperIds, config, supabase),
+      this.keywordSearch(query, paperIds, config, supabase)
+    ])
     
-    const rpcName = config.useCitationBoost 
-      ? 'hybrid_search_chunks_with_boost' 
-      : 'hybrid_search_chunks'
-    
-    const rpcParams = config.useCitationBoost
-      ? {
-          query_embedding: queryEmbedding,
-          search_query: query,
-          match_count: config.retrieveLimit,
-          min_vector_score: config.minScore,
-          paper_ids: paperIds,
-          vector_weight: config.vectorWeight,
-          citation_boost: config.citationBoostFactor
-        }
-      : {
-          query_embedding: queryEmbedding,
-          search_query: query,
-          match_count: config.retrieveLimit,
-          min_vector_score: config.minScore,
-          paper_ids: paperIds,
-          vector_weight: config.vectorWeight
-        }
-    
-    const { data, error } = await supabase.rpc(rpcName, rpcParams)
-    
-    if (error) {
-      // Fallback to vector search
-      console.warn('Hybrid search failed, falling back to vector:', error.message)
-      return this.vectorSearch(query, paperIds, config, supabase, queryEmbedding)
+    // If one search type fails, return the other
+    if (vectorResults.length === 0 && keywordResults.length === 0) {
+      return []
+    }
+    if (vectorResults.length === 0) {
+      return keywordResults
+    }
+    if (keywordResults.length === 0) {
+      return vectorResults
     }
     
-    if (!data || data.length === 0) {
-      return this.vectorSearch(query, paperIds, config, supabase, queryEmbedding)
-    }
+    // Client-side RRF fusion (same algorithm as the SQL function)
+    // RRF formula: score = sum(1 / (k + rank)) where k=60 is standard
+    const K = 60
+    const vectorWeight = config.vectorWeight
+    const keywordWeight = 1 - vectorWeight
     
-    return this.mapSearchResults(data)
+    // Build score map from vector results (with ranks)
+    const scoreMap = new Map<string, {
+      chunk: RetrievedChunk
+      vectorRank: number | null
+      keywordRank: number | null
+      vectorScore: number
+      keywordScore: number
+    }>()
+    
+    vectorResults.forEach((chunk, index) => {
+      const key = chunk.id || `${chunk.paper_id}-${chunk.chunk_index}`
+      scoreMap.set(key, {
+        chunk,
+        vectorRank: index + 1,
+        keywordRank: null,
+        vectorScore: chunk.score,
+        keywordScore: 0
+      })
+    })
+    
+    // Merge keyword results
+    keywordResults.forEach((chunk, index) => {
+      const key = chunk.id || `${chunk.paper_id}-${chunk.chunk_index}`
+      const existing = scoreMap.get(key)
+      
+      if (existing) {
+        // Found in both - update keyword rank and score
+        existing.keywordRank = index + 1
+        existing.keywordScore = chunk.score
+      } else {
+        // Keyword only
+        scoreMap.set(key, {
+          chunk,
+          vectorRank: null,
+          keywordRank: index + 1,
+          vectorScore: 0,
+          keywordScore: chunk.score
+        })
+      }
+    })
+    
+    // Calculate RRF scores and sort
+    const combined = Array.from(scoreMap.values())
+      .map(item => {
+        const vectorRRF = item.vectorRank ? 1 / (K + item.vectorRank) : 0
+        const keywordRRF = item.keywordRank ? 1 / (K + item.keywordRank) : 0
+        const combinedScore = (vectorRRF * vectorWeight) + (keywordRRF * keywordWeight)
+        
+        return {
+          ...item.chunk,
+          score: combinedScore,
+          vector_score: item.vectorScore,
+          keyword_score: item.keywordScore
+        }
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, config.retrieveLimit)
+    
+    return combined
   }
   
   /**
    * Vector-only search using embeddings.
-   * Uses Qdrant if configured, otherwise falls back to pgvector.
+   * Uses Qdrant only (embeddings are only stored in Qdrant, not pgvector).
    */
   private async vectorSearch(
     query: string,
     paperIds: string[],
     config: RetrievalConfig,
-    supabase: ReturnType<typeof createServiceClient>,
+    _supabase: ReturnType<typeof createServiceClient>,
     embedding?: number[]
   ): Promise<RetrievedChunk[]> {
-    const queryEmbedding = embedding || await getCachedQueryEmbedding(query)
-    
-    // Use Qdrant if configured
-    if (isQdrantConfigured()) {
-      try {
-        const results = await qdrantSearchChunks(queryEmbedding, {
-          limit: config.retrieveLimit,
-          minScore: config.minScore,
-          paperIds: paperIds.length > 0 ? paperIds : undefined,
-        })
-        
-        return results.map(r => ({
-          id: r.id,
-          paper_id: r.paper_id,
-          content: r.content,
-          score: normalizeScore(r.score),
-          chunk_index: r.chunk_index,
-          vector_score: normalizeScore(r.score)
-        }))
-      } catch (err) {
-        console.warn('Qdrant search failed, falling back to pgvector:', err)
-        // Fall through to pgvector
-      }
-    }
-    
-    // Fallback to pgvector (Supabase)
-    const { data, error } = await supabase.rpc('match_paper_chunks', {
-      query_embedding: queryEmbedding,
-      match_count: config.retrieveLimit,
-      min_score: config.minScore,
-      paper_ids: paperIds
-    })
-    
-    if (error) {
-      console.warn('Vector search failed:', error)
+    // Qdrant only - no pgvector fallback (embeddings are only in Qdrant)
+    if (!isQdrantConfigured()) {
+      console.warn('Qdrant not configured - cannot perform vector search')
       return []
     }
     
-    return (data || [])
-      .filter((c: { score: number }) => c.score >= config.minScore)
-      .map((c: { id?: string; paper_id: string; content: string; score: number; chunk_index?: number }) => ({
-        id: c.id,
-        paper_id: c.paper_id,
-        content: c.content,
-        score: normalizeScore(c.score),
-        chunk_index: c.chunk_index,
-        vector_score: normalizeScore(c.score)
+    const queryEmbedding = embedding || await getCachedQueryEmbedding(query)
+    
+    try {
+      const results = await qdrantSearchChunks(queryEmbedding, {
+        limit: config.retrieveLimit,
+        minScore: config.minScore,
+        paperIds: paperIds.length > 0 ? paperIds : undefined,
+      })
+      
+      return results.map(r => ({
+        id: r.id,
+        paper_id: r.paper_id,
+        content: r.content,
+        score: normalizeScore(r.score),
+        chunk_index: r.chunk_index,
+        vector_score: normalizeScore(r.score)
       }))
+    } catch (err) {
+      console.error('Qdrant vector search failed:', err)
+      return []
+    }
   }
   
   /**

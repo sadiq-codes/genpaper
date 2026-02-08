@@ -41,10 +41,8 @@ interface EditorSidebarProps {
   isChatLoadingHistory?: boolean
   /** Chat error (for rate limit handling) */
   chatError?: Error | null
-  // Tool-related props (actions are in editor now, these are for status display)
+  // Tool-related props (actions are handled in editor, this is for status display only)
   pendingTools?: PendingToolCall[]
-  onConfirmTool?: (toolId: string) => void
-  onRejectTool?: (toolId: string) => void
   onClearHistory?: () => void
   // Research props
   papers: ProjectPaper[]
@@ -72,8 +70,6 @@ export function EditorSidebar({
   isChatLoadingHistory = false,
   chatError,
   pendingTools,
-  onConfirmTool,
-  onRejectTool,
   onClearHistory,
   papers,
   onInsertCitation,
@@ -146,9 +142,15 @@ export function EditorSidebar({
             error={chatError}
             papers={papers}
             projectId={projectId}
+            onCitePaper={(paper) => onInsertCitation({
+              id: paper.id,
+              authors: paper.authors,
+              title: paper.title,
+              year: paper.year,
+              journal: paper.journal,
+              doi: paper.doi,
+            })}
             pendingTools={pendingTools}
-            onConfirmTool={onConfirmTool}
-            onRejectTool={onRejectTool}
             onClearHistory={onClearHistory}
             onStop={onStopGeneration}
           />

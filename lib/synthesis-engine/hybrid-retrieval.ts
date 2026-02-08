@@ -10,8 +10,8 @@
  * @module lib/synthesis-engine/hybrid-retrieval
  */
 
-import { createServiceClient } from '@/lib/supabase/service'
 import { getCachedQueryEmbedding } from '@/lib/rag/embedding-cache'
+import { searchChunks as qdrantSearchChunks, isQdrantConfigured } from '@/lib/qdrant/client'
 import type { FormattedPattern, FormattedContradiction } from './formatters'
 import type { PaperInfo } from './types'
 
@@ -108,20 +108,43 @@ export async function retrieveChunksForPattern(
   // Get embedding for query
   const embedding = await getCachedQueryEmbedding(query)
   
-  // Search chunks restricted to supporting papers
-  const supabase = createServiceClient()
+  // Search chunks restricted to supporting papers (Qdrant only)
+  if (!isQdrantConfigured()) {
+    console.warn(`Qdrant not configured - cannot retrieve chunks for pattern`)
+    return {
+      patternId: pattern.claim,
+      patternClaim: pattern.claim,
+      chunks: [],
+      totalRetrieved: 0,
+      retrievalTimeMs: Date.now() - startTime
+    }
+  }
   
-  const { data: chunks, error } = await supabase.rpc('hybrid_search_chunks', {
-    query_embedding: embedding,
-    search_query: query,
-    match_count: cfg.maxChunksPerPattern * 2, // Over-fetch for filtering
-    min_vector_score: cfg.minScore,
-    paper_ids: targetPaperIds,
-    vector_weight: 0.7
-  })
+  let chunks: Array<{
+    id: string
+    paper_id: string
+    content: string
+    chunk_index: number
+    combined_score: number
+    vector_score: number
+  }>
   
-  if (error) {
-    console.error(`Error retrieving chunks for pattern: ${error.message}`)
+  try {
+    const qdrantResults = await qdrantSearchChunks(embedding, {
+      limit: cfg.maxChunksPerPattern * 2,
+      minScore: cfg.minScore,
+      paperIds: targetPaperIds,
+    })
+    chunks = qdrantResults.map(r => ({
+      id: r.id,
+      paper_id: r.paper_id,
+      content: r.content,
+      chunk_index: r.chunk_index,
+      combined_score: r.score,
+      vector_score: r.score,
+    }))
+  } catch (qdrantErr) {
+    console.error(`Qdrant search failed for pattern:`, qdrantErr)
     return {
       patternId: pattern.claim,
       patternClaim: pattern.claim,
@@ -201,18 +224,37 @@ export async function retrieveChunksForContradiction(
       const query = `${side.position} ${contradiction.description}`
       const embedding = await getCachedQueryEmbedding(query)
       
-      const supabase = createServiceClient()
-      const { data: chunks, error } = await supabase.rpc('hybrid_search_chunks', {
-        query_embedding: embedding,
-        search_query: query,
-        match_count: Math.ceil(cfg.maxChunksPerPattern / 2),
-        min_vector_score: cfg.minScore,
-        paper_ids: paperIds,
-        vector_weight: 0.7
-      })
+      // Qdrant only - no pgvector fallback
+      if (!isQdrantConfigured()) {
+        console.warn(`Qdrant not configured - cannot retrieve chunks for contradiction`)
+        return []
+      }
       
-      if (error) {
-        console.error(`Error retrieving chunks for contradiction side ${index + 1}: ${error.message}`)
+      let chunks: Array<{
+        id: string
+        paper_id: string
+        content: string
+        chunk_index: number
+        combined_score: number
+        vector_score: number
+      }>
+      
+      try {
+        const qdrantResults = await qdrantSearchChunks(embedding, {
+          limit: Math.ceil(cfg.maxChunksPerPattern / 2),
+          minScore: cfg.minScore,
+          paperIds: paperIds,
+        })
+        chunks = qdrantResults.map(r => ({
+          id: r.id,
+          paper_id: r.paper_id,
+          content: r.content,
+          chunk_index: r.chunk_index,
+          combined_score: r.score,
+          vector_score: r.score,
+        }))
+      } catch (qdrantErr) {
+        console.error(`Qdrant search failed for contradiction side ${index + 1}:`, qdrantErr)
         return []
       }
       
@@ -305,27 +347,32 @@ export async function getChunksByPaperIds(
   
   if (paperIds.length === 0) return []
   
+  // Qdrant only - no pgvector fallback
+  if (!isQdrantConfigured()) {
+    console.warn(`Qdrant not configured - cannot retrieve chunks`)
+    return []
+  }
+  
   const embedding = await getCachedQueryEmbedding(query)
-  const supabase = createServiceClient()
   
-  const { data: chunks, error } = await supabase.rpc('hybrid_search_chunks', {
-    query_embedding: embedding,
-    search_query: query,
-    match_count: cfg.maxChunksPerPattern,
-    min_vector_score: cfg.minScore,
-    paper_ids: paperIds,
-    vector_weight: 0.7
-  })
-  
-  if (error || !chunks) return []
-  
-  return chunks.map((chunk: any) => ({
-    id: chunk.id,
-    paperId: chunk.paper_id,
-    paperTitle: 'Unknown', // Caller should enrich
-    content: chunk.content,
-    score: chunk.combined_score || chunk.vector_score || 0,
-    evidenceStrength: 'full_text' as const,
-    chunkIndex: chunk.chunk_index
-  }))
+  try {
+    const qdrantResults = await qdrantSearchChunks(embedding, {
+      limit: cfg.maxChunksPerPattern,
+      minScore: cfg.minScore,
+      paperIds: paperIds,
+    })
+    
+    return qdrantResults.map(r => ({
+      id: r.id,
+      paperId: r.paper_id,
+      paperTitle: 'Unknown', // Caller should enrich
+      content: r.content,
+      score: r.score,
+      evidenceStrength: 'full_text' as const,
+      chunkIndex: r.chunk_index
+    }))
+  } catch (qdrantErr) {
+    console.error(`Qdrant search failed:`, qdrantErr)
+    return []
+  }
 }

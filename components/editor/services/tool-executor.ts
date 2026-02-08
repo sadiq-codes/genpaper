@@ -683,15 +683,18 @@ async function saveCitationInstancesToDatabase(
   })
   
   // Store failed instances in localStorage for recovery on next page load
-  try {
-    const failedQueue = JSON.parse(localStorage.getItem('failedCitationInstances') || '[]')
-    failedQueue.push({ projectId, instances, timestamp: Date.now() })
-    // Keep only last 50 failed saves to prevent localStorage bloat
-    if (failedQueue.length > 50) failedQueue.shift()
-    localStorage.setItem('failedCitationInstances', JSON.stringify(failedQueue))
-    console.log('[ToolExecutor] Queued failed citation instances for recovery')
-  } catch {
-    // localStorage not available, silently fail
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('failedCitationInstances')
+      const failedQueue = stored ? JSON.parse(stored) : []
+      failedQueue.push({ projectId, instances, timestamp: Date.now() })
+      // Keep only last 50 failed saves to prevent localStorage bloat
+      if (failedQueue.length > 50) failedQueue.shift()
+      localStorage.setItem('failedCitationInstances', JSON.stringify(failedQueue))
+      console.log('[ToolExecutor] Queued failed citation instances for recovery')
+    } catch {
+      // localStorage not available or corrupted data, silently fail
+    }
   }
 }
 

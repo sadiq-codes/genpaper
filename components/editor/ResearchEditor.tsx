@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import type { Editor } from "@tiptap/react"
 import { EditorTopNav } from "./EditorTopNav"
@@ -151,10 +151,10 @@ export function ResearchEditor({
   }, [setPapers])
 
   // Paper processing status tracking
-  // Polls for status updates when papers are being processed
+  // Polls for status updates whenever papers exist (not just in write mode)
   const processingStatus = usePaperProcessingStatus({
     projectId,
-    enabled: isWriteMode && papers.length > 0,
+    enabled: papers.length > 0,
     pollInterval: 3000,
     stopWhenComplete: true,
     onAllProcessed: () => {
@@ -230,14 +230,22 @@ export function ResearchEditor({
     })
   }, [isWriteMode, projectId, projectTopic])
 
-  // Write mode: Trigger background processing of project papers
+  // Trigger background processing of project papers when papers exist
+  // This runs on mount and whenever new papers are added to ensure all papers get processed
+  const processedPaperCountRef = useRef<number>(0)
+  
   useEffect(() => {
-    if (!isWriteMode || !projectId) return
+    if (!projectId || papers.length === 0) return
+    
+    // Only trigger if we have new papers that haven't been seen
+    // This prevents re-triggering on every render while still catching new additions
+    if (papers.length <= processedPaperCountRef.current) return
+    processedPaperCountRef.current = papers.length
     
     // Start background processing of all papers in this project
     const triggerProcessing = async () => {
       try {
-        console.log('[ResearchEditor] Triggering background paper processing for project:', projectId)
+        console.log('[ResearchEditor] Triggering background paper processing for project:', projectId, 'papers:', papers.length)
         const response = await fetch('/api/papers/process', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -259,7 +267,7 @@ export function ResearchEditor({
     }
     
     triggerProcessing()
-  }, [isWriteMode, projectId])
+  }, [projectId, papers.length])
 
   // Sync papers and projectId with tool executor for markdown processing and citation saving
   useEffect(() => {
@@ -483,8 +491,6 @@ export function ResearchEditor({
       isChatLoadingHistory={isChatLoadingHistory}
       chatError={chatError}
       pendingTools={pendingTools}
-      onConfirmTool={confirmTool}
-      onRejectTool={rejectTool}
       onClearHistory={clearChatHistory}
       papers={papers}
       onInsertCitation={handleInsertCitation}
