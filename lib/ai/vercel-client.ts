@@ -92,7 +92,7 @@ export function getEmbeddingProviderName(): string {
 }
 
 // Re-export config for convenience
-export { getModel, EMBEDDING_CONFIG } from './config'
+export { getModel, EMBEDDING_CONFIG, isSelfHostedEmbeddingConfigured } from './config'
 
 // Re-export commonly used types for convenience
 export type { 

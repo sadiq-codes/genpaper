@@ -26,6 +26,37 @@ const qdrant = new QdrantClient({
   url: process.env.QDRANT_URL!,
 })
 
+/**
+ * Parse pgvector string format to number array
+ * pgvector returns embeddings as strings like "[0.1,0.2,0.3,...]"
+ */
+function parseEmbedding(embedding: unknown): number[] | null {
+  if (!embedding) return null
+  
+  // Already an array
+  if (Array.isArray(embedding)) {
+    return embedding as number[]
+  }
+  
+  // Parse string format "[0.1,0.2,...]"
+  if (typeof embedding === 'string') {
+    try {
+      const parsed = JSON.parse(embedding)
+      if (Array.isArray(parsed)) {
+        return parsed as number[]
+      }
+    } catch {
+      // Try without JSON.parse for format like "[0.1,0.2,...]"
+      const match = embedding.match(/\[(.*)\]/)
+      if (match) {
+        return match[1].split(',').map(s => parseFloat(s.trim()))
+      }
+    }
+  }
+  
+  return null
+}
+
 async function main() {
   const args = process.argv.slice(2)
   let batchSize = BATCH_SIZE
@@ -93,14 +124,20 @@ async function main() {
     
     if (!papers || papers.length === 0) break
     
-    const points = papers.map(p => ({
-      id: p.id,
-      vector: p.embedding as number[],
-      payload: {
-        title: p.title,
-        doi: p.doi || undefined,
-      },
-    }))
+    const points = papers
+      .map(p => {
+        const vector = parseEmbedding(p.embedding)
+        if (!vector || vector.length !== 1024) return null
+        return {
+          id: p.id,
+          vector,
+          payload: {
+            title: p.title,
+            doi: p.doi || undefined,
+          },
+        }
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null)
     
     try {
       await qdrant.upsert('papers', { wait: true, points })
@@ -133,15 +170,21 @@ async function main() {
     
     if (!chunks || chunks.length === 0) break
     
-    const points = chunks.map(c => ({
-      id: c.id,
-      vector: c.embedding as number[],
-      payload: {
-        paper_id: c.paper_id,
-        chunk_index: c.chunk_index,
-        content: c.content,
-      },
-    }))
+    const points = chunks
+      .map(c => {
+        const vector = parseEmbedding(c.embedding)
+        if (!vector || vector.length !== 1024) return null
+        return {
+          id: c.id,
+          vector,
+          payload: {
+            paper_id: c.paper_id,
+            chunk_index: c.chunk_index,
+            content: c.content,
+          },
+        }
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null)
     
     try {
       await qdrant.upsert('paper_chunks', { wait: true, points })
