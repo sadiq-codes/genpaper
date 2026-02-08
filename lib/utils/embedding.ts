@@ -52,39 +52,56 @@ export async function generateEmbeddings(inputs: string | string[]): Promise<num
     return []
   }
 
+  const isTEI = isSelfHostedEmbeddingConfigured()
+  const provider = isTEI ? 'TEI' : 'OpenAI'
+
   // Log provider on first use (helps verify which provider is being used)
   if (!hasLoggedProvider) {
-    const provider = isSelfHostedEmbeddingConfigured()
+    const providerDetails = isTEI
       ? `TEI BGE-large-en-v1.5 (${EMBEDDING_CONFIG.dimensions} dims) @ ${process.env.EMBEDDING_SERVER_URL}`
       : `OpenAI text-embedding-3-small (${EMBEDDING_CONFIG.dimensions} dims)`
-    console.log(`📊 Embedding provider: ${provider}`)
+    console.log(`📊 Embedding provider: ${providerDetails}`)
     hasLoggedProvider = true
   }
 
+  const startTime = Date.now()
+  
   try {
+    let embeddings: number[][]
+    
     // Use TEI if configured (faster, self-hosted)
-    if (isSelfHostedEmbeddingConfigured()) {
-      return await callTEI(inputArray)
+    if (isTEI) {
+      embeddings = await callTEI(inputArray)
+    } else {
+      // Fallback to OpenAI
+      const model = getEmbeddingModel()
+      
+      const result = await embedMany({
+        model,
+        values: inputArray,
+        // Request 1024 dimensions from OpenAI text-embedding-3-small
+        providerOptions: {
+          openai: {
+            dimensions: EMBEDDING_CONFIG.dimensions,
+          },
+        },
+        experimental_telemetry: { isEnabled: false },
+      })
+      
+      embeddings = result.embeddings
     }
     
-    // Fallback to OpenAI
-    const model = getEmbeddingModel()
+    const duration = Date.now() - startTime
     
-    const { embeddings } = await embedMany({
-      model,
-      values: inputArray,
-      // Request 1024 dimensions from OpenAI text-embedding-3-small
-      providerOptions: {
-        openai: {
-          dimensions: EMBEDDING_CONFIG.dimensions,
-        },
-      },
-      experimental_telemetry: { isEnabled: false },
-    })
+    // Log timing for monitoring (always log in production for visibility)
+    if (duration > 500 || process.env.NODE_ENV === 'production') {
+      console.log(`[Embedding] ${provider}: ${duration}ms for ${inputArray.length} text(s)`)
+    }
     
     return embeddings
   } catch (error) {
-    console.error('Failed to generate embeddings:', error)
+    const duration = Date.now() - startTime
+    console.error(`[Embedding] ${provider} failed after ${duration}ms:`, error)
     throw new Error(`Embedding generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 } 
