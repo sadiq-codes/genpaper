@@ -68,12 +68,40 @@ export function getChatModel(): string {
 }
 
 /**
- * Embedding configuration (OpenAI only)
+ * Embedding configuration
  * Note: Changing embedding model requires re-embedding all stored vectors
+ * 
+ * Current model: BGE-large-en-v1.5 (1024 dimensions)
+ * - State-of-the-art retrieval performance on MTEB benchmark
+ * - Self-hosted on Azure VM (32 vCPUs)
+ * - Falls back to OpenAI text-embedding-3-small if server unavailable
  */
 export const EMBEDDING_CONFIG = {
-  model: 'text-embedding-3-small',
-  dimensions: 384,
+  model: 'bge-large-en-v1.5',
+  dimensions: 1024,
 } as const
 
 export type EmbeddingConfig = typeof EMBEDDING_CONFIG
+
+/**
+ * Get Azure OpenAI embedding deployment name
+ * This is the name you gave when deploying the model in Azure OpenAI Studio
+ * Defaults to the model name if not specified
+ */
+export function getAzureEmbeddingDeployment(): string {
+  return process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT || EMBEDDING_CONFIG.model
+}
+
+/**
+ * Check if Azure OpenAI is configured for embeddings
+ */
+export function isAzureOpenAIConfigured(): boolean {
+  return !!(process.env.AZURE_OPENAI_RESOURCE_NAME && process.env.AZURE_OPENAI_API_KEY)
+}
+
+/**
+ * Check if self-hosted embedding server is configured
+ */
+export function isSelfHostedEmbeddingConfigured(): boolean {
+  return !!process.env.EMBEDDING_SERVER_URL
+}

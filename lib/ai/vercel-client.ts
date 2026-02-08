@@ -1,5 +1,16 @@
 import { createOpenAI } from '@ai-sdk/openai'
-import { getModel, getChatModel as getChatModelName, getAutocompleteModel as getAutocompleteModelName, getFastAutocompleteModel as getFastAutocompleteModelName, getExtractionModel as getExtractionModelName, EMBEDDING_CONFIG } from './config'
+import { createAzure } from '@ai-sdk/azure'
+import { 
+  getModel, 
+  getChatModel as getChatModelName, 
+  getAutocompleteModel as getAutocompleteModelName, 
+  getFastAutocompleteModel as getFastAutocompleteModelName, 
+  getExtractionModel as getExtractionModelName, 
+  EMBEDDING_CONFIG, 
+  getAzureEmbeddingDeployment,
+  isAzureOpenAIConfigured,
+  isSelfHostedEmbeddingConfigured
+} from './config'
 
 // Vercel AI SDK client for paper generation
 export const ai = createOpenAI({
@@ -55,21 +66,29 @@ export function getExtractionLanguageModel() {
 /**
  * Get the embedding model instance.
  * 
- * When EMBEDDING_SERVER_URL is set, uses a self-hosted all-MiniLM-L6-v2 server
- * (OpenAI-compatible endpoint). Otherwise falls back to OpenAI's API.
- * 
- * Set EMBEDDING_SERVER_URL=http://<your-server>:8787 in .env.local
- * Set EMBEDDING_API_TOKEN to the token configured on the server (optional)
+ * Priority:
+ * 1. Self-hosted BGE-large server (if EMBEDDING_SERVER_URL is set)
+ * 2. OpenAI text-embedding-3-small (fallback)
  */
 export function getEmbeddingModel() {
-  if (process.env.EMBEDDING_SERVER_URL) {
+  if (isSelfHostedEmbeddingConfigured()) {
     const embeddingClient = createOpenAI({
       baseURL: `${process.env.EMBEDDING_SERVER_URL}/v1`,
-      apiKey: process.env.EMBEDDING_API_TOKEN || 'unused',
+      apiKey: 'unused', // Self-hosted doesn't need API key
     })
-    return embeddingClient.embedding(EMBEDDING_CONFIG.model)
+    return embeddingClient.embedding('bge-large-en-v1.5')
   }
-  return ai.embedding(EMBEDDING_CONFIG.model)
+  return ai.embedding('text-embedding-3-small')
+}
+
+/**
+ * Get the current embedding provider name (for logging/debugging)
+ */
+export function getEmbeddingProviderName(): string {
+  if (isSelfHostedEmbeddingConfigured()) {
+    return `BGE-large-en-v1.5 (${EMBEDDING_CONFIG.dimensions} dims) @ ${process.env.EMBEDDING_SERVER_URL}`
+  }
+  return `OpenAI text-embedding-3-small (${EMBEDDING_CONFIG.dimensions} dims)`
 }
 
 // Re-export config for convenience
