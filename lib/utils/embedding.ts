@@ -10,7 +10,8 @@
  */
 
 import { embedMany } from 'ai'
-import { getEmbeddingModel, EMBEDDING_CONFIG, isSelfHostedEmbeddingConfigured } from '@/lib/ai/vercel-client'
+import { getEmbeddingModel, EMBEDDING_CONFIG, isSelfHostedEmbeddingConfigured, getEmbeddingProviderName } from '@/lib/ai/vercel-client'
+import { isAzureOpenAIConfigured } from '@/lib/ai/config'
 
 // Re-export for backwards compatibility
 export { EMBEDDING_CONFIG } from '@/lib/ai/vercel-client'
@@ -53,14 +54,12 @@ export async function generateEmbeddings(inputs: string | string[]): Promise<num
   }
 
   const isTEI = isSelfHostedEmbeddingConfigured()
-  const provider = isTEI ? 'TEI' : 'OpenAI'
+  const isAzure = !isTEI && isAzureOpenAIConfigured()
+  const provider = isTEI ? 'TEI' : isAzure ? 'Azure' : 'OpenAI'
 
   // Log provider on first use (helps verify which provider is being used)
   if (!hasLoggedProvider) {
-    const providerDetails = isTEI
-      ? `TEI BGE-large-en-v1.5 (${EMBEDDING_CONFIG.dimensions} dims) @ ${process.env.EMBEDDING_SERVER_URL}`
-      : `OpenAI text-embedding-3-large (${EMBEDDING_CONFIG.dimensions} dims)`
-    console.log(`📊 Embedding provider: ${providerDetails}`)
+    console.log(`📊 Embedding provider: ${getEmbeddingProviderName()}`)
     hasLoggedProvider = true
   }
 

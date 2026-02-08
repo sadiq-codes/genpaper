@@ -64,13 +64,25 @@ export function getExtractionLanguageModel() {
 }
 
 /**
+ * Get Azure OpenAI client (if configured)
+ */
+function getAzureClient() {
+  return createAzure({
+    resourceName: process.env.AZURE_OPENAI_RESOURCE_NAME!,
+    apiKey: process.env.AZURE_OPENAI_API_KEY!,
+  })
+}
+
+/**
  * Get the embedding model instance.
  * 
  * Priority:
  * 1. Self-hosted TEI server (if EMBEDDING_SERVER_URL is set)
- * 2. OpenAI text-embedding-3-large (default - best quality)
+ * 2. Azure OpenAI (if AZURE_OPENAI_RESOURCE_NAME is set)
+ * 3. OpenAI text-embedding-3-large (fallback)
  */
 export function getEmbeddingModel() {
+  // 1. Self-hosted TEI
   if (isSelfHostedEmbeddingConfigured()) {
     const embeddingClient = createOpenAI({
       baseURL: `${process.env.EMBEDDING_SERVER_URL}/v1`,
@@ -78,6 +90,14 @@ export function getEmbeddingModel() {
     })
     return embeddingClient.embedding('bge-large-en-v1.5')
   }
+  
+  // 2. Azure OpenAI
+  if (isAzureOpenAIConfigured()) {
+    const azure = getAzureClient()
+    return azure.embedding(getAzureEmbeddingDeployment())
+  }
+  
+  // 3. OpenAI (fallback)
   return ai.embedding('text-embedding-3-large')
 }
 
@@ -87,6 +107,9 @@ export function getEmbeddingModel() {
 export function getEmbeddingProviderName(): string {
   if (isSelfHostedEmbeddingConfigured()) {
     return `TEI BGE-large-en-v1.5 (${EMBEDDING_CONFIG.dimensions} dims) @ ${process.env.EMBEDDING_SERVER_URL}`
+  }
+  if (isAzureOpenAIConfigured()) {
+    return `Azure OpenAI ${getAzureEmbeddingDeployment()} (${EMBEDDING_CONFIG.dimensions} dims)`
   }
   return `OpenAI text-embedding-3-large (${EMBEDDING_CONFIG.dimensions} dims)`
 }
