@@ -10,6 +10,7 @@ import { chunkByTokens, normalizeText, type TokenChunkOptions } from '@/lib/util
 import { collisionResistantHash } from '@/lib/utils/hash'
 import { ContentRetrievalError, IngestionError, ChunkingError } from './errors'
 import { getPDFContent, hasPDFContent } from '@/lib/pdf/pdf-utils'
+import { isQdrantConfigured, upsertChunks as upsertQdrantChunks, deleteChunksByPaperId as deleteQdrantChunks } from '@/lib/qdrant/client'
 import type { PaperWithAuthors } from '@/types/simplified'
 
 export interface ContentStatus {
@@ -236,6 +237,15 @@ export async function createChunksForPaper(
       if (deleteError) {
         console.warn(`Failed to delete existing chunks for paper ${paperId}:`, deleteError.message)
       }
+      
+      // Also delete from Qdrant if configured
+      if (isQdrantConfigured()) {
+        try {
+          await deleteQdrantChunks(paperId)
+        } catch (qdrantErr) {
+          console.warn(`Failed to delete Qdrant chunks for paper ${paperId}:`, qdrantErr)
+        }
+      }
     }
 
     // Handle short content: ensure at least one chunk for short abstracts
@@ -274,6 +284,21 @@ export async function createChunksForPaper(
         
         if (!verifyChunk || verifyChunk.length === 0) {
           throw new ChunkingError(`Failed to insert short-content chunk: ${error.message}`)
+        }
+      }
+      
+      // Also insert into Qdrant if configured
+      if (isQdrantConfigured()) {
+        try {
+          await upsertQdrantChunks([{
+            id: chunkId,
+            paper_id: paperId,
+            chunk_index: 0,
+            content: normalizedContent,
+            embedding
+          }])
+        } catch (qdrantErr) {
+          console.warn(`Failed to insert Qdrant chunk for paper ${paperId}:`, qdrantErr)
         }
       }
 
@@ -339,6 +364,16 @@ export async function createChunksForPaper(
       }
       
       console.log(`⚠️ Some chunks may have been duplicates, but ${verifyChunks.length} chunks exist for paper`)
+    }
+    
+    // Also insert into Qdrant if configured
+    if (isQdrantConfigured()) {
+      try {
+        await upsertQdrantChunks(chunkData)
+        console.log(`✅ Inserted ${chunkData.length} chunks into Qdrant for paper ${paperId}`)
+      } catch (qdrantErr) {
+        console.warn(`Failed to insert Qdrant chunks for paper ${paperId}:`, qdrantErr)
+      }
     }
 
     // Verify actual chunk count in database

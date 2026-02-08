@@ -8,6 +8,7 @@ import {
   type RetrievedChunk,
   type SearchMode
 } from './base-retrieval'
+import { searchChunks as qdrantSearchChunks, isQdrantConfigured } from '@/lib/qdrant/client'
 
 /**
  * ChunkRetriever - Focused class for semantic chunk retrieval
@@ -355,6 +356,7 @@ export class ChunkRetriever {
   
   /**
    * Vector-only search using embeddings.
+   * Uses Qdrant if configured, otherwise falls back to pgvector.
    */
   private async vectorSearch(
     query: string,
@@ -365,6 +367,30 @@ export class ChunkRetriever {
   ): Promise<RetrievedChunk[]> {
     const queryEmbedding = embedding || await getCachedQueryEmbedding(query)
     
+    // Use Qdrant if configured
+    if (isQdrantConfigured()) {
+      try {
+        const results = await qdrantSearchChunks(queryEmbedding, {
+          limit: config.retrieveLimit,
+          minScore: config.minScore,
+          paperIds: paperIds.length > 0 ? paperIds : undefined,
+        })
+        
+        return results.map(r => ({
+          id: r.id,
+          paper_id: r.paper_id,
+          content: r.content,
+          score: normalizeScore(r.score),
+          chunk_index: r.chunk_index,
+          vector_score: normalizeScore(r.score)
+        }))
+      } catch (err) {
+        console.warn('Qdrant search failed, falling back to pgvector:', err)
+        // Fall through to pgvector
+      }
+    }
+    
+    // Fallback to pgvector (Supabase)
     const { data, error } = await supabase.rpc('match_paper_chunks', {
       query_embedding: queryEmbedding,
       match_count: config.retrieveLimit,
