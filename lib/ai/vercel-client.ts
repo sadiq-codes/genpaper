@@ -67,8 +67,8 @@ export function getExtractionLanguageModel() {
  * Get the embedding model instance.
  * 
  * Priority:
- * 1. Self-hosted BGE-large server (if EMBEDDING_SERVER_URL is set)
- * 2. OpenAI text-embedding-3-small (fallback)
+ * 1. Self-hosted TEI server (if EMBEDDING_SERVER_URL is set)
+ * 2. OpenAI text-embedding-3-large (default - best quality)
  */
 export function getEmbeddingModel() {
   if (isSelfHostedEmbeddingConfigured()) {
@@ -78,7 +78,7 @@ export function getEmbeddingModel() {
     })
     return embeddingClient.embedding('bge-large-en-v1.5')
   }
-  return ai.embedding('text-embedding-3-small')
+  return ai.embedding('text-embedding-3-large')
 }
 
 /**
@@ -86,9 +86,9 @@ export function getEmbeddingModel() {
  */
 export function getEmbeddingProviderName(): string {
   if (isSelfHostedEmbeddingConfigured()) {
-    return `BGE-large-en-v1.5 (${EMBEDDING_CONFIG.dimensions} dims) @ ${process.env.EMBEDDING_SERVER_URL}`
+    return `TEI BGE-large-en-v1.5 (${EMBEDDING_CONFIG.dimensions} dims) @ ${process.env.EMBEDDING_SERVER_URL}`
   }
-  return `OpenAI text-embedding-3-small (${EMBEDDING_CONFIG.dimensions} dims)`
+  return `OpenAI text-embedding-3-large (${EMBEDDING_CONFIG.dimensions} dims)`
 }
 
 // Re-export config for convenience

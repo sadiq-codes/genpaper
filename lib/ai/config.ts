@@ -71,14 +71,17 @@ export function getChatModel(): string {
  * Embedding configuration
  * Note: Changing embedding model requires re-embedding all stored vectors
  * 
- * Current model: BGE-large-en-v1.5 (1024 dimensions)
- * - State-of-the-art retrieval performance on MTEB benchmark
- * - Self-hosted on Azure VM (32 vCPUs)
- * - Falls back to OpenAI text-embedding-3-small if server unavailable
+ * Current model: OpenAI text-embedding-3-large (1024 dimensions)
+ * - Best quality on MTEB benchmark (~64.6%)
+ * - Better than BGE-large for academic/scientific text
+ * - Uses Matryoshka embeddings (can truncate to 1024 dims with minimal quality loss)
+ * - Cost: $0.13/1M tokens
+ * 
+ * Falls back to self-hosted TEI if EMBEDDING_SERVER_URL is set
  */
 export const EMBEDDING_CONFIG = {
-  model: 'bge-large-en-v1.5',
-  dimensions: 1024,
+  model: 'text-embedding-3-large',
+  dimensions: 1024, // Truncated from 3072 using Matryoshka
 } as const
 
 export type EmbeddingConfig = typeof EMBEDDING_CONFIG

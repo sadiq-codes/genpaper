@@ -59,7 +59,7 @@ export async function generateEmbeddings(inputs: string | string[]): Promise<num
   if (!hasLoggedProvider) {
     const providerDetails = isTEI
       ? `TEI BGE-large-en-v1.5 (${EMBEDDING_CONFIG.dimensions} dims) @ ${process.env.EMBEDDING_SERVER_URL}`
-      : `OpenAI text-embedding-3-small (${EMBEDDING_CONFIG.dimensions} dims)`
+      : `OpenAI text-embedding-3-large (${EMBEDDING_CONFIG.dimensions} dims)`
     console.log(`📊 Embedding provider: ${providerDetails}`)
     hasLoggedProvider = true
   }
