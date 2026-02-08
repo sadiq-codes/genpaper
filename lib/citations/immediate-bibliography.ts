@@ -431,13 +431,15 @@ export class CitationService {
           throw new Error(`Citation constraint violation but unable to fetch existing: ${fetchError?.message}`)
         }
 
-        // Update quote if provided and different from existing
-        if (params.quote && params.quote !== existing.quote) {
+        // Update quote only if existing quote is empty and new quote is provided
+        // This prevents race conditions from overwriting legitimate quotes
+        // The first quote to be saved wins; subsequent calls preserve it
+        if (params.quote && !existing.quote) {
           await supabase
             .from('project_citations')
             .update({ quote: params.quote })
             .eq('id', existing.id)
-          if (isDev) console.log(`[Citation ${requestId}] Updated quote for existing citation`)
+          if (isDev) console.log(`[Citation ${requestId}] Set quote for existing citation (was empty)`)
         }
 
         const citeKey = existing.cite_key || `${params.projectId}-${paperId}`

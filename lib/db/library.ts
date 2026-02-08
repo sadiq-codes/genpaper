@@ -78,12 +78,18 @@ export async function addPaperToLibrary(
   notes?: string
 ): Promise<LibraryPaperWithAuthors> {
   const supabase = await getSB()
+  
+  // Use upsert with onConflict to handle duplicate bookmarks gracefully
+  // If paper is already in library, update notes (if provided) and return existing
   const { data, error } = await supabase
     .from('library_papers')
-    .insert({
+    .upsert({
       user_id: userId,
       paper_id: paperId,
       notes
+    }, {
+      onConflict: 'user_id,paper_id',
+      ignoreDuplicates: false // Update notes if provided
     })
     .select(`
       *,

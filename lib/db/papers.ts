@@ -445,7 +445,14 @@ export async function ingestPaper(
 ): Promise<{ paperId: string; isNew: boolean; status: 'metadata_only' | 'processed' | 'queued' }> {
   
   // 1. Check for duplicates (idempotent)
-  const { exists, paperId: existingId } = await checkPaperExists(paperData.doi, paperData.title)
+  // For user uploads (ownerId provided): only match user's own papers or global papers
+  // For API/search (no ownerId): match any existing paper
+  // This ensures users can upload their own copy even if a global copy exists
+  const checkOptions = options.ownerId 
+    ? { ownerId: options.ownerId, userOnly: true } // For uploads: only reuse if user already has this paper
+    : undefined // For search/cite: reuse any existing paper
+  
+  const { exists, paperId: existingId } = await checkPaperExists(paperData.doi, paperData.title, checkOptions)
   if (exists && existingId) {
     debug({ paperId: existingId }, 'Paper already exists')
     
@@ -548,8 +555,35 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
   
   const paperId = data.id
   
-  // Authors are now stored directly in the JSONB column during insert
-  // No separate author handling needed
+  // Seed an abstract chunk so Tier 3 RAG works immediately (before PDF processing).
+  // The paper embedding was already generated from title+abstract above — reuse it.
+  // When PDF processing completes, createChunksForPaper will replace this with
+  // full-text chunks (it deletes existing chunks before writing new ones).
+  const abstractText = paperData.abstract?.trim()
+  if (abstractText && abstractText.length > 30) {
+    try {
+      const { createDeterministicChunkId } = await import('@/lib/utils/deterministic-id')
+      const chunkId = createDeterministicChunkId(paperId, abstractText, 0)
+      
+      await supabase
+        .from('paper_chunks')
+        .upsert({
+          id: chunkId,
+          paper_id: paperId,
+          chunk_index: 0,
+          content: abstractText,
+          embedding,  // Reuse the same embedding (title+abstract)
+        }, {
+          onConflict: 'paper_id,chunk_index',
+          ignoreDuplicates: true,
+        })
+      
+      debug({ paperId }, 'Seeded abstract chunk for immediate Tier 3 RAG')
+    } catch (chunkErr) {
+      // Non-fatal — PDF processing will create proper chunks later
+      warn({ paperId, error: chunkErr }, 'Failed to seed abstract chunk')
+    }
+  }
   
   return paperId
 }
@@ -635,21 +669,53 @@ async function queuePdfProcessing(paperId: string, pdfUrl: string, _title: strin
 
 // Author management functions removed - authors are now stored as JSONB arrays
 
-// Check if paper exists by DOI to prevent duplicates
-export async function checkPaperExists(doi?: string, title?: string): Promise<{ exists: boolean, paperId?: string }> {
+/**
+ * Check if paper exists by DOI or title to prevent duplicates
+ * 
+ * @param doi - DOI to check
+ * @param title - Title to check (fuzzy match)
+ * @param options - Optional parameters
+ * @param options.ownerId - If provided, only match papers owned by this user OR global papers.
+ *                          For uploads: pass the user's ID to avoid reusing another user's paper.
+ *                          For search/cite: omit to match any existing paper (current behavior).
+ * @param options.globalOnly - If true, only match global papers (owner_id IS NULL)
+ * @param options.userOnly - If true, only match papers owned by ownerId (requires ownerId)
+ */
+export async function checkPaperExists(
+  doi?: string, 
+  title?: string,
+  options?: { 
+    ownerId?: string | null
+    globalOnly?: boolean
+    userOnly?: boolean
+  }
+): Promise<{ exists: boolean, paperId?: string, isGlobal?: boolean }> {
   // Use service client to bypass RLS - this is called from Inngest background jobs
   const supabase = getServiceClient()
   
+  const { ownerId, globalOnly, userOnly } = options || {}
+  
   // First check by DOI if available
   if (doi) {
-    const { data, error } = await supabase
+    let query = supabase
       .from('papers')
-      .select('id')
+      .select('id, owner_id')
       .eq('doi', doi)
-      .single()
+    
+    // Apply ownership filter
+    if (globalOnly) {
+      query = query.is('owner_id', null)
+    } else if (userOnly && ownerId) {
+      query = query.eq('owner_id', ownerId)
+    } else if (ownerId) {
+      // Match this user's papers OR global papers (for upload dedup)
+      query = query.or(`owner_id.eq.${ownerId},owner_id.is.null`)
+    }
+    
+    const { data, error } = await query.limit(1).single()
     
     if (!error && data) {
-      return { exists: true, paperId: data.id }
+      return { exists: true, paperId: data.id, isGlobal: data.owner_id === null }
     }
   }
   
@@ -660,11 +726,21 @@ export async function checkPaperExists(doi?: string, title?: string): Promise<{ 
       .replace(/\s+/g, ' ')
       .trim()
     
-    const { data, error } = await supabase
+    let query = supabase
       .from('papers')
-      .select('id, title')
+      .select('id, title, owner_id')
       .ilike('title', `%${normalizedTitle}%`)
-      .limit(5)
+    
+    // Apply ownership filter
+    if (globalOnly) {
+      query = query.is('owner_id', null)
+    } else if (userOnly && ownerId) {
+      query = query.eq('owner_id', ownerId)
+    } else if (ownerId) {
+      query = query.or(`owner_id.eq.${ownerId},owner_id.is.null`)
+    }
+    
+    const { data, error } = await query.limit(5)
     
     if (!error && data) {
       // Check for close title matches
@@ -680,7 +756,7 @@ export async function checkPaperExists(doi?: string, title?: string): Promise<{ 
         const commonWords = titleWords.filter(word => paperWords.includes(word))
         
         if (commonWords.length / titleWords.length > 0.9) {
-          return { exists: true, paperId: paper.id }
+          return { exists: true, paperId: paper.id, isGlobal: paper.owner_id === null }
         }
       }
     }
