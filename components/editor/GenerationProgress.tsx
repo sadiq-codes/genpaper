@@ -30,14 +30,14 @@ interface ConnectionState {
 // Stage configuration - maps pipeline stage IDs to display labels and icons
 const STAGE_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
   // Initialization stages (not shown in list)
-  start: { label: "Starting", icon: <Loader2 className="h-4 w-4" /> },
-  initialization: { label: "Starting", icon: <Loader2 className="h-4 w-4" /> },
+  start: { label: "Getting ready", icon: <Loader2 className="h-4 w-4" /> },
+  initialization: { label: "Getting ready", icon: <Loader2 className="h-4 w-4" /> },
   // Main stages (shown in list)
-  profiling: { label: "Analyzing Topic", icon: <Search className="h-4 w-4" /> },
-  search: { label: "Preparing Sources", icon: <FileStack className="h-4 w-4" /> },
-  planning: { label: "Planning Structure", icon: <FileText className="h-4 w-4" /> },
-  writing: { label: "Writing Paper", icon: <Sparkles className="h-4 w-4" /> },
-  finishing: { label: "Finishing Up", icon: <CheckCircle2 className="h-4 w-4" /> },
+  profiling: { label: "Understanding Your Research", icon: <Search className="h-4 w-4" /> },
+  search: { label: "Finding Sources", icon: <FileStack className="h-4 w-4" /> },
+  planning: { label: "Designing Structure", icon: <FileText className="h-4 w-4" /> },
+  writing: { label: "Writing Your Paper", icon: <Sparkles className="h-4 w-4" /> },
+  finishing: { label: "Final Touches", icon: <CheckCircle2 className="h-4 w-4" /> },
   complete: { label: "Complete", icon: <CheckCircle2 className="h-4 w-4" /> },
 }
 
@@ -87,7 +87,7 @@ function createInitialState(): GenerationState {
   return {
     progress: 0,
     currentStage: "start",
-    message: "Starting paper generation...",
+    message: "Preparing to write your paper...",
     stages: ORDERED_STAGES.map((id) => ({
       id,
       label: STAGE_CONFIG[id]?.label || id,

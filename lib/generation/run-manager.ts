@@ -418,3 +418,197 @@ export function isRunActive(run: GenerationRun): boolean {
 export function isRunTerminal(run: GenerationRun): boolean {
   return run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled';
 }
+
+// =============================================================================
+// Pipeline State Management
+// =============================================================================
+// These functions manage intermediate state for the multi-step Inngest pipeline.
+// State is stored in the pipeline_state JSONB column of generation_runs.
+
+import type { PaperProfile } from "@/lib/generation/paper-profile-types";
+import type { AnalysisResult } from "@/lib/analysis/cross-document";
+import type { SectionContext } from "@/lib/prompts/types";
+import type { StructuredCitation } from "@/lib/generation/unified-generator";
+
+/**
+ * Pipeline state stored between Inngest steps
+ */
+export interface PipelineState {
+  // Phase 1: Profile
+  profile?: PaperProfile;
+  
+  // Phase 2: Discovery  
+  paperIds?: string[];
+  
+  // Phase 3: Theme Extraction
+  extractionProgress?: {
+    cachedPaperIds: string[];
+    pendingPaperIds: string[];
+    extractedBatches: number;
+    totalBatches: number;
+  };
+  themeAnalysis?: AnalysisResult;
+  
+  // Phase 4: Contexts
+  // Note: We store minimal context info, not full chunks (too large)
+  contextSummaries?: Array<{
+    sectionKey: string;
+    title: string;
+    expectedWords: number;
+  }>;
+  
+  // Phase 5: Section Generation
+  sectionResults?: Array<{
+    sectionKey: string;
+    title: string;
+    content: string;
+    citations: StructuredCitation[];
+    wordCount: number;
+  }>;
+  completedSectionIndices?: number[];
+  
+  // Phase 6: Quality
+  qualityIssues?: Array<{
+    sectionIndex: number;
+    issue: 'overlap' | 'length' | 'citation';
+    details?: string;
+  }>;
+  rewrittenSections?: number[];
+  
+  // Config passed from event
+  config?: {
+    topic: string;
+    paperType: string;
+    length: string;
+    useLibraryOnly?: boolean;
+    libraryPaperIds?: string[];
+  };
+}
+
+/**
+ * Get pipeline state for a run
+ */
+export async function getPipelineState(runId: string): Promise<PipelineState> {
+  const supabase = createServiceClient();
+  
+  const { data, error } = await supabase
+    .from("generation_runs")
+    .select("pipeline_state")
+    .eq("id", runId)
+    .single();
+  
+  if (error) {
+    if (error.code === 'PGRST116') return {}; // Not found, return empty state
+    throw new Error(`Failed to get pipeline state: ${error.message}`);
+  }
+  
+  return (data?.pipeline_state as PipelineState) || {};
+}
+
+/**
+ * Update pipeline state (merges with existing state)
+ */
+export async function updatePipelineState(
+  runId: string,
+  updates: Partial<PipelineState>
+): Promise<void> {
+  const supabase = createServiceClient();
+  
+  // Get current state and merge
+  const currentState = await getPipelineState(runId);
+  const newState = { ...currentState, ...updates };
+  
+  const { error } = await supabase
+    .from("generation_runs")
+    .update({ pipeline_state: newState })
+    .eq("id", runId);
+  
+  if (error) {
+    throw new Error(`Failed to update pipeline state: ${error.message}`);
+  }
+}
+
+/**
+ * Set a specific key in pipeline state
+ */
+export async function setPipelineStateKey<K extends keyof PipelineState>(
+  runId: string,
+  key: K,
+  value: PipelineState[K]
+): Promise<void> {
+  await updatePipelineState(runId, { [key]: value } as Partial<PipelineState>);
+}
+
+/**
+ * Append a section result to the pipeline state
+ */
+export async function appendSectionResult(
+  runId: string,
+  sectionIndex: number,
+  result: {
+    sectionKey: string;
+    title: string;
+    content: string;
+    citations: StructuredCitation[];
+    wordCount: number;
+  }
+): Promise<void> {
+  const state = await getPipelineState(runId);
+  const sectionResults = state.sectionResults || [];
+  const completedIndices = state.completedSectionIndices || [];
+  
+  // Add or update the section result
+  const existingIndex = sectionResults.findIndex(r => r.sectionKey === result.sectionKey);
+  if (existingIndex >= 0) {
+    sectionResults[existingIndex] = result;
+  } else {
+    sectionResults.push(result);
+  }
+  
+  // Track completed indices
+  if (!completedIndices.includes(sectionIndex)) {
+    completedIndices.push(sectionIndex);
+  }
+  
+  await updatePipelineState(runId, { 
+    sectionResults, 
+    completedSectionIndices: completedIndices 
+  });
+}
+
+/**
+ * Mark extraction batch as complete
+ */
+export async function markExtractionBatchComplete(
+  runId: string,
+  batchNumber: number
+): Promise<void> {
+  const state = await getPipelineState(runId);
+  const progress = state.extractionProgress || {
+    cachedPaperIds: [],
+    pendingPaperIds: [],
+    extractedBatches: 0,
+    totalBatches: 0,
+  };
+  
+  progress.extractedBatches = batchNumber + 1;
+  
+  await updatePipelineState(runId, { extractionProgress: progress });
+}
+
+/**
+ * Clear pipeline state (called on completion or failure)
+ */
+export async function clearPipelineState(runId: string): Promise<void> {
+  const supabase = createServiceClient();
+  
+  const { error } = await supabase
+    .from("generation_runs")
+    .update({ pipeline_state: {} })
+    .eq("id", runId);
+  
+  if (error) {
+    console.error(`Failed to clear pipeline state: ${error.message}`);
+    // Don't throw - this is cleanup
+  }
+}

@@ -53,6 +53,50 @@ const AUTO_TRIGGER_DEBOUNCE_MS = 400
 // If user types faster than this, skip the request (they're still typing)
 const MIN_PAUSE_BETWEEN_KEYSTROKES_MS = 200
 
+/**
+ * Check if a suggestion substantially overlaps with existing document text.
+ * Extracts n-grams from both and returns true if overlap exceeds threshold.
+ * This prevents the "echo" bug where the model restates what's already written.
+ */
+function suggestionOverlapsDocument(
+  suggestionText: string,
+  documentText: string,
+  ngramSize = 4,
+  overlapThreshold = 0.5
+): boolean {
+  // Normalize: lowercase, strip citation markers, collapse whitespace
+  const normalize = (t: string) =>
+    t.toLowerCase()
+      .replace(/\[\d+\]/g, '')
+      .replace(/\([^)]*,\s*(?:n\.d\.|[12]\d{3})\)/g, '') // remove (Author, Year)
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+  const suggestionNorm = normalize(suggestionText)
+  const docNorm = normalize(documentText)
+
+  const words = suggestionNorm.split(' ')
+  if (words.length < ngramSize) return false
+
+  // Build n-grams from the suggestion
+  const suggestionNgrams: string[] = []
+  for (let i = 0; i <= words.length - ngramSize; i++) {
+    suggestionNgrams.push(words.slice(i, i + ngramSize).join(' '))
+  }
+
+  if (suggestionNgrams.length === 0) return false
+
+  // Count how many of the suggestion's n-grams appear in the document
+  let hits = 0
+  for (const ng of suggestionNgrams) {
+    if (docNorm.includes(ng)) hits++
+  }
+
+  const ratio = hits / suggestionNgrams.length
+  return ratio >= overlapThreshold
+}
+
 // Find the last complete sentence in text
 // Returns the sentence text or empty string if no complete sentence found
 function findLastCompleteSentence(text: string): string {
@@ -746,22 +790,48 @@ export function useSmartCompletion({
           }))
         }))
         
-        // Show FIRST sentence as ghost text (with smart spacing)
-        const firstSentence = prependSpaceIfNeeded(editor, queuedSentences[0])
+        // OVERLAP CHECK: Reject suggestions that repeat existing document content.
+        // Compare against ~1500 chars around the cursor to catch local repetition.
+        const cursorPos = editor.state.selection.from
+        const docSize = editor.state.doc.content.size
+        const nearbyStart = Math.max(0, cursorPos - 1000)
+        const nearbyEnd = Math.min(docSize, cursorPos + 500)
+        const nearbyText = editor.state.doc.textBetween(nearbyStart, nearbyEnd, ' ')
+
+        // Filter out sentences that substantially overlap with nearby document text
+        const filteredSentences = queuedSentences.filter(s => {
+          if (suggestionOverlapsDocument(s.displayText, nearbyText)) {
+            console.log('[SmartCompletion] Dropped overlapping sentence:', s.displayText.slice(0, 60))
+            return false
+          }
+          return true
+        })
+
+        if (filteredSentences.length === 0) {
+          // All sentences were duplicates — don't show anything
+          console.log('[SmartCompletion] All sentences overlapped with document — suppressing')
+          sentenceQueueRef.current = []
+          queueContextRef.current = ''
+          lastContextKeyRef.current = ''
+          return
+        }
+
+        // Show FIRST non-overlapping sentence as ghost text (with smart spacing)
+        const firstSentence = prependSpaceIfNeeded(editor, filteredSentences[0])
         editor.commands.setGhostText(
           firstSentence.text,        // rawText with [@paperId#instanceId] markers
           firstSentence.displayText, // displayText with formatted citations
           firstSentence.citations,
           currentPapers,
-          queuedSentences.length - 1  // queueCount (remaining after showing first)
+          filteredSentences.length - 1  // queueCount (remaining after showing first)
         )
         
         // Queue remaining sentences for instant display on accept
-        sentenceQueueRef.current = queuedSentences.slice(1)
+        sentenceQueueRef.current = filteredSentences.slice(1)
         queueContextRef.current = contextKey
         
         // CACHE: Store this completion for potential reuse
-        storeInCache(context.precedingText, context.currentSection, queuedSentences)
+        storeInCache(context.precedingText, context.currentSection, filteredSentences)
         
         
         // Reset context key after successful ghost text display
@@ -921,6 +991,19 @@ export function useSmartCompletion({
     const rawNextSentence = queue.shift()!
     sentenceQueueRef.current = queue
     
+    // Overlap check: reject if the queued sentence now overlaps document content
+    // (user may have typed similar content since the suggestion was fetched)
+    const cursorPos = editor.state.selection.from
+    const docSize = editor.state.doc.content.size
+    const nearbyStart = Math.max(0, cursorPos - 1000)
+    const nearbyEnd = Math.min(docSize, cursorPos + 500)
+    const nearbyText = editor.state.doc.textBetween(nearbyStart, nearbyEnd, ' ')
+    
+    if (suggestionOverlapsDocument(rawNextSentence.displayText, nearbyText)) {
+      console.log('[SmartCompletion] Queued sentence overlaps document — skipping')
+      // Try the next one in queue recursively
+      return showNextQueuedSentence()
+    }
     
     // Apply smart spacing (cursor position may have changed since fetch)
     const nextSentence = prependSpaceIfNeeded(editor, rawNextSentence)

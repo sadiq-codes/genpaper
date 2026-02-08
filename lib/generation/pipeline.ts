@@ -324,7 +324,7 @@ export async function generatePaper(
   // Check for cancellation at pipeline start
   checkCancellation('initialization')
   
-  onProgress?.('initialization', 0, 'Starting paper generation pipeline...')
+  onProgress?.('initialization', 0, 'Preparing to write your paper...')
   
   // Sanitize user input to prevent prompt injection
   const sanitizedTopic = sanitizeTopic(config.topic)
@@ -338,7 +338,7 @@ export async function generatePaper(
   try {
     // Step 1: Generate Paper Profile (contextual intelligence)
     // This MUST happen first to determine search parameters
-    onProgress?.('profiling', 2, 'Analyzing your topic...', {
+    onProgress?.('profiling', 2, `Understanding what "${sanitizedTopic.slice(0, 60)}" requires...`, {
       topic: sanitizedTopic.slice(0, 50)
     })
     
@@ -357,7 +357,7 @@ export async function generatePaper(
       recencyProfile: paperProfile.sourceExpectations.recencyProfile
     }, 'Paper profile generated')
     
-    onProgress?.('profiling', 8, `Identified as ${paperProfile.discipline.primary} research`, {
+    onProgress?.('profiling', 8, `This is ${paperProfile.discipline.primary} research — tailoring approach accordingly`, {
       discipline: paperProfile.discipline.primary,
       sectionsPlanned: paperProfile.structure.appropriateSections.length,
       minSources: paperProfile.sourceExpectations.minimumUniqueSources
@@ -381,7 +381,7 @@ export async function generatePaper(
     
     // 2a: Process uploaded papers first (if any)
     if (uploadedCount > 0) {
-      onProgress?.('search', 10, `Processing ${uploadedCount} uploaded paper${uploadedCount > 1 ? 's' : ''}...`, {
+      onProgress?.('search', 10, `Reading your ${uploadedCount} uploaded paper${uploadedCount > 1 ? 's' : ''}...`, {
         uploadedPapers: uploadedCount,
         phase: 'processing_uploads'
       })
@@ -403,7 +403,7 @@ export async function generatePaper(
         
         info({ successful, failed, total: uploadedCount }, 'Uploaded paper processing completed')
         
-        onProgress?.('search', 15, `Processed ${successful} uploaded paper${successful > 1 ? 's' : ''}`, {
+        onProgress?.('search', 15, `Your ${successful} uploaded paper${successful > 1 ? 's are' : ' is'} ready to use`, {
           uploadedProcessed: successful,
           uploadedFailed: failed,
           phase: 'uploads_complete'
@@ -415,12 +415,12 @@ export async function generatePaper(
     
     // 2b: Search online for additional papers (unless library-only mode)
     if (!config.useLibraryOnly) {
-      onProgress?.('search', 18, 'Searching online databases...', { 
+      onProgress?.('search', 18, 'Searching academic databases for relevant studies...', { 
         phase: 'searching_online',
         recencyProfile: paperProfile.sourceExpectations.recencyProfile
       })
     } else {
-      onProgress?.('search', 18, 'Using only your uploaded papers...', {
+      onProgress?.('search', 18, 'Working exclusively with your uploaded papers', {
         phase: 'library_only',
         uploadedPapers: uploadedCount
       })
@@ -492,7 +492,7 @@ export async function generatePaper(
         discipline: paperProfile.discipline.primary
       }, `Source availability far below recommended minimum (${availablePapers}/${minRequiredSources}). Paper quality may be significantly affected.`)
       
-      onProgress?.('search', 16, `⚠️ Very limited sources: ${availablePapers} papers found, ${minRequiredSources} recommended`, {
+      onProgress?.('search', 16, `Only ${availablePapers} sources found — your paper may have limited depth (${minRequiredSources} recommended)`, {
         papersFound: availablePapers,
         minRequired: minRequiredSources,
         criticalThreshold,
@@ -509,7 +509,7 @@ export async function generatePaper(
         discipline: paperProfile.discipline.primary
       }, `Source availability below recommended minimum (${availablePapers}/${minRequiredSources}). Paper quality may be affected.`)
       
-      onProgress?.('search', 18, `⚠️ Limited source availability: ${availablePapers} papers found, ${minRequiredSources} recommended`, {
+      onProgress?.('search', 18, `Found ${availablePapers} sources (${minRequiredSources} recommended) — we'll make the most of them`, {
         papersFound: availablePapers,
         minRequired: minRequiredSources,
         warning: 'Paper may have limited citation diversity'
@@ -542,7 +542,7 @@ export async function generatePaper(
     // Step 3: Planning (Theme Extraction + Outline Generation)
     // Use hybrid extraction: structured findings + cross-document analysis
     const themeStartTime = Date.now()
-    onProgress?.('planning', 25, 'Extracting findings from papers...')
+    onProgress?.('planning', 25, `Reading through ${allPapers.length} papers to identify key findings...`)
     
     let analysisResult: AnalysisResult | undefined
     let hybridResult: HybridThemeExtractionResult | undefined
@@ -577,7 +577,7 @@ export async function generatePaper(
       
       metrics.themeExtractionDuration = Date.now() - themeStartTime
       
-      onProgress?.('planning', 30, `Found ${analysisResult.patterns.length} patterns from ${hybridResult.extractionStats.totalFindings} findings`, {
+      onProgress?.('planning', 30, `Identified ${analysisResult.patterns.length} research patterns across ${hybridResult.extractionStats.totalFindings} key findings`, {
         patternsFound: analysisResult.patterns.length,
         contradictionsFound: analysisResult.contradictions.length,
         gapsFound: analysisResult.gaps.length,
@@ -590,7 +590,7 @@ export async function generatePaper(
       // Legacy extractThemes has been removed in favor of hybrid approach
       metrics.themeExtractionDuration = Date.now() - themeStartTime
       warn({ error: hybridError }, 'Hybrid extraction failed, continuing without theme enrichment')
-      onProgress?.('planning', 30, 'Creating paper outline...', {
+      onProgress?.('planning', 30, 'Designing your paper\'s structure...', {
         phase: 'outline_start',
         warning: 'Theme extraction failed'
       })
@@ -643,7 +643,7 @@ export async function generatePaper(
     
     // Build section names for display
     const sectionNames = typedOutline.sections.map(s => s.title).join(', ')
-    onProgress?.('planning', 38, `Outline ready: ${typedOutline.sections.length} sections`, {
+    onProgress?.('planning', 38, `Structure ready — ${typedOutline.sections.length} sections planned`, {
       sectionsPlanned: typedOutline.sections.length,
       sectionNames,
       durationMs: metrics.outlineGenerationDuration,
@@ -698,7 +698,7 @@ export async function generatePaper(
     // Try hybrid enrichment if we have analysis results
     // Note: usingSynthesisEnrichment is only true when hybridResult exists
     if (usingSynthesisEnrichment && hybridResult) {
-      onProgress?.('writing', 40, 'Building enriched contexts with synthesis analysis...')
+      onProgress?.('writing', 40, 'Connecting findings across papers for deeper analysis...')
       
       try {
         sectionContexts = await enrichAndBuildContexts(
@@ -720,7 +720,7 @@ export async function generatePaper(
             sum + ((s as EnrichedSectionContext).synthesisContent?.patterns.length || 0), 0)
         }, 'Hybrid enriched contexts built')
         
-        onProgress?.('writing', 45, `Enriched ${enrichedCount}/${sectionContexts.length} sections with synthesis content`, {
+        onProgress?.('writing', 45, `${enrichedCount} of ${sectionContexts.length} sections enriched with cross-paper insights`, {
           sectionsWithContext: sectionContexts.length,
           enrichedSections: enrichedCount,
           durationMs: Date.now() - contextStartTime
@@ -729,7 +729,7 @@ export async function generatePaper(
       } catch (enrichError) {
         // Fallback to standard RAG-only contexts
         warn({ error: enrichError }, 'Hybrid enrichment failed, falling back to RAG-only')
-        onProgress?.('writing', 40, 'Gathering evidence for each section...')
+        onProgress?.('writing', 40, 'Gathering the most relevant evidence for each section...')
         sectionContexts = await GenerationContextService.buildContexts(
           typedOutline,
           sanitizedTopic,
@@ -738,7 +738,7 @@ export async function generatePaper(
       }
     } else {
       // Not enough findings for hybrid, use RAG-only
-      onProgress?.('writing', 40, 'Gathering evidence for each section...')
+      onProgress?.('writing', 40, 'Gathering the most relevant evidence for each section...')
       sectionContexts = await GenerationContextService.buildContexts(
         typedOutline,
         sanitizedTopic,
@@ -753,7 +753,7 @@ export async function generatePaper(
     const totalChunks = allChunkCounts.reduce((a, b) => a + b, 0)
     metrics.pdfStats.avgChunksPerPaper = allPapers.length > 0 ? totalChunks / allPapers.length : 0
     
-    onProgress?.('writing', 48, 'Starting to write sections...', {
+    onProgress?.('writing', 48, 'Beginning to write — this is the main event...', {
       sectionsWithContext: sectionContexts.length,
       durationMs: metrics.contextBuildingDuration,
       avgChunksPerSection: totalChunks / sectionContexts.length
@@ -809,12 +809,12 @@ export async function generatePaper(
       // Progress callback - called when section starts
       (completed, total, currentSection) => {
         const progress = Math.round((completed / total) * 35) + 50 // 50-85%
-        onProgress?.('writing', progress, `Writing ${currentSection} (${completed + 1}/${total})...`)
+        onProgress?.('writing', progress, `Writing "${currentSection}" (${completed + 1} of ${total})...`)
       },
       // Section complete callback - sends content for live preview
       (sectionTitle, content, sectionIndex, total) => {
         const progress = Math.round((sectionIndex / total) * 35) + 50 // 50-85%
-        onProgress?.('writing', progress, `Completed ${sectionTitle} (${sectionIndex}/${total})`, {
+        onProgress?.('writing', progress, `Finished "${sectionTitle}" (${sectionIndex} of ${total} done)`, {
           sectionComplete: true,
           sectionTitle,
           sectionContent: content,
@@ -837,7 +837,7 @@ export async function generatePaper(
     // Step 5: Finishing (Quality Checks + Save)
     metrics.sectionGenerationDuration = Date.now() - generationStartTime
     const qualityStartTime = Date.now()
-    onProgress?.('finishing', 88, 'Reviewing quality...')
+    onProgress?.('finishing', 88, 'Checking for consistency and quality...')
     
     let totalQualityScore = 0
     let qualityIssues: string[] = []
@@ -1158,7 +1158,7 @@ export async function generatePaper(
       validationScore: profileValidation.score
     }, 'Paper profile validation analysis')
     
-    onProgress?.('finishing', 92, 'Saving your paper...')
+    onProgress?.('finishing', 92, 'Polishing and saving your paper...')
     
     // Clean non-citation artifacts (leaked tool syntax, etc.)
     const { cleanNonCitationArtifacts } = await import('@/lib/citations/post-processor')
@@ -1272,7 +1272,7 @@ export async function generatePaper(
       totalSections: metrics.sectionTimings.length
     }, 'Pipeline performance metrics')
     
-    onProgress?.('complete', 100, 'Paper generation completed successfully', {
+    onProgress?.('complete', 100, 'Your paper is ready!', {
       totalWords: fullContent.split(' ').length,
       qualityScore: avgQualityScore,
       performanceMetrics: metrics

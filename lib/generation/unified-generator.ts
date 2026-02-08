@@ -124,11 +124,11 @@ export async function generateWithUnifiedTemplate(
   // Token usage is not currently exposed by generateObject in our usage; keep as best-effort.
   let tokensUsed = 0
 
-  progress('context', 10, 'Building generation context...')
+  progress('context', 10, 'Preparing evidence for this section...')
   
   const promptData = await buildPromptData(context, options)
   
-  progress('generation', 20, 'Generating section (structured output)...')
+  progress('generation', 20, 'Writing section content...')
   
   const resolvedOptions = resolveGenOptions(options)
 
@@ -175,7 +175,7 @@ export async function generateWithUnifiedTemplate(
     onStreamEvent?.({ type: 'sentence', data: { text: fullContent }})
   }
   
-  progress('generation', 50, 'Content generated successfully', {
+  progress('generation', 50, 'Section written successfully', {
     word_count: fullContent.split(' ').length,
     citations: collectedCitations.length
   })
@@ -189,7 +189,7 @@ export async function generateWithUnifiedTemplate(
     minCitationsExpected: Math.max(collectedCitations.length, 1)  // Self-calibrating
   })
 
-  progress('complete', 100, 'Generation finished')
+  progress('complete', 100, 'Section complete')
 
   return {
     content: fullContent,

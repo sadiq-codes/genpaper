@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
+import { processPaper } from '@/lib/content/background-processor'
 
 /**
  * GET /api/editor/papers?projectId=xxx
@@ -200,24 +201,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Trigger background processing for the newly added paper
-    // This ensures papers added via library drawer get processed immediately
-    try {
-      const processResponse = await fetch(new URL('/api/papers/process', request.url).toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          paperIds: [paperId],
-          waitForCompletion: false, // Don't wait - process in background
-        }),
-      })
-      if (processResponse.ok) {
-        console.log(`[Editor Papers] Triggered processing for paper ${paperId}`)
-      }
-    } catch (processError) {
-      // Non-critical: paper is added, processing will be picked up later
-      console.warn('[Editor Papers] Failed to trigger processing:', processError)
-    }
+    // Trigger background processing directly (no HTTP round-trip needed).
+    // processPaper uses createServiceClient() internally, so no auth cookies required.
+    processPaper(paperId).then(result => {
+      console.log(`[Editor Papers] Processing result for ${paperId}:`, result.status)
+    }).catch(err => {
+      console.warn('[Editor Papers] Background processing failed:', err)
+    })
 
     // Return the paper data for UI update
     const projectPaper = {

@@ -216,6 +216,22 @@ function parseAIResponse(rawText: string): AIStructuredResponse | null {
           continue // Skip invalid sentences
         }
         
+        let text = s.text.trim()
+        
+        // Strip trailing citation markers to expose the actual last character
+        // e.g. "some claim [1]" → check "some claim" for sentence-ending punctuation
+        const textWithoutTrailingCitations = text.replace(/(\s*\[\d+\])+\s*$/, '').trim()
+        
+        // COMPLETENESS CHECK: Reject sentences truncated mid-flow by token limit.
+        // A complete sentence must end with sentence-terminating punctuation.
+        // Allow closing parens/quotes after the period: "end." or 'end."' or "end.)"
+        const endsWithPunctuation = /[.!?]['")]*$/.test(textWithoutTrailingCitations)
+        
+        if (!endsWithPunctuation) {
+          console.log(`[Autocomplete] Dropping truncated sentence: "${text.slice(-40)}"`)
+          continue
+        }
+        
         const citations: NumberedCitation[] = []
         if (Array.isArray(s.citations)) {
           for (const c of s.citations) {
@@ -230,7 +246,7 @@ function parseAIResponse(rawText: string): AIStructuredResponse | null {
         }
         
         sentences.push({
-          text: s.text.trim(),
+          text,
           citations
         })
       }

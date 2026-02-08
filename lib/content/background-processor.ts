@@ -76,7 +76,7 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
     // 6. Download PDF from storage
     let pdfBuffer: Buffer
     try {
-      pdfBuffer = await downloadPdfFromStorage(paper.pdf_url)
+      pdfBuffer = await downloadPdf(paper.pdf_url)
     } catch (downloadError) {
       console.error(`[BackgroundProcessor] Failed to download PDF for ${paperId}:`, downloadError)
       await supabase
@@ -270,16 +270,30 @@ async function runStructuredExtraction(paperId: string, content: string): Promis
 /**
  * Download PDF from Supabase storage
  */
-async function downloadPdfFromStorage(pdfUrl: string): Promise<Buffer> {
+async function downloadPdf(pdfUrl: string): Promise<Buffer> {
+  // Check if this is a Supabase storage URL/path or an external URL
+  const isSupabaseStorage =
+    pdfUrl.includes('supabase.co/storage') || pdfUrl.startsWith('papers/')
+  const isExternalUrl =
+    pdfUrl.startsWith('http://') || pdfUrl.startsWith('https://')
+
+  if (isSupabaseStorage) {
+    return downloadPdfFromSupabase(pdfUrl)
+  }
+
+  if (isExternalUrl) {
+    return downloadPdfFromUrl(pdfUrl)
+  }
+
+  // Fallback: assume it's a Supabase storage path
+  return downloadPdfFromSupabase(pdfUrl)
+}
+
+async function downloadPdfFromSupabase(pdfUrl: string): Promise<Buffer> {
   const supabase = createServiceClient()
-  
-  // Extract bucket and path from URL
-  // URL format: https://xxx.supabase.co/storage/v1/object/public/papers/userId/filename.pdf
-  // Or: papers/userId/filename.pdf (storage path)
   
   let storagePath: string
   if (pdfUrl.includes('supabase.co/storage')) {
-    // Full URL - extract path after bucket name
     const match = pdfUrl.match(/\/storage\/v1\/object\/(?:public|authenticated)\/papers\/(.+)$/)
     if (match) {
       storagePath = match[1]
@@ -287,10 +301,8 @@ async function downloadPdfFromStorage(pdfUrl: string): Promise<Buffer> {
       throw new Error(`Invalid storage URL format: ${pdfUrl}`)
     }
   } else if (pdfUrl.startsWith('papers/')) {
-    // Storage path format
     storagePath = pdfUrl.replace('papers/', '')
   } else {
-    // Assume it's just the path
     storagePath = pdfUrl
   }
   
@@ -305,8 +317,23 @@ async function downloadPdfFromStorage(pdfUrl: string): Promise<Buffer> {
     throw new Error(`Storage download failed: ${error?.message || 'No data returned'}`)
   }
   
-  // Convert Blob to Buffer
   const arrayBuffer = await data.arrayBuffer()
+  return Buffer.from(arrayBuffer)
+}
+
+async function downloadPdfFromUrl(pdfUrl: string): Promise<Buffer> {
+  console.log(`[BackgroundProcessor] Downloading PDF from external URL: ${pdfUrl}`)
+  
+  const response = await fetch(pdfUrl, {
+    headers: { 'Accept': 'application/pdf' },
+    signal: AbortSignal.timeout(30_000),
+  })
+  
+  if (!response.ok) {
+    throw new Error(`External PDF download failed: ${response.status} ${response.statusText}`)
+  }
+  
+  const arrayBuffer = await response.arrayBuffer()
   return Buffer.from(arrayBuffer)
 }
 
