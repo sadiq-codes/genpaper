@@ -157,6 +157,9 @@ export function DocumentEditor({
     to: number
   } | null>(null)
 
+  // Scroll/positioning container for absolute overlays (InlineEditBar, etc.)
+  const editorScrollContainerRef = useRef<HTMLDivElement>(null)
+
   const handleCloseInlineEdit = useCallback(() => {
     setInlineEdit(null)
   }, [])
@@ -761,7 +764,7 @@ export function DocumentEditor({
         </div>
       </div>
       
-      <div className="flex-1 overflow-auto relative">
+      <div ref={editorScrollContainerRef} className="flex-1 overflow-auto relative">
         {/* Review Toolbar - only shows when multiple edits are pending */}
         {pendingEditCount > 1 && (
           <ReviewToolbar
@@ -819,6 +822,7 @@ export function DocumentEditor({
             selectedText={inlineEdit.selectedText}
             selectionFrom={inlineEdit.from}
             selectionTo={inlineEdit.to}
+            containerRef={editorScrollContainerRef}
             onClose={handleCloseInlineEdit}
           />
         )}

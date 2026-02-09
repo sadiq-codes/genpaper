@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useCallback, memo, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { ScrollArea } from '@/components/ui/scroll-area'
+// Native scroll used instead of Radix ScrollArea for reliable scrolling in nested flex layouts
 import { Bot, User, Wrench, Trash2, Square, MessageSquare } from 'lucide-react'
 import { RichChatInput } from './RichChatInput'
 import { EvidencePanel } from './EvidencePanel'
@@ -426,10 +426,7 @@ export function ChatTab() {
   useEffect(() => {
     requestAnimationFrame(() => {
       if (scrollAreaRef.current) {
-        const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight
-        }
+        scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight
       }
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -460,10 +457,7 @@ export function ChatTab() {
     // Schedule scroll on next frame
     scrollRafRef.current = requestAnimationFrame(() => {
       if (scrollAreaRef.current) {
-        const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight
-        }
+        scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight
       }
     })
     
@@ -542,56 +536,57 @@ export function ChatTab() {
       )}
       
       {/* Messages area - takes remaining space and scrolls */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <ScrollArea ref={scrollAreaRef} className="h-full">
-          {messages.length === 0 && !isLoading ? (
-            // Show empty state immediately - no skeleton loading for fresh chat
-            <EmptyState />
-          ) : (
-            <div>
-              {messages.map((message, index) => {
-                // Skip rendering an empty assistant message while loading —
-                // the LoadingBubble handles that visual state instead.
-                if (
-                  isLoading &&
-                  index === messages.length - 1 &&
-                  message.role === 'assistant' &&
-                  !getMessageText(message) &&
-                  !getToolInvocations(message).length
-                ) {
-                  return null
-                }
-                return (
-                  <MessageBubble 
-                    key={message.id} 
-                    message={message}
-                    papers={papers}
-                  />
-                )
-              })}
-              {isLoading && (() => {
-                const lastMsg = messages[messages.length - 1]
-                const hasContent = lastMsg?.role === 'assistant' && (getMessageText(lastMsg) || getToolInvocations(lastMsg).length)
-                return (
-                  <>
-                    {!hasContent && <LoadingBubble />}
-                    {onStop && (
-                      <div className="flex justify-center py-2">
-                        <button
-                          className="flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer px-3 py-1 rounded-full border border-border/40 hover:border-border/60"
-                          onClick={onStop}
-                        >
-                          <Square className="h-2 w-2 fill-current" />
-                          Stop generating
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )
-              })()}
-            </div>
-          )}
-        </ScrollArea>
+      <div
+        ref={scrollAreaRef}
+        className="flex-1 min-h-0 overflow-y-auto"
+      >
+        {messages.length === 0 && !isLoading ? (
+          // Show empty state immediately - no skeleton loading for fresh chat
+          <EmptyState />
+        ) : (
+          <div>
+            {messages.map((message, index) => {
+              // Skip rendering an empty assistant message while loading —
+              // the LoadingBubble handles that visual state instead.
+              if (
+                isLoading &&
+                index === messages.length - 1 &&
+                message.role === 'assistant' &&
+                !getMessageText(message) &&
+                !getToolInvocations(message).length
+              ) {
+                return null
+              }
+              return (
+                <MessageBubble 
+                  key={message.id} 
+                  message={message}
+                  papers={papers}
+                />
+              )
+            })}
+            {isLoading && (() => {
+              const lastMsg = messages[messages.length - 1]
+              const hasContent = lastMsg?.role === 'assistant' && (getMessageText(lastMsg) || getToolInvocations(lastMsg).length)
+              return (
+                <>
+                  {!hasContent && <LoadingBubble />}
+                  {onStop && (
+                    <div className="flex justify-center py-2">
+                      <button
+                        className="flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer px-3 py-1 rounded-full border border-border/40 hover:border-border/60"
+                        onClick={onStop}
+                      >
+                        <Square className="h-2 w-2 fill-current" />
+                        Stop generating
+                      </button>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
+          </div>
+        )}
       </div>
       
       {/* Quick Actions - above input */}

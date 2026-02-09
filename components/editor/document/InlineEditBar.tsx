@@ -23,6 +23,7 @@ interface InlineEditBarProps {
   selectedText: string
   selectionFrom: number
   selectionTo: number
+  containerRef: React.RefObject<HTMLElement | null>
   onClose: () => void
 }
 
@@ -75,6 +76,7 @@ export function InlineEditBar({
   selectedText,
   selectionFrom,
   selectionTo,
+  containerRef,
   onClose,
 }: InlineEditBarProps) {
   const [instruction, setInstruction] = useState('')
@@ -93,19 +95,31 @@ export function InlineEditBar({
 
   useEffect(() => {
     try {
-      const editorContainer = editor.view.dom.closest('.ProseMirror')?.parentElement
-      if (!editorContainer) return
-      const containerRect = editorContainer.getBoundingClientRect()
+      // Use the actual scroll/positioning container (the element that InlineEditBar is
+      // absolutely positioned within). Fall back to ProseMirror parent if needed.
+      const containerEl =
+        containerRef.current ??
+        (editor.view.dom.closest('.ProseMirror')?.parentElement ?? null)
+      if (!containerEl) return
+
+      const containerRect = containerEl.getBoundingClientRect()
+
+      // Selection may span multiple lines; use the lower edge of either end.
+      const coordsStart = editor.view.coordsAtPos(selectionFrom)
       const coordsEnd = editor.view.coordsAtPos(selectionTo)
-      // Position below the selection with enough gap to not overlap
+      const selectionBottom = Math.max(coordsStart.bottom, coordsEnd.bottom)
+
+      // Position below the selection with enough gap to not overlap.
+      // Add scrollTop so the absolute position matches document coordinates.
       const gap = 16
-      setPosition({ top: coordsEnd.bottom - containerRect.top + gap })
+      const scrollTop = containerEl instanceof HTMLElement ? containerEl.scrollTop : 0
+      setPosition({ top: selectionBottom - containerRect.top + scrollTop + gap })
     } catch {
       // Selection might be invalid
     }
     // Small delay to let the bar render before focusing so selection is preserved
     setTimeout(() => inputRef.current?.focus(), 50)
-  }, [editor, selectionTo])
+  }, [editor, selectionFrom, selectionTo, containerRef])
 
   const chatId = useRef(`inline-${Date.now()}`).current
 
