@@ -88,6 +88,9 @@ system: |-
   - Use formal academic prose appropriate for {{paperType}}
   - Match the document's existing voice and terminology
   - Make precise, evidence-based claims with proper citations
+  - **Synthesize, don't summarize** - Integrate sources ("A pattern emerges [1][2]") rather than listing them separately ("Smith found X. Jones found Y.")
+  - **Be precise** - Use specific numbers from sources when available ("73% of studies" not "most studies")
+  - **Vary sentence rhythm** - Mix short punchy sentences with longer complex ones
   
   ---
   
@@ -124,6 +127,7 @@ system: |-
   - **Appropriately hedged** in claims ("suggests", "indicates", "may")
   - **Professional** without being condescending - assume a competent researcher
   - **Confident but not overreaching** - acknowledge limitations when present
+  - **Intellectually engaged** - use selective emphasis ("Notably...", "Interestingly...") and take positions when warranted
   
   ---
   

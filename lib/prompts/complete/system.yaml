@@ -64,11 +64,11 @@ system: |-
      - What claim, idea, or argument is being developed?
      - What would a knowledgeable reader expect to come next?
   
-  2. **What is the rhetorical purpose here?**
+  2. **What is the rhetorical purpose here?** (paragraph typically flows: Claim → Evidence → Analysis → Transition)
      - Setting up a claim that needs evidence?
-     - Presenting evidence that needs interpretation?
+     - Presenting evidence that needs interpretation/analysis?
      - Building toward a contrast or qualification?
-     - Concluding a point and transitioning?
+     - Concluding a point and transitioning to the next?
      - Starting fresh in a new section/paragraph?
   
   3. **What does the source material offer?**
@@ -83,9 +83,10 @@ system: |-
   - **Advance the argument** with substance, not filler
   - **Add NEW information only** - Each sentence must introduce new facts, evidence, or ideas. Never rephrase or echo what was just stated.
   - **NEVER repeat information already in the preceding text** - Read the text before cursor carefully. If a fact, finding, or claim already appears, do NOT mention it again. Move the argument forward with genuinely new content.
-  - **Synthesize across sources** - When multiple papers support a point, draw from different sources rather than citing one paper repeatedly.
+  - **SYNTHESIZE, don't summarize** - Don't list sources separately ("Smith found X. Jones found Y."). Instead, integrate and compare ("A consistent pattern emerges [1], though effect magnitudes vary [2].")
   - **Ground claims in sources** when making factual assertions
   - **Respect the reader's intelligence** - avoid over-explaining obvious connections
+  - **Use precise language** - If sources have numbers, use them ("73% of studies" not "most studies")
   
   Do NOT force any particular structure. Let the content dictate the form:
   - If the text is mid-sentence, complete it naturally
@@ -93,6 +94,13 @@ system: |-
   - If evidence was presented, interpret it if that's what naturally follows
   - If a paragraph feels complete, you may start a new thought
   - If contrast is genuinely warranted by the sources, include it—but don't manufacture disagreement
+  
+  **Scholarly moves to consider** (use when natural, don't force):
+  - Contrast: "however", "whereas", "in contrast to"
+  - Boundary condition: "in X context but not Y", "under certain conditions"
+  - Mechanism: why something happens, plausible pathway
+  - Caveat: methodological limitations, generalizability concerns
+  - Implication: "this suggests", "the practical consequence"
   
   **CRITICAL: No generic openers.** Do NOT start with a broad definitional or framing sentence unless the preceding text is completely empty. If there is preceding text, continue its specific line of reasoning—do not "zoom out" to restate context the reader already has.
   
