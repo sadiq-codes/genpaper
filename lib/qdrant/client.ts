@@ -111,6 +111,8 @@ export async function searchChunks(
     paperIds?: string[] // Filter to specific papers
     boostPaperIds?: string[] // Boost scores for these papers
     boostFactor?: number
+    deboostPaperIds?: string[] // De-boost scores for these papers (recently cited)
+    deboostFactor?: number // Multiplier for de-boosted papers (default: 0.4 = 40% of original)
   } = {}
 ): Promise<SearchResult[]> {
   const qdrant = getQdrantClient()
@@ -120,6 +122,8 @@ export async function searchChunks(
     paperIds,
     boostPaperIds,
     boostFactor = 1.15,
+    deboostPaperIds,
+    deboostFactor = 0.6, // Reduce to 60% of original score (softer penalty)
   } = options
   
   // Build filter
@@ -143,16 +147,23 @@ export async function searchChunks(
     score_threshold: minScore,
   })
   
-  // Apply boost and format results
+  // Apply boost/de-boost and format results
   const boostedSet = new Set(boostPaperIds || [])
+  const deboostSet = new Set(deboostPaperIds || [])
   
   return results
     .map(result => {
       const payload = result.payload as unknown as ChunkPayload
       let score = result.score
       
-      // Apply boost if paper is in boosted set
-      if (boostedSet.has(payload.paper_id)) {
+      // Apply de-boost first (recently cited papers)
+      // This takes priority over boost - if paper is both boosted and de-boosted,
+      // de-boost wins (user just cited it, don't want it again)
+      if (deboostSet.has(payload.paper_id)) {
+        score = score * deboostFactor
+      }
+      // Apply boost if paper is in boosted set (and not de-boosted)
+      else if (boostedSet.has(payload.paper_id)) {
         score = Math.min(1.0, score * boostFactor)
       }
       

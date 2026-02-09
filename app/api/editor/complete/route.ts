@@ -21,6 +21,27 @@ import { checkAndIncrementAutocompleteUsage, formatTimeUntilReset } from '@/lib/
 // Note: SuggestionType removed - the unified prompt now handles all cases
 // by having the LLM analyze writing intent semantically
 
+/**
+ * Extract paper IDs from citation markers in the preceding text.
+ * Used to de-boost recently cited papers in RAG retrieval for better diversity.
+ * 
+ * Detects our internal marker format: [@paperId#instanceId]
+ * This is zero-latency (simple regex, no API calls needed).
+ */
+function extractCitedPaperIds(text: string): string[] {
+  const ids = new Set<string>()
+  
+  // Pattern: [@uuid#instanceId] - our internal citation marker format
+  // UUID format: 8-4-4-4-12 hex characters
+  const markerRegex = /\[@([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})#/gi
+  let match
+  while ((match = markerRegex.exec(text)) !== null) {
+    ids.add(match[1].toLowerCase())
+  }
+  
+  return Array.from(ids)
+}
+
 interface CompletionRequest {
   projectId: string
   context: {
@@ -570,6 +591,17 @@ export async function POST(request: NextRequest) {
       timings.rag = Date.now() - ragStartTime
       console.log('[Autocomplete] RAG skipped — citations disabled')
     } else {
+      // Extract recently cited paper IDs from preceding text for de-boosting
+      // Look back ~1000 chars to capture recent citations in current context
+      // Cap at 5 papers to ensure enough of the corpus remains at full score
+      const recentlyCitedPaperIds = extractCitedPaperIds(
+        context.precedingText.slice(-1000)
+      ).slice(0, 5)
+      
+      if (recentlyCitedPaperIds.length > 0) {
+        console.log(`[Autocomplete] De-boosting ${recentlyCitedPaperIds.length} recently cited papers (max 5)`)
+      }
+      
       const [retrievedContext, style] = await Promise.all([
         retrieveEditorContext(queryText, effectivePaperIds, {
           maxChunks: 10,           // Increased from 4 for better diversity
@@ -578,6 +610,7 @@ export async function POST(request: NextRequest) {
           minClaimScore: 0.25,
           boostedPaperIds,
           maxChunksPerPaper: 2,   // Limit per paper to force diversity
+          deboostPaperIds: recentlyCitedPaperIds, // De-boost recently cited papers
         }),
         getProjectCitationStyle(projectId, user.id) as Promise<CitationStyle>
       ])

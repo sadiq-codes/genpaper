@@ -72,11 +72,14 @@ export function LimitModalProvider({ children }: { children: React.ReactNode }) 
   return (
     <LimitModalContext.Provider value={{ showLimitModal, hideLimitModal }}>
       {children}
-      <LimitModal 
-        open={state.open} 
-        limitType={state.limitType} 
-        onClose={hideLimitModal}
-      />
+      {/* Only render modal when open to avoid useSubscription() API calls on every page */}
+      {state.open && state.limitType && (
+        <LimitModal 
+          open={state.open} 
+          limitType={state.limitType} 
+          onClose={hideLimitModal}
+        />
+      )}
     </LimitModalContext.Provider>
   )
 }

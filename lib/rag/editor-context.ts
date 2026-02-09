@@ -130,6 +130,8 @@ export interface EditorRetrievalOptions {
   boostedPaperIds?: string[]
   /** Max chunks per paper to ensure diversity across papers */
   maxChunksPerPaper?: number
+  /** Paper IDs to de-boost in search results (recently cited - reduce score by ~60%) */
+  deboostPaperIds?: string[]
 }
 
 export interface EditorContext extends BaseRetrievalResult {
@@ -169,6 +171,7 @@ export async function retrieveEditorContext(
     minChunkScore = 0.2,
     boostedPaperIds,
     maxChunksPerPaper = 3, // Default: max 3 chunks per paper for diversity
+    deboostPaperIds,
     // maxClaims and minClaimScore are no longer used - claims search disabled (pgvector deprecated)
   } = options
 
@@ -208,6 +211,7 @@ export async function retrieveEditorContext(
         minScore: minChunkScore,
         paperIds: globalSearch ? undefined : paperIds,
         boostPaperIds: boostedPaperIds?.length ? boostedPaperIds : undefined,
+        deboostPaperIds: deboostPaperIds?.length ? deboostPaperIds : undefined,
       })
       return results.map(r => ({
         paper_id: r.paper_id,
