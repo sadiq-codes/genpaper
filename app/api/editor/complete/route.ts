@@ -148,8 +148,8 @@ function buildUserPrompt(context: CompletionRequest['context']): string {
     return `[START OF ${context.currentSection.toUpperCase()}]`
   }
   
-  const snippet = preceding.slice(-150)
-  const ellipsis = preceding.length > 150 ? '...' : ''
+  const snippet = preceding.slice(-300)
+  const ellipsis = preceding.length > 300 ? '...' : ''
   
   return `${ellipsis}"${snippet}" [CURSOR]`
 }
@@ -572,11 +572,12 @@ export async function POST(request: NextRequest) {
     } else {
       const [retrievedContext, style] = await Promise.all([
         retrieveEditorContext(queryText, effectivePaperIds, {
-          maxChunks: 4,
+          maxChunks: 10,           // Increased from 4 for better diversity
           maxClaims: 0,
-          minChunkScore: 0.25,
+          minChunkScore: 0.2,     // Slightly lower to include more papers
           minClaimScore: 0.25,
           boostedPaperIds,
+          maxChunksPerPaper: 2,   // Limit per paper to force diversity
         }),
         getProjectCitationStyle(projectId, user.id) as Promise<CitationStyle>
       ])

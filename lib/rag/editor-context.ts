@@ -59,6 +59,54 @@ function getRagCacheKey(query: string, paperIds: string[], options: EditorRetrie
 // This provides consistent caching and query normalization across all RAG paths.
 
 // =============================================================================
+// DIVERSITY FILTER
+// =============================================================================
+
+/**
+ * Apply diversity filter to ensure chunks come from multiple papers.
+ * This prevents one paper from dominating the context.
+ */
+function applyDiversityFilter(
+  chunks: RetrievedChunk[],
+  maxPerPaper: number,
+  totalLimit: number
+): RetrievedChunk[] {
+  // Group chunks by paper
+  const byPaper = new Map<string, RetrievedChunk[]>()
+  
+  for (const chunk of chunks) {
+    const existing = byPaper.get(chunk.paper_id) || []
+    if (existing.length < maxPerPaper) {
+      existing.push(chunk)
+      byPaper.set(chunk.paper_id, existing)
+    }
+  }
+  
+  // Round-robin selection to maximize paper diversity
+  const result: RetrievedChunk[] = []
+  let index = 0
+  const paperIds = Array.from(byPaper.keys())
+  
+  while (result.length < totalLimit && paperIds.length > 0) {
+    const paperId = paperIds[index % paperIds.length]
+    const paperChunks = byPaper.get(paperId)!
+    
+    if (paperChunks.length > 0) {
+      result.push(paperChunks.shift()!)
+    } else {
+      // Remove exhausted paper
+      paperIds.splice(index % paperIds.length, 1)
+      if (paperIds.length === 0) break
+      continue
+    }
+    
+    index++
+  }
+  
+  return result
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -80,6 +128,8 @@ export interface EditorRetrievalOptions {
   minClaimScore?: number
   /** Paper IDs to boost in search results (e.g. user library papers) */
   boostedPaperIds?: string[]
+  /** Max chunks per paper to ensure diversity across papers */
+  maxChunksPerPaper?: number
 }
 
 export interface EditorContext extends BaseRetrievalResult {
@@ -118,6 +168,7 @@ export async function retrieveEditorContext(
     maxChunks = 15,
     minChunkScore = 0.2,
     boostedPaperIds,
+    maxChunksPerPaper = 3, // Default: max 3 chunks per paper for diversity
     // maxClaims and minClaimScore are no longer used - claims search disabled (pgvector deprecated)
   } = options
 
@@ -170,7 +221,9 @@ export async function retrieveEditorContext(
     }
   })()
 
-  const chunks = await chunkSearchPromise.then(results => results.slice(0, maxChunks))
+  // Apply diversity filter: limit chunks per paper to ensure variety
+  const rawChunks = await chunkSearchPromise
+  const chunks = applyDiversityFilter(rawChunks, maxChunksPerPaper, maxChunks)
   const searchTime = Date.now() - searchStartTime
 
   // Claims search disabled - paper_claims table uses pgvector embeddings which have been deprecated
