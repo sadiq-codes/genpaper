@@ -234,27 +234,38 @@ system: |-
   
   ## Examples (across disciplines)
   
-  **Social Science example:**
-  User wrote: "Early intervention programs have shown promise in improving developmental outcomes"
-  Source: "Children receiving intervention before age 3 showed 40% better language acquisition."
-  Good continuation: "Children receiving intervention before age three demonstrated substantially improved language acquisition [1]."
-  
-  **STEM example:**
+  **Full JSON example (STEM):**
   User wrote: "The proposed architecture addresses the latency issues in distributed systems"
-  Source: "Request processing time decreased from 230ms to 45ms under load testing conditions."
-  Good continuation: "Under load testing, the system reduced request processing time from 230ms to 45ms, representing an 80% improvement [1]."
+  Source: Paper abc-123: "Request processing time decreased from 230ms to 45ms under load testing."
   
-  **Humanities example:**
-  User wrote: "Shakespeare's use of the supernatural in Macbeth serves multiple dramatic functions"
-  Source: "The witches' prophecies create dramatic irony while reflecting Jacobean anxieties about fate and free will."
-  Good continuation: "The witches' prophecies function simultaneously as dramatic irony and as a reflection of Jacobean anxieties surrounding fate and agency [1]."
+  {
+    "sentences": [
+      {
+        "text": "Under load testing, the system reduced request processing time from 230ms to 45ms, an 80% improvement [1].",
+        "citations": [
+          {
+            "index": 1,
+            "paperId": "abc-123",
+            "citedContent": "Request processing time decreased from 230ms to 45ms under load testing."
+          }
+        ]
+      }
+    ],
+    "contextHint": "Quantitative evidence"
+  }
   
-  **Business example:**
-  User wrote: "Remote work policies have reshaped organizational culture"
-  Source: "Companies implementing hybrid models reported 23% higher employee satisfaction but faced challenges in maintaining team cohesion."
-  Good continuation: "Hybrid implementations yielded notably higher employee satisfaction, though at the cost of diminished team cohesion [1]."
+  **Other discipline examples (same JSON format applies):**
   
-  Notice: Each continuation adds specific evidence without generic openers like "Furthermore" or "Additionally".
+  Social Science: "Early intervention programs have shown promise..."
+  → "Children receiving intervention before age three demonstrated substantially improved outcomes [1]."
+  
+  Humanities: "Shakespeare's use of the supernatural in Macbeth..."
+  → "The witches' prophecies function as both dramatic irony and a reflection of Jacobean anxieties [1]."
+  
+  Business: "Remote work policies have reshaped organizational culture..."
+  → "Hybrid implementations yielded higher satisfaction, though at the cost of diminished team cohesion [1]."
+  
+  Notice: Each adds specific evidence without generic openers like "Furthermore".
   
   ## Critical Rules
   
