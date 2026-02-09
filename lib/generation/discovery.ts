@@ -1,47 +1,20 @@
 import { createServiceClient } from '@/lib/supabase/service'
 import { getPapersByIds as getLibraryPapersByIds } from '@/lib/db/library'
 import type { EnhancedGenerationOptions } from './types'
+import { isDirectPdfUrl, isLandingPageUrl } from '@/lib/config/pdf-domains'
 
 // Helper function to check if URL is likely a direct PDF or open access article
+// Uses centralized domain lists from lib/config/pdf-domains.ts
 function isLikelyDirectPdfUrl(url: string): boolean {
   if (!url) return false
   
-  // Direct PDF patterns
-  const directPdfPatterns = [
-    /\.pdf$/i,
-    /\.pdf\//i,  // PMC URLs often end with /pdf/
-    /arxiv\.org\/pdf\//i,
-    /biorxiv\.org\/content\/.*\.full\.pdf/i,
-    /medrxiv\.org\/content\/.*\.full\.pdf/i,
-    /core\.ac\.uk\/download\/pdf/i,
-    /europepmc\.org\/.*\.pdf/i,
-    /europepmc\.org\/backend\/ptpmcrender\.fcgi/i,  // Europe PMC PDF render
-    /ncbi\.nlm\.nih\.gov\/pmc\/articles\/.*\/pdf/i,
-    /ncbi\.nlm\.nih\.gov\/pmc\/articles\/PMC\d+$/i,  // PMC article pages (can extract PDF)
-  ]
-  
-  // Publisher landing page patterns (NOT direct PDFs)
-  const landingPagePatterns = [
-    /doi\.org\//i,
-    /dx\.doi\.org\//i,
-    /link\.springer\.com\//i,
-    /ieeexplore\.ieee\.org\//i,
-    /acm\.org\/doi\//i,
-    /onlinelibrary\.wiley\.com\//i,
-    /sciencedirect\.com\/science\/article\//i,
-    /nature\.com\/articles\//i,
-    /tandfonline\.com\//i,
-    /jstor\.org\//i,
-    /sage.*\.com\//i
-  ]
-  
-  // Check if it's a known landing page
-  if (landingPagePatterns.some(pattern => pattern.test(url))) {
+  // Check if it's a known landing page (using central config)
+  if (isLandingPageUrl(url)) {
     return false
   }
   
-  // Check if it's a direct PDF
-  return directPdfPatterns.some(pattern => pattern.test(url))
+  // Check if it's a direct PDF (using central config)
+  return isDirectPdfUrl(url)
 }
 import type { PaperWithAuthors, PaperSource, OriginalResearchConfig } from '@/types/simplified'
 import type { UnifiedSearchOptions } from '@/lib/services/search-orchestrator'

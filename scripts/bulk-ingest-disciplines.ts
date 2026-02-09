@@ -24,6 +24,7 @@ import { downloadPdfBuffer } from '@/lib/pdf/pdf-utils'
 import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
 import { chunkByTokens, normalizeText } from '@/lib/utils/text'
 import { isQdrantConfigured, upsertChunks as upsertQdrantChunks, upsertPapers as upsertQdrantPapers } from '@/lib/qdrant/client'
+import { isPdfFriendlyDomain } from '@/lib/config/pdf-domains'
 import { v5 as uuidv5 } from 'uuid'
 import fs from 'fs'
 
@@ -84,33 +85,8 @@ const DISCIPLINES: Record<string, string> = {
   'Statistics': 'C105795698',
 }
 
-// PDF-friendly domains
-const PDF_FRIENDLY_DOMAINS = [
-  'arxiv.org', 'www.arxiv.org', 'export.arxiv.org',
-  'biorxiv.org', 'www.biorxiv.org', 'medrxiv.org', 'www.medrxiv.org',
-  'chemrxiv.org', 'eartharxiv.org', 'engrxiv.org',
-  'psyarxiv.com', 'osf.io', 'preprints.org',
-  'peerj.com', 'www.peerj.com',
-  'mdpi.com', 'www.mdpi.com',
-  'frontiersin.org', 'www.frontiersin.org',
-  'plos.org', 'journals.plos.org',
-  'elifesciences.org',
-  'hindawi.com', 'www.hindawi.com',
-  'biomedcentral.com', 'www.biomedcentral.com',
-  'nature.com', 'www.nature.com',  // Some OA content
-  'ncbi.nlm.nih.gov', 'www.ncbi.nlm.nih.gov', 'pubmed.ncbi.nlm.nih.gov',
-  'europepmc.org', 'www.europepmc.org',
-  'scielo.org', 'www.scielo.org',
-  'doaj.org', 'www.doaj.org',
-  'zenodo.org', 'www.zenodo.org',
-  'figshare.com', 'www.figshare.com',
-  'hal.science', 'hal.archives-ouvertes.fr',
-  'researchgate.net', 'www.researchgate.net',
-  'academia.edu', 'www.academia.edu',
-  'ssrn.com', 'papers.ssrn.com',
-  'dspace.mit.edu', 'dash.harvard.edu',
-  'repec.org', 'ideas.repec.org',
-]
+// PDF-friendly domains - imported from central config
+// See lib/config/pdf-domains.ts for the full list
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -176,14 +152,8 @@ function invertedIndexToAbstract(index: Record<string, number[]> | null): string
   return words.map(w => w[0]).join(' ')
 }
 
-function isPdfFriendlyUrl(url: string): boolean {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase()
-    return PDF_FRIENDLY_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))
-  } catch {
-    return false
-  }
-}
+// Use the centralized isPdfFriendlyDomain function from lib/config/pdf-domains.ts
+const isPdfFriendlyUrl = isPdfFriendlyDomain
 
 function getBestPdfUrl(work: OpenAlexWork): string | null {
   const candidates = [

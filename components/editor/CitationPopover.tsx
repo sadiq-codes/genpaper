@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import type { Editor } from '@tiptap/react'
-import { ExternalLink, Copy, Trash2, Pencil } from 'lucide-react'
+import { ExternalLink, Copy, Trash2, Pencil, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { CitationEditModal } from './CitationEditModal'
@@ -29,6 +29,7 @@ interface PaperInfo {
   year: number | null
   journal?: string
   doi?: string
+  pdfUrl?: string
 }
 
 export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated }: CitationPopoverProps) {
@@ -53,6 +54,7 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
         year: paper.year || null,
         journal: paper.journal,
         doi: paper.doi,
+        pdfUrl: paper.pdfUrl,
       })
     }
     return map
@@ -391,6 +393,14 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
                     className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                   >
                     <ExternalLink className="h-3 w-3" /> DOI
+                  </button>
+                )}
+                {paper.pdfUrl && (
+                  <button
+                    onClick={() => window.open(paper.pdfUrl, '_blank')}
+                    className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                  >
+                    <FileText className="h-3 w-3" /> PDF
                   </button>
                 )}
                 <div className="flex-1" />

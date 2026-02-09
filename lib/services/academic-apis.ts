@@ -36,6 +36,14 @@ import pLimit from 'p-limit'
 import { formatDateForAPI, createCanonicalId } from '@/lib/utils/paper-id'
 import { jaccardSimilarity } from '@/lib/utils/fuzzy-matching'
 import { getOpenAlexConceptIds, shouldApplyConceptFilter } from '@/lib/utils/discipline-mapping'
+import { 
+  isPaywalledDomain, 
+  isLandingPageUrl as isLandingPageUrlFromConfig,
+  isDirectPdfUrl as isDirectPdfUrlFromConfig,
+  filterPdfUrl as filterPdfUrlFromConfig,
+  isPdfFriendlyDomain,
+  DIRECT_PDF_PATTERNS
+} from '@/lib/config/pdf-domains'
 
 // OpenAlex publication types - using correct names per API docs
 // Note: OpenAlex uses different type names than Crossref
@@ -62,83 +70,30 @@ if (!CONTACT_EMAIL) {
 }
 
 // PDF URL Detection Utilities
-
-// Domains that ALWAYS require API tokens — these will never work with a plain fetch.
-// Publisher domains with mixed OA/paywalled content (Wiley, ScienceDirect, T&F, SAGE, OUP)
-// are intentionally NOT listed here — many papers on those hosts are legitimately OA
-// and the download attempt + %PDF header check will filter out paywalled ones.
-const PAYWALL_DOMAINS = [
-  'api.elsevier.com',           // Requires Elsevier API token
-  'api.wiley.com',              // Requires Wiley TDM Client Token
-  'www.aeaweb.org/articles/pdf', // AEA journals - always paywalled
-  'pubsonline.informs.org',     // INFORMS - always paywalled
-]
-
-// Landing page patterns that look like PDF URLs but aren't
-const LANDING_PAGE_PATTERNS = [
-  /papers\.ssrn\.com\/sol3\/Delivery\.cfm/i,  // SSRN delivery - returns HTML
-  /dspace\..*\/handle\//i,                     // DSpace repository handles
-  /hdl\.handle\.net\//i,                       // Handle.net redirects
-  /doi\.org\/(?!.*\.pdf)/i,                    // DOI resolvers (not ending in .pdf)
-  /\/abstract\//i,                              // Abstract pages
-  /\/abs\//i,                                   // ArXiv abstract pages (not /pdf/)
-]
+// Domain lists and patterns are now imported from lib/config/pdf-domains.ts
 
 /**
  * Check if URL points to a known paywall domain
+ * Uses the centralized PAYWALL_DOMAINS list
  */
 function isPaywalledUrl(url: string): boolean {
-  if (!url) return false
-  return PAYWALL_DOMAINS.some(domain => url.includes(domain))
+  return isPaywalledDomain(url)
 }
 
 /**
  * Check if URL is a landing page rather than a direct PDF
+ * Uses the centralized LANDING_PAGE_PATTERNS
  */
 function isLandingPageUrl(url: string): boolean {
-  if (!url) return false
-  return LANDING_PAGE_PATTERNS.some(pattern => pattern.test(url))
+  return isLandingPageUrlFromConfig(url)
 }
 
 /**
  * Check if URL is likely to be a direct, accessible PDF
+ * Uses the centralized DIRECT_PDF_PATTERNS
  */
 function isDirectPdfUrl(url: string): boolean {
-  if (!url) return false
-  
-  // Reject known paywalls and landing pages
-  if (isPaywalledUrl(url) || isLandingPageUrl(url)) {
-    return false
-  }
-  
-  // Direct PDF patterns - known good sources and mixed-OA publishers
-  const pdfPatterns = [
-    /\.pdf$/i,
-    /arxiv\.org\/pdf\//i,
-    /biorxiv\.org\/content\/.*\.full\.pdf/i,
-    /medrxiv\.org\/content\/.*\.full\.pdf/i,
-    /researchgate\.net\/.*\.pdf/i,
-    /academia\.edu\/.*\.pdf/i,
-    /core\.ac\.uk\/download/i,                  // CORE downloads (may not end in .pdf)
-    /europepmc\.org\/.*\.pdf/i,
-    /ncbi\.nlm\.nih\.gov\/pmc\/articles\/.*\/pdf/i,
-    /pmc\.ncbi\.nlm\.nih\.gov\/.*\/pdf/i,
-    /link\.springer\.com\/content\/pdf/i,        // Springer OA PDFs
-    /biomedcentral\.com\/track\/pdf/i,           // BMC PDFs
-    /mdpi\.com\/.*\/pdf/i,                       // MDPI OA PDFs
-    /frontiersin\.org\/.*\/pdf/i,                // Frontiers OA PDFs
-    /plos\.org\/.*\.pdf/i,                       // PLOS OA PDFs
-    /nature\.com\/.*\.pdf/i,                     // Nature (some OA)
-    /doi\.org\/.*\.pdf$/i,                       // DOI resolving to PDF
-    /onlinelibrary\.wiley\.com\/doi\/pdf\//i,    // Wiley (many hybrid OA)
-    /onlinelibrary\.wiley\.com\/doi\/pdfdirect\//i,
-    /sciencedirect\.com\/.*\/pdf/i,              // ScienceDirect OA articles
-    /tandfonline\.com\/doi\/pdf\//i,             // Taylor & Francis OA
-    /journals\.sagepub\.com\/doi\/pdf\//i,       // SAGE OA
-    /academic\.oup\.com\/.*\/pdf/i,              // Oxford OA
-  ]
-  
-  return pdfPatterns.some(pattern => pattern.test(url))
+  return isDirectPdfUrlFromConfig(url)
 }
 
 /**
@@ -147,7 +102,7 @@ function isDirectPdfUrl(url: string): boolean {
  */
 function filterPdfUrl(url: string): string {
   if (!url) return ''
-  if (isPaywalledUrl(url)) {
+  if (isPaywalledDomain(url)) {
     // Don't log every rejection - too noisy
     return ''
   }
