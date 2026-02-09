@@ -593,40 +593,8 @@ export function DocumentEditor({
   // References manager - auto-inserts/removes References section based on citations
   useReferencesManager(editor)
 
-  // Pre-warm RAG cache on editor load for faster autocomplete
-  // This runs once when the editor is ready with papers
-  const prewarmCalledRef = useRef(false)
-  
-  useEffect(() => {
-    if (!projectId || papers.length === 0 || prewarmCalledRef.current) return
-    prewarmCalledRef.current = true
-    
-    // Extract section titles from document outline for targeted pre-warming
-    const sections = initialContent
-      .match(/^#{1,3}\s+.+$/gm)
-      ?.map(h => h.replace(/^#+\s+/, '').trim())
-      .slice(0, 5) || []
-    
-    // Fire and forget - don't block editor
-    fetch('/api/editor/prewarm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        paperIds: papers.map(p => p.id),
-        sections
-      })
-    }).then(res => {
-      if (res.ok) {
-        res.json().then(data => {
-          console.log(`[DocumentEditor] RAG cache pre-warmed: ${data.prewarmed} queries in ${data.duration}ms`)
-        })
-      }
-    }).catch(err => {
-      // Silently ignore pre-warm errors - it's just an optimization
-      console.warn('[DocumentEditor] Pre-warm failed:', err)
-    })
-  }, [projectId, papers, initialContent])
+  // Note: RAG cache prewarm was removed to save ~4s on page load
+  // Cache populates naturally on first autocomplete use
 
   // Listen for citations accepted event to save citedContent to database
   useEffect(() => {
