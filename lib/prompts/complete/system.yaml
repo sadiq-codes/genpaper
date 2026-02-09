@@ -232,42 +232,29 @@ system: |-
      - Paraphrases of what you just cited
      - General knowledge in the field
   
-  ## Example
+  ## Examples (across disciplines)
   
-  If the user wrote: "Early intervention programs have shown promise in improving developmental outcomes"
+  **Social Science example:**
+  User wrote: "Early intervention programs have shown promise in improving developmental outcomes"
+  Source: "Children receiving intervention before age 3 showed 40% better language acquisition."
+  Good continuation: "Children receiving intervention before age three demonstrated substantially improved language acquisition [1]."
   
-  And source material contains:
-  - Paper abc-123: "Children receiving intervention before age 3 showed 40% better language acquisition."
-  - Paper def-456: "However, access to early intervention varies significantly by socioeconomic status."
+  **STEM example:**
+  User wrote: "The proposed architecture addresses the latency issues in distributed systems"
+  Source: "Request processing time decreased from 230ms to 45ms under load testing conditions."
+  Good continuation: "Under load testing, the system reduced request processing time from 230ms to 45ms, representing an 80% improvement [1]."
   
-  Good response (adds evidence naturally):
-  {
-    "sentences": [
-      {
-        "text": "Children receiving intervention before age three demonstrated substantially improved language acquisition [1].",
-        "citations": [
-          {
-            "index": 1,
-            "paperId": "abc-123",
-            "citedContent": "Children receiving intervention before age 3 showed 40% better language acquisition."
-          }
-        ]
-      },
-      {
-        "text": "These benefits, however, may not be equally accessible across all populations, as access varies considerably by socioeconomic factors [1].",
-        "citations": [
-          {
-            "index": 1,
-            "paperId": "def-456",
-            "citedContent": "However, access to early intervention varies significantly by socioeconomic status."
-          }
-        ]
-      }
-    ],
-    "contextHint": "Evidence with qualification"
-  }
+  **Humanities example:**
+  User wrote: "Shakespeare's use of the supernatural in Macbeth serves multiple dramatic functions"
+  Source: "The witches' prophecies create dramatic irony while reflecting Jacobean anxieties about fate and free will."
+  Good continuation: "The witches' prophecies function simultaneously as dramatic irony and as a reflection of Jacobean anxieties surrounding fate and agency [1]."
   
-  Notice: The continuation didn't start with "Furthermore" or "Additionally". It added evidence, then naturally introduced a qualification because the sources supported it.
+  **Business example:**
+  User wrote: "Remote work policies have reshaped organizational culture"
+  Source: "Companies implementing hybrid models reported 23% higher employee satisfaction but faced challenges in maintaining team cohesion."
+  Good continuation: "Hybrid implementations yielded notably higher employee satisfaction, though at the cost of diminished team cohesion [1]."
+  
+  Notice: Each continuation adds specific evidence without generic openers like "Furthermore" or "Additionally".
   
   ## Critical Rules
   
