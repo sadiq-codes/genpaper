@@ -1,10 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Button } from '@/components/ui/button'
 import { Loader2, Check, Sparkles, BookOpen, Keyboard } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -89,29 +87,30 @@ export function EditorSection({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold">Editor Settings</h2>
-        <p className="text-sm text-muted-foreground">
+        <h2 className="font-instrument text-xl tracking-tight">Editor Settings</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
           Configure AI autocomplete behavior
         </p>
       </div>
 
-      {/* Autocomplete Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">AI Autocomplete</CardTitle>
-          <CardDescription>
+      {/* Autocomplete */}
+      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+        <div>
+          <h3 className="font-instrument text-base tracking-tight">AI Autocomplete</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
             Control how AI suggestions appear while you write
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5 sm:space-y-6">
+          </p>
+        </div>
+
+        <div className="space-y-5">
           {/* Auto Suggestions Toggle */}
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-0.5 min-w-0">
-              <Label htmlFor="auto-suggestions" className="flex items-center gap-2">
+              <Label htmlFor="auto-suggestions" className="flex items-center gap-2 text-xs">
                 <Sparkles className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
                 <span>Enable Auto Suggestions</span>
               </Label>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground ml-[22px]">
                 Show AI completions as you type
               </p>
             </div>
@@ -125,11 +124,11 @@ export function EditorSection({
           {/* Include Citations Toggle */}
           <div className="flex items-center justify-between gap-4">
             <div className="space-y-0.5 min-w-0">
-              <Label htmlFor="include-citations" className="flex items-center gap-2">
+              <Label htmlFor="include-citations" className="flex items-center gap-2 text-xs">
                 <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
                 <span>Include Citations</span>
               </Label>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground ml-[22px]">
                 AI suggestions include relevant citations from your library
               </p>
             </div>
@@ -142,7 +141,7 @@ export function EditorSection({
 
           {/* Accept Key Selector */}
           <div className="space-y-2">
-            <Label htmlFor="accept-key" className="flex items-center gap-2">
+            <Label htmlFor="accept-key" className="flex items-center gap-2 text-xs">
               <Keyboard className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               Accept Suggestion Key
             </Label>
@@ -155,29 +154,33 @@ export function EditorSection({
                 <SelectItem value="ctrlEnter">Ctrl&nbsp;+&nbsp;Enter</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11px] text-muted-foreground">
               Keyboard shortcut to accept AI suggestions
             </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Save Button */}
       {hasChanges && (
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={isSaving}>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-foreground/80 text-background text-sm font-medium hover:bg-foreground transition-colors disabled:opacity-50"
+          >
             {isSaving ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                 Saving…
               </>
             ) : (
               <>
-                <Check className="mr-2 h-4 w-4" aria-hidden="true" />
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
                 Save Changes
               </>
             )}
-          </Button>
+          </button>
         </div>
       )}
     </div>

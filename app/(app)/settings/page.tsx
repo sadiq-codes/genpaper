@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation'
 import { PageContainer } from '@/components/ui/page-container'
 import { PageHeader } from '@/components/ui/page-header'
 import { SettingsPage as SettingsPageClient } from '@/components/settings/settings-page'
+import { TIER_CONFIG } from '@/types/subscription'
+import type { SubscriptionTier } from '@/types/subscription'
 
 export const metadata = {
   title: 'Settings | GenPaper',
@@ -18,7 +20,8 @@ export default async function SettingsPage() {
     redirect('/login')
   }
 
-  // Fetch preferences and profile in parallel using service client
+  // Fetch preferences and profile (with subscription fields) in parallel
+  // Include subscription fields to avoid a second profiles query when billing section loads
   const serviceClient = createServiceClient()
   
   const [prefsResult, profileResult] = await Promise.all([
@@ -29,7 +32,7 @@ export default async function SettingsPage() {
       .single(),
     serviceClient
       .from('profiles')
-      .select('full_name, created_at')
+      .select('full_name, created_at, subscription_tier, papers_used_this_period, period_ends_at')
       .eq('id', user.id)
       .single()
   ])
@@ -55,19 +58,36 @@ export default async function SettingsPage() {
     fontSize: prefs?.font_size || 'medium',
   }
 
+  // Build subscription data from the same profiles query (no extra round-trip)
+  const tier = (profile?.subscription_tier || 'free') as SubscriptionTier
+  const tierConfig = TIER_CONFIG[tier]
+  const papersUsed = profile?.papers_used_this_period || 0
+  const subscriptionData = {
+    tier,
+    tierName: tierConfig.name,
+    papersUsed,
+    papersLimit: tierConfig.limits.papersPerMonth,
+    papersRemaining: Math.max(0, tierConfig.limits.papersPerMonth - papersUsed),
+    periodEndsAt: profile?.period_ends_at || null,
+    features: tierConfig.features,
+  }
+
   return (
     <PageContainer>
-      <PageHeader
-        title="Settings"
-        description="Manage your account settings and preferences"
-      />
+      <PageHeader title="Settings" />
       
-      {/* Centered content wrapper to match library page style */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-5xl mx-auto space-y-6">
+          <div className="space-y-1">
+            <h2 className="font-instrument text-3xl tracking-tight">Settings</h2>
+            <p className="text-[13px] text-muted-foreground">
+              Manage your account, preferences, and billing.
+            </p>
+          </div>
           <SettingsPageClient 
             user={userData}
             preferences={preferences}
+            subscription={subscriptionData}
           />
         </div>
       </div>

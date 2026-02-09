@@ -3,9 +3,6 @@
 import { useState, useMemo, useCallback, memo, startTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -31,9 +28,6 @@ import {
   Upload,
   Loader2,
   X,
-  Calendar,
-  Users,
-  FileText,
   FolderOpen,
   Bookmark,
 } from 'lucide-react'
@@ -44,7 +38,6 @@ import { toast } from 'sonner'
 interface UnifiedPaper {
   id: string
   title: string
-  abstract: string | null
   authors: string[]
   publication_date: string | null
   venue: string | null
@@ -118,18 +111,20 @@ function formatDate(dateString: string | null): string {
 
 // OPTIMIZATION: Hoist static skeleton JSX (rule: rendering-hoist-jsx)
 const paperListSkeleton = (
-  <div className="space-y-3">
+    <div className="space-y-3">
     {[0, 1, 2, 3, 4].map((i) => (
-      <Card key={i} className="p-4">
-        <div className="animate-pulse space-y-3">
-          <div className="h-5 bg-muted rounded w-3/4" />
-          <div className="h-4 bg-muted rounded w-1/2" />
-          <div className="flex gap-2">
-            <div className="h-6 bg-muted rounded w-20" />
-            <div className="h-6 bg-muted rounded w-16" />
-          </div>
+      <div key={i} className="rounded-xl border border-border/60 bg-card p-3 sm:p-4 animate-pulse">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-7 h-7 rounded-lg bg-muted/60" />
+          <div className="h-3 bg-muted/40 rounded w-16" />
         </div>
-      </Card>
+        <div className="h-4 bg-muted/50 rounded w-4/5 mb-2" />
+        <div className="h-4 bg-muted/40 rounded w-3/5 mb-3" />
+        <div className="pt-3 border-t border-border/40 flex gap-3">
+          <div className="h-3 bg-muted/30 rounded w-24" />
+          <div className="h-3 bg-muted/30 rounded w-12" />
+        </div>
+      </div>
     ))}
   </div>
 )
@@ -172,110 +167,50 @@ const PaperCard = memo(function PaperCard({
   }, [paper.doi])
 
   return (
-    <Card 
+    <div 
       className={cn(
-        "p-4 hover:shadow-md transition-shadow cursor-pointer",
-        // OPTIMIZATION: content-visibility for long lists (rule: rendering-content-visibility)
+        "relative rounded-xl border border-border/60 bg-card p-3 sm:p-4 cursor-pointer group",
+        "transition-all duration-300 ease-out",
+        "hover:border-foreground/15 hover:shadow-sm hover:-translate-y-px",
         "[content-visibility:auto] [contain-intrinsic-size:0_120px]"
       )}
       onClick={handleClick}
     >
-      <div className="flex items-start gap-4">
-        {/* Icon + Bookmark indicator */}
-        <div className="flex-shrink-0 mt-1 relative">
-          {paper.source === 'upload' ? (
-            <div className="p-2 rounded-lg bg-blue-500/10">
-              <FileText className="h-4 w-4 text-blue-500" />
-            </div>
-          ) : (
-            <div className="p-2 rounded-lg bg-green-500/10">
-              <Search className="h-4 w-4 text-green-500" />
-            </div>
-          )}
+      {/* Header: source icon + bookmark */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-muted/70 flex items-center justify-center shrink-0">
+            {paper.source === 'upload' ? (
+              <Upload className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <Search className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+            )}
+          </div>
+          <span className="text-[11px] font-medium text-muted-foreground tracking-wide uppercase">
+            {paper.source === 'upload' ? 'Uploaded' : 'Found'}
+          </span>
           {paper.isBookmarked && (
-            <div className="absolute -top-1 -right-1 bg-amber-500 rounded-full p-0.5">
-              <Bookmark className="h-2.5 w-2.5 text-white fill-white" />
-            </div>
+            <Bookmark className="h-3 w-3 text-amber-500 fill-amber-500 shrink-0" aria-hidden="true" />
           )}
         </div>
 
-        {/* Content */}
-        <div className="flex-1 min-w-0 space-y-2">
-          <h3 className="font-medium leading-snug line-clamp-2">{paper.title}</h3>
-
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <span className="flex items-center gap-1 truncate">
-              <Users className="h-3.5 w-3.5 flex-shrink-0" />
-              {formatAuthors(paper.authors)}
-            </span>
-            {paper.publication_date && (
-              <span className="flex items-center gap-1 flex-shrink-0">
-                <Calendar className="h-3.5 w-3.5" />
-                {formatDate(paper.publication_date)}
-              </span>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {paper.venue && (
-              <Badge variant="secondary" className="text-xs">
-                {paper.venue}
-              </Badge>
-            )}
-            <Badge variant="outline" className="text-xs">
-              {paper.source === 'upload' ? 'Uploaded' : 'Found'}
-            </Badge>
-            
-            {/* Projects using this paper */}
-            {paper.projects.length > 0 && (
-              <TooltipProvider delayDuration={300}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Badge 
-                      variant="outline" 
-                      className="text-xs bg-purple-500/10 text-purple-600 border-purple-500/20 cursor-help"
-                    >
-                      <FolderOpen className="h-3 w-3 mr-1" />
-                      {paper.projects.length} project{paper.projects.length !== 1 ? 's' : ''}
-                    </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <div className="text-xs">
-                      <p className="font-medium mb-1">Used in:</p>
-                      {paper.projects.slice(0, 3).map((proj) => (
-                        <p key={proj.id} className="truncate max-w-[200px]">• {proj.topic}</p>
-                      ))}
-                      {paper.projects.length > 3 && (
-                        <p className="text-muted-foreground">+{paper.projects.length - 3} more</p>
-                      )}
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Bookmark button */}
+        {/* Actions — show on hover */}
+        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           {!paper.isBookmarked && (
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-amber-500"
+                  <button
+                    className="h-7 w-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-amber-500 transition-colors"
                     onClick={handleBookmarkClick}
                     disabled={isBookmarking}
                   >
                     {isBookmarking ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <Bookmark className="h-4 w-4" />
+                      <Bookmark className="h-3.5 w-3.5" />
                     )}
-                  </Button>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent>Save to library</TooltipContent>
               </Tooltip>
@@ -283,29 +218,65 @@ const PaperCard = memo(function PaperCard({
           )}
           
           {paper.doi && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
+            <button
+              className="h-7 w-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
               onClick={handleExternalClick}
             >
-              <ExternalLink className="h-4 w-4" />
-            </Button>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </button>
           )}
           
           {paper.isBookmarked && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+            <button
+              className="h-7 w-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
               onClick={handleDeleteClick}
             >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       </div>
-    </Card>
+
+      {/* Title */}
+      <h3 className="font-instrument text-base tracking-tight leading-snug line-clamp-2 mb-3 group-hover:text-foreground transition-colors">
+        {paper.title}
+      </h3>
+
+      {/* Footer: Meta row */}
+      <div className="flex items-center justify-between pt-3 border-t border-border/40">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="truncate max-w-[200px]">{formatAuthors(paper.authors)}</span>
+          {paper.publication_date && (
+            <>
+              <span className="text-border">·</span>
+              <span>{formatDate(paper.publication_date)}</span>
+            </>
+          )}
+        </div>
+        {paper.projects.length > 0 && (
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-[10px] text-muted-foreground cursor-help shrink-0">
+                  {paper.projects.length} project{paper.projects.length !== 1 ? 's' : ''}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="text-xs">
+                  <p className="font-medium mb-1">Used in:</p>
+                  {paper.projects.slice(0, 3).map((proj) => (
+                    <p key={proj.id} className="truncate max-w-[200px]">• {proj.topic}</p>
+                  ))}
+                  {paper.projects.length > 3 && (
+                    <p className="text-muted-foreground">+{paper.projects.length - 3} more</p>
+                  )}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+      </div>
+    </div>
   )
 })
 
@@ -481,98 +452,72 @@ export function LibraryPage() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
-        <div className="rounded-full bg-destructive/10 p-4 mb-4">
-          <X className="h-8 w-8 text-destructive" />
+        <div className="w-12 h-12 rounded-full border border-destructive/20 flex items-center justify-center mb-4">
+          <X className="h-5 w-5 text-destructive/60" />
         </div>
-        <h3 className="text-lg font-semibold mb-2">Failed to load library</h3>
-        <p className="text-sm text-muted-foreground mb-4">
+        <h3 className="font-instrument text-lg tracking-tight mb-1">Failed to load library</h3>
+        <p className="text-sm text-muted-foreground mb-5">
           There was an error loading your papers.
         </p>
-        <Button onClick={() => queryClient.invalidateQueries({ queryKey: ['library'] })}>
+        <button
+          className="h-8 px-4 text-xs font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors"
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['library'] })}
+        >
           Try Again
-        </Button>
+        </button>
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/10">
-              <BookOpen className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{stats.total}</p>
-              <p className="text-sm text-muted-foreground">Total Papers</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-amber-500/10">
-              <Bookmark className="h-5 w-5 text-amber-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{stats.bookmarked}</p>
-              <p className="text-sm text-muted-foreground">Bookmarked</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-blue-500/10">
-              <Upload className="h-5 w-5 text-blue-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{stats.uploaded}</p>
-              <p className="text-sm text-muted-foreground">Uploaded</p>
-            </div>
-          </div>
-        </Card>
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-purple-500/10">
-              <FolderOpen className="h-5 w-5 text-purple-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{stats.projects}</p>
-              <p className="text-sm text-muted-foreground">Projects</p>
-            </div>
-          </div>
-        </Card>
+      {/* Stats Row */}
+      <div className="flex items-center gap-6 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="font-instrument text-2xl tracking-tight">{stats.total}</span>
+          <span className="text-muted-foreground text-xs">papers</span>
+        </div>
+        <div className="w-px h-4 bg-border/40" />
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Bookmark className="h-3 w-3 text-amber-500" aria-hidden="true" />
+          <span>{stats.bookmarked}</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Upload className="h-3 w-3" aria-hidden="true" />
+          <span>{stats.uploaded}</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <FolderOpen className="h-3 w-3" aria-hidden="true" />
+          <span>{stats.projects} projects</span>
+        </div>
       </div>
 
-      {/* Filters */}
+      {/* Search + Filters */}
       <div className="flex flex-col gap-3">
-        {/* Search */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
           <Input
             placeholder="Search papers by title, author, or venue..."
             value={searchQuery}
             onChange={(e) => handleSearchChange(e.target.value)}
-            className="pl-9 pr-9"
+            className="pl-10 pr-9 h-10 rounded-xl border-border/40 bg-background placeholder:text-muted-foreground/60 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
           />
           {searchQuery && (
             <button
               onClick={() => handleSearchChange('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
 
-        {/* Filter row */}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           <Select value={filterSource} onValueChange={handleSourceChange}>
-            <SelectTrigger className="w-32">
+            <SelectTrigger className="w-32 h-8 rounded-full border-border/40 text-xs">
               <SelectValue placeholder="Source" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="rounded-xl">
               <SelectItem value="all">All Sources</SelectItem>
               <SelectItem value="upload">Uploaded</SelectItem>
               <SelectItem value="search">From Search</SelectItem>
@@ -580,10 +525,10 @@ export function LibraryPage() {
           </Select>
 
           <Select value={filterProject} onValueChange={handleProjectChange}>
-            <SelectTrigger className="w-44">
+            <SelectTrigger className="w-44 h-8 rounded-full border-border/40 text-xs">
               <SelectValue placeholder="Project" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="rounded-xl">
               <SelectItem value="all">All Projects</SelectItem>
               <SelectItem value="none">Not in any project</SelectItem>
               {projects.map((project) => (
@@ -595,10 +540,10 @@ export function LibraryPage() {
           </Select>
 
           <Select value={filterBookmarked} onValueChange={handleBookmarkedChange}>
-            <SelectTrigger className="w-36">
+            <SelectTrigger className="w-36 h-8 rounded-full border-border/40 text-xs">
               <SelectValue placeholder="Bookmarked" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="rounded-xl">
               <SelectItem value="all">All Papers</SelectItem>
               <SelectItem value="bookmarked">Bookmarked</SelectItem>
               <SelectItem value="not-bookmarked">Not Bookmarked</SelectItem>
@@ -606,10 +551,10 @@ export function LibraryPage() {
           </Select>
 
           <Select value={sortBy} onValueChange={handleSortChange}>
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-40 h-8 rounded-full border-border/40 text-xs">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="rounded-xl">
               <SelectItem value="added_at">Recently Added</SelectItem>
               <SelectItem value="title">Title (A-Z)</SelectItem>
               <SelectItem value="year">Year (Newest)</SelectItem>
@@ -623,24 +568,24 @@ export function LibraryPage() {
         paperListSkeleton
       ) : filteredPapers.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="rounded-full bg-muted p-4 mb-4">
+          <div className="w-10 h-10 rounded-full border border-border/40 flex items-center justify-center mb-4">
             {searchQuery || filterSource !== 'all' || filterProject !== 'all' ? (
-              <Search className="h-8 w-8 text-muted-foreground" />
+              <Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             ) : (
-              <BookOpen className="h-8 w-8 text-muted-foreground" />
+              <BookOpen className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             )}
           </div>
-          <h3 className="text-lg font-semibold mb-2">
+          <h3 className="font-instrument text-base tracking-tight mb-1">
             {searchQuery || filterSource !== 'all' || filterProject !== 'all' ? 'No papers found' : 'No papers yet'}
           </h3>
-          <p className="text-sm text-muted-foreground max-w-md">
+          <p className="text-xs text-muted-foreground max-w-[260px] leading-relaxed">
             {searchQuery || filterSource !== 'all' || filterProject !== 'all'
               ? 'Try adjusting your search or filters.'
               : 'Papers will appear here when you upload PDFs, search for papers, or create projects.'}
           </p>
         </div>
       ) : (
-        <ScrollArea className="h-[calc(100vh-480px)] min-h-[300px]">
+        <ScrollArea className="h-[calc(100vh-420px)] min-h-[300px]">
           <div className="space-y-3 pr-4">
             {filteredPapers.map((paper) => (
               <PaperCard
@@ -658,39 +603,38 @@ export function LibraryPage() {
 
       {/* Results count */}
       {!isLoading && filteredPapers.length > 0 && (
-        <p className="text-sm text-muted-foreground text-center">
+        <p className="text-xs text-muted-foreground text-center font-instrument italic">
           Showing {filteredPapers.length} of {papers.length} papers
         </p>
       )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={!!paperToDelete} onOpenChange={() => setPaperToDelete(null)}>
-        <DialogContent>
+        <DialogContent className="rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Remove from library?</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="font-instrument text-lg tracking-tight">Remove from library?</DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
               This will remove &quot;{paperToDelete?.title}&quot; from your bookmarked papers. 
               {paperToDelete?.projects && paperToDelete.projects.length > 0 && (
                 <> The paper will still be available in the {paperToDelete.projects.length} project{paperToDelete.projects.length !== 1 ? 's' : ''} where it&apos;s used.</>
               )}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPaperToDelete(null)}>
+          <DialogFooter className="gap-2">
+            <button
+              className="h-9 px-4 text-sm rounded-full border border-border/40 hover:bg-muted transition-colors"
+              onClick={() => setPaperToDelete(null)}
+            >
               Cancel
-            </Button>
-            <Button
-              variant="destructive"
+            </button>
+            <button
+              className="h-9 px-4 text-sm rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
               onClick={() => paperToDelete && deleteMutation.mutate(paperToDelete.id)}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              ) : (
-                <Trash2 className="h-4 w-4 mr-2" />
-              )}
+              {deleteMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Remove
-            </Button>
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

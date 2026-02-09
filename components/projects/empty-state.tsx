@@ -1,27 +1,19 @@
 'use client'
 
-import { FileText, Sparkles } from 'lucide-react'
+import { FileText } from 'lucide-react'
 
 export function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-4">
-      {/* Decorative icon */}
-      <div className="relative mb-6">
-        <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
-          <FileText className="h-8 w-8 text-muted-foreground" />
-        </div>
-        <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
-          <Sparkles className="h-3 w-3 text-primary" />
-        </div>
+    <div className="flex flex-col items-center justify-center py-20 px-4">
+      <div className="w-12 h-12 rounded-xl bg-muted/50 flex items-center justify-center mb-5">
+        <FileText className="h-5 w-5 text-muted-foreground/50" />
       </div>
 
-      {/* Text */}
-      <h3 className="text-lg font-medium text-foreground mb-2">
+      <h3 className="font-instrument text-xl tracking-tight text-foreground mb-1.5">
         No projects yet
       </h3>
-      <p className="text-sm text-muted-foreground text-center max-w-sm">
-        Start by entering a research topic above. We&apos;ll help you discover papers, 
-        extract key findings, and identify research gaps.
+      <p className="text-sm text-muted-foreground/60 text-center max-w-xs leading-relaxed">
+        Start by entering a research topic above to discover papers and begin writing.
       </p>
     </div>
   )

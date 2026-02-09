@@ -4,11 +4,10 @@ import type React from "react"
 import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
+import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
-import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
-import Image from "next/image"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
 function LoginPageContent() {
@@ -22,23 +21,23 @@ function LoginPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
-  const nextPath = searchParams.get('next') || '/projects'
+  const nextPath = searchParams.get("next") || "/projects"
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true)
     setError("")
-    
+
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
+      provider: "google",
       options: {
         redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
         queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
+          access_type: "offline",
+          prompt: "consent",
         },
       },
     })
-    
+
     if (error) {
       setError(error.message)
       setGoogleLoading(false)
@@ -47,14 +46,11 @@ function LoginPageContent() {
 
   useEffect(() => {
     const checkUser = async () => {
-      // Remove automatic redirect to avoid login/generate loop
-      // Let server-side route protection handle authentication flow
       setChecking(false)
     }
     checkUser()
-    
-    // Check for error message from URL params (e.g., email verification failed)
-    const errorParam = searchParams.get('error')
+
+    const errorParam = searchParams.get("error")
     if (errorParam) {
       setError(decodeURIComponent(errorParam))
     }
@@ -66,21 +62,20 @@ function LoginPageContent() {
     setError("")
 
     try {
-      const response = await fetch('/auth/signin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/auth/signin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       })
 
       const data = await response.json().catch(() => null)
 
       if (!response.ok) {
-        const message = data?.error || 'Invalid email or password'
+        const message = data?.error || "Invalid email or password"
         setError(message)
         return
       }
 
-      // Force a hard navigation to ensure session is loaded
       window.location.href = nextPath
     } catch (error) {
       console.error("Sign-in error:", error)
@@ -95,138 +90,129 @@ function LoginPageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="flex h-screen bg-background">
-        <div className="w-full bg-card flex flex-col justify-center px-12">
-          <div className="max-w-sm mx-auto w-full">
-            <div className="flex items-center justify-center mb-8">
-              <div className="flex items-center space-x-2">
-                <Image 
-                  src="/favicon-32x32.png" 
-                  alt="GenPaper" 
-                  width={32} 
-                  height={32} 
-                  className="h-8 w-8"
-                />
-                <span className="text-2xl font-bold text-foreground">GenPaper</span>
-              </div>
-            </div>
+    <div className="w-full max-w-sm mx-auto px-6">
+      {/* Logo */}
+      <div className="flex items-center justify-center mb-10">
+        <Link href="/" className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-foreground/80 flex items-center justify-center p-1.5">
+            <Image
+              src="/favicon-32x32.png"
+              alt="GenPaper"
+              width={20}
+              height={20}
+              className="w-full h-full invert dark:invert-0"
+            />
+          </div>
+          <span className="text-lg font-semibold tracking-tight text-foreground/80">GenPaper</span>
+        </Link>
+      </div>
 
-            <div className="text-center mb-8">
-              <h3 className="text-2xl font-semibold text-foreground mb-2">Welcome back</h3>
-              <p className="text-muted-foreground">Sign in to your research workspace</p>
-            </div>
+      {/* Header */}
+      <div className="text-center mb-8">
+        <h1 className="font-instrument text-3xl tracking-tight mb-2">Welcome back</h1>
+        <p className="text-sm text-muted-foreground">Sign in to your research workspace</p>
+      </div>
 
-            <div className="space-y-3 mb-6">
-              <Button 
-                variant="outline" 
-                className="w-full h-11"
-                onClick={handleGoogleSignIn}
-                disabled={googleLoading}
-              >
-                {googleLoading ? (
-                  <Loader2 className="w-4 h-4 mr-3 animate-spin" />
-                ) : (
-                  <svg className="w-4 h-4 mr-3" viewBox="0 0 24 24">
-                    <path
-                      fill="currentColor"
-                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                    />
-                  </svg>
-                )}
-                {googleLoading ? "Connecting..." : "Continue with Google"}
-              </Button>
-            </div>
+      {/* Google sign-in */}
+      <button
+        className="w-full flex items-center justify-center gap-3 h-11 rounded-full border border-border bg-card text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50"
+        onClick={handleGoogleSignIn}
+        disabled={googleLoading}
+      >
+        {googleLoading ? (
+          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+        ) : (
+          <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+            <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+            <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+            <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+          </svg>
+        )}
+        {googleLoading ? "Connecting\u2026" : "Continue with Google"}
+      </button>
 
-            <div className="relative mb-6">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border"></div>
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-4 bg-card text-muted-foreground">or continue with email</span>
-              </div>
-            </div>
+      {/* Divider */}
+      <div className="relative my-6">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-border/60" />
+        </div>
+        <div className="relative flex justify-center text-xs">
+          <span className="px-3 bg-background text-muted-foreground/60">or</span>
+        </div>
+      </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4 mb-6">
-              {error && (
-                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
-                  <p className="text-sm text-destructive">{error}</p>
-                </div>
-              )}
-              
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">Email address</label>
-                <Input
-                  type="email"
-                  placeholder="Enter your email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-11"
-                  required
-                />
-              </div>
+      {/* Email form */}
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-3">
+            <p className="text-sm text-destructive">{error}</p>
+          </div>
+        )}
 
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-2">Password</label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="h-11 pr-10"
-                    required
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
-                    onClick={() => setShowPassword(!showPassword)}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </Button>
-                </div>
-              </div>
+        <div>
+          <label htmlFor="email" className="block text-[13px] font-medium text-foreground/70 mb-1.5">
+            Email
+          </label>
+          <Input
+            id="email"
+            type="email"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="h-11 rounded-xl border-border/40 bg-background placeholder:text-muted-foreground/30 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
+            required
+          />
+        </div>
 
-              <Button 
-                type="submit"
-                disabled={loading}
-                className="w-full h-11 bg-primary hover:bg-primary/90 text-white"
-              >
-                {loading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {loading ? "Signing in..." : "Enter Workspace"}
-              </Button>
-            </form>
-
-            <div className="text-center mb-6">
-              <a href="#" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-                Forgot your password?
-              </a>
-            </div>
-
-            <div className="text-center pt-6 border-t border-border">
-              <p className="text-sm text-muted-foreground">
-                Don&apos;t have an account?{" "}
-                <Link href="/signup" className="text-primary hover:text-primary/80 font-medium">
-                  Sign up
-                </Link>
-              </p>
-            </div>
+        <div>
+          <label htmlFor="password" className="block text-[13px] font-medium text-foreground/70 mb-1.5">
+            Password
+          </label>
+          <div className="relative">
+            <Input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              placeholder="Enter your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="h-11 pr-10 rounded-xl border-border/40 bg-background placeholder:text-muted-foreground/30 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
+              required
+            />
+            <button
+              type="button"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 h-7 w-7 rounded-full flex items-center justify-center text-muted-foreground/40 hover:text-foreground transition-colors"
+              onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
           </div>
         </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full h-11 rounded-full bg-foreground text-background text-sm font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-2"
+        >
+          {loading && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+          {loading ? "Signing in\u2026" : "Sign In"}
+        </button>
+      </form>
+
+      <div className="text-center mt-4">
+        <a href="#" className="text-xs text-muted-foreground/50 hover:text-foreground transition-colors">
+          Forgot your password?
+        </a>
+      </div>
+
+      <div className="text-center mt-8 pt-6 border-t border-border/40">
+        <p className="text-sm text-muted-foreground">
+          Don&apos;t have an account?{" "}
+          <Link href="/signup" className="text-foreground font-medium hover:underline">
+            Sign up
+          </Link>
+        </p>
       </div>
     </div>
   )

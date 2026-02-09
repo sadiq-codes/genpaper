@@ -60,29 +60,29 @@ export const EvidencePanel = memo(function EvidencePanel({
   const paperCount = Object.keys(byPaper).length
 
   return (
-    <div className="mt-2">
+    <div className="mt-3">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+        className="group inline-flex items-center gap-1 text-[10px] text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors cursor-pointer"
       >
         <ChevronDown className={cn(
-          "h-3 w-3 transition-transform",
+          "h-2.5 w-2.5 transition-transform",
           !isExpanded && "-rotate-90"
         )} />
-        <span>{paperCount} paper{paperCount !== 1 ? 's' : ''} referenced</span>
+        <span className="tracking-wide uppercase font-medium">{paperCount} source{paperCount !== 1 ? 's' : ''}</span>
       </button>
 
       {isExpanded && (
-        <div className="mt-1.5 space-y-2 pl-4 border-l-2 border-border/30">
+        <div className="mt-2 space-y-2.5 pl-3 border-l border-foreground/10">
           {Object.entries(byPaper).map(([paperId, { title, chunks }]) => (
             <div key={paperId}>
-              <p className="text-[11px] font-medium text-foreground/60 leading-snug line-clamp-1">
+              <p className="font-instrument text-[11px] text-foreground/50 leading-snug line-clamp-1 italic">
                 {title}
               </p>
               {chunks.map((chunk, i) => (
                 <p
                   key={i}
-                  className="text-[10px] text-muted-foreground/50 leading-relaxed mt-0.5 line-clamp-2 italic"
+                  className="text-[10px] text-muted-foreground/35 leading-relaxed mt-0.5 line-clamp-2"
                 >
                   {chunk.content}
                 </p>

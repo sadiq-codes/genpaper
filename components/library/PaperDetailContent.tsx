@@ -4,10 +4,6 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
@@ -121,58 +117,49 @@ function getYear(dateString: string | null): string {
   }
 }
 
-// Processing status badge
-function ProcessingStatusBadge({ status, chunkCount }: { status: string | null; chunkCount: number }) {
+// Processing status label
+function ProcessingStatusLabel({ status, chunkCount }: { status: string | null; chunkCount: number }) {
   if (status === 'processed' && chunkCount > 0) {
     return (
-      <Badge variant="default" className="bg-green-500/10 text-green-600 border-green-500/20">
-        <CheckCircle className="h-3 w-3 mr-1" />
-        Processed ({chunkCount} chunks)
-      </Badge>
+      <span className="inline-flex items-center gap-1 text-[9px] text-emerald-600/70 uppercase tracking-wide font-medium">
+        <CheckCircle className="h-2.5 w-2.5" />
+        Processed
+      </span>
     )
   }
   if (status === 'processing') {
     return (
-      <Badge variant="secondary">
-        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+      <span className="inline-flex items-center gap-1 text-[9px] text-blue-500/70 uppercase tracking-wide font-medium">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />
         Processing
-      </Badge>
+      </span>
     )
   }
   if (status === 'failed') {
     return (
-      <Badge variant="destructive">
-        <AlertCircle className="h-3 w-3 mr-1" />
+      <span className="inline-flex items-center gap-1 text-[9px] text-destructive/70 uppercase tracking-wide font-medium">
+        <AlertCircle className="h-2.5 w-2.5" />
         Failed
-      </Badge>
+      </span>
     )
   }
   if (status === 'pending') {
     return (
-      <Badge variant="secondary">
-        <Clock className="h-3 w-3 mr-1" />
+      <span className="inline-flex items-center gap-1 text-[9px] text-muted-foreground/50 uppercase tracking-wide font-medium">
+        <Clock className="h-2.5 w-2.5" />
         Pending
-      </Badge>
+      </span>
     )
   }
   return null
 }
 
-// Source badge - standardized labels: "Uploaded" and "From Search"
-function SourceBadge({ source, ownerId }: { source: string | null; ownerId: string | null }) {
-  if (source === 'upload' || ownerId) {
-    return (
-      <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/20">
-        <Upload className="h-3 w-3 mr-1" />
-        Uploaded
-      </Badge>
-    )
-  }
+// Source label
+function SourceLabel({ source, ownerId }: { source: string | null; ownerId: string | null }) {
   return (
-    <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">
-      <Search className="h-3 w-3 mr-1" />
-      From Search
-    </Badge>
+    <span className="text-[9px] text-muted-foreground/40 uppercase tracking-wide font-medium">
+      {source === 'upload' || ownerId ? 'Uploaded PDF' : 'From search'}
+    </span>
   )
 }
 
@@ -326,300 +313,237 @@ export function PaperDetailContent({
   const hasPdf = !!paper.pdf_url
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Back Button */}
-      <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2">
-        <ArrowLeft className="h-4 w-4" />
+      <button
+        onClick={() => router.back()}
+        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground transition-colors"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
         Back to Library
-      </Button>
+      </button>
 
       {/* Main Paper Info */}
       <div className="space-y-4">
-        {/* Title */}
-        <h1 className="text-2xl font-bold leading-tight">{paper.title}</h1>
+        <h1 className="font-instrument text-2xl tracking-tight leading-snug">{paper.title}</h1>
 
-        {/* Authors */}
-        <div className="flex items-start gap-2 text-muted-foreground">
-          <Users className="h-4 w-4 mt-1 flex-shrink-0" />
-          <p className="text-sm">{formatAuthors(paper.authors)}</p>
-        </div>
+        <p className="text-[13px] text-muted-foreground/60">{formatAuthors(paper.authors)}</p>
 
-        {/* Meta badges */}
-        <div className="flex flex-wrap items-center gap-2">
-          <SourceBadge source={paper.source} ownerId={paper.owner_id} />
-          <ProcessingStatusBadge status={paper.processing_status} chunkCount={chunkCount} />
-          
+        {/* Meta row */}
+        <div className="flex flex-wrap items-center gap-3">
+          <SourceLabel source={paper.source} ownerId={paper.owner_id} />
+          <ProcessingStatusLabel status={paper.processing_status} chunkCount={chunkCount} />
           {paper.venue && (
-            <Badge variant="secondary">
-              <BookOpen className="h-3 w-3 mr-1" />
-              {paper.venue}
-            </Badge>
+            <span className="text-[11px] text-muted-foreground/50 font-instrument italic">{paper.venue}</span>
           )}
-          
           {paper.publication_date && (
-            <Badge variant="outline">
-              <Calendar className="h-3 w-3 mr-1" />
-              {getYear(paper.publication_date)}
-            </Badge>
+            <span className="text-[11px] text-muted-foreground/40">{getYear(paper.publication_date)}</span>
           )}
-          
           {paper.citation_count !== null && paper.citation_count > 0 && (
-            <Badge variant="outline">
-              <Quote className="h-3 w-3 mr-1" />
-              {paper.citation_count.toLocaleString()} citations
-            </Badge>
+            <span className="text-[11px] text-muted-foreground/40">{paper.citation_count.toLocaleString()} citations</span>
           )}
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5 pt-1">
           {hasPdf && (
             <>
-              <Button onClick={handleViewPdf} disabled={isLoadingPdf}>
-                {isLoadingPdf ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Eye className="h-4 w-4 mr-2" />
-                )}
+              <button
+                className="h-8 px-4 text-xs font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
+                onClick={handleViewPdf}
+                disabled={isLoadingPdf}
+              >
+                {isLoadingPdf ? <Loader2 className="h-3 w-3 animate-spin" /> : <Eye className="h-3 w-3" />}
                 View PDF
-              </Button>
-              <Button variant="outline" onClick={handleDownloadPdf} disabled={isLoadingPdf}>
-                {isLoadingPdf ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4 mr-2" />
-                )}
+              </button>
+              <button
+                className="h-8 px-4 text-xs rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
+                onClick={handleDownloadPdf}
+                disabled={isLoadingPdf}
+              >
+                {isLoadingPdf ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
                 Download
-              </Button>
+              </button>
             </>
           )}
           
           {paper.doi && (
-            <Button
-              variant="outline"
+            <button
+              className="h-8 px-4 text-xs rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5"
               onClick={() => window.open(`https://doi.org/${paper.doi}`, '_blank')}
             >
-              <ExternalLink className="h-4 w-4 mr-2" />
-              View on DOI
-            </Button>
+              <ExternalLink className="h-3 w-3" />
+              DOI
+            </button>
           )}
 
           {!isInLibrary && (
-            <Button
-              variant="default"
+            <button
+              className="h-8 px-4 text-xs font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
               onClick={() => addMutation.mutate()}
               disabled={addMutation.isPending}
             >
-              {addMutation.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4 mr-2" />
-              )}
+              {addMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
               Add to Library
-            </Button>
+            </button>
           )}
         </div>
       </div>
 
-      <Separator />
-
       {/* Abstract */}
       {paper.abstract && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Abstract</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">
-              {paper.abstract}
-            </p>
-          </CardContent>
-        </Card>
+        <div className="pt-6 border-t border-border/20">
+          <h2 className="font-instrument text-base tracking-tight mb-3">Abstract</h2>
+          <p className="text-[13px] text-muted-foreground/60 leading-[1.7] whitespace-pre-wrap">
+            {paper.abstract}
+          </p>
+        </div>
       )}
 
       {/* Paper Details */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Details</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-            {paper.doi && (
-              <div>
-                <p className="text-muted-foreground mb-1">DOI</p>
-                <a
-                  href={`https://doi.org/${paper.doi}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline flex items-center gap-1"
-                >
-                  {paper.doi}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            )}
-            
-            {paper.publication_date && (
-              <div>
-                <p className="text-muted-foreground mb-1">Published</p>
-                <p>{formatDate(paper.publication_date)}</p>
-              </div>
-            )}
-            
-            {paper.venue && (
-              <div>
-                <p className="text-muted-foreground mb-1">Journal/Venue</p>
-                <p>{paper.venue}</p>
-              </div>
-            )}
-            
-            {libraryEntry && (
-              <div>
-                <p className="text-muted-foreground mb-1">Added to Library</p>
-                <p>{formatDate(libraryEntry.added_at)}</p>
-              </div>
-            )}
-            
+      <div className="pt-6 border-t border-border/20">
+        <h2 className="font-instrument text-base tracking-tight mb-4">Details</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {paper.doi && (
             <div>
-              <p className="text-muted-foreground mb-1">Source</p>
-              <p>{isOwnUpload ? 'Uploaded by you' : 'Found via search'}</p>
+              <p className="text-[11px] text-muted-foreground/40 uppercase tracking-wide font-medium mb-1">DOI</p>
+              <a
+                href={`https://doi.org/${paper.doi}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[13px] text-foreground/70 hover:text-foreground transition-colors inline-flex items-center gap-1"
+              >
+                {paper.doi}
+                <ExternalLink className="h-2.5 w-2.5" />
+              </a>
             </div>
-            
+          )}
+          {paper.publication_date && (
             <div>
-              <p className="text-muted-foreground mb-1">Processing Status</p>
-              <p className="capitalize">{paper.processing_status || 'Unknown'}</p>
+              <p className="text-[11px] text-muted-foreground/40 uppercase tracking-wide font-medium mb-1">Published</p>
+              <p className="text-[13px] text-foreground/70">{formatDate(paper.publication_date)}</p>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          )}
+          {paper.venue && (
+            <div>
+              <p className="text-[11px] text-muted-foreground/40 uppercase tracking-wide font-medium mb-1">Venue</p>
+              <p className="text-[13px] text-foreground/70 font-instrument italic">{paper.venue}</p>
+            </div>
+          )}
+          {libraryEntry && (
+            <div>
+              <p className="text-[11px] text-muted-foreground/40 uppercase tracking-wide font-medium mb-1">Added</p>
+              <p className="text-[13px] text-foreground/70">{formatDate(libraryEntry.added_at)}</p>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Projects Using This Paper */}
       {projectCitations.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <FolderOpen className="h-5 w-5" />
-              Used in {projectCitations.length} Project{projectCitations.length !== 1 ? 's' : ''}
-            </CardTitle>
-            <CardDescription>
-              This paper is cited in the following projects
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {projectCitations.map((citation) => (
-                citation.research_projects && (
-                  <Link
-                    key={citation.id}
-                    href={`/editor/${citation.research_projects.id}`}
-                    className="block p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                  >
-                    <p className="font-medium text-sm line-clamp-1">
-                      {citation.research_projects.topic}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Added {formatDate(citation.created_at)}
-                      {citation.reason && ` · ${citation.reason}`}
-                    </p>
-                  </Link>
-                )
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Notes (only if in library) */}
-      {isInLibrary && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Your Notes</CardTitle>
-            <CardDescription>
-              Add private notes about this paper
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Textarea
-              placeholder="Add notes about this paper..."
-              value={notes}
-              onChange={(e) => {
-                setNotes(e.target.value)
-                setIsNotesEdited(true)
-              }}
-              rows={4}
-            />
-            {isNotesEdited && (
-              <div className="flex justify-end">
-                <Button
-                  onClick={() => saveNotesMutation.mutate()}
-                  disabled={saveNotesMutation.isPending}
+        <div className="pt-6 border-t border-border/20">
+          <h2 className="font-instrument text-base tracking-tight mb-1">
+            Used in {projectCitations.length} project{projectCitations.length !== 1 ? 's' : ''}
+          </h2>
+          <p className="text-[11px] text-muted-foreground/40 mb-4">This paper is cited in the following projects</p>
+          <div className="space-y-2">
+            {projectCitations.map((citation) => (
+              citation.research_projects && (
+                <Link
+                  key={citation.id}
+                  href={`/editor/${citation.research_projects.id}`}
+                  className="block px-4 py-3 rounded-xl border border-border/20 hover:border-border/40 hover:bg-muted/20 transition-all"
                 >
-                  {saveNotesMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  Save Notes
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  <p className="font-instrument text-[13px] tracking-tight line-clamp-1">
+                    {citation.research_projects.topic}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/40 mt-1">
+                    Added {formatDate(citation.created_at)}
+                    {citation.reason && ` · ${citation.reason}`}
+                  </p>
+                </Link>
+              )
+            ))}
+          </div>
+        </div>
       )}
 
-      {/* Danger Zone */}
+      {/* Notes */}
       {isInLibrary && (
-        <Card className="border-destructive/50">
-          <CardHeader>
-            <CardTitle className="text-lg text-destructive">Danger Zone</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-sm">Remove from Library</p>
-                <p className="text-xs text-muted-foreground">
-                  The paper will still be available in any projects where it&apos;s cited.
-                </p>
-              </div>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowDeleteDialog(true)}
+        <div className="pt-6 border-t border-border/20">
+          <h2 className="font-instrument text-base tracking-tight mb-1">Your Notes</h2>
+          <p className="text-[11px] text-muted-foreground/40 mb-3">Add private notes about this paper</p>
+          <Textarea
+            placeholder="Add notes about this paper..."
+            value={notes}
+            onChange={(e) => {
+              setNotes(e.target.value)
+              setIsNotesEdited(true)
+            }}
+            rows={4}
+            className="rounded-xl border-border/30 placeholder:text-muted-foreground/30 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
+          />
+          {isNotesEdited && (
+            <div className="flex justify-end mt-3">
+              <button
+                className="h-8 px-4 text-xs font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
+                onClick={() => saveNotesMutation.mutate()}
+                disabled={saveNotesMutation.isPending}
               >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Remove
-              </Button>
+                {saveNotesMutation.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                Save Notes
+              </button>
             </div>
-          </CardContent>
-        </Card>
+          )}
+        </div>
+      )}
+
+      {/* Remove */}
+      {isInLibrary && (
+        <div className="pt-6 border-t border-border/20">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[13px] font-medium text-foreground/70">Remove from library</p>
+              <p className="text-[11px] text-muted-foreground/40">
+                The paper will still be available in any projects where it&apos;s cited.
+              </p>
+            </div>
+            <button
+              className="h-7 px-3 text-[11px] rounded-full text-destructive/60 hover:text-destructive border border-destructive/20 hover:border-destructive/40 transition-colors inline-flex items-center gap-1"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              <Trash2 className="h-3 w-3" />
+              Remove
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <DialogContent>
+        <DialogContent className="rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Remove from library?</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="font-instrument text-lg tracking-tight">Remove from library?</DialogTitle>
+            <DialogDescription className="text-[13px] text-muted-foreground/60">
               This will remove &quot;{paper.title}&quot; from your library. The paper will still be
               available in any projects where it&apos;s been cited.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+          <DialogFooter className="gap-2">
+            <button
+              className="h-9 px-4 text-sm rounded-full border border-border/40 hover:bg-muted transition-colors"
+              onClick={() => setShowDeleteDialog(false)}
+            >
               Cancel
-            </Button>
-            <Button
-              variant="destructive"
+            </button>
+            <button
+              className="h-9 px-4 text-sm rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
               onClick={() => removeMutation.mutate()}
               disabled={removeMutation.isPending}
             >
-              {removeMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              ) : (
-                <Trash2 className="h-4 w-4 mr-2" />
-              )}
+              {removeMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Remove
-            </Button>
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

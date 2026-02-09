@@ -44,6 +44,7 @@ import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
 import { isNumericStyle, clearCaches as clearCitationCaches, resolveStyleId, isStyleAvailable, loadStyle } from '@/lib/citations/local-formatter'
 import { toast } from 'sonner'
+import { useResearchEditor } from '../research-editor-context'
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
@@ -114,26 +115,8 @@ interface DocumentEditorProps {
   onEditorReady?: (editor: Editor) => void
   autocompleteEnabled?: boolean
   onChat: (text: string) => void
-  /** @deprecated Math insertion is now handled internally via slash commands. Kept for API compatibility. */
-  onInsertMath?: () => void
   /** Called when a paper's citation metadata is edited (title/authors/year/etc.) */
   onPaperUpdated?: (paperId: string, updates: Partial<ProjectPaper>) => void
-  // Context for smart completion
-  projectId?: string
-  projectTopic?: string
-  papers?: ProjectPaper[]
-  // Citation style for formatting (apa, mla, chicago, ieee, harvard, etc.)
-  citationStyle?: string
-  // Review toolbar props for pending edits
-  pendingEditCount?: number
-  activeEditIndex?: number
-  onNavigateEdit?: (direction: 'next' | 'prev') => void
-  onAcceptAllEdits?: () => void
-  onRejectAllEdits?: () => void
-  // Mobile sidebar toggle
-  isMobile?: boolean
-  mobileMenuOpen?: boolean
-  onToggleMobileMenu?: () => void
 }
 
 const DEFAULT_CONTENT = `<h1></h1><p></p>`
@@ -144,21 +127,21 @@ export function DocumentEditor({
   onEditorReady,
   autocompleteEnabled = true,
   onChat,
-  onInsertMath: _onInsertMath,
   onPaperUpdated,
-  projectId = '',
-  projectTopic = '',
-  papers = [],
-  citationStyle = 'apa',
-  pendingEditCount = 0,
-  activeEditIndex = 0,
-  onNavigateEdit,
-  onAcceptAllEdits,
-  onRejectAllEdits,
-  isMobile = false,
-  mobileMenuOpen = false,
-  onToggleMobileMenu,
 }: DocumentEditorProps) {
+  const {
+    projectId = '',
+    projectTitle: projectTopic = '',
+    papers = [],
+    citationStyle = 'apa',
+    pendingEditCount,
+    activeEditIndex,
+    navigateEdit: onNavigateEdit,
+    acceptAllEdits: onAcceptAllEdits,
+    rejectAllEdits: onRejectAllEdits,
+    mobileMenuOpen,
+    toggleSidebar: onToggleMobileMenu,
+  } = useResearchEditor()
   // Ref for debouncing markdown conversion - prevents typing lag in large documents
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   
@@ -682,7 +665,7 @@ export function DocumentEditor({
   if (!editor) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading editor...</div>
+        <div className="animate-pulse text-muted-foreground">Loading editor…</div>
       </div>
     )
   }
@@ -692,16 +675,15 @@ export function DocumentEditor({
       {/* Editor toolbar */}
       <div className="flex items-center border-b border-border/30 shrink-0 sticky top-0 z-10 bg-background">
         {/* Sidebar toggle - pinned outside scroll area */}
-        {onToggleMobileMenu && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground ml-1 sm:ml-2"
-            onClick={onToggleMobileMenu}
-          >
-            {mobileMenuOpen ? <ChevronsLeft className="h-3.5 w-3.5" /> : <ChevronsRight className="h-3.5 w-3.5" />}
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground ml-1 sm:ml-2"
+          onClick={onToggleMobileMenu}
+          aria-label={mobileMenuOpen ? "Close sidebar" : "Open sidebar"}
+        >
+          {mobileMenuOpen ? <ChevronsLeft className="h-3.5 w-3.5" /> : <ChevronsRight className="h-3.5 w-3.5" />}
+        </Button>
 
         {/* Scrollable formatting buttons */}
         <div className="flex items-center justify-end flex-1 gap-0.5 px-1 py-0.5 sm:px-2 sm:py-1 overflow-x-auto scrollbar-none">
@@ -735,45 +717,45 @@ export function DocumentEditor({
         <Separator orientation="vertical" className="h-4 mx-0.5" />
 
         {/* Inline formatting */}
-        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('bold') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBold().run()}>
+        <Button variant="ghost" size="icon" aria-label="Bold" className={cn("h-7 w-7 shrink-0", editor.isActive('bold') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBold().run()}>
           <Bold className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('italic') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleItalic().run()}>
+        <Button variant="ghost" size="icon" aria-label="Italic" className={cn("h-7 w-7 shrink-0", editor.isActive('italic') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleItalic().run()}>
           <Italic className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('underline') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleUnderline().run()}>
+        <Button variant="ghost" size="icon" aria-label="Underline" className={cn("h-7 w-7 shrink-0", editor.isActive('underline') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleUnderline().run()}>
           <UnderlineIcon className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('strike') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleStrike().run()}>
+        <Button variant="ghost" size="icon" aria-label="Strikethrough" className={cn("h-7 w-7 shrink-0", editor.isActive('strike') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleStrike().run()}>
           <Strikethrough className="h-3.5 w-3.5" />
         </Button>
 
         <Separator orientation="vertical" className="h-4 mx-0.5" />
 
         {/* Block formatting */}
-        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('bulletList') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBulletList().run()}>
+        <Button variant="ghost" size="icon" aria-label="Bullet list" className={cn("h-7 w-7 shrink-0", editor.isActive('bulletList') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBulletList().run()}>
           <List className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('orderedList') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
+        <Button variant="ghost" size="icon" aria-label="Numbered list" className={cn("h-7 w-7 shrink-0", editor.isActive('orderedList') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
           <ListOrdered className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('blockquote') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
+        <Button variant="ghost" size="icon" aria-label="Blockquote" className={cn("h-7 w-7 shrink-0", editor.isActive('blockquote') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
           <Quote className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" className={cn("h-7 w-7 shrink-0", editor.isActive('codeBlock') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleCodeBlock().run()}>
+        <Button variant="ghost" size="icon" aria-label="Code block" className={cn("h-7 w-7 shrink-0", editor.isActive('codeBlock') ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground")} onClick={() => editor.chain().focus().toggleCodeBlock().run()}>
           <Code className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().setHorizontalRule().run()}>
+        <Button variant="ghost" size="icon" aria-label="Horizontal rule" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().setHorizontalRule().run()}>
           <Minus className="h-3.5 w-3.5" />
         </Button>
 
         <Separator orientation="vertical" className="h-4 mx-0.5" />
 
         {/* Undo / Redo */}
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()}>
+        <Button variant="ghost" size="icon" aria-label="Undo" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()}>
           <Undo className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()}>
+        <Button variant="ghost" size="icon" aria-label="Redo" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()}>
           <Redo className="h-3.5 w-3.5" />
         </Button>
         </div>
@@ -781,7 +763,7 @@ export function DocumentEditor({
       
       <div className="flex-1 overflow-auto relative">
         {/* Review Toolbar - only shows when multiple edits are pending */}
-        {pendingEditCount > 1 && onNavigateEdit && onAcceptAllEdits && onRejectAllEdits && (
+        {pendingEditCount > 1 && (
           <ReviewToolbar
             pendingCount={pendingEditCount}
             currentIndex={activeEditIndex}
@@ -809,21 +791,21 @@ export function DocumentEditor({
           shouldShow={({ editor: e }) => e.isActive('table')}
           className="flex items-center gap-0.5 p-1 bg-card border border-border rounded-lg shadow-md"
         >
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => editor.chain().focus().addRowAfter().run()}>
-            <Rows3 className="h-3 w-3" /> Row
-            <Plus className="h-2.5 w-2.5" />
+          <Button variant="ghost" size="sm" aria-label="Add row" className="h-7 px-2 text-xs gap-1" onClick={() => editor.chain().focus().addRowAfter().run()}>
+            <Rows3 className="h-3 w-3" aria-hidden="true" /> Row
+            <Plus className="h-2.5 w-2.5" aria-hidden="true" />
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => editor.chain().focus().addColumnAfter().run()}>
-            <Columns3 className="h-3 w-3" /> Col
-            <Plus className="h-2.5 w-2.5" />
+          <Button variant="ghost" size="sm" aria-label="Add column" className="h-7 px-2 text-xs gap-1" onClick={() => editor.chain().focus().addColumnAfter().run()}>
+            <Columns3 className="h-3 w-3" aria-hidden="true" /> Col
+            <Plus className="h-2.5 w-2.5" aria-hidden="true" />
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 text-muted-foreground" onClick={() => editor.chain().focus().deleteRow().run()}>
-            <Rows3 className="h-3 w-3" />
-            <Minus className="h-2.5 w-2.5" />
+          <Button variant="ghost" size="sm" aria-label="Delete row" className="h-7 px-2 text-xs gap-1 text-muted-foreground" onClick={() => editor.chain().focus().deleteRow().run()}>
+            <Rows3 className="h-3 w-3" aria-hidden="true" />
+            <Minus className="h-2.5 w-2.5" aria-hidden="true" />
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 text-muted-foreground" onClick={() => editor.chain().focus().deleteColumn().run()}>
-            <Columns3 className="h-3 w-3" />
-            <Minus className="h-2.5 w-2.5" />
+          <Button variant="ghost" size="sm" aria-label="Delete column" className="h-7 px-2 text-xs gap-1 text-muted-foreground" onClick={() => editor.chain().focus().deleteColumn().run()}>
+            <Columns3 className="h-3 w-3" aria-hidden="true" />
+            <Minus className="h-2.5 w-2.5" aria-hidden="true" />
           </Button>
           <div className="w-px h-4 bg-border mx-0.5" />
           <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => editor.chain().focus().deleteTable().run()}>

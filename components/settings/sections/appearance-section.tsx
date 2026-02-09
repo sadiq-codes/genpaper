@@ -1,9 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Button } from '@/components/ui/button'
 import { Loader2, Check, Moon, Sun, Monitor, Type } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
@@ -75,73 +73,73 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold">Appearance</h2>
-        <p className="text-sm text-muted-foreground">
+        <h2 className="font-instrument text-xl tracking-tight">Appearance</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
           Customize how GenPaper looks
         </p>
       </div>
 
-      {/* Theme Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Theme</CardTitle>
-          <CardDescription>
+      {/* Theme */}
+      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+        <div>
+          <h3 className="font-instrument text-base tracking-tight">Theme</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
             Select your preferred color scheme
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full sm:max-w-md">
-            {THEMES.map((themeOption) => {
-              const Icon = themeOption.icon
-              const isActive = mounted && theme === themeOption.value
-              return (
-                <button
-                  key={themeOption.value}
-                  onClick={() => setTheme(themeOption.value)}
-                  aria-label={`Set theme to ${themeOption.label}`}
-                  aria-pressed={isActive}
-                  className={cn(
-                    'flex flex-col items-center gap-1.5 sm:gap-2 p-3 sm:p-4 rounded-lg border-2 transition-colors',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                    isActive
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50 hover:bg-muted/50'
-                  )}
-                >
-                  <Icon 
-                    className={cn(
-                      'h-5 w-5',
-                      isActive ? 'text-primary' : 'text-muted-foreground'
-                    )} 
-                    aria-hidden="true"
-                  />
-                  <span className={cn(
-                    'text-sm font-medium',
-                    isActive ? 'text-primary' : 'text-foreground'
-                  )}>
-                    {themeOption.label}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-          <p className="text-xs text-muted-foreground mt-3">
-            Theme preference is saved in your browser.
           </p>
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* Font Size Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Editor Font Size</CardTitle>
-          <CardDescription>
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full sm:max-w-md">
+          {THEMES.map((themeOption) => {
+            const Icon = themeOption.icon
+            const isActive = mounted && theme === themeOption.value
+            return (
+              <button
+                key={themeOption.value}
+                onClick={() => setTheme(themeOption.value)}
+                aria-label={`Set theme to ${themeOption.label}`}
+                aria-pressed={isActive}
+                className={cn(
+                  'flex flex-col items-center gap-1.5 sm:gap-2 p-3 sm:p-4 rounded-xl border transition-all duration-200',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                  isActive
+                    ? 'border-foreground/40 bg-foreground/5'
+                    : 'border-border/40 hover:border-foreground/20 hover:bg-muted/50'
+                )}
+              >
+                <Icon 
+                  className={cn(
+                    'h-5 w-5',
+                    isActive ? 'text-foreground' : 'text-muted-foreground'
+                  )} 
+                  aria-hidden="true"
+                />
+                <span className={cn(
+                  'text-xs',
+                  isActive ? 'text-foreground font-medium' : 'text-muted-foreground'
+                )}>
+                  {themeOption.label}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Theme preference is saved in your browser.
+        </p>
+      </div>
+
+      {/* Font Size */}
+      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+        <div>
+          <h3 className="font-instrument text-base tracking-tight">Editor Font Size</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
             Adjust the text size in the editor
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 sm:space-y-6">
+          </p>
+        </div>
+
+        <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="font-size" className="flex items-center gap-2">
+            <Label htmlFor="font-size" className="flex items-center gap-2 text-xs">
               <Type className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               Font Size
             </Label>
@@ -163,8 +161,8 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
           </div>
 
           {/* Preview */}
-          <div className="rounded-lg bg-muted p-3 sm:p-4 w-full sm:max-w-md">
-            <p className="text-muted-foreground text-xs mb-2 font-medium">Preview:</p>
+          <div className="rounded-lg bg-muted/50 p-3 sm:p-4 w-full sm:max-w-md border border-border/30">
+            <p className="text-muted-foreground text-[11px] mb-2 font-medium uppercase tracking-wide">Preview</p>
             <p 
               className="text-foreground"
               style={{ 
@@ -174,25 +172,29 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
               The quick brown fox jumps over the lazy dog.
             </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Save Button */}
       {hasChanges && (
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={isSaving}>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-foreground/80 text-background text-sm font-medium hover:bg-foreground transition-colors disabled:opacity-50"
+          >
             {isSaving ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                 Saving…
               </>
             ) : (
               <>
-                <Check className="mr-2 h-4 w-4" aria-hidden="true" />
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
                 Save Changes
               </>
             )}
-          </Button>
+          </button>
         </div>
       )}
     </div>

@@ -13,7 +13,7 @@ export default function PrivacyPolicyPage() {
   return (
     <div className="min-h-screen bg-background">
       <div className="container max-w-4xl mx-auto px-4 py-16">
-        <h1 className="text-4xl font-bold mb-4">Privacy Policy</h1>
+        <h1 className="font-instrument text-4xl tracking-tight mb-4">Privacy Policy</h1>
         <p className="text-muted-foreground mb-8">Last updated: {lastUpdated}</p>
         
         <div className="prose prose-neutral dark:prose-invert max-w-none space-y-8">

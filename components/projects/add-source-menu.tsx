@@ -2,7 +2,6 @@
 
 import { useRef } from 'react'
 import { Plus, Link2, Library, FileUp } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 
 interface AddSourceMenuProps {
   disabled?: boolean
@@ -41,16 +41,13 @@ export function AddSourceMenu({ disabled, onPdfUpload, onOpenLibrary }: AddSourc
     if (!files || files.length === 0) return
 
     if (onPdfUpload) {
-      // Use the provided callback for actual upload
       onPdfUpload(files)
     } else {
-      // Fallback: show coming soon message
       toast.info('PDF upload coming soon', {
         description: 'This will extract paper details and add them to your project.',
       })
     }
 
-    // Reset input so same file can be selected again
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -70,29 +67,48 @@ export function AddSourceMenu({ disabled, onPdfUpload, onOpenLibrary }: AddSourc
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          <button
+            className={cn(
+              'h-8 w-8 rounded-full flex items-center justify-center',
+              'text-muted-foreground/60 hover:text-foreground',
+              'border border-border/30 hover:border-border/50',
+              'transition-colors cursor-pointer',
+              'disabled:opacity-40'
+            )}
             disabled={disabled}
             type="button"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-3.5 w-3.5" />
             <span className="sr-only">Add source</span>
-          </Button>
+          </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-48">
-          <DropdownMenuItem onClick={handleAddUrl} className="gap-2">
-            <Link2 className="h-4 w-4" />
-            Add paper URL
+        <DropdownMenuContent align="start" className="w-52 rounded-xl p-1">
+          <DropdownMenuItem onClick={handleUploadPdf} className="gap-2.5 rounded-lg py-2.5 px-3">
+            <div className="w-6 h-6 rounded-full bg-foreground/5 flex items-center justify-center shrink-0">
+              <FileUp className="h-3 w-3 text-foreground/60" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">Upload PDF</span>
+              <span className="text-[10px] text-muted-foreground/50">From your device</span>
+            </div>
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleFromLibrary} className="gap-2">
-            <Library className="h-4 w-4" />
-            Add from library
+          <DropdownMenuItem onClick={handleFromLibrary} className="gap-2.5 rounded-lg py-2.5 px-3">
+            <div className="w-6 h-6 rounded-full bg-foreground/5 flex items-center justify-center shrink-0">
+              <Library className="h-3 w-3 text-foreground/60" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">From Library</span>
+              <span className="text-[10px] text-muted-foreground/50">Your saved papers</span>
+            </div>
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleUploadPdf} className="gap-2">
-            <FileUp className="h-4 w-4" />
-            Upload PDF
+          <DropdownMenuItem onClick={handleAddUrl} className="gap-2.5 rounded-lg py-2.5 px-3">
+            <div className="w-6 h-6 rounded-full bg-foreground/5 flex items-center justify-center shrink-0">
+              <Link2 className="h-3 w-3 text-foreground/60" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">Paste URL</span>
+              <span className="text-[10px] text-muted-foreground/50">Add by DOI or link</span>
+            </div>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

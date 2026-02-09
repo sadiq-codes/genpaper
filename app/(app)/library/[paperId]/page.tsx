@@ -12,15 +12,26 @@ interface PageProps {
 
 function PaperDetailSkeleton() {
   return (
-    <div className="space-y-6">
-      <Skeleton className="h-8 w-3/4" />
-      <Skeleton className="h-4 w-1/2" />
-      <div className="flex gap-2">
-        <Skeleton className="h-10 w-32" />
-        <Skeleton className="h-10 w-32" />
+    <div className="space-y-6 animate-pulse">
+      <div className="h-3 w-20 bg-muted/40 rounded-full" />
+      <div className="space-y-3">
+        <div className="h-6 w-3/4 bg-muted/50 rounded-lg" />
+        <div className="h-4 w-1/3 bg-muted/30 rounded-lg" />
+        <div className="flex gap-2 mt-2">
+          <div className="h-5 w-16 bg-muted/20 rounded-full" />
+          <div className="h-5 w-14 bg-muted/20 rounded-full" />
+        </div>
+        <div className="flex gap-1.5 mt-3">
+          <div className="h-8 w-24 bg-muted/30 rounded-full" />
+          <div className="h-8 w-24 bg-muted/20 rounded-full" />
+        </div>
       </div>
-      <Skeleton className="h-40 w-full" />
-      <Skeleton className="h-60 w-full" />
+      <div className="pt-6 border-t border-border/15 space-y-3">
+        <div className="h-4 w-20 bg-muted/30 rounded-lg" />
+        <div className="h-3 w-full bg-muted/20 rounded-lg" />
+        <div className="h-3 w-4/5 bg-muted/20 rounded-lg" />
+        <div className="h-3 w-3/5 bg-muted/20 rounded-lg" />
+      </div>
     </div>
   )
 }

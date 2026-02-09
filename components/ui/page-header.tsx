@@ -19,23 +19,23 @@ export function PageHeader({
   return (
     <header 
       className={cn(
-        "h-14 border-b border-border/50 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60",
+        "h-12 border-b border-border/30 flex items-center justify-between px-4 bg-background",
         className
       )}
     >
       {/* Left: Sidebar Trigger + Title */}
-      <div className="flex items-center gap-2">
-        <SidebarTrigger className="h-8 w-8" />
+      <div className="flex items-center gap-2.5">
+        <SidebarTrigger className="h-7 w-7 rounded-full" />
 
-        <div className="h-6 w-px bg-border mx-1" />
+        <div className="h-4 w-px bg-border/40" />
 
         {/* Page Title */}
         <div className="flex items-center gap-2">
-          <span className="font-medium text-sm text-foreground/80 truncate max-w-[150px] sm:max-w-[250px]">
+          <span className="font-instrument text-sm tracking-tight text-foreground/80 truncate max-w-[200px] sm:max-w-[300px]">
             {title}
           </span>
           {description && (
-            <span className="text-sm text-muted-foreground hidden md:inline">
+            <span className="text-[11px] text-muted-foreground/40 hidden md:inline">
               {description}
             </span>
           )}

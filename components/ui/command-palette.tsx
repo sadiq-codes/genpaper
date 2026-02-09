@@ -11,7 +11,6 @@ import {
   Command as CommandIcon,
   FolderOpen
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
@@ -194,79 +193,67 @@ export default function CommandPalette({
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm animate-in fade-in-0 duration-200"
+      className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm animate-in fade-in-0 duration-200"
     >
       <div className="fixed left-1/2 top-1/4 -translate-x-1/2 w-full max-w-lg mx-auto px-4">
-        <div className="bg-card border border-border rounded-lg shadow-lg animate-in zoom-in-95 duration-200">
-          {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <CommandIcon className="h-4 w-4" />
-              <span className="text-sm font-medium">Quick Actions</span>
-            </div>
-            <div className="flex items-center gap-1 ml-auto">
-              <kbd className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs font-mono text-muted-foreground">
-                esc
-              </kbd>
-            </div>
-          </div>
-
+        <div className="bg-background border border-border/30 rounded-2xl shadow-lg animate-in zoom-in-95 duration-200 overflow-hidden">
           {/* Search Input */}
-          <div className="relative px-4 py-3">
-            <Search className="absolute left-7 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className="relative px-4 py-3 border-b border-border/20">
+            <Search className="absolute left-7 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40" aria-hidden="true" />
             <Input
               ref={inputRef}
               placeholder="Type a command or search..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="pl-10 border-none shadow-none focus-visible:ring-0 text-base"
+              className="pl-10 border-none shadow-none focus-visible:ring-0 text-base bg-transparent placeholder:text-muted-foreground/30"
             />
           </div>
 
           {/* Commands */}
           <ScrollArea className="max-h-80">
-            <div className="px-2 pb-2">
+            <div className="p-1.5">
               {filteredCommands.length > 0 ? (
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {filteredCommands.map((command, index) => (
-                    <Button
+                    <button
                       key={command.id}
-                      variant="ghost"
-                      className={`w-full justify-start h-auto p-3 ${
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
                         index === selectedIndex 
-                          ? 'bg-muted text-foreground' 
-                          : 'hover:bg-muted/50'
+                          ? 'bg-muted/50' 
+                          : 'hover:bg-muted/30'
                       }`}
                       onClick={command.action}
                     >
-                      <div className="flex items-center gap-3 w-full">
-                        <div className="flex-shrink-0 text-muted-foreground">
+                      <div className="w-8 h-8 rounded-lg bg-foreground/5 flex items-center justify-center shrink-0">
+                        <span className="text-muted-foreground/50">
                           {command.icon}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-instrument text-sm tracking-tight">
+                          {command.title}
                         </div>
-                        <div className="flex-1 text-left">
-                          <div className="font-medium text-sm">
-                            {command.title}
+                        {command.description && (
+                          <div className="text-[11px] text-muted-foreground/40 mt-0.5">
+                            {command.description}
                           </div>
-                          {command.description && (
-                            <div className="text-xs text-muted-foreground mt-0.5">
-                              {command.description}
-                            </div>
-                          )}
-                        </div>
-                        {index === selectedIndex && (
-                          <kbd className="inline-flex items-center rounded border border-border bg-muted px-1.5 py-0.5 text-xs font-mono text-muted-foreground">
-                            ↵
-                          </kbd>
                         )}
                       </div>
-                    </Button>
+                      {index === selectedIndex && (
+                        <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded-md font-mono text-[10px] border border-border/30 text-muted-foreground/40">
+                          ↵
+                        </kbd>
+                      )}
+                    </button>
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8">
-                  <Search className="h-8 w-8 text-muted-foreground/50 mx-auto mb-3" />
-                  <p className="text-sm text-muted-foreground">No commands found</p>
-                  <p className="text-xs text-muted-foreground/70 mt-1">
+                <div className="text-center py-10">
+                  <div className="w-10 h-10 rounded-full border border-border/40 flex items-center justify-center mx-auto mb-3">
+                    <Search className="h-4 w-4 text-muted-foreground/50" aria-hidden="true" />
+                  </div>
+                  <p className="font-instrument text-sm tracking-tight mb-1">No commands found</p>
+                  <p className="text-[11px] text-muted-foreground/40">
                     Try &quot;library&quot;, &quot;new project&quot;, or &quot;upload&quot;
                   </p>
                 </div>
@@ -275,23 +262,23 @@ export default function CommandPalette({
           </ScrollArea>
 
           {/* Footer */}
-          <div className="px-4 py-2 border-t border-border bg-muted/30 rounded-b-lg">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <div className="flex items-center gap-4">
+          <div className="px-4 py-2 border-t border-border/20">
+            <div className="flex items-center justify-between text-[10px] text-muted-foreground/30">
+              <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1">
-                  <kbd className="inline-flex items-center rounded border border-border bg-card px-1 py-0.5 font-mono">
-                    ↑↓
-                  </kbd>
+                  <kbd className="px-1 py-0.5 bg-foreground/5 rounded font-mono border border-border/30">↑↓</kbd>
                   <span>navigate</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <kbd className="inline-flex items-center rounded border border-border bg-card px-1 py-0.5 font-mono">
-                    ↵
-                  </kbd>
+                  <kbd className="px-1 py-0.5 bg-foreground/5 rounded font-mono border border-border/30">↵</kbd>
                   <span>select</span>
                 </div>
+                <div className="flex items-center gap-1">
+                  <kbd className="px-1 py-0.5 bg-foreground/5 rounded font-mono border border-border/30">esc</kbd>
+                  <span>close</span>
+                </div>
               </div>
-              <span className="text-muted-foreground/70">⌘K</span>
+              <span className="text-muted-foreground/25">⌘K</span>
             </div>
           </div>
         </div>

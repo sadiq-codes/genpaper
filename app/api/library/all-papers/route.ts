@@ -25,75 +25,70 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url)
     const projectFilter = url.searchParams.get('projectId') // Optional: filter by project
 
-    // Step 1: Get user's projects first (needed to scope citations query)
-    const { data: userProjects, error: projectsError } = await supabase
-      .from('research_projects')
-      .select('id, topic')
-      .eq('user_id', user.id)
+        // Shared select fields — exclude abstract for list view (server-serialization)
+    const paperFields = `
+      id,
+      title,
+      authors,
+      publication_date,
+      venue,
+      doi,
+      pdf_url,
+      source,
+      citation_count,
+      processing_status,
+      owner_id
+    `
 
-    if (projectsError) {
-      console.error('Failed to fetch projects:', projectsError)
-      return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 })
-    }
+    // Start ALL queries in parallel (async-parallel) — no sequential dependencies.
+    // Library papers don't depend on projects; citations use project_id filter
+    // but we can fetch projects in parallel and merge after.
+    const [projectsResult, libraryResult, citationsResult] = await Promise.all([
+      // Projects query
+      supabase
+        .from('research_projects')
+        .select('id, topic')
+        .eq('user_id', user.id),
 
-    const projectIds = (userProjects || []).map(p => p.id)
-    const projectMap = new Map((userProjects || []).map(p => [p.id, p.topic]))
-
-    // Step 2: Fetch library papers and project citations in parallel
-    // Citations are now filtered at the DB level using the user's project IDs
-    const citationProjectIds = projectFilter ? [projectFilter] : projectIds
-
-    const [libraryResult, citationsResult] = await Promise.all([
+      // Library papers query
       supabase
         .from('library_papers')
         .select(`
           paper_id,
           added_at,
           notes,
-          papers:paper_id (
-            id,
-            title,
-            abstract,
-            authors,
-            publication_date,
-            venue,
-            doi,
-            pdf_url,
-            source,
-            citation_count,
-            processing_status,
-            owner_id
-          )
+          papers:paper_id (${paperFields})
         `)
         .eq('user_id', user.id),
 
-      // Only fetch citations for the user's own projects
-      citationProjectIds.length > 0
+      // Citations query — use inner join on research_projects to scope to user's projects
+      // This avoids needing project IDs upfront (no sequential dependency)
+      projectFilter
         ? supabase
             .from('project_citations')
             .select(`
               paper_id,
               project_id,
               created_at,
-              papers:paper_id (
-                id,
-                title,
-                abstract,
-                authors,
-                publication_date,
-                venue,
-                doi,
-                pdf_url,
-                source,
-                citation_count,
-                processing_status,
-                owner_id
-              )
+              papers:paper_id (${paperFields})
             `)
-            .in('project_id', citationProjectIds)
-        : Promise.resolve({ data: [], error: null }),
+            .eq('project_id', projectFilter)
+        : supabase
+            .from('project_citations')
+            .select(`
+              paper_id,
+              project_id,
+              created_at,
+              papers:paper_id (${paperFields}),
+              research_projects!inner(user_id)
+            `)
+            .eq('research_projects.user_id', user.id),
     ])
 
+    if (projectsResult.error) {
+      console.error('Failed to fetch projects:', projectsResult.error)
+      return NextResponse.json({ error: 'Failed to fetch projects' }, { status: 500 })
+    }
     if (libraryResult.error) {
       console.error('Failed to fetch library papers:', libraryResult.error)
       return NextResponse.json({ error: 'Failed to fetch library papers' }, { status: 500 })
@@ -103,6 +98,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch project papers' }, { status: 500 })
     }
 
+    const userProjects = projectsResult.data || []
+    const projectMap = new Map(userProjects.map(p => [p.id, p.topic]))
     const libraryPapers = libraryResult.data || []
     const projectCitations = citationsResult.data || []
 
@@ -110,7 +107,6 @@ export async function GET(request: NextRequest) {
     interface UnifiedPaper {
       id: string
       title: string
-      abstract: string | null
       authors: string[]
       publication_date: string | null
       venue: string | null
@@ -138,7 +134,6 @@ export async function GET(request: NextRequest) {
       paperMap.set(paper.id, {
         id: paper.id,
         title: paper.title,
-        abstract: paper.abstract,
         authors: paper.authors || [],
         publication_date: paper.publication_date,
         venue: paper.venue,
@@ -178,7 +173,6 @@ export async function GET(request: NextRequest) {
         paperMap.set(paper.id, {
           id: paper.id,
           title: paper.title,
-          abstract: paper.abstract,
           authors: paper.authors || [],
           publication_date: paper.publication_date,
           venue: paper.venue,

@@ -34,7 +34,7 @@ const paperTypeOptions: PaperTypeOption[] = [
     value: 'researchArticle',
     label: 'Research Article',
     shortLabel: 'Research',
-    description: 'Original study with methodology and results',
+    description: 'Original study with methodology',
   },
   {
     value: 'capstoneProject',
@@ -60,70 +60,41 @@ interface PaperTypeSelectProps {
   value: PaperTypeValue
   onValueChange: (value: PaperTypeValue) => void
   disabled?: boolean
-  variant?: 'default' | 'inline'
 }
 
 export function PaperTypeSelect({ 
   value, 
   onValueChange, 
   disabled,
-  variant = 'default',
 }: PaperTypeSelectProps) {
   const selectedOption = paperTypeOptions.find(opt => opt.value === value)
 
-  if (variant === 'inline') {
-    return (
-      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-        <SelectTrigger 
-          className={cn(
-            'h-7 px-2.5 text-xs font-medium',
-            'bg-muted/50 hover:bg-muted',
-            'border-0 rounded-md',
-            'gap-1.5 w-auto',
-            'focus:ring-1 focus:ring-ring/50',
-            'transition-colors'
-          )}
-        >
-          <SelectValue>
-            {selectedOption?.shortLabel || 'Select type'}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent align="start">
-          {paperTypeOptions.map((option) => (
-            <SelectItem 
-              key={option.value} 
-              value={option.value}
-              className="py-2"
-            >
-              <div className="flex flex-col gap-0.5">
-                <span className="font-medium">{option.label}</span>
-                <span className="text-xs text-muted-foreground">
-                  {option.description}
-                </span>
-              </div>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    )
-  }
-
-  // Default variant
   return (
     <Select value={value} onValueChange={onValueChange} disabled={disabled}>
-      <SelectTrigger className="w-[200px]">
-        <SelectValue placeholder="Select paper type" />
+      <SelectTrigger 
+        className={cn(
+          'h-8 px-3 text-xs',
+          'bg-transparent hover:bg-muted/50',
+          'border border-border/40 hover:border-border/60 rounded-full',
+          'gap-1.5 w-auto',
+          'focus:ring-0 focus:border-foreground/20',
+          'transition-colors'
+        )}
+      >
+        <SelectValue>
+          {selectedOption?.shortLabel || 'Select type'}
+        </SelectValue>
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent align="start" className="rounded-xl">
         {paperTypeOptions.map((option) => (
           <SelectItem 
             key={option.value} 
             value={option.value}
-            className="py-2"
+            className="py-2.5 rounded-lg"
           >
             <div className="flex flex-col gap-0.5">
-              <span className="font-medium">{option.label}</span>
-              <span className="text-xs text-muted-foreground">
+              <span className="font-medium text-sm">{option.label}</span>
+              <span className="text-[11px] text-muted-foreground/60">
                 {option.description}
               </span>
             </div>

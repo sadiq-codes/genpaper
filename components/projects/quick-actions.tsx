@@ -53,16 +53,16 @@ export function QuickActions({ onPdfUpload, disabled, onOpenLibrary }: QuickActi
   }
 
   return (
-    <div className="space-y-4">
-      {/* Separator with text */}
-      <div className="flex items-center gap-4">
-        <div className="flex-1 h-px bg-border" />
-        <span className="text-xs text-muted-foreground font-medium">or start from</span>
-        <div className="flex-1 h-px bg-border" />
+    <div className="space-y-3">
+      {/* Separator */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-px bg-border/40" />
+        <span className="text-[11px] text-muted-foreground/50">or start from</span>
+        <div className="flex-1 h-px bg-border/40" />
       </div>
 
       {/* Action buttons */}
-      <div className="flex items-center justify-center gap-2 flex-wrap">
+      <div className="flex items-center justify-center gap-1.5 flex-wrap">
         <input
           ref={fileInputRef}
           type="file"
@@ -73,38 +73,32 @@ export function QuickActions({ onPdfUpload, disabled, onOpenLibrary }: QuickActi
           aria-hidden="true"
         />
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-2 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+        <button
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-40 cursor-pointer"
           onClick={handleImportPDF}
           disabled={disabled}
         >
-          <FileUp className="h-4 w-4" />
+          <FileUp className="h-3 w-3" />
           Import PDF
-        </Button>
+        </button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-2 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+        <button
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-40 cursor-pointer"
           onClick={handleFromLibrary}
           disabled={disabled}
         >
-          <Library className="h-4 w-4" />
+          <Library className="h-3 w-3" />
           From Library
-        </Button>
+        </button>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-2 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+        <button
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-40 cursor-pointer"
           onClick={handlePasteUrl}
           disabled={disabled}
         >
-          <Link2 className="h-4 w-4" />
+          <Link2 className="h-3 w-3" />
           Paste URL
-        </Button>
+        </button>
       </div>
     </div>
   )

@@ -85,12 +85,10 @@ export function InlineEditBar({
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 
-  // Keep ref in sync
   useEffect(() => {
     pendingEditsRef.current = pendingEdits
   }, [pendingEdits])
 
-  // Position below selection
   const [position, setPosition] = useState({ top: 0 })
 
   useEffect(() => {
@@ -98,15 +96,17 @@ export function InlineEditBar({
       const editorContainer = editor.view.dom.closest('.ProseMirror')?.parentElement
       if (!editorContainer) return
       const containerRect = editorContainer.getBoundingClientRect()
-      const coords = editor.view.coordsAtPos(selectionTo)
-      setPosition({ top: coords.bottom - containerRect.top + 8 })
+      const coordsEnd = editor.view.coordsAtPos(selectionTo)
+      // Position below the selection with enough gap to not overlap
+      const gap = 16
+      setPosition({ top: coordsEnd.bottom - containerRect.top + gap })
     } catch {
       // Selection might be invalid
     }
-    inputRef.current?.focus()
+    // Small delay to let the bar render before focusing so selection is preserved
+    setTimeout(() => inputRef.current?.focus(), 50)
   }, [editor, selectionTo])
 
-  // Unique chat ID per inline edit session
   const chatId = useRef(`inline-${Date.now()}`).current
 
   const transport = useMemo(() => new DefaultChatTransport({
@@ -114,7 +114,6 @@ export function InlineEditBar({
     body: { projectId, isInlineEdit: true },
   }), [projectId])
 
-  // Accept a single edit
   const handleAcceptEdit = useCallback((editId: string) => {
     const edit = pendingEditsRef.current.find(e => e.id === editId)
     if (!edit) return
@@ -134,7 +133,6 @@ export function InlineEditBar({
     }
   }, [editor])
 
-  // Reject a single edit
   const handleRejectEdit = useCallback((editId: string) => {
     editor.commands.clearGhostEdit(editId)
 
@@ -193,7 +191,6 @@ export function InlineEditBar({
     },
   })
 
-  // Build editor context
   const getEditorContext = useCallback(() => {
     let documentContent = serializeForAIContext(editor.state.doc)
     const documentStructure = getDocumentStructure(editor)
@@ -208,7 +205,6 @@ export function InlineEditBar({
     return { documentContent, selectedText, documentStructure }
   }, [editor, selectedText])
 
-  // Submit instruction
   const handleSubmit = useCallback(() => {
     if (!instruction.trim()) return
 
@@ -227,7 +223,6 @@ export function InlineEditBar({
     setPhase('loading')
   }, [instruction, selectedText, projectId, getEditorContext, sendMessage])
 
-  // Accept all
   const handleAcceptAll = useCallback(() => {
     import('../services/tool-executor').then(({ executeDocumentTool }) => {
       for (const edit of pendingEditsRef.current) {
@@ -239,19 +234,17 @@ export function InlineEditBar({
     onClose()
   }, [editor, onClose])
 
-  // Reject all
   const handleRejectAll = useCallback(() => {
     editor.commands.clearGhostEdits()
     onClose()
   }, [editor, onClose])
 
-  // Keyboard handling
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       if (phase === 'review') {
         handleRejectAll()
       } else {
-        if (phase === 'loading') return // Don't close while loading
+        if (phase === 'loading') return
         onClose()
       }
     } else if (e.key === 'Enter' && !e.shiftKey) {
@@ -270,10 +263,9 @@ export function InlineEditBar({
       style={{ top: position.top }}
     >
       <div className={cn(
-        "flex items-center gap-2 p-2 rounded-lg border bg-background shadow-lg max-w-5xl mx-auto",
-        "ring-1 ring-primary/20",
+        "flex items-center gap-2 p-1.5 rounded-xl border border-border/50 bg-popover shadow-lg max-w-3xl mx-auto",
       )}>
-        <Sparkles className="h-4 w-4 text-primary shrink-0" />
+        <Sparkles className="h-3.5 w-3.5 text-muted-foreground ml-2 shrink-0" aria-hidden="true" />
 
         {phase === 'input' && (
           <>
@@ -283,21 +275,23 @@ export function InlineEditBar({
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Enter editing instruction..."
-              className="flex-1 text-sm bg-transparent border-none outline-none placeholder:text-muted-foreground/50"
+              placeholder="Enter editing instruction…"
+              aria-label="Editing instruction"
+              className="flex-1 text-sm bg-transparent border-none outline-none placeholder:text-muted-foreground/40 text-foreground"
               autoFocus
             />
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 w-7 p-0 text-muted-foreground"
+              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full"
               onClick={onClose}
+              aria-label="Close"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3 w-3" />
             </Button>
             <Button
               size="sm"
-              className="h-7 px-3 text-xs"
+              className="h-7 px-3.5 text-xs rounded-full bg-foreground text-background hover:bg-foreground/90"
               onClick={handleSubmit}
               disabled={!instruction.trim()}
             >
@@ -308,8 +302,8 @@ export function InlineEditBar({
 
         {phase === 'loading' && (
           <>
-            <span className="flex-1 text-sm text-muted-foreground">Generating edit...</span>
-            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="flex-1 text-sm text-muted-foreground">Generating edit…</span>
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-foreground/60 mr-2" aria-hidden="true" />
           </>
         )}
 
@@ -320,19 +314,19 @@ export function InlineEditBar({
             </span>
             <Button
               size="sm"
-              variant="outline"
-              className="h-7 px-3 text-xs"
+              variant="ghost"
+              className="h-7 px-3 text-xs rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
               onClick={handleRejectAll}
             >
-              <X className="h-3.5 w-3.5 mr-1" />
+              <X className="h-3 w-3 mr-1" />
               Reject
             </Button>
             <Button
               size="sm"
-              className="h-7 px-3 text-xs"
+              className="h-7 px-3 text-xs rounded-full bg-foreground text-background hover:bg-foreground/90"
               onClick={handleAcceptAll}
             >
-              <Check className="h-3.5 w-3.5 mr-1" />
+              <Check className="h-3 w-3 mr-1" />
               Accept
             </Button>
           </>
@@ -340,8 +334,8 @@ export function InlineEditBar({
       </div>
 
       {/* Keyboard hints */}
-      <div className="flex justify-end mt-1 px-1 max-w-5xl mx-auto">
-        <span className="text-[10px] text-muted-foreground/50">
+      <div className="flex justify-end mt-1 px-1 max-w-3xl mx-auto">
+        <span className="text-[10px] text-muted-foreground/40">
           {phase === 'input' && 'Enter to submit · Esc to cancel'}
           {phase === 'review' && 'Enter to accept · Esc to reject'}
         </span>

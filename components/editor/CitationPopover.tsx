@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import type { Editor } from '@tiptap/react'
-import { Button } from '@/components/ui/button'
 import { ExternalLink, Copy, Trash2, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -353,95 +352,87 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
           ref={popoverRef}
           onMouseLeave={handlePopoverMouseLeave}
           className={cn(
-            'fixed z-50 w-80 rounded-lg border bg-popover shadow-lg animate-in fade-in-0 zoom-in-95'
+            'fixed z-50 w-80 rounded-xl border border-border/40 bg-popover shadow-lg animate-in fade-in-0 zoom-in-95'
           )}
           style={{ top: position.top, left: position.left }}
         >
           {paper ? (
             <>
               <div className="p-4 space-y-2">
-                <h4 className="font-medium text-sm line-clamp-2">{paper.title}</h4>
+                <h4 className="font-instrument text-sm tracking-tight line-clamp-2">{paper.title}</h4>
                 <p className="text-xs text-muted-foreground">
                   {(paper.authors || []).slice(0, 3).join(', ')}
                   {(paper.authors || []).length > 3 && ' et al.'}
                 </p>
                 <div className="text-xs text-muted-foreground">
                   {paper.journal && <span className="italic">{paper.journal}</span>}
-                  {paper.journal && paper.year && ' - '}
+                  {paper.journal && paper.year && ' · '}
                   {paper.year}
                 </div>
                 {citedContent && (
-                  <div className="pt-2 mt-2 border-t">
-                    <div className="text-xs text-muted-foreground mb-1">Cited passage:</div>
+                  <div className="pt-2 mt-2 border-t border-border/30">
+                    <div className="text-[11px] text-muted-foreground mb-1 uppercase tracking-wide font-medium">Cited passage</div>
                     <div className="text-sm italic text-foreground/80">&ldquo;{citedContent}&rdquo;</div>
                   </div>
                 )}
               </div>
-              <div className="border-t px-2 py-2 flex gap-1 bg-muted/30">
+              <div className="border-t border-border/30 px-2 py-2 flex gap-1">
                 {projectId && (
-                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleEdit}>
-                    <Pencil className="h-3 w-3 mr-1" /> Edit
-                  </Button>
+                  <button onClick={handleEdit} className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                    <Pencil className="h-3 w-3" /> Edit
+                  </button>
                 )}
-                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleCopyBibtex}>
-                  <Copy className="h-3 w-3 mr-1" /> BibTeX
-                </Button>
+                <button onClick={handleCopyBibtex} className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                  <Copy className="h-3 w-3" /> BibTeX
+                </button>
                 {paper.doi && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
+                  <button
                     onClick={() => window.open(`https://doi.org/${paper.doi}`, '_blank')}
+                    className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                   >
-                    <ExternalLink className="h-3 w-3 mr-1" /> DOI
-                  </Button>
+                    <ExternalLink className="h-3 w-3" /> DOI
+                  </button>
                 )}
                 <div className="flex-1" />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs text-destructive"
+                <button
                   onClick={handleDelete}
+                  className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-destructive hover:bg-destructive/10 transition-colors"
                 >
                   <Trash2 className="h-3 w-3" />
-                </Button>
+                </button>
               </div>
             </>
           ) : (
             <div className="p-4 space-y-2">
-              <div className="text-sm font-medium text-muted-foreground">
+              <div className="text-sm font-instrument tracking-tight text-muted-foreground">
                 Citation not found in project papers
               </div>
               {renderedText && (
                 <div className="text-xs text-muted-foreground">
-                  Citation text: <span className="font-mono">{renderedText}</span>
+                  Citation text: <span className="font-mono text-[11px]">{renderedText}</span>
                 </div>
               )}
               {citationId && (
                 <div className="text-xs text-muted-foreground mt-2">
-                  ID: <span className="font-mono">{citationId.slice(0, 8)}...</span>
+                  ID: <span className="font-mono text-[11px]">{citationId.slice(0, 8)}...</span>
                 </div>
               )}
-              <div className="border-t pt-2 mt-2 flex gap-1">
+              <div className="border-t border-border/30 pt-2 mt-2 flex gap-1">
                 {projectId && citationId && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
+                  <button
                     onClick={handleEdit}
+                    className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                   >
-                    <Pencil className="h-3 w-3 mr-1" /> Edit
-                  </Button>
+                    <Pencil className="h-3 w-3" /> Edit
+                  </button>
                 )}
                 <div className="flex-1" />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs text-destructive"
+                <button
                   onClick={handleDelete}
+                  className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-destructive hover:bg-destructive/10 transition-colors"
                 >
-                  <Trash2 className="h-3 w-3 mr-1" /> Delete
-                </Button>
+                  <Trash2 className="h-3 w-3" /> Delete
+                </button>
               </div>
             </div>
           )}

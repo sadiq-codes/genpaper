@@ -1,10 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
-import { Card } from "@/components/ui/card"
+import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -19,7 +16,6 @@ import {
   Upload,
   Loader2,
   X,
-  Quote,
 } from "lucide-react"
 import type { LibraryPaper, Paper } from "@/types/simplified"
 import FileUpload from "@/components/FileUpload"
@@ -101,130 +97,132 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
     const isRemoving = removingPapers.has(paperId)
 
     return (
-      <Card className={cn("p-4", isRemoving && "opacity-50")}>
-        <div className="flex items-start gap-4">
-          <div className="flex-shrink-0 mt-1">
-            <BookOpen className="h-5 w-5 text-muted-foreground" />
-          </div>
-
-          <div className="flex-1 min-w-0 space-y-2">
-            <div className="flex items-start justify-between gap-3">
-              <h3 className="text-sm font-medium leading-snug">{actualPaper.title}</h3>
-              
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" disabled={isProcessing || isRemoving}>
-                    {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreVertical className="h-4 w-4" />}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {isSearchResult ? (
-                    <DropdownMenuItem onClick={() => addPaperToLibrary(paperId)} disabled={isProcessing}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add to Library
-                    </DropdownMenuItem>
-                  ) : (
-                    <>
-                      <DropdownMenuItem onClick={() => handleNotesEdit(libraryPaper!)}>
-                        <Edit3 className="h-4 w-4 mr-2" />
-                        Edit Notes
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => removePaperFromLibrary(paperId)}
-                        disabled={isRemoving}
-                        className="text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Remove
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                  {actualPaper.url && (
-                    <DropdownMenuItem onClick={() => window.open(actualPaper.url, "_blank")}>
-                      <ExternalLink className="h-4 w-4 mr-2" />
-                      View Paper
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-
-            <p className="text-sm text-muted-foreground">
+      <div className={cn("py-3.5 border-b border-border/40 group", isRemoving && "opacity-50")}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-instrument text-sm tracking-tight leading-snug line-clamp-2 group-hover:text-foreground transition-colors">
+              {actualPaper.title}
+            </h3>
+            <p className="text-xs text-muted-foreground truncate mt-1">
               {actualPaper.authors
                 ?.map((a) => (typeof a === "string" ? a : a.name))
                 .slice(0, 2)
                 .join(", ") || "Unknown authors"}
+              {actualPaper.publication_date && ` · ${new Date(actualPaper.publication_date).getFullYear()}`}
+              {actualPaper.venue && ` · ${actualPaper.venue}`}
             </p>
-
-            <div className="flex flex-wrap gap-2">
-              {actualPaper.venue && (
-                <Badge variant="secondary" className="text-xs h-6">
-                  {actualPaper.venue}
-                </Badge>
-              )}
-              {actualPaper.publication_date && (
-                <Badge variant="outline" className="text-xs h-6">
-                  {new Date(actualPaper.publication_date).getFullYear()}
-                </Badge>
-              )}
-              {actualPaper.citation_count && (
-                <Badge variant="outline" className="text-xs h-6 flex items-center gap-1">
-                  <Quote className="h-3 w-3" />
-                  {actualPaper.citation_count}
-                </Badge>
-              )}
-            </div>
           </div>
+          
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="h-7 w-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-all" disabled={isProcessing || isRemoving}>
+                {isProcessing ? <Loader2 className="h-3 w-3 animate-spin" /> : <MoreVertical className="h-3 w-3" />}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="rounded-xl">
+              {isSearchResult ? (
+                <DropdownMenuItem onClick={() => addPaperToLibrary(paperId)} disabled={isProcessing}>
+                  <Plus className="h-3.5 w-3.5 mr-2" />
+                  Add to Library
+                </DropdownMenuItem>
+              ) : (
+                <>
+                  <DropdownMenuItem onClick={() => handleNotesEdit(libraryPaper!)}>
+                    <Edit3 className="h-3.5 w-3.5 mr-2" />
+                    Edit Notes
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => removePaperFromLibrary(paperId)}
+                    disabled={isRemoving}
+                    className="text-destructive"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-2" />
+                    Remove
+                  </DropdownMenuItem>
+                </>
+              )}
+              {actualPaper.url && (
+                <DropdownMenuItem onClick={() => window.open(actualPaper.url, "_blank")}>
+                  <ExternalLink className="h-3.5 w-3.5 mr-2" />
+                  View Paper
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      </Card>
+      </div>
     )
   }
 
   return (
     <div className={cn("w-full space-y-6", className)}>
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "library" | "search")} className="w-full">
-        <div className="flex items-center justify-between gap-4 pb-4 border-b">
-          <TabsList>
-            <TabsTrigger value="library">My Library</TabsTrigger>
-            <TabsTrigger value="search">Search Papers</TabsTrigger>
-          </TabsList>
+        <div className="flex items-center justify-between gap-4 pb-4 border-b border-border/20">
+          <div className="flex gap-0.5" role="tablist">
+            <button
+              role="tab"
+              aria-selected={activeTab === 'library'}
+              onClick={() => setActiveTab('library')}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all duration-200",
+                activeTab === 'library'
+                  ? "bg-foreground/80 text-background font-medium"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              )}
+            >
+              <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
+              My Library
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === 'search'}
+              onClick={() => setActiveTab('search')}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all duration-200",
+                activeTab === 'search'
+                  ? "bg-foreground/80 text-background font-medium"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              )}
+            >
+              <Search className="h-3.5 w-3.5" aria-hidden="true" />
+              Search
+            </button>
+          </div>
 
           {activeTab === "library" && (
-            <Button variant="outline" size="sm" asChild>
-              <label className="cursor-pointer flex items-center gap-2">
-                <Upload className="h-4 w-4" />
-                Upload PDF
-              </label>
-            </Button>
+            <label className="cursor-pointer h-7 px-3 text-[11px] font-medium rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5">
+              <Upload className="h-3 w-3" />
+              Upload PDF
+            </label>
           )}
         </div>
 
         <TabsContent value="library" className="space-y-4">
           {/* Search and Filter Controls */}
-          <div className="flex gap-3 items-end">
+          <div className="flex gap-2 items-end">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               <Input
                 placeholder="Search by title or notes..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 pr-9"
+                className="pl-9 pr-9 h-9 rounded-xl border-border/40 placeholder:text-muted-foreground/60 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               )}
             </div>
 
             <Select value={sortBy} onValueChange={(v) => setSortBy(v as "added_at" | "title")}>
-              <SelectTrigger className="w-32">
+              <SelectTrigger className="w-36 h-9 rounded-full border-border/30 text-xs">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-xl">
                 <SelectItem value="added_at">Recently Added</SelectItem>
                 <SelectItem value="title">Title (A-Z)</SelectItem>
               </SelectContent>
@@ -233,37 +231,41 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
           {/* Library Papers List */}
           {loading ? (
-            <div className="space-y-2">
+            <div>
               {[...Array(3)].map((_, i) => (
-                <div key={i} className="h-20 bg-muted rounded-lg animate-pulse" />
+                <div key={i} className="py-3.5 border-b border-border/40 animate-pulse">
+                  <div className="h-3.5 bg-muted/50 rounded-lg w-3/4 mb-2" />
+                  <div className="h-3 bg-muted/30 rounded-lg w-1/2" />
+                </div>
               ))}
             </div>
           ) : sortedLibraryPapers.length > 0 ? (
-            <div className="space-y-3">
+            <div>
               {sortedLibraryPapers.map((paper) => (
                 <PaperItem key={paper.id} paper={paper} isSearchResult={false} />
               ))}
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-              <div className="rounded-full bg-muted p-3 mb-4">
-                <BookOpen className="h-6 w-6 text-muted-foreground" />
+            <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
+              <div className="w-10 h-10 rounded-full border border-border/40 flex items-center justify-center mb-4">
+                <BookOpen className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               </div>
-              <h3 className="text-lg font-semibold mb-2">No papers yet</h3>
-              <p className="text-sm text-muted-foreground mb-6 max-w-md">
+              <h3 className="font-instrument text-base tracking-tight mb-1">No papers yet</h3>
+              <p className="text-xs text-muted-foreground mb-5 max-w-[240px] leading-relaxed">
                 Start by uploading a PDF or searching for papers to add to your library.
               </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" asChild>
-                  <label className="cursor-pointer flex items-center gap-2">
-                    <Upload className="h-4 w-4" />
-                    Upload PDF
-                  </label>
-                </Button>
-                <Button size="sm" onClick={() => setActiveTab("search")}>
-                  <Search className="h-4 w-4 mr-2" />
+              <div className="flex gap-1.5">
+                <label className="cursor-pointer h-7 px-3 text-[11px] font-medium rounded-full border border-border/40 text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5">
+                  <Upload className="h-3 w-3" />
+                  Upload PDF
+                </label>
+                <button
+                  onClick={() => setActiveTab("search")}
+                  className="h-7 px-3 text-[11px] font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors inline-flex items-center gap-1.5"
+                >
+                  <Search className="h-3 w-3" />
                   Search Papers
-                </Button>
+                </button>
               </div>
             </div>
           )}
@@ -276,9 +278,9 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
 
         <TabsContent value="search" className="space-y-4">
           <div className="space-y-4">
-            <div className="relative flex gap-2">
+            <div className="relative flex gap-1.5">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                 <Input
                   placeholder="Search academic papers..."
                   value={searchQuery}
@@ -288,37 +290,41 @@ export default function LibraryManager({ className }: LibraryManagerProps) {
                       searchOnlinePapers(searchQuery)
                     }
                   }}
-                  className="pl-9"
+                  className="pl-9 h-9 rounded-xl border-border/40 placeholder:text-muted-foreground/60 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
                 />
               </div>
-              <Button onClick={() => searchOnlinePapers(searchQuery)} disabled={isSearching}>
-                {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              </Button>
+              <button
+                onClick={() => searchOnlinePapers(searchQuery)}
+                disabled={isSearching}
+                className="h-9 w-9 rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors flex items-center justify-center shrink-0 disabled:opacity-50"
+              >
+                {isSearching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+              </button>
             </div>
 
             {searchResults.length > 0 ? (
-              <div className="space-y-3">
+              <div>
                 {searchResults.map((paper) => (
                   <PaperItem key={paper.id} paper={paper} isSearchResult={true} />
                 ))}
               </div>
             ) : searchQuery && !isSearching ? (
-              <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-                <div className="rounded-full bg-muted p-3 mb-4">
-                  <Search className="h-6 w-6 text-muted-foreground" />
+              <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
+                <div className="w-10 h-10 rounded-full border border-border/40 flex items-center justify-center mb-4">
+                  <Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                 </div>
-                <h3 className="text-lg font-semibold mb-2">No results found</h3>
-                <p className="text-sm text-muted-foreground max-w-md">
+                <h3 className="font-instrument text-base tracking-tight mb-1">No results found</h3>
+                <p className="text-xs text-muted-foreground max-w-[220px] leading-relaxed">
                   Try a different search term or adjust your filters.
                 </p>
               </div>
             ) : !searchQuery ? (
-              <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-                <div className="rounded-full bg-muted p-3 mb-4">
-                  <Search className="h-6 w-6 text-muted-foreground" />
+              <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
+                <div className="w-10 h-10 rounded-full border border-border/40 flex items-center justify-center mb-4">
+                  <Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                 </div>
-                <h3 className="text-lg font-semibold mb-2">Search for papers</h3>
-                <p className="text-sm text-muted-foreground max-w-md">
+                <h3 className="font-instrument text-base tracking-tight mb-1">Search for papers</h3>
+                <p className="text-xs text-muted-foreground max-w-[240px] leading-relaxed">
                   Enter a search term to find papers from OpenAlex, CrossRef, and Semantic Scholar.
                 </p>
               </div>

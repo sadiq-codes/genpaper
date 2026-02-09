@@ -134,25 +134,22 @@ export function ProjectInput() {
   }, [isFormValid, isLoading])
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      <form action={formAction} className="space-y-3">
-        {/* Unified Input Container */}
+    <div className="w-full max-w-3xl mx-auto">
+      <form action={formAction} className="space-y-4">
+        {/* Input Container */}
         <div
           className={cn(
-            'rounded-xl border-2 bg-card/50 transition-all duration-200',
-            'border-border/50 hover:border-border',
-            'focus-within:border-primary/50 focus-within:ring-4 focus-within:ring-primary/10',
-            'shadow-sm hover:shadow-md focus-within:shadow-md',
+            'rounded-2xl border border-border/30 bg-background transition-all duration-300',
+            'hover:border-border/50',
+            'focus-within:border-foreground/15 focus-within:shadow-xl focus-within:shadow-foreground/3',
           )}
         >
-          {/* PDF Chips - shown at top of input area */}
           <PdfChipList
             pdfs={uploadedPdfs}
             onRemove={handleRemovePdf}
             disabled={isLoading}
           />
           
-          {/* Textarea */}
           <Textarea
             name="topic"
             value={topic}
@@ -162,20 +159,19 @@ export function ProjectInput() {
             disabled={isLoading}
             required
             minLength={10}
-            rows={3}
+            rows={4}
             className={cn(
               'border-0 bg-transparent resize-none',
-              'min-h-[100px] text-base leading-relaxed',
-              'p-4 pb-2',
-              'placeholder:text-muted-foreground/60',
+              'min-h-[140px] text-[15px] leading-relaxed',
+              'px-6 pt-5 pb-3',
+              'placeholder:text-muted-foreground/40',
               'focus-visible:ring-0 focus-visible:ring-offset-0',
             )}
           />
 
           {/* Controls Row */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3 pb-3 pt-1">
-            {/* Left Controls */}
-            <div className="flex items-center gap-0.5 flex-wrap">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 pb-4 pt-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <AddSourceMenu disabled={isLoading} onPdfUpload={handlePdfUpload} />
               <AdvancedOptionsPopover
                 hasOriginalResearch={hasOriginalResearch}
@@ -188,12 +184,11 @@ export function ProjectInput() {
                 onUseLibraryOnlyChange={setUseLibraryOnly}
                 disabled={isLoading}
               />
-              <div className="hidden sm:block w-px h-5 bg-border/50 mx-1" />
+              <div className="hidden sm:block w-px h-4 bg-border/30 mx-0.5" />
               <PaperTypeSelect
                 value={paperType}
                 onValueChange={setPaperType}
                 disabled={isLoading}
-                variant="inline"
               />
               <GenerationModeSelect
                 value={generationMode}
@@ -202,21 +197,22 @@ export function ProjectInput() {
               />
             </div>
 
-            {/* Right Control - Submit */}
             <Button
               type="submit"
               disabled={isLoading || !isFormValid}
               className={cn(
-                'h-9 sm:h-8 sm:w-8 rounded-lg transition-all w-full sm:w-auto',
-                isFormValid && !isLoading && 'bg-primary hover:bg-primary/90',
+                'h-10 rounded-full transition-all w-full sm:w-auto sm:px-5 gap-2 text-sm font-medium',
+                isFormValid && !isLoading 
+                  ? 'bg-foreground text-background hover:bg-foreground/90 shadow-sm' 
+                  : '',
               )}
             >
               {isLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <>
-                  <span className="sm:hidden mr-2">Start</span>
-                  <ArrowRight className="h-4 w-4" />
+                  <span>Start</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
                 </>
               )}
               <span className="sr-only">Start research</span>
@@ -224,59 +220,50 @@ export function ProjectInput() {
           </div>
         </div>
 
-        {/* Hidden fields for form submission */}
+        {/* Hidden fields */}
         <input type="hidden" name="paperType" value={paperType} />
         <input type="hidden" name="generationMode" value={generationMode} />
         <input type="hidden" name="hasOriginalResearch" value={hasOriginalResearch ? 'true' : 'false'} />
         {showKeyFindings && <input type="hidden" name="keyFindings" value={keyFindings} />}
-        {/* Hidden fields for uploaded PDF paper IDs */}
         {uploadedPaperIds.map((paperId) => (
           <input key={paperId} type="hidden" name="uploadedPaperIds" value={paperId} />
         ))}
 
-        {/* Helper Text & Status */}
-        <div className="text-center space-y-2">
-          {/* Mode indicator */}
+        {/* Status area */}
+        <div className="text-center space-y-1.5">
           {generationMode === 'write' ? (
-            <div className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <BookOpen className="h-3.5 w-3.5" />
-              <span>We&apos;ll find relevant papers while you write</span>
-            </div>
+            <p className="text-[11px] text-muted-foreground/50">
+              We&apos;ll find relevant papers while you write
+            </p>
           ) : isSynthesisType ? (
-            <div className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <BookOpen className="h-3.5 w-3.5" />
-              <span>Synthesizing existing literature</span>
-            </div>
+            <p className="text-[11px] text-muted-foreground/50">
+              Synthesizing existing literature
+            </p>
           ) : null}
 
-          {/* Keyboard hint */}
-          <p className="text-xs text-muted-foreground/70">
-            Press{' '}
-            <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">
+          <p className="text-[11px] text-muted-foreground/35">
+            <kbd className="px-1 py-0.5 text-[9px] font-mono bg-foreground/5 rounded border border-border/30">
               {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}
             </kbd>
             {' + '}
-            <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded border">
+            <kbd className="px-1 py-0.5 text-[9px] font-mono bg-foreground/5 rounded border border-border/30">
               Enter
             </kbd>
             {' '}to {generationMode === 'generate' ? 'generate' : 'start writing'}
           </p>
 
-          {/* Validation feedback */}
           {!isTopicValid && topic.length > 0 && topic.length < 10 && (
-            <p className="text-xs text-warning">
-              Please provide at least 10 characters ({10 - topic.length} more needed)
+            <p className="text-xs text-amber-600/80">
+              {10 - topic.length} more characters needed
             </p>
           )}
 
-          {/* Key findings validation */}
           {showKeyFindings && !isKeyFindingsValid && keyFindings.length > 0 && (
-            <p className="text-xs text-warning">
-              Please provide more detail in your key findings ({10 - keyFindings.length} more characters needed)
+            <p className="text-xs text-amber-600/80">
+              Key findings need {10 - keyFindings.length} more characters
             </p>
           )}
 
-          {/* Error from server */}
           {state && !state.success && state.error && (
             <p className="text-sm text-destructive">{state.error}</p>
           )}

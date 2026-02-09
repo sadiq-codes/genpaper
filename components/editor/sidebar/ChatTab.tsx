@@ -3,18 +3,16 @@
 import { useRef, useEffect, useCallback, memo, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Button } from '@/components/ui/button'
-import { Bot, User, Wrench, Trash2, Square } from 'lucide-react'
+import { Bot, User, Wrench, Trash2, Square, MessageSquare } from 'lucide-react'
 import { RichChatInput } from './RichChatInput'
 import { EvidencePanel } from './EvidencePanel'
-import { ChatLimitBanner, ChatUsageIndicator } from '@/components/billing/chat-limit-banner'
+import { ChatLimitBanner } from '@/components/billing/chat-limit-banner'
 import type { UIMessage } from 'ai'
-import type { PendingToolCall } from '../hooks/useEditorChat'
 import type { ProjectPaper } from '../types'
 import type { ChatMessageMetadata } from '@/app/api/editor/chat/route'
 import { cn } from '@/lib/utils'
 import { useChatImageUpload } from '../hooks/useChatImageUpload'
+import { useResearchEditor } from '../research-editor-context'
 
 // =============================================================================
 // CITATION FORMATTING FOR CHAT
@@ -69,7 +67,7 @@ function ChatCitationSpan({ paper, instanceId }: { paper: ProjectPaper; instance
     'data-journal': paper.journal || '',
     'data-doi': paper.doi || '',
     title: paper.title || '',
-    className: 'citation-inline text-primary/80 hover:text-primary hover:underline transition-colors',
+    className: 'citation-inline font-instrument italic text-foreground/60 hover:text-foreground hover:underline decoration-foreground/30 underline-offset-2 transition-colors cursor-pointer',
   }
 
   if (url) {
@@ -177,30 +175,6 @@ export interface ChatSendOptions {
   attachedImages?: string[]
 }
 
-interface ChatTabProps {
-  messages: UIMessage[]
-  /** 
-   * Callback when message is sent. 
-   * For backward compatibility, accepts either:
-   * - (content: string) => void
-   * - (options: ChatSendOptions) => void
-   */
-  onSendMessage: (content: string | ChatSendOptions) => void
-  isLoading?: boolean
-  /** Error from chat API (used to show rate limit banners) */
-  error?: Error | null
-  // Papers for @ mentions
-  papers?: ProjectPaper[]
-  projectId?: string
-  /** Insert a citation into the document editor from the @ mention dropdown */
-  onCitePaper?: (paper: ProjectPaper) => void
-  // Tool support props (actions handled in editor, this is for status display only)
-  pendingTools?: PendingToolCall[]
-  onClearHistory?: () => void
-  /** Stop the current AI generation */
-  onStop?: () => void
-}
-
 // =============================================================================
 // COMPONENTS
 // =============================================================================
@@ -216,8 +190,8 @@ function ToolCallBadge({ toolName }: { toolName: string }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
-      <Wrench className="h-2.5 w-2.5" />
+    <span className="inline-flex items-center gap-1 rounded-full bg-foreground/80 text-background px-2 py-0.5 text-[9px] font-medium tracking-wide uppercase">
+      <Wrench className="h-2 w-2" />
       {toolLabels[toolName] || toolName}
     </span>
   )
@@ -315,50 +289,67 @@ const MessageBubble = memo(function MessageBubble({
   const timestamp = useMemo(() => new Date(), [])
 
   return (
-    <div className="flex gap-3 px-4 py-4">
-      <Avatar className="h-6 w-6 shrink-0">
-        <AvatarFallback className={cn(
-          "text-xs",
-          isAssistant ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
-        )}>
-          {isAssistant ? <Bot className="h-3.5 w-3.5" /> : <User className="h-3.5 w-3.5" />}
-        </AvatarFallback>
-      </Avatar>
-      
-      <div className="flex-1 min-w-0 space-y-2">
+    <div className={cn(
+      "px-4 py-4 border-b border-border/20 last:border-b-0",
+      !isAssistant && "bg-muted/20"
+    )}>
+      {/* Role header */}
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-foreground">
+          <div className={cn(
+            "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
+            isAssistant ? "bg-foreground/80 text-background" : "border border-border/40"
+          )}>
+            {isAssistant ? <Bot className="h-2.5 w-2.5" /> : <User className="h-2.5 w-2.5 text-muted-foreground" />}
+          </div>
+          <span className="font-instrument text-sm tracking-tight">
             {isAssistant ? 'Assistant' : 'You'}
           </span>
-          <span className="text-[10px] text-muted-foreground/60">
-            {timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </span>
         </div>
-        
-        {(content || toolInvocations.length > 0) && (
-          <div className="text-[13px] leading-relaxed text-foreground/80 prose prose-sm prose-neutral dark:prose-invert max-w-none chat-message-content [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_p]:my-3 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-medium [&_h1]:mt-4 [&_h2]:mt-4 [&_h3]:mt-3 [&_code]:text-xs [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-muted">
-            {content ? <MemoizedMarkdown content={content} papers={papers} /> : <span className="text-muted-foreground italic">Applying suggested edits…</span>}
-          </div>
-        )}
-
-        {/* Tool invocations - just show badges, no action buttons */}
-        {toolInvocations && toolInvocations.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {toolInvocations.map((invocation) => (
-              <ToolCallBadge key={invocation.toolCallId} toolName={invocation.toolName} />
-            ))}
-          </div>
-        )}
-
-        {/* Evidence transparency - show what sources were used (assistant messages only) */}
-        {isAssistant && (
-          <EvidencePanel
-            evidence={(message.metadata as ChatMessageMetadata)?.evidence}
-            papers={papers}
-            ragMetadata={(message.metadata as ChatMessageMetadata)?.ragMetadata}
-          />
-        )}
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          {timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </span>
       </div>
+      
+      {/* Message content */}
+      {(content || toolInvocations.length > 0) && (
+        <div className={cn(
+          "text-[13px] leading-[1.7] text-foreground/85",
+          "prose prose-sm prose-neutral dark:prose-invert max-w-none",
+          "chat-message-content",
+          "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          "[&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5",
+          "[&_p]:my-2.5",
+          "[&_h1]:font-instrument [&_h1]:text-base [&_h1]:tracking-tight [&_h1]:mt-4 [&_h1]:mb-1.5",
+          "[&_h2]:font-instrument [&_h2]:text-base [&_h2]:tracking-tight [&_h2]:mt-3.5 [&_h2]:mb-1",
+          "[&_h3]:font-instrument [&_h3]:text-sm [&_h3]:tracking-tight [&_h3]:mt-3 [&_h3]:mb-1",
+          "[&_strong]:text-foreground [&_strong]:font-medium",
+          "[&_code]:text-[11px] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded-md [&_code]:bg-foreground/5 [&_code]:border [&_code]:border-border/30 [&_code]:font-mono",
+          "[&_blockquote]:border-l-2 [&_blockquote]:border-foreground/20 [&_blockquote]:pl-3 [&_blockquote]:italic [&_blockquote]:text-foreground/70",
+          "[&_a]:text-foreground/80 [&_a]:underline [&_a]:decoration-foreground/25 [&_a]:underline-offset-2 [&_a]:hover:text-foreground [&_a]:hover:decoration-foreground/50",
+          isAssistant ? "pl-0.5" : ""
+        )}>
+          {content ? <MemoizedMarkdown content={content} papers={papers} /> : <span className="text-muted-foreground italic text-xs font-instrument">Applying edits…</span>}
+        </div>
+      )}
+
+      {/* Tool invocations */}
+      {toolInvocations && toolInvocations.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1">
+          {toolInvocations.map((invocation) => (
+            <ToolCallBadge key={invocation.toolCallId} toolName={invocation.toolName} />
+          ))}
+        </div>
+      )}
+
+      {/* Evidence */}
+      {isAssistant && (
+        <EvidencePanel
+          evidence={(message.metadata as ChatMessageMetadata)?.evidence}
+          papers={papers}
+          ragMetadata={(message.metadata as ChatMessageMetadata)?.ragMetadata}
+        />
+      )}
     </div>
   )
 })
@@ -369,16 +360,18 @@ const MessageBubble = memo(function MessageBubble({
  */
 function LoadingBubble() {
   return (
-    <div className="flex gap-3 px-4 py-4">
-      <Avatar className="h-6 w-6 shrink-0">
-        <AvatarFallback className="bg-primary/10 text-primary text-xs">
-          <Bot className="h-3.5 w-3.5" />
-        </AvatarFallback>
-      </Avatar>
-      <div className="flex items-center gap-1.5 py-1">
-        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.3s]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.15s]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce" />
+    <div className="px-4 py-4">
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-5 h-5 rounded-full bg-foreground/80 text-background flex items-center justify-center shrink-0">
+          <Bot className="h-2.5 w-2.5" />
+        </div>
+        <span className="font-instrument text-sm tracking-tight">Assistant</span>
+      </div>
+      <div className="flex items-center gap-1.5 pl-0.5 h-5">
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-pulse [animation-delay:0ms] animation-duration-[1.2s]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-pulse [animation-delay:200ms] animation-duration-[1.2s]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-pulse [animation-delay:400ms] animation-duration-[1.2s]" />
+        <span className="text-[11px] text-muted-foreground ml-1 font-instrument italic">thinking…</span>
       </div>
     </div>
   )
@@ -386,9 +379,15 @@ function LoadingBubble() {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center h-full text-center p-6">
-      <p className="text-sm text-muted-foreground max-w-[220px]">
-        Ask anything about your paper or research.
+    <div className="flex flex-col items-center justify-center h-full text-center px-8 py-16">
+      <div className="w-10 h-10 rounded-full border border-border/40 flex items-center justify-center mb-4">
+        <MessageSquare className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <h4 className="font-instrument text-base tracking-tight mb-1">
+        Start a conversation
+      </h4>
+      <p className="text-xs text-muted-foreground max-w-[180px] leading-relaxed">
+        Ask about your research, request edits, or explore your papers
       </p>
     </div>
   )
@@ -398,18 +397,20 @@ function EmptyState() {
 // MAIN COMPONENT
 // =============================================================================
 
-export function ChatTab({ 
-  messages, 
-  onSendMessage, 
-  isLoading = false,
-  error,
-  papers = [],
-  projectId,
-  onCitePaper,
-  pendingTools = [],
-  onClearHistory,
-  onStop,
-}: ChatTabProps) {
+export function ChatTab() {
+  const {
+    chatMessages: messages,
+    sendMessage: onSendMessage,
+    isChatLoading: isLoading,
+    chatError: error,
+    papers,
+    projectId,
+    insertCitation,
+    pendingTools,
+    clearChatHistory: onClearHistory,
+    stopGeneration: onStop,
+  } = useResearchEditor()
+
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const scrollRafRef = useRef<number | null>(null)
   const lastScrollTriggerRef = useRef({ messageCount: 0, lastMessageLength: 0 })
@@ -473,12 +474,20 @@ export function ChatTab({
     }
   }, [messages.length, isLoading, lastMessageContent.length])
 
-  // Handle cite from @ mention dropdown — look up full paper and forward
+  // Handle cite from @ mention dropdown — look up full paper and insert citation
   const handleCitePaper = useCallback((mentioned: { id: string }) => {
-    if (!onCitePaper) return
     const paper = papers.find(p => p.id === mentioned.id)
-    if (paper) onCitePaper(paper)
-  }, [onCitePaper, papers])
+    if (paper) {
+      insertCitation({
+        id: paper.id,
+        authors: paper.authors,
+        title: paper.title,
+        year: paper.year,
+        journal: paper.journal,
+        doi: paper.doi,
+      })
+    }
+  }, [papers, insertCitation])
 
   // Handle send from RichChatInput
   const handleSend = useCallback((
@@ -521,16 +530,14 @@ export function ChatTab({
       
       {/* Header with clear button - only show when no pending edits */}
       {messages.length > 0 && onClearHistory && pendingTools.length === 0 && (
-        <div className="flex-shrink-0 flex justify-end p-2 border-b border-border">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+        <div className="shrink-0 flex justify-end px-3 py-1.5 border-b border-border/30">
+          <button 
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             onClick={onClearHistory}
           >
-            <Trash2 className="h-3 w-3 mr-1" />
+            <Trash2 className="h-2.5 w-2.5" />
             Clear
-          </Button>
+          </button>
         </div>
       )}
       
@@ -541,30 +548,47 @@ export function ChatTab({
             // Show empty state immediately - no skeleton loading for fresh chat
             <EmptyState />
           ) : (
-            <div className="space-y-1">
-              {messages.map((message) => (
-                <MessageBubble 
-                  key={message.id} 
-                  message={message}
-                  papers={papers}
-                />
-              ))}
-              {isLoading && (
-                <div className="flex items-center justify-between pr-4">
-                  <LoadingBubble />
-                  {onStop && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground shrink-0"
-                      onClick={onStop}
-                    >
-                      <Square className="h-2.5 w-2.5 mr-1 fill-current" />
-                      Stop
-                    </Button>
-                  )}
-                </div>
-              )}
+            <div>
+              {messages.map((message, index) => {
+                // Skip rendering an empty assistant message while loading —
+                // the LoadingBubble handles that visual state instead.
+                if (
+                  isLoading &&
+                  index === messages.length - 1 &&
+                  message.role === 'assistant' &&
+                  !getMessageText(message) &&
+                  !getToolInvocations(message).length
+                ) {
+                  return null
+                }
+                return (
+                  <MessageBubble 
+                    key={message.id} 
+                    message={message}
+                    papers={papers}
+                  />
+                )
+              })}
+              {isLoading && (() => {
+                const lastMsg = messages[messages.length - 1]
+                const hasContent = lastMsg?.role === 'assistant' && (getMessageText(lastMsg) || getToolInvocations(lastMsg).length)
+                return (
+                  <>
+                    {!hasContent && <LoadingBubble />}
+                    {onStop && (
+                      <div className="flex justify-center py-2">
+                        <button
+                          className="flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer px-3 py-1 rounded-full border border-border/40 hover:border-border/60"
+                          onClick={onStop}
+                        >
+                          <Square className="h-2 w-2 fill-current" />
+                          Stop generating
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           )}
         </ScrollArea>
@@ -574,13 +598,13 @@ export function ChatTab({
       {messages.length > 0 && <QuickActions onSend={(prompt) => handleSend(prompt, [], [])} disabled={isLoading} />}
       
       {/* Rich Input - always visible at bottom */}
-      <div className="flex-shrink-0">
+      <div className="shrink-0">
         <RichChatInput 
           onSend={handleSend} 
           disabled={isLoading}
           papers={papers}
           projectId={projectId}
-          onCitePaper={onCitePaper ? handleCitePaper : undefined}
+          onCitePaper={handleCitePaper}
           onImageUpload={uploadImage}
           isUploadingImage={isUploading}
         />
@@ -616,19 +640,17 @@ function QuickActions({
   disabled: boolean 
 }) {
   return (
-    <div className="flex-shrink-0 px-4 py-2">
-      <div className="flex items-center justify-left gap-1.5 flex-wrap">
+    <div className="shrink-0 px-3 py-1.5">
+      <div className="flex items-center gap-1 flex-wrap">
         {QUICK_ACTIONS.map((action) => (
-          <Button
+          <button
             key={action.label}
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs px-2.5 rounded-full bg-background shadow-sm hover:bg-muted border-border/60"
+            className="text-[11px] px-2.5 py-1 rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-40 cursor-pointer"
             onClick={() => onSend(action.prompt)}
             disabled={disabled}
           >
             {action.label}
-          </Button>
+          </button>
         ))}
       </div>
     </div>

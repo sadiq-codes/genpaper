@@ -6,7 +6,6 @@ import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import Link from "next/link"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,43 +21,43 @@ import {
   PenLine,
   Trash2,
   ExternalLink,
-  Clock,
   BookOpen,
   FlaskConical,
   GraduationCap,
   ScrollText,
   Briefcase,
   type LucideIcon,
+  ArrowUpRight,
 } from "lucide-react"
 import { deleteProjectAction } from "@/components/dashboard/actions"
 import { cn } from "@/lib/utils"
 import type { ResearchProjectWithLatestVersion, PaperTypeKey, GenerationConfig } from "@/types/simplified"
 
-const paperTypeConfig: Record<PaperTypeKey, { icon: LucideIcon; label: string; color: string }> = {
+const paperTypeConfig: Record<PaperTypeKey, { icon: LucideIcon; label: string; shortLabel: string }> = {
   literatureReview: {
     icon: BookOpen,
     label: "Literature Review",
-    color: "text-muted-foreground bg-muted/50 border-border",
+    shortLabel: "Lit Review",
   },
   researchArticle: {
     icon: FlaskConical,
     label: "Research Article",
-    color: "text-primary bg-primary/5 border-primary/20",
+    shortLabel: "Research",
   },
   mastersThesis: {
     icon: GraduationCap,
     label: "Master's Thesis",
-    color: "text-muted-foreground bg-muted/50 border-border",
+    shortLabel: "Master's",
   },
   phdDissertation: {
     icon: ScrollText,
     label: "PhD Dissertation",
-    color: "text-muted-foreground bg-muted/50 border-border",
+    shortLabel: "PhD",
   },
   capstoneProject: {
     icon: Briefcase,
     label: "Capstone Project",
-    color: "text-muted-foreground bg-muted/50 border-border",
+    shortLabel: "Capstone",
   },
 }
 
@@ -81,15 +80,9 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
     return config?.paper_settings?.paperType || config?.paperType
   }
 
-  const hasOriginalResearch = (): boolean => {
-    if (project.has_original_research) return true
-    const config = project.generation_config as GenerationConfig | undefined
-    return config?.original_research?.has_original_research || false
-  }
-
   const paperType = getPaperType()
-  const isOriginalResearch = hasOriginalResearch()
   const typeConfig = paperType ? paperTypeConfig[paperType] : null
+  const TypeIcon = typeConfig?.icon ?? FileText
 
   const handleDelete = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -109,31 +102,22 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
     router.push(`/projects/${project.id}`)
   }
 
-  const getStatusVariant = (status: string): "default" | "secondary" | "destructive" | "outline" => {
+  const getStatusLabel = (status: string): string => {
     switch (status) {
-      case "complete":
-        return "default"
-      case "failed":
-        return "destructive"
-      case "generating":
-        return "secondary"
-      default:
-        return "outline"
+      case "complete": return "Complete"
+      case "failed": return "Failed"
+      case "generating": return "In Progress"
+      case "draft": return "Draft"
+      default: return status
     }
   }
 
-  const getStatusLabel = (status: string): string => {
+  const getStatusColor = (status: string): string => {
     switch (status) {
-      case "complete":
-        return "Complete"
-      case "failed":
-        return "Failed"
-      case "generating":
-        return "In Progress"
-      case "draft":
-        return "Draft"
-      default:
-        return status
+      case "complete": return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+      case "failed": return "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20"
+      case "generating": return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+      default: return "bg-muted text-muted-foreground border-border"
     }
   }
 
@@ -145,7 +129,7 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
 
     if (diffDays === 0) return "Today"
     if (diffDays === 1) return "Yesterday"
-    if (diffDays < 7) return `${diffDays} days ago`
+    if (diffDays < 7) return `${diffDays}d ago`
 
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
@@ -157,43 +141,50 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
   return (
     <Link
       href={editorUrl}
-      className="block"
+      className="block group"
       prefetch={true}
     >
-      <Card
+      <div
         className={cn(
-          "group cursor-pointer transition-all duration-200",
-          "hover:shadow-md hover:border-primary/30",
-          "relative overflow-hidden",
+          "relative rounded-xl border border-border/60 bg-card p-5",
+          "transition-all duration-300 ease-out",
+          "hover:border-foreground/15 hover:shadow-sm",
+          "hover:-translate-y-px",
           isDeleting && "opacity-50 pointer-events-none",
         )}
       >
-        {/* Top accent bar on hover */}
-        <div className="absolute inset-x-0 top-0 h-0.5 bg-primary opacity-0 group-hover:opacity-100 transition-opacity" />
-
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <CardTitle className="text-base font-semibold line-clamp-2 leading-snug">{project.topic}</CardTitle>
+        {/* Header: Type icon + Actions */}
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-muted/70 flex items-center justify-center shrink-0">
+              <TypeIcon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            </div>
+            {typeConfig && (
+              <span className="text-[11px] font-medium text-muted-foreground tracking-wide uppercase">
+                {typeConfig.shortLabel}
+              </span>
+            )}
+          </div>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={(e) => e.preventDefault()}>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-full"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <MoreHorizontal className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuItem asChild>
                 <Link href={editorUrl}>
-                  <PenLine className="h-4 w-4 mr-2" />
+                  <PenLine className="h-3.5 w-3.5 mr-2" />
                   Open Editor
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleViewDetails}>
-                <ExternalLink className="h-4 w-4 mr-2" />
+                <ExternalLink className="h-3.5 w-3.5 mr-2" />
                 View Details
               </DropdownMenuItem>
               <DropdownMenuSeparator />
@@ -202,55 +193,45 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
                 className="text-destructive focus:text-destructive"
                 disabled={isDeleting}
               >
-                <Trash2 className="h-4 w-4 mr-2" />
-                {isDeleting ? "Deleting..." : "Delete"}
+                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                {isDeleting ? "Deleting…" : "Delete"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </CardHeader>
 
-      <CardContent className="pt-0 space-y-3">
-        {(typeConfig || isOriginalResearch) && (
-          <div className="flex items-center gap-2 flex-wrap">
-            {typeConfig && (
-              <Badge variant="outline" className={cn("text-xs px-2 py-0.5 h-auto font-normal gap-1", typeConfig.color)}>
-                <typeConfig.icon className="h-3 w-3" />
-                {typeConfig.label}
-              </Badge>
-            )}
-            {isOriginalResearch && (
-              <Badge
-                variant="outline"
-                className="text-xs px-2 py-0.5 h-auto font-normal gap-1 text-primary bg-primary/5 border-primary/20"
-              >
-                <FlaskConical className="h-3 w-3" />
-                Original Research
-              </Badge>
-            )}
+        {/* Title */}
+        <h3 className="font-instrument text-lg tracking-tight leading-snug line-clamp-2 mb-4 group-hover:text-foreground transition-colors">
+          {project.topic}
+        </h3>
+
+        {/* Footer: Meta row */}
+        <div className="flex items-center justify-between pt-3 border-t border-border/40">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <FileText className="h-3 w-3" aria-hidden="true" />
+              {paperCount}
+            </span>
+            <span className="text-border">·</span>
+            <span>{formatDate(project.created_at)}</span>
           </div>
-        )}
 
-        {/* Stats */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-            {paperCount} {paperCount === 1 ? "paper" : "papers"}
-          </span>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between pt-2 border-t">
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Clock className="h-3 w-3" />
-            {formatDate(project.created_at)}
-          </span>
-          <Badge variant={getStatusVariant(project.status)} className="text-xs">
+          <Badge
+            variant="outline"
+            className={cn(
+              "text-[10px] px-2 py-0 h-5 font-medium border rounded-full",
+              getStatusColor(project.status)
+            )}
+          >
             {getStatusLabel(project.status)}
           </Badge>
         </div>
-      </CardContent>
-      </Card>
+
+        {/* Hover arrow indicator */}
+        <div className="absolute top-5 right-14 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-x-[-4px] group-hover:translate-x-0">
+          <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground" />
+        </div>
+      </div>
     </Link>
   )
 }

@@ -2,7 +2,6 @@
 
 import type React from "react"
 import { useEffect, useRef, useMemo, memo, useState } from "react"
-import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { 
@@ -60,12 +59,12 @@ interface GenerationLoadingUIProps {
 // =============================================================================
 
 const STAGE_ICONS: Record<string, React.ReactNode> = {
-  search: <Search className="h-4 w-4" />,
-  outline: <FileText className="h-4 w-4" />,
-  context: <BookOpen className="h-4 w-4" />,
-  generation: <Sparkles className="h-4 w-4" />,
-  quality: <CheckCircle2 className="h-4 w-4" />,
-  saving: <Loader2 className="h-4 w-4" />,
+  search: <Search className="h-3.5 w-3.5" />,
+  outline: <FileText className="h-3.5 w-3.5" />,
+  context: <BookOpen className="h-3.5 w-3.5" />,
+  generation: <Sparkles className="h-3.5 w-3.5" />,
+  quality: <CheckCircle2 className="h-3.5 w-3.5" />,
+  saving: <Loader2 className="h-3.5 w-3.5" />,
 }
 
 // =============================================================================
@@ -76,7 +75,7 @@ function ShimmerBar({ className, delay = 0 }: { className?: string; delay?: numb
   return (
     <div 
       className={cn(
-        "rounded-md bg-gradient-to-r from-muted via-muted/60 to-muted bg-[length:200%_100%] animate-shimmer",
+        "rounded-md bg-linear-to-r from-muted via-muted/60 to-muted bg-size-[200%_100%] animate-shimmer",
         className
       )}
       style={{ animationDelay: `${delay}ms` }}
@@ -108,7 +107,7 @@ function PaperSkeleton({ currentSection }: { currentSection: string | null }) {
         <ShimmerBar className="h-4 w-1/2" delay={100} />
       </div>
 
-      <div className="h-px bg-border" />
+      <div className="h-px bg-border/30" />
 
       {/* Section skeletons */}
       {sections.map((section, sectionIndex) => {
@@ -119,29 +118,29 @@ function PaperSkeleton({ currentSection }: { currentSection: string | null }) {
           <div 
             key={section.name} 
             className={cn(
-              "space-y-3 p-4 rounded-lg transition-all duration-500",
-              isActive && "bg-primary/5 ring-1 ring-primary/20",
+              "space-y-3 p-4 rounded-xl transition-all duration-500",
+              isActive && "bg-foreground/3 ring-1 ring-foreground/10",
               isComplete && "opacity-60"
             )}
           >
             {/* Section heading */}
             <div className="flex items-center gap-2">
               {isComplete ? (
-                <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
               ) : isActive ? (
-                <Loader2 className="h-4 w-4 text-primary animate-spin flex-shrink-0" />
+                <Loader2 className="h-3.5 w-3.5 text-foreground/60 animate-spin shrink-0" />
               ) : (
-                <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/20 flex-shrink-0" />
+                <div className="h-3.5 w-3.5 rounded-full border-2 border-border/40 shrink-0" />
               )}
               <ShimmerBar 
                 className={cn(
                   "h-5 w-32",
-                  isActive && "bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20"
+                  isActive && "bg-linear-to-r from-foreground/10 via-foreground/5 to-foreground/10"
                 )} 
                 delay={sectionIndex * 50} 
               />
               {isActive && (
-                <span className="text-xs text-primary font-medium ml-auto">
+                <span className="text-[10px] text-muted-foreground font-medium ml-auto uppercase tracking-wide">
                   Writing...
                 </span>
               )}
@@ -186,7 +185,7 @@ function renderMarkdownContent(text: string, isStreaming = false) {
     // H1
     if (trimmed.startsWith('# ')) {
       return (
-        <h1 key={i} className="text-xl font-bold mt-4 mb-2 first:mt-0 text-foreground">
+        <h1 key={i} className="font-instrument text-xl tracking-tight mt-4 mb-2 first:mt-0 text-foreground">
           {trimmed.slice(2)}
         </h1>
       )
@@ -195,7 +194,7 @@ function renderMarkdownContent(text: string, isStreaming = false) {
     // H2
     if (trimmed.startsWith('## ')) {
       return (
-        <h2 key={i} className="text-lg font-semibold mt-3 mb-2 text-foreground">
+        <h2 key={i} className="font-instrument text-lg tracking-tight mt-3 mb-2 text-foreground">
           {trimmed.slice(3)}
         </h2>
       )
@@ -204,7 +203,7 @@ function renderMarkdownContent(text: string, isStreaming = false) {
     // H3
     if (trimmed.startsWith('### ')) {
       return (
-        <h3 key={i} className="text-base font-medium mt-2 mb-1 text-foreground">
+        <h3 key={i} className="font-instrument text-base tracking-tight mt-2 mb-1 text-foreground">
           {trimmed.slice(4)}
         </h3>
       )
@@ -242,10 +241,10 @@ const CompletedSectionItem = memo(function CompletedSectionItem({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
-        <h2 className="text-lg font-semibold text-foreground">{section.title}</h2>
+        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+        <h2 className="font-instrument text-base tracking-tight text-foreground">{section.title}</h2>
       </div>
-      <div className="pl-6 border-l-2 border-success/20">
+      <div className="pl-6 border-l-2 border-emerald-500/20">
         <MemoizedSectionContent content={section.content} />
       </div>
     </div>
@@ -267,14 +266,12 @@ function LiveContentPreview({
   const lastScrollTriggerRef = useRef({ sectionsCount: 0, hasContent: false })
 
   // Throttled auto-scroll using requestAnimationFrame
-  // Only scrolls when sections change or content appears (not every character)
   useEffect(() => {
     const currentTrigger = { 
       sectionsCount: completedSections.length, 
       hasContent: currentSectionContent.length > 0 
     }
     
-    // Only scroll when section count changes or content first appears
     const shouldScroll = 
       currentTrigger.sectionsCount !== lastScrollTriggerRef.current.sectionsCount ||
       (currentTrigger.hasContent && !lastScrollTriggerRef.current.hasContent)
@@ -283,12 +280,10 @@ function LiveContentPreview({
     
     if (!shouldScroll) return
     
-    // Cancel pending scroll
     if (scrollRafRef.current) {
       cancelAnimationFrame(scrollRafRef.current)
     }
     
-    // Schedule scroll on next frame
     scrollRafRef.current = requestAnimationFrame(() => {
       if (contentEndRef.current) {
         contentEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -318,11 +313,11 @@ function LiveContentPreview({
       {/* Show current section being written */}
       {currentSection && (
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-primary">
-            <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
-            <h2 className="text-lg font-semibold">Writing: {currentSection}</h2>
+          <div className="flex items-center gap-2 text-foreground/70">
+            <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+            <h2 className="font-instrument text-base tracking-tight">Writing: {currentSection}</h2>
           </div>
-          <div className="pl-6 border-l-2 border-primary/30">
+          <div className="pl-6 border-l-2 border-foreground/15">
             {streamingContent ?? (
               <div className="space-y-2 py-2">
                 <ShimmerBar className="h-3 w-full" />
@@ -350,7 +345,6 @@ function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false)
   
   useEffect(() => {
-    // Check for mobile via user agent and touch capability
     const checkMobile = () => {
       const userAgent = navigator.userAgent || navigator.vendor
       const isMobileUA = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase())
@@ -384,11 +378,11 @@ function StatusPanel({
   const [dismissedWarning, setDismissedWarning] = useState(false)
   
   return (
-    <div className="flex flex-col h-full p-6 space-y-6">
+    <div className="flex flex-col h-full p-6 space-y-5">
       {/* Mobile Warning Banner */}
       {isMobile && !dismissedWarning && !error && progress < 100 && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
-          <Smartphone className="h-4 w-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+          <Smartphone className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
           <div className="flex-1 text-xs">
             <p className="font-medium">Keep this tab open</p>
             <p className="text-amber-600 dark:text-amber-500 mt-0.5">
@@ -400,33 +394,33 @@ function StatusPanel({
             className="text-amber-600 hover:text-amber-700 dark:text-amber-500"
             aria-label="Dismiss warning"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-3 w-3" />
           </button>
         </div>
       )}
 
       {/* Header */}
       <div className="space-y-1">
-        <h2 className="text-lg font-semibold">Generating Paper</h2>
-        <p className="text-sm text-muted-foreground line-clamp-2">{topic}</p>
+        <h2 className="font-instrument text-lg tracking-tight">Generating Paper</h2>
+        <p className="text-xs text-muted-foreground line-clamp-2">{topic}</p>
       </div>
 
-      {/* Current status with icon */}
+      {/* Current status */}
       <div className={cn(
-        "flex items-start gap-3 p-4 rounded-lg",
-        error ? "bg-destructive/10" : "bg-muted/50"
+        "flex items-start gap-3 p-3.5 rounded-xl border",
+        error ? "bg-destructive/5 border-destructive/20" : "bg-muted/30 border-border/30"
       )}>
         {error ? (
-          <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+          <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
         ) : progress >= 100 ? (
-          <CheckCircle2 className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+          <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
         ) : (
-          <Loader2 className="h-5 w-5 text-primary animate-spin flex-shrink-0 mt-0.5" />
+          <Loader2 className="h-4 w-4 text-muted-foreground animate-spin shrink-0 mt-0.5" />
         )}
         <div className="flex-1 min-w-0">
           <p className={cn(
-            "text-sm font-medium",
-            error && "text-destructive"
+            "text-sm",
+            error ? "text-destructive" : "text-foreground"
           )}>
             {error || message}
           </p>
@@ -440,9 +434,9 @@ function StatusPanel({
 
       {/* Papers found badge */}
       {papersFound > 0 && (
-        <div className="flex items-center gap-2 text-sm">
-          <FileStack className="h-4 w-4 text-muted-foreground" />
-          <span className="text-muted-foreground">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <FileStack className="h-3.5 w-3.5" />
+          <span>
             {papersFound} source{papersFound !== 1 ? 's' : ''} found
           </span>
         </div>
@@ -450,33 +444,33 @@ function StatusPanel({
 
       {/* Progress bar */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between text-sm">
+        <div className="flex items-center justify-between text-xs">
           <span className="text-muted-foreground">{timeEstimate}</span>
-          <span className="font-semibold text-primary">{Math.round(progress)}%</span>
+          <span className="font-medium text-foreground tabular-nums">{Math.round(progress)}%</span>
         </div>
-        <Progress value={progress} className="h-2" />
+        <Progress value={progress} className="h-1.5" />
       </div>
 
       {/* Stage list */}
-      <div className="flex-1 space-y-1 overflow-y-auto">
+      <div className="flex-1 space-y-0.5 overflow-y-auto">
         {stages.map((stage) => (
           <div
             key={stage.id}
             className={cn(
-              "flex items-center gap-3 py-2 px-3 rounded-md text-sm transition-all",
-              stage.status === "active" && "bg-primary/10 text-primary",
+              "flex items-center gap-3 py-2 px-3 rounded-lg text-xs transition-all",
+              stage.status === "active" && "bg-foreground/5 text-foreground",
               stage.status === "complete" && "text-muted-foreground",
               stage.status === "pending" && "text-muted-foreground/50",
-              stage.status === "error" && "text-destructive bg-destructive/10"
+              stage.status === "error" && "text-destructive bg-destructive/5"
             )}
           >
-            <div className="flex-shrink-0 w-5 flex items-center justify-center">
+            <div className="shrink-0 w-4 flex items-center justify-center">
               {stage.status === "complete" ? (
-                <CheckCircle2 className="h-4 w-4 text-success" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
               ) : stage.status === "error" ? (
-                <XCircle className="h-4 w-4" />
+                <XCircle className="h-3.5 w-3.5" />
               ) : stage.status === "active" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <div className="h-1.5 w-1.5 rounded-full bg-current opacity-40" />
               )}
@@ -493,26 +487,31 @@ function StatusPanel({
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2 pt-2 border-t">
+      <div className="flex gap-2 pt-3 border-t border-border/30">
         {error ? (
           <>
-            <Button variant="outline" onClick={onCancel} className="flex-1">
+            <button
+              onClick={onCancel}
+              className="flex-1 h-9 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors"
+            >
               Go Back
-            </Button>
-            <Button onClick={onRetry} className="flex-1">
+            </button>
+            <button
+              onClick={onRetry}
+              className="flex-1 h-9 rounded-full bg-foreground/80 text-background text-xs font-medium hover:bg-foreground transition-colors"
+            >
               Retry
-            </Button>
+            </button>
           </>
         ) : (
           onCancel && progress < 100 && (
-            <Button 
-              variant="ghost" 
+            <button 
               onClick={onCancel} 
-              className="w-full text-muted-foreground hover:text-foreground"
+              className="w-full h-9 rounded-full text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center justify-center gap-1.5"
             >
-              <X className="h-4 w-4 mr-2" />
+              <X className="h-3 w-3" />
               Cancel
-            </Button>
+            </button>
           )
         )}
       </div>
@@ -539,10 +538,10 @@ export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
 
   return (
     <div className="absolute inset-0 z-50 bg-background/98 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-5xl h-[min(85vh,700px)] bg-card border rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-5xl h-[min(85vh,700px)] bg-card border border-border/40 rounded-2xl shadow-2xl overflow-hidden">
         <div className="h-full flex flex-col md:flex-row">
           {/* Left: Paper Preview or Skeleton */}
-          <div className="flex-1 border-b md:border-b-0 md:border-r overflow-hidden bg-muted/30">
+          <div className="flex-1 border-b md:border-b-0 md:border-r border-border/30 overflow-hidden bg-muted/20">
             <ScrollArea className="h-full">
               {showLiveContent ? (
                 <LiveContentPreview 
@@ -557,7 +556,7 @@ export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
           </div>
 
           {/* Right: Status Panel */}
-          <div className="w-full md:w-80 lg:w-96 flex-shrink-0 bg-background overflow-y-auto">
+          <div className="w-full md:w-80 lg:w-96 shrink-0 bg-background overflow-y-auto">
             <StatusPanel {...props} />
           </div>
         </div>

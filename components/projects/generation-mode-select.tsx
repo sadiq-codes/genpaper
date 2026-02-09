@@ -55,33 +55,35 @@ export function GenerationModeSelect({
     <Select value={value} onValueChange={onValueChange} disabled={disabled}>
       <SelectTrigger
         className={cn(
-          'h-7 px-2.5 text-xs font-medium',
-          'bg-muted/50 hover:bg-muted',
-          'border-0 rounded-md',
+          'h-8 px-3 text-xs',
+          'bg-transparent hover:bg-muted/50',
+          'border border-border/40 hover:border-border/60 rounded-full',
           'gap-1.5 w-auto',
-          'focus:ring-1 focus:ring-ring/50',
+          'focus:ring-0 focus:border-foreground/20',
           'transition-colors'
         )}
       >
-        <Icon className="h-3 w-3" />
+        <Icon className="h-3 w-3 text-muted-foreground" />
         <SelectValue>
           {selectedOption?.shortLabel || 'Select mode'}
         </SelectValue>
       </SelectTrigger>
-      <SelectContent align="start">
+      <SelectContent align="start" className="rounded-xl">
         {generationModeOptions.map((option) => {
           const OptionIcon = option.icon
           return (
             <SelectItem
               key={option.value}
               value={option.value}
-              className="py-2"
+              className="py-2.5 rounded-lg"
             >
-              <div className="flex items-start gap-2">
-                <OptionIcon className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="flex items-start gap-2.5">
+                <div className="w-6 h-6 rounded-full bg-foreground/5 flex items-center justify-center shrink-0 mt-0.5">
+                  <OptionIcon className="h-3 w-3 text-foreground/60" />
+                </div>
                 <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">{option.label}</span>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="font-medium text-sm">{option.label}</span>
+                  <span className="text-[11px] text-muted-foreground/60">
                     {option.description}
                   </span>
                 </div>

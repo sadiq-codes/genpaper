@@ -18,13 +18,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Menu, X, AlertTriangle } from "lucide-react"
+import { AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 import type {
   ProjectPaper,
   Citation,
 } from "./types"
 import { cn } from "@/lib/utils"
+import { ResearchEditorProvider, type ResearchEditorContextValue } from "./research-editor-context"
 import { processContent } from "./utils/content-processor"
 import { editorToMarkdown } from "./utils/tiptap-to-markdown"
 import { GenerationProgress } from "./GenerationProgress"
@@ -73,7 +74,7 @@ export function ResearchEditor({
   // ============================================================================
   
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeTab, setActiveTab] = useState<"chat" | "research">("research")
   const [isMobile, setIsMobile] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -104,11 +105,11 @@ export function ResearchEditor({
     }
   }, [projectId, projectTitle])
   
-  // Resizable sidebar
+  // Resizable sidebar — default to ~1/3 of viewport, clamped to min/max
   const { width: sidebarWidth, isDragging, handleProps } = useResizablePanel({
     minWidth: 300,
     maxWidth: 600,
-    defaultWidth: 400,
+    defaultWidth: typeof window !== 'undefined' ? Math.min(600, Math.max(300, Math.round(window.innerWidth / 3))) : 400,
     storageKey: 'genpaper-sidebar-width',
   })
 
@@ -477,195 +478,205 @@ export function ResearchEditor({
   // ============================================================================
 
   // ============================================================================
-  // Sidebar Content
+  // Context Value
   // ============================================================================
 
-  const sidebarContent = (
-    <EditorSidebar
-      activeTab={activeTab}
-      onTabChange={setActiveTab}
-      projectId={projectId}
-      chatMessages={chatMessages}
-      onSendMessage={handleSendMessage}
-      isChatLoading={isChatLoading}
-      isChatLoadingHistory={isChatLoadingHistory}
-      chatError={chatError}
-      pendingTools={pendingTools}
-      onClearHistory={clearChatHistory}
-      papers={papers}
-      onInsertCitation={handleInsertCitation}
-      onOpenLibrary={() => setLibraryDrawerOpen(true)}
-      onRemovePaper={removePaper}
-      getProcessingStatus={processingStatus.getStatus}
-      processingSummary={processingStatus.summary}
-      onRetryPaper={processingStatus.retryPaper}
-      isProcessingPolling={processingStatus.isPolling}
-      onStopGeneration={stopGeneration}
-    />
-  )
+  const contextValue: ResearchEditorContextValue = {
+    // Project
+    projectId,
+    projectTitle: currentTitle,
+    papers,
+    citationStyle: currentCitationStyle,
+
+    // Chat
+    chatMessages,
+    isChatLoading,
+    isChatLoadingHistory,
+    chatError,
+    pendingTools,
+    sendMessage: handleSendMessage,
+    clearChatHistory,
+    stopGeneration,
+
+    // UI
+    isMobile,
+    mobileMenuOpen: isMobile ? mobileMenuOpen : sidebarOpen,
+    sidebarOpen,
+    activeTab,
+    setActiveTab,
+    toggleSidebar: () => isMobile ? setMobileMenuOpen(!mobileMenuOpen) : setSidebarOpen(!sidebarOpen),
+    openLibraryDrawer: () => setLibraryDrawerOpen(true),
+
+    // Actions
+    insertCitation: handleInsertCitation,
+    removePaper,
+
+    // Processing status
+    getProcessingStatus: processingStatus.getStatus,
+    processingSummary: processingStatus.summary,
+    retryPaper: processingStatus.retryPaper,
+    isProcessingPolling: processingStatus.isPolling,
+
+    // Review toolbar
+    pendingEditCount: pendingTools.length,
+    activeEditIndex,
+    navigateEdit,
+    acceptAllEdits: confirmAllTools,
+    rejectAllEdits: rejectAllTools,
+  }
+
+  const sidebarContent = <EditorSidebar />
 
   // ============================================================================
   // Render
   // ============================================================================
 
   return (
-    <div className="h-screen w-full flex flex-col rounded-xl border border-border overflow-hidden bg-background">
-      {/* Top Navigation */}
-      <EditorTopNav
-        projectTitle={currentTitle}
-        projectId={projectId}
-        onTitleChange={handleTitleChange}
-        onExport={handleExport}
-        onPublish={() => toast.info("Publish feature coming soon")}
-        onHistory={() => toast.info("History feature coming soon")}
-        onSettings={() => setSettingsModalOpen(true)}
-        saveStatus={hasUnsavedChanges ? "unsaved" : "saved"}
-      />
-
-      {/* Generation Progress Overlay */}
-      {isGenerating && projectId && (
-        <GenerationProgress
+    <ResearchEditorProvider value={contextValue}>
+      <div className="h-screen w-full flex flex-col rounded-xl border border-border/40 overflow-hidden bg-background">
+        {/* Top Navigation */}
+        <EditorTopNav
+          projectTitle={currentTitle}
           projectId={projectId}
-          topic={projectTopic || projectTitle}
-          paperType={paperType}
-          onComplete={handleGenerationComplete}
-          onError={handleGenerationError}
-          onCancel={handleGenerationCancel}
+          onTitleChange={handleTitleChange}
+          onExport={handleExport}
+          onPublish={() => toast.info("Publish feature coming soon")}
+          onHistory={() => toast.info("History feature coming soon")}
+          onSettings={() => setSettingsModalOpen(true)}
+          saveStatus={hasUnsavedChanges ? "unsaved" : "saved"}
         />
-      )}
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden relative">
-        {/* Left Sidebar - Desktop */}
-        {!isMobile && (
-          <div
-            className={cn(
-              "relative flex-shrink-0 overflow-hidden",
-              !isDragging && "transition-all duration-300 ease-in-out",
-              !sidebarOpen && "w-0 min-w-0"
-            )}
-            style={{ width: sidebarOpen ? sidebarWidth : 0 }}
-          >
-            <div className="h-full p-3 pr-0">{sidebarContent}</div>
-            
-            {/* Resize Handle */}
-            {sidebarOpen && (
-              <div
-                {...handleProps}
-                className={cn(
-                  "absolute top-0 right-0 w-1 h-full cursor-col-resize z-10",
-                  "hover:bg-primary/20 active:bg-primary/30",
-                  "transition-colors duration-150",
-                  isDragging && "bg-primary/30"
-                )}
-                title="Drag to resize"
-              >
-                {/* Visual indicator on hover */}
-                <div className={cn(
-                  "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
-                  "w-1 h-8 rounded-full bg-border",
-                  "opacity-0 hover:opacity-100 transition-opacity",
-                  isDragging && "opacity-100 bg-primary"
-                )} />
-              </div>
-            )}
-          </div>
+        {/* Generation Progress Overlay */}
+        {isGenerating && projectId && (
+          <GenerationProgress
+            projectId={projectId}
+            topic={projectTopic || projectTitle}
+            paperType={paperType}
+            onComplete={handleGenerationComplete}
+            onError={handleGenerationError}
+            onCancel={handleGenerationCancel}
+          />
         )}
 
-        {/* Mobile Sidebar Overlay */}
-        {isMobile && mobileMenuOpen && (
-          <>
-            <div className="fixed inset-0 bg-black/50 z-30" onClick={() => setMobileMenuOpen(false)} />
-            <div className="fixed inset-y-0 left-0 w-[85%] max-w-[380px] z-40 p-3">{sidebarContent}</div>
-          </>
-        )}
-
-        {/* Document Editor Area */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Editor */}
-          <div className="flex-1 overflow-hidden">
-            <DocumentEditor
-              initialContent={initialContent}
-              onUpdate={(newContent) => {
-                setContent(newContent)
-              }}
-              onEditorReady={setEditor}
-              onChat={handleChatFromToolbar}
-              onPaperUpdated={handlePaperUpdated}
-              projectId={projectId}
-              projectTopic={projectTitle}
-              papers={papers}
-              citationStyle={currentCitationStyle}
-              // Review toolbar props
-              pendingEditCount={pendingTools.length}
-              activeEditIndex={activeEditIndex}
-              onNavigateEdit={navigateEdit}
-              onAcceptAllEdits={confirmAllTools}
-              onRejectAllEdits={rejectAllTools}
-              isMobile={isMobile}
-              mobileMenuOpen={isMobile ? mobileMenuOpen : sidebarOpen}
-              onToggleMobileMenu={() => isMobile ? setMobileMenuOpen(!mobileMenuOpen) : setSidebarOpen(!sidebarOpen)}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Library Drawer */}
-      <LibraryDrawer
-        isOpen={libraryDrawerOpen}
-        onClose={() => setLibraryDrawerOpen(false)}
-        onAddToProject={handleAddPaperToProject}
-        currentProjectId={projectId}
-      />
-
-      {/* Project Settings Modal */}
-      {projectId && (
-        <ProjectSettingsModal
-          open={settingsModalOpen}
-          onOpenChange={setSettingsModalOpen}
-          projectId={projectId}
-          currentCitationStyle={currentCitationStyle}
-          onCitationStyleChange={(style) => setCurrentCitationStyle(style as CitationStyleType)}
-        />
-      )}
-
-      {/* Remove Paper Confirmation Dialog */}
-      <Dialog
-        open={removePaperDialog.open}
-        onOpenChange={(open) => !open && closeRemovePaperDialog()}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
-              Remove Paper
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to remove &ldquo;{removePaperDialog.paperTitle}&rdquo; from this project?
-            </DialogDescription>
-          </DialogHeader>
-
-          {removePaperDialog.claimCount > 0 && (
-            <div className="rounded-lg bg-destructive/10 p-3 text-sm">
-              <p className="font-medium text-destructive">
-                This paper has {removePaperDialog.claimCount} extracted claims.
-              </p>
-              <p className="text-muted-foreground mt-1">
-                Removing the paper will also delete these claims from your analysis.
-              </p>
+        {/* Main Content Area */}
+        <div className="flex-1 flex overflow-hidden relative">
+          {/* Left Sidebar - Desktop */}
+          {!isMobile && (
+            <div
+              className={cn(
+                "relative shrink-0 overflow-hidden",
+                !isDragging && "transition-[width] duration-300 ease-in-out",
+                !sidebarOpen && "w-0 min-w-0"
+              )}
+              style={{ width: sidebarOpen ? sidebarWidth : 0 }}
+            >
+              <div className="h-full p-3 pr-0">{sidebarContent}</div>
+              
+              {/* Resize Handle */}
+              {sidebarOpen && (
+                <div
+                  {...handleProps}
+                  className={cn(
+                    "absolute top-0 right-0 w-1 h-full cursor-col-resize z-10",
+                    "hover:bg-foreground/10 active:bg-foreground/15",
+                    "transition-colors duration-150",
+                    isDragging && "bg-foreground/15"
+                  )}
+                  title="Drag to resize"
+                >
+                  <div className={cn(
+                    "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+                    "w-0.5 h-8 rounded-full bg-border/60",
+                    "opacity-0 hover:opacity-100 transition-opacity",
+                    isDragging && "opacity-100 bg-foreground/30"
+                  )} />
+                </div>
+              )}
             </div>
           )}
 
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={closeRemovePaperDialog}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={() => confirmRemovePaper(true)}>
-              Remove Paper
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+          {/* Mobile Sidebar Overlay */}
+          {isMobile && mobileMenuOpen && (
+            <>
+              <div className="fixed inset-0 bg-black/50 z-30" role="button" tabIndex={0} aria-label="Close sidebar" onClick={() => setMobileMenuOpen(false)} onKeyDown={(e) => e.key === 'Escape' && setMobileMenuOpen(false)} />
+              <div className="fixed inset-y-0 left-0 w-[85%] max-w-[380px] z-40 p-3">{sidebarContent}</div>
+            </>
+          )}
+
+          {/* Document Editor Area */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Editor */}
+            <div className="flex-1 overflow-hidden">
+              <DocumentEditor
+                initialContent={initialContent}
+                onUpdate={(newContent) => {
+                  setContent(newContent)
+                }}
+                onEditorReady={setEditor}
+                onChat={handleChatFromToolbar}
+                onPaperUpdated={handlePaperUpdated}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Library Drawer */}
+        <LibraryDrawer
+          isOpen={libraryDrawerOpen}
+          onClose={() => setLibraryDrawerOpen(false)}
+          onAddToProject={handleAddPaperToProject}
+          currentProjectId={projectId}
+        />
+
+        {/* Project Settings Modal */}
+        {projectId && (
+          <ProjectSettingsModal
+            open={settingsModalOpen}
+            onOpenChange={setSettingsModalOpen}
+            projectId={projectId}
+            currentCitationStyle={currentCitationStyle}
+            onCitationStyleChange={(style) => setCurrentCitationStyle(style as CitationStyleType)}
+          />
+        )}
+
+        {/* Remove Paper Confirmation Dialog */}
+        <Dialog
+          open={removePaperDialog.open}
+          onOpenChange={(open) => !open && closeRemovePaperDialog()}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 font-instrument tracking-tight">
+                <AlertTriangle className="h-5 w-5 text-destructive" aria-hidden="true" />
+                Remove Paper
+              </DialogTitle>
+              <DialogDescription>
+                Are you sure you want to remove &ldquo;{removePaperDialog.paperTitle}&rdquo; from this project?
+              </DialogDescription>
+            </DialogHeader>
+
+            {removePaperDialog.claimCount > 0 && (
+              <div className="rounded-xl bg-destructive/5 border border-destructive/10 p-3 text-sm">
+                <p className="font-medium text-destructive">
+                  This paper has {removePaperDialog.claimCount} extracted claims.
+                </p>
+                <p className="text-muted-foreground mt-1">
+                  Removing the paper will also delete these claims from your analysis.
+                </p>
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={closeRemovePaperDialog}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={() => confirmRemovePaper(true)}>
+                Remove Paper
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </ResearchEditorProvider>
   )
 }

@@ -45,6 +45,7 @@ export function ChatInput({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={disabled}
+          aria-label="Chat message"
           className="min-h-[40px] max-h-[120px] flex-1 resize-none border-0 bg-transparent p-2 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           rows={1}
         />
@@ -55,6 +56,7 @@ export function ChatInput({
           disabled={disabled || !message.trim()}
           size="icon"
           className="h-8 w-8 shrink-0 rounded-lg"
+          aria-label="Send message"
         >
           <Send className="h-4 w-4" />
         </Button>

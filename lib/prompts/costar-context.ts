@@ -336,7 +336,7 @@ export function buildCompleteContext(params: {
   
   return {
     ...base,
-    precedingText: precedingText.slice(-300), // Limit preceding text
+    precedingText: precedingText.slice(-800), // Enough context to detect repetition
     followingText,
     sectionGuidance: getSectionGuidance(currentSection),
     outlineContext,

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
 import { ArrowRight, Menu, X } from 'lucide-react'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
@@ -25,17 +24,17 @@ export function LandingNav() {
     <nav className="fixed top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-md border-b border-border">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          <Link href="/" className="flex items-center space-x-2 group">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center p-1.5">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-foreground/80 flex items-center justify-center p-1.5">
               <Image 
                 src="/favicon-32x32.png" 
                 alt="GenPaper" 
                 width={20} 
                 height={20} 
-                className="w-full h-full"
+                className="w-full h-full invert dark:invert-0"
               />
             </div>
-            <span className="text-xl font-bold text-foreground">GenPaper</span>
+            <span className="text-lg font-semibold tracking-tight text-foreground/80">GenPaper</span>
           </Link>
 
           <div className="hidden md:flex items-center space-x-8">
@@ -52,12 +51,10 @@ export function LandingNav() {
               How it Works
             </a>
             {user ? (
-              <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-6" asChild>
-                <Link href="/projects">
-                  Dashboard
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
+              <Link href="/projects" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-5 py-2 text-sm font-medium transition-colors inline-flex items-center gap-1.5">
+                Dashboard
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
             ) : (
               <>
                 <Link
@@ -66,9 +63,9 @@ export function LandingNav() {
                 >
                   Sign In
                 </Link>
-                <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-6" asChild>
-                  <Link href="/signup">Get Started</Link>
-                </Button>
+                <Link href="/signup" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-5 py-2 text-sm font-medium transition-colors">
+                  Get Started
+                </Link>
               </>
             )}
           </div>
@@ -103,12 +100,10 @@ export function LandingNav() {
                 How it Works
               </a>
               {user ? (
-                <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg" asChild>
-                  <Link href="/projects">
-                    Dashboard
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
+                <Link href="/projects" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-5 py-2 text-sm font-medium transition-colors inline-flex items-center gap-1.5 w-fit">
+                  Dashboard
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
               ) : (
                 <>
                   <Link
@@ -118,9 +113,9 @@ export function LandingNav() {
                   >
                     Sign In
                   </Link>
-                  <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg" asChild>
-                    <Link href="/signup">Get Started</Link>
-                  </Button>
+                  <Link href="/signup" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-5 py-2 text-sm font-medium transition-colors w-fit">
+                    Get Started
+                  </Link>
                 </>
               )}
             </div>
@@ -151,36 +146,19 @@ export function LandingCTA({ variant }: LandingCTAProps) {
     return (
       <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
         {user ? (
-          <Button
-            size="lg"
-            className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg shadow-lg transition-all duration-300 hover:shadow-xl"
-            asChild
-          >
-            <Link href="/projects">
-              Start New Paper
-              <ArrowRight className="ml-2 h-5 w-5" />
-            </Link>
-          </Button>
+          <Link href="/projects" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-8 py-3 text-base font-medium transition-colors inline-flex items-center gap-2">
+            Start New Paper
+            <ArrowRight className="h-4 w-4" />
+          </Link>
         ) : (
           <>
-            <Button
-              size="lg"
-              className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg shadow-lg transition-all duration-300 hover:shadow-xl"
-              asChild
-            >
-              <Link href="/signup">
-                Get Started
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Link>
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className="px-8 py-6 text-base rounded-lg border border-border text-foreground hover:bg-muted transition-all duration-300 bg-transparent"
-              asChild
-            >
-              <Link href="/login">Sign In</Link>
-            </Button>
+            <Link href="/signup" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-8 py-3 text-base font-medium transition-colors inline-flex items-center gap-2">
+              Get Started
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link href="/login" className="rounded-full px-8 py-3 text-base font-medium border border-border text-foreground hover:bg-muted transition-colors">
+              Sign In
+            </Link>
           </>
         )}
       </div>
@@ -190,7 +168,7 @@ export function LandingCTA({ variant }: LandingCTAProps) {
   // Final CTA section
   return (
     <>
-      <h2 className="text-4xl font-bold text-foreground mb-6">
+      <h2 className="font-instrument text-4xl tracking-tight text-foreground mb-6">
         {user ? 'Ready to continue?' : 'Start writing smarter today'}
       </h2>
       <p className="text-lg text-muted-foreground mb-12">
@@ -202,45 +180,23 @@ export function LandingCTA({ variant }: LandingCTAProps) {
       <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
         {user ? (
           <>
-            <Button
-              size="lg"
-              className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg shadow-lg transition-all duration-300"
-              asChild
-            >
-              <Link href="/projects">
-                Start New Paper
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Link>
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className="px-8 py-6 text-base rounded-lg border border-border text-foreground hover:bg-muted transition-all duration-300 bg-transparent"
-              asChild
-            >
-              <Link href="/projects">View Projects</Link>
-            </Button>
+            <Link href="/projects" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-8 py-3 text-base font-medium transition-colors inline-flex items-center gap-2">
+              Start New Paper
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link href="/projects" className="rounded-full px-8 py-3 text-base font-medium border border-border text-foreground hover:bg-muted transition-colors">
+              View Projects
+            </Link>
           </>
         ) : (
           <>
-            <Button
-              size="lg"
-              className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg shadow-lg transition-all duration-300"
-              asChild
-            >
-              <Link href="/signup">
-                Write Your First Paper
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Link>
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              className="px-8 py-6 text-base rounded-lg border border-border text-foreground hover:bg-muted transition-all duration-300 bg-transparent"
-              asChild
-            >
-              <Link href="/login">Sign In</Link>
-            </Button>
+            <Link href="/signup" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-8 py-3 text-base font-medium transition-colors inline-flex items-center gap-2">
+              Write Your First Paper
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link href="/login" className="rounded-full px-8 py-3 text-base font-medium border border-border text-foreground hover:bg-muted transition-colors">
+              Sign In
+            </Link>
           </>
         )}
       </div>

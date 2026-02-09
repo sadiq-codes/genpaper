@@ -25,19 +25,12 @@ import { cn } from '@/lib/utils'
 // =============================================================================
 
 export interface ReviewToolbarProps {
-  /** Total number of pending edits */
   pendingCount: number
-  /** Current active edit index (1-based) */
   currentIndex: number
-  /** Navigate to prev/next edit */
   onNavigate: (direction: 'next' | 'prev') => void
-  /** Accept all pending edits */
   onAcceptAll: () => void
-  /** Reject all pending edits */
   onRejectAll: () => void
-  /** Whether toolbar is minimized */
   isMinimized?: boolean
-  /** Toggle minimized state */
   onToggleMinimize?: () => void
 }
 
@@ -48,30 +41,30 @@ export interface ReviewToolbarProps {
 function KeyboardHints() {
   return (
     <div className="text-xs space-y-1.5 p-1">
-      <div className="font-medium text-foreground mb-2">Keyboard Shortcuts</div>
+      <div className="font-instrument text-sm tracking-tight text-foreground mb-2">Keyboard Shortcuts</div>
       <div className="flex items-center gap-2 text-muted-foreground">
-        <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-[10px]">Tab</kbd>
+        <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded-md font-mono text-[10px] border border-border/50">Tab</kbd>
         <span>Next edit</span>
       </div>
       <div className="flex items-center gap-2 text-muted-foreground">
-        <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-[10px]">Shift+Tab</kbd>
+        <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded-md font-mono text-[10px] border border-border/50">Shift+Tab</kbd>
         <span>Previous edit</span>
       </div>
       <div className="flex items-center gap-2 text-muted-foreground">
-        <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-[10px]">Enter</kbd>
+        <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded-md font-mono text-[10px] border border-border/50">Enter</kbd>
         <span>Accept current</span>
       </div>
       <div className="flex items-center gap-2 text-muted-foreground">
-        <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-[10px]">Esc</kbd>
+        <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded-md font-mono text-[10px] border border-border/50">Esc</kbd>
         <span>Reject current</span>
       </div>
-      <div className="border-t border-border mt-2 pt-2">
+      <div className="border-t border-border/40 mt-2 pt-2">
         <div className="flex items-center gap-2 text-muted-foreground">
-          <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-[10px]">Cmd+Shift+A</kbd>
+          <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded-md font-mono text-[10px] border border-border/50">Cmd+Shift+A</kbd>
           <span>Accept all</span>
         </div>
         <div className="flex items-center gap-2 text-muted-foreground mt-1">
-          <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono text-[10px]">Cmd+Shift+R</kbd>
+          <kbd className="px-1.5 py-0.5 bg-foreground/5 rounded-md font-mono text-[10px] border border-border/50">Cmd+Shift+R</kbd>
           <span>Reject all</span>
         </div>
       </div>
@@ -102,17 +95,17 @@ export function ReviewToolbar({
       <div 
         className={cn(
           'sticky top-0 z-20 flex items-center',
-          'px-3 py-1.5 bg-background/95 backdrop-blur-sm border-b border-border/40',
+          'px-3 py-1.5 bg-background border-b border-border/30',
           'animate-in slide-in-from-top duration-200'
         )}
       >
         <button
           onClick={onToggleMinimize}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
         >
-          <FileEdit className="h-3.5 w-3.5" />
+          <FileEdit className="h-3 w-3" />
           <span>{pendingCount} edit{pendingCount !== 1 ? 's' : ''} pending</span>
-          <Maximize2 className="h-3 w-3 ml-0.5" />
+          <Maximize2 className="h-2.5 w-2.5 ml-0.5" />
         </button>
       </div>
     )
@@ -123,23 +116,21 @@ export function ReviewToolbar({
       <div 
         className={cn(
           'sticky top-0 z-20 flex items-center justify-between gap-3',
-          'px-3 py-1.5 bg-background/95 backdrop-blur-sm border-b border-border/40',
+          'px-3 py-1.5 bg-background border-b border-border/30',
           'animate-in slide-in-from-top duration-200'
         )}
         role="toolbar"
         aria-label="Edit review toolbar"
       >
-        {/* Left: Edit counter and navigation */}
+        {/* Left: Counter and navigation */}
         <div className="flex items-center gap-2">
-          {/* Badge */}
           <div className="flex items-center gap-1.5">
-            <FileEdit className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-xs font-medium text-muted-foreground">
-              {pendingCount} edit{pendingCount !== 1 ? 's' : ''} pending
+            <FileEdit className="h-3 w-3 text-muted-foreground" />
+            <span className="text-[11px] font-medium text-muted-foreground">
+              {pendingCount} edit{pendingCount !== 1 ? 's' : ''}
             </span>
           </div>
 
-          {/* Navigation */}
           {pendingCount > 1 && (
             <div className="flex items-center gap-0.5 ml-1">
               <Tooltip>
@@ -147,18 +138,18 @@ export function ReviewToolbar({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 text-muted-foreground"
+                    className="h-5 w-5 rounded-full text-muted-foreground"
                     onClick={() => onNavigate('prev')}
                     aria-label="Previous edit"
                   >
-                    <ChevronLeft className="h-3.5 w-3.5" />
+                    <ChevronLeft className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Previous (Shift+Tab)</TooltipContent>
               </Tooltip>
               
-              <span className="text-xs text-muted-foreground min-w-[40px] text-center">
-                {currentIndex} of {pendingCount}
+              <span className="text-[11px] text-muted-foreground min-w-[36px] text-center tabular-nums">
+                {currentIndex}/{pendingCount}
               </span>
               
               <Tooltip>
@@ -166,11 +157,11 @@ export function ReviewToolbar({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 text-muted-foreground"
+                    className="h-5 w-5 rounded-full text-muted-foreground"
                     onClick={() => onNavigate('next')}
                     aria-label="Next edit"
                   >
-                    <ChevronRight className="h-3.5 w-3.5" />
+                    <ChevronRight className="h-3 w-3" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Next (Tab)</TooltipContent>
@@ -180,17 +171,16 @@ export function ReviewToolbar({
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-3">
-          {/* Keyboard hints */}
+        <div className="flex items-center gap-2">
           <Tooltip open={showKeyboardHints} onOpenChange={setShowKeyboardHints}>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-muted-foreground"
+                className="h-6 w-6 rounded-full text-muted-foreground"
                 aria-label="Keyboard shortcuts"
               >
-                <Keyboard className="h-3.5 w-3.5" />
+                <Keyboard className="h-3 w-3" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" align="end" className="w-56">
@@ -198,50 +188,38 @@ export function ReviewToolbar({
             </TooltipContent>
           </Tooltip>
 
-          {/* Minimize button */}
           {onToggleMinimize && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-muted-foreground"
+                  className="h-6 w-6 rounded-full text-muted-foreground"
                   onClick={onToggleMinimize}
                   aria-label="Minimize toolbar"
                 >
-                  <Minimize2 className="h-3.5 w-3.5" />
+                  <Minimize2 className="h-3 w-3" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Minimize</TooltipContent>
             </Tooltip>
           )}
 
-          {/* Batch actions — text links matching diff block style */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onRejectAll}
-                className="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors cursor-pointer"
-              >
-                <X className="h-3 w-3 inline mr-0.5 -mt-px" />
-                Reject All
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>Cmd+Shift+R</TooltipContent>
-          </Tooltip>
+          <button
+            onClick={onRejectAll}
+            className="text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer flex items-center gap-0.5"
+          >
+            <X className="h-2.5 w-2.5" />
+            Reject All
+          </button>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onAcceptAll}
-                className="text-xs text-green-600 dark:text-green-400 hover:underline transition-colors cursor-pointer"
-              >
-                <Check className="h-3 w-3 inline mr-0.5 -mt-px" />
-                Accept All
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>Cmd+Shift+A</TooltipContent>
-          </Tooltip>
+          <button
+            onClick={onAcceptAll}
+            className="text-[11px] text-emerald-600 dark:text-emerald-400 hover:underline transition-colors cursor-pointer flex items-center gap-0.5"
+          >
+            <Check className="h-2.5 w-2.5" />
+            Accept All
+          </button>
         </div>
       </div>
     </TooltipProvider>

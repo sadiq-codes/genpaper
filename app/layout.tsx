@@ -1,6 +1,6 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Geist, Geist_Mono, Caveat } from "next/font/google"
+import { Geist, Geist_Mono, Caveat, Instrument_Serif } from "next/font/google"
 import "./globals.css"
 import { AuthProvider } from "@/components/providers/AuthProvider"
 import { getUser } from "@/lib/auth/cached"
@@ -20,6 +20,13 @@ const geistMono = Geist_Mono({
 const caveat = Caveat({
   variable: "--font-caveat",
   subsets: ["latin"],
+})
+
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-instrument",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
 })
 
 export const metadata: Metadata = {
@@ -89,7 +96,7 @@ export default async function RootLayout({
   const user = await getUser()
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} ${caveat.variable} antialiased`} suppressHydrationWarning={true}>
+        <body className={`${geistSans.variable} ${geistMono.variable} ${caveat.variable} ${instrumentSerif.variable} antialiased`} suppressHydrationWarning={true}>
         <AuthProvider initialUser={user}>
           {children}
         </AuthProvider>

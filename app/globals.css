@@ -270,14 +270,10 @@ pre code .hljs-emphasis {
 }
 
 .prose h1 {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.5rem;
   color: var(--foreground);
 }
 
 .prose h2 {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.25rem;
   color: var(--foreground);
 }
 
@@ -571,6 +567,11 @@ kbd {
 /* Hand-drawn font for editor tabs */
 .font-caveat {
   font-family: var(--font-caveat), cursive;
+}
+
+/* Serif display font for landing page headings */
+.font-instrument {
+  font-family: var(--font-instrument), serif;
 }
 
 /* Research Editor Styles */
@@ -1123,35 +1124,35 @@ kbd {
    ============================================================================= */
 
 .mention-suggestion-menu {
-  @apply bg-background border border-border/60 rounded-md shadow-md;
+  @apply bg-popover border border-border/40 rounded-xl shadow-lg;
   @apply overflow-hidden min-w-[240px] max-w-[360px] max-h-[280px] overflow-y-auto py-1;
 }
 
 .mention-suggestion-header {
-  @apply px-2.5 py-1 text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wider;
+  @apply px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider;
 }
 
 .mention-suggestion-item {
   @apply flex items-center gap-0 w-full text-left;
-  @apply transition-colors hover:bg-muted/60 cursor-pointer border-0 bg-transparent;
+  @apply transition-colors hover:bg-muted/50 cursor-pointer border-0 bg-transparent;
 }
 
 .mention-suggestion-item.is-selected {
-  @apply bg-muted/60;
+  @apply bg-muted/50;
 }
 
 .mention-suggestion-main {
-  @apply flex items-center gap-2 flex-1 min-w-0 px-2.5 py-1.5 border-0 bg-transparent cursor-pointer;
+  @apply flex items-center gap-2.5 flex-1 min-w-0 px-3 py-2 border-0 bg-transparent cursor-pointer;
 }
 
 .mention-suggestion-cite {
-  @apply flex items-center gap-1 shrink-0 px-2 py-1 mr-1.5 text-[11px] font-medium;
-  @apply text-primary/70 hover:text-primary hover:bg-primary/10 rounded transition-colors;
+  @apply flex items-center gap-1 shrink-0 px-2 py-1 mr-2 text-[11px] font-medium;
+  @apply text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-full transition-colors;
   @apply border-0 bg-transparent cursor-pointer opacity-0;
 }
 
 .mention-suggestion-icon {
-  @apply flex items-center justify-center w-5 h-5 text-muted-foreground shrink-0;
+  @apply flex items-center justify-center w-6 h-6 rounded-lg bg-muted/70 text-muted-foreground shrink-0;
 }
 
 .mention-suggestion-item.is-selected .mention-suggestion-icon,
@@ -1169,11 +1170,12 @@ kbd {
 }
 
 .mention-suggestion-title {
-  @apply text-xs font-medium text-foreground leading-tight line-clamp-1;
+  @apply text-xs text-foreground leading-tight line-clamp-1 tracking-tight;
+  font-family: var(--font-instrument), serif;
 }
 
 .mention-suggestion-meta {
-  @apply flex items-center gap-1.5 text-[11px] text-muted-foreground/70 leading-tight;
+  @apply flex items-center gap-1.5 text-[11px] text-muted-foreground leading-tight;
 }
 
 .mention-suggestion-authors {
@@ -1185,11 +1187,11 @@ kbd {
 }
 
 .mention-suggestion-loading {
-  @apply flex items-center gap-2 px-2.5 py-2.5 text-xs text-muted-foreground;
+  @apply flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground;
 }
 
 .mention-suggestion-empty {
-  @apply px-2.5 py-2.5 text-xs text-muted-foreground text-center;
+  @apply px-3 py-3 text-xs text-muted-foreground text-center;
 }
 
 /* =============================================================================

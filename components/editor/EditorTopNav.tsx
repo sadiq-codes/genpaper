@@ -83,25 +83,25 @@ export function EditorTopNav({
       setEditValue(projectTitle)
     }
   }, [handleSave, projectTitle])
+
   return (
-    <header className="h-14 border-b border-border/50 flex items-center justify-between px-4 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="h-12 border-b border-border/30 flex items-center justify-between px-4 bg-background">
       {/* Left: Sidebar Trigger + Title */}
-      <div className="flex items-center gap-2">
-        {/* Sidebar Trigger - Opens app navigation */}
+      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+        {/* Sidebar Trigger */}
         <TooltipProvider delayDuration={300}>
           <Tooltip>
             <TooltipTrigger asChild>
-              <SidebarTrigger className="h-8 w-8" />
+              <SidebarTrigger className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground shrink-0" />
             </TooltipTrigger>
             <TooltipContent side="bottom">Navigation (B)</TooltipContent>
           </Tooltip>
         </TooltipProvider>
 
-        <div className="h-6 w-px bg-border mx-1" />
+        <div className="h-4 w-px bg-border/40 shrink-0" />
 
-        {/* Project Title — click to rename */}
-        <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4 text-muted-foreground hidden sm:block" />
+        {/* Project Title — larger, wider */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           {isEditing ? (
             <input
               ref={inputRef}
@@ -109,69 +109,70 @@ export function EditorTopNav({
               onChange={(e) => setEditValue(e.target.value)}
               onBlur={handleSave}
               onKeyDown={handleKeyDown}
-              className="font-medium text-sm text-foreground bg-transparent border-b border-primary/50 outline-none max-w-[150px] sm:max-w-[250px] px-0 py-0"
+              className="font-instrument text-base tracking-tight text-foreground bg-transparent border-b border-foreground/20 outline-none w-full max-w-[500px] px-0 py-0"
+              aria-label="Project title"
               autoFocus
             />
           ) : (
             <button
               onClick={handleStartEditing}
-              className="font-medium text-sm text-foreground/80 truncate max-w-[150px] sm:max-w-[250px] hover:text-foreground transition-colors cursor-text text-left"
+              className="font-instrument text-base tracking-tight text-foreground/80 truncate max-w-[500px] hover:text-foreground transition-colors cursor-text text-left"
               title="Click to rename"
             >
               {projectTitle}
             </button>
           )}
-        </div>
 
-        {/* Save Status Indicator */}
-        <div className={cn(
-          "flex items-center gap-1.5 text-xs transition-opacity",
-          saveStatus === 'saved' ? "text-muted-foreground" : "text-foreground"
-        )}>
+          {/* Save Status — inline next to title */}
+          <div className={cn(
+            "flex items-center gap-1 text-[11px] shrink-0 transition-opacity",
+            saveStatus === 'saved' ? "text-muted-foreground/50" : "text-foreground"
+          )}>
           {saveStatus === 'saving' && (
             <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span className="hidden sm:inline">Saving...</span>
+              <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden="true" />
+              <span className="hidden sm:inline">Saving…</span>
             </>
           )}
           {saveStatus === 'saved' && (
             <>
-              <Check className="h-3 w-3 text-success" />
+              <Check className="h-2.5 w-2.5" aria-hidden="true" />
               <span className="hidden sm:inline">Saved</span>
             </>
           )}
           {saveStatus === 'unsaved' && (
-            <span className="text-warning">Unsaved changes</span>
+            <span className="text-amber-500 dark:text-amber-400">Unsaved</span>
           )}
+          </div>
         </div>
       </div>
 
       {/* Right: Actions */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         <TooltipProvider delayDuration={300}>
-          {/* Export Dropdown */}
+          {/* Export */}
           <DropdownMenu>
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                    <Upload className="h-4 w-4" />
+                  <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground" aria-label="Export">
+                    <Upload className="h-3.5 w-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
               <TooltipContent>Export</TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuItem onClick={() => onExport('pdf')}>
-                <File className="mr-2 h-4 w-4" />
+                <File className="mr-2 h-3.5 w-3.5" />
                 Export as PDF
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onExport('docx')}>
-                <FileText className="mr-2 h-4 w-4" />
+                <FileText className="mr-2 h-3.5 w-3.5" />
                 Export as DOCX
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onExport('latex')}>
-                <FileCode className="mr-2 h-4 w-4" />
+                <FileCode className="mr-2 h-3.5 w-3.5" />
                 Export as LaTeX
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -183,10 +184,11 @@ export function EditorTopNav({
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="h-8 w-8"
+                className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground"
                 onClick={onPublish}
+                aria-label="Publish"
               >
-                <Globe className="h-4 w-4" />
+                <Globe className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Publish</TooltipContent>
@@ -198,10 +200,11 @@ export function EditorTopNav({
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="h-8 w-8"
+                className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground"
                 onClick={onHistory}
+                aria-label="History"
               >
-                <Clock className="h-4 w-4" />
+                <Clock className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>History</TooltipContent>
@@ -213,10 +216,11 @@ export function EditorTopNav({
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="h-8 w-8"
+                className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground"
                 onClick={onSettings}
+                aria-label="Settings"
               >
-                <Settings className="h-4 w-4" />
+                <Settings className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent>Settings</TooltipContent>

@@ -94,15 +94,17 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <Link href="/projects" className="flex items-center gap-2 px-2 py-1 hover:opacity-80 transition-opacity">
-          <Image 
-            src="/favicon-32x32.png" 
-            alt="GenPaper" 
-            width={24} 
-            height={24} 
-            className="h-6 w-6"
-          />
+          <div className="w-7 h-7 rounded-lg bg-foreground/80 flex items-center justify-center p-1 shrink-0">
+            <Image 
+              src="/favicon-32x32.png" 
+              alt="GenPaper" 
+              width={16} 
+              height={16} 
+              className="w-full h-full invert dark:invert-0"
+            />
+          </div>
           {state === "expanded" && (
-            <span className="font-semibold text-lg">GenPaper</span>
+            <span className="font-semibold text-base tracking-tight text-foreground/80">GenPaper</span>
           )}
         </Link>
       </SidebarHeader>

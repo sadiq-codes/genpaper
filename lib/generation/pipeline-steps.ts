@@ -28,6 +28,7 @@ import {
 import { 
   getExtractionsService, 
   getPapersNeedingExtractionService,
+  hasExtractionService,
   saveExtractionService 
 } from '@/lib/extraction/db-service'
 import { analyzeFindings, type FindingWithPaper, type AnalysisResult } from '@/lib/analysis/cross-document'
@@ -240,6 +241,16 @@ export async function runExtractionBatchPhase(
       limit(async () => {
         const paper = papers.find(p => p.id === paperId)
         if (!paper) return
+
+        // Idempotency: if this step is retried, don't create a new extraction version.
+        // (pendingPaperIds is persisted from an earlier check and may be stale.)
+        try {
+          const alreadyExtracted = await hasExtractionService(paperId)
+          if (alreadyExtracted) return
+        } catch (err) {
+          // If we can't check, proceed with extraction; save will fail if constraints do.
+          warn({ paperId, error: err }, 'Failed to check existing extraction; proceeding')
+        }
         
         const pdfContent = (paper as any).pdf_content as string || ''
         if (pdfContent.length < MIN_FULL_TEXT_LENGTH) return
@@ -739,17 +750,26 @@ export async function runFinalizePhase(
         .delete()
         .eq('project_id', projectId)
       
-      // Insert new instances
+      // Insert new instances.
+      // Use the instanceId as the primary key `id` so markers in content match rows.
       const instanceRecords = citationInstances.map(inst => ({
         project_id: projectId,
-        instance_id: inst.instanceId,
+        id: inst.instanceId,
         paper_id: inst.paperId,
         quote: inst.quote
       }))
       
-      await supabase
-        .from('citation_instances')
-        .insert(instanceRecords)
+      // Batch inserts to avoid request size/timeouts for large papers.
+      const BATCH_SIZE = 500
+      for (let i = 0; i < instanceRecords.length; i += BATCH_SIZE) {
+        const batch = instanceRecords.slice(i, i + BATCH_SIZE)
+        const { error } = await supabase
+          .from('citation_instances')
+          .insert(batch)
+        if (error) {
+          throw error
+        }
+      }
     } catch (err) {
       warn({ error: err }, 'Failed to save citation instances')
     }

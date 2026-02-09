@@ -9,7 +9,7 @@ export function PageContainer({ children, className }: PageContainerProps) {
   return (
     <div 
       className={cn(
-        "h-full min-h-[calc(100vh-2rem)] flex flex-col rounded-xl border border-border overflow-hidden bg-background",
+        "h-full min-h-[calc(100vh-2rem)] flex flex-col rounded-xl border border-border/40 overflow-hidden bg-background",
         className
       )}
     >

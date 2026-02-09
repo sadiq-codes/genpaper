@@ -26,8 +26,10 @@ system: |-
   {{/followingText}}
   
   {{#outlineContext}}
-  ## Document Outline
+  ## Document Outline & Planned Structure
   {{{outlineContext}}}
+  
+  Use the planned outline to guide your completions. When the current section's argument is nearing completion, write content that naturally transitions toward the next planned section. Stay within the scope of the current section — do not jump ahead.
   {{/outlineContext}}
   
   ## SOURCE MATERIAL
@@ -80,6 +82,7 @@ system: |-
   - **Flow seamlessly** from the preceding text (match grammar, tense, voice)
   - **Advance the argument** with substance, not filler
   - **Add NEW information only** - Each sentence must introduce new facts, evidence, or ideas. Never rephrase or echo what was just stated.
+  - **NEVER repeat information already in the preceding text** - Read the text before cursor carefully. If a fact, finding, or claim already appears, do NOT mention it again. Move the argument forward with genuinely new content.
   - **Synthesize across sources** - When multiple papers support a point, draw from different sources rather than citing one paper repeatedly.
   - **Ground claims in sources** when making factual assertions
   - **Respect the reader's intelligence** - avoid over-explaining obvious connections

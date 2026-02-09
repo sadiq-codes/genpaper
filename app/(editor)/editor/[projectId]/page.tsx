@@ -15,15 +15,14 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
   const isWriteMode = write === '1'
   const supabase = await createClient()
   
-  // Get user
+  // Get user (layout already checks auth, but we need user.id for the query)
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) {
     redirect('/login')
   }
 
-  // Fetch project and citation paper IDs first
+  // Fetch project and citations+papers in ONE parallel batch (2 queries, not 3)
   const [projectResult, citationsResult] = await Promise.all([
-    // Get project - only select needed columns
     supabase
       .from('research_projects')
       .select('id, user_id, topic, content, status, citation_style, paper_type, generation_config')
@@ -31,19 +30,22 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
       .eq('user_id', user.id)
       .single(),
     
-    // Get citation records (paper_ids and csl_json) - no join, just the citation data
+    // Join citations with papers in a single query
     supabase
       .from('project_citations')
-      .select('paper_id, csl_json')
+      .select('paper_id, csl_json, papers(id, title, authors, publication_date, venue, doi, source, pdf_url)')
       .eq('project_id', projectId)
   ])
 
   const { data: project, error: projectError } = projectResult
-  const { data: citations, error: citationsError } = citationsResult
+  const { data: citations } = citationsResult
 
-  // Now fetch the actual papers using the paper_ids from citations
-  const paperIds = citations?.map(c => c.paper_id).filter(Boolean) || []
-  let papersData: Array<{
+  if (projectError || !project) {
+    notFound()
+  }
+
+  // Build paper data from the joined query
+  type PaperRow = {
     id: string
     title: string
     authors: string[]
@@ -52,76 +54,49 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     doi: string | null
     source: string | null
     pdf_url: string | null
-  }> = []
-
-  if (paperIds.length > 0) {
-    const { data: fetchedPapers, error: papersError } = await supabase
-      .from('papers')
-      .select('id, title, authors, publication_date, venue, doi, source, pdf_url')
-      .in('id', paperIds)
-    
-    if (papersError) {
-      console.error('[EditorPage] Error fetching papers:', papersError.message)
-    } else {
-      papersData = (fetchedPapers || []) as typeof papersData
-    }
   }
 
-  // Create a map of paper_id -> paper data for quick lookup
-  const papersById = new Map(papersData.map(p => [p.id, p]))
+  type JoinedCitation = {
+    paper_id: string
+    csl_json: Record<string, unknown> | null
+    papers: PaperRow | PaperRow[] | null
+  }
+
+  const joinedCitations = (citations || []) as unknown as JoinedCitation[]
   
   // Create a map of paper_id -> csl_json for fallback
   const cslJsonById = new Map(
-    (citations || [])
+    joinedCitations
       .filter(c => c.csl_json)
       .map(c => [c.paper_id, c.csl_json])
   )
 
-  // Debug logging for paper fetching issues
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[EditorPage] Paper fetch results:', {
-      citationsCount: citations?.length || 0,
-      citationsError: citationsError?.message,
-      paperIdsFromCitations: paperIds,
-      papersFoundInDb: papersData.length,
-      papersWithCslJson: cslJsonById.size,
-      missingPapers: paperIds.filter(id => !papersById.has(id)),
-    })
-  }
-
-  if (projectError || !project) {
-    notFound()
-  }
-
-  // Build papers array by combining:
-  // 1. Papers found in the papers table (via paper_id from citations)
-  // 2. Fallback to csl_json from citations for papers not in DB
+  // Build papers array from joined citation data
   const paperMap = new Map<string, ProjectPaper>()
   
-  // First, add papers found in the database
-  for (const paper of papersData) {
-    paperMap.set(paper.id, {
-      id: paper.id,
-      title: paper.title || 'Untitled',
-      authors: paper.authors || [],
-      year: paper.publication_date 
-        ? new Date(paper.publication_date).getFullYear() 
-        : new Date().getFullYear(),
-      journal: paper.venue || undefined,
-      doi: paper.doi || undefined,
-      pdfUrl: paper.pdf_url || undefined,
-      // Map old source values to new simplified types
-      source: paper.source === 'upload' ? 'upload' : 'search',
-    })
-  }
-  
-  // Then, for any paper_ids not found in DB, try to use csl_json as fallback
-  for (const paperId of paperIds) {
-    if (!paperMap.has(paperId) && cslJsonById.has(paperId)) {
+  for (const citation of joinedCitations) {
+    // Supabase join returns object for many-to-one, array for one-to-many
+    const paper = Array.isArray(citation.papers) ? citation.papers[0] : citation.papers
+    
+    if (paper) {
+      // Paper found in DB via join
+      paperMap.set(paper.id, {
+        id: paper.id,
+        title: paper.title || 'Untitled',
+        authors: paper.authors || [],
+        year: paper.publication_date 
+          ? new Date(paper.publication_date).getFullYear() 
+          : new Date().getFullYear(),
+        journal: paper.venue || undefined,
+        doi: paper.doi || undefined,
+        pdfUrl: paper.pdf_url || undefined,
+        source: paper.source === 'upload' ? 'upload' : 'search',
+      })
+    } else if (cslJsonById.has(citation.paper_id)) {
+      // Fallback to CSL JSON for papers not in DB
       try {
-        const csl = cslJsonById.get(paperId) as Record<string, unknown>
+        const csl = cslJsonById.get(citation.paper_id) as Record<string, unknown>
         
-        // Format authors from CSL JSON
         const authors = Array.isArray(csl.author) 
           ? (csl.author as Array<{literal?: string; given?: string; family?: string}>).map((a) => {
               if (a.literal) return a.literal
@@ -130,20 +105,16 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
             })
           : []
 
-        paperMap.set(paperId, {
-          id: paperId,
+        paperMap.set(citation.paper_id, {
+          id: citation.paper_id,
           title: (csl.title as string) || 'Untitled',
           authors,
           year: ((csl.issued as {['date-parts']?: number[][]})?.['date-parts']?.[0]?.[0]) || new Date().getFullYear(),
           journal: csl['container-title'] as string | undefined,
           doi: csl.DOI as string | undefined,
         })
-        
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`[EditorPage] Used CSL JSON fallback for paper ${paperId}`)
-        }
       } catch (e) {
-        console.error(`[EditorPage] Failed to parse CSL JSON for paper ${paperId}:`, e)
+        console.error(`[EditorPage] Failed to parse CSL JSON for paper ${citation.paper_id}:`, e)
       }
     }
   }

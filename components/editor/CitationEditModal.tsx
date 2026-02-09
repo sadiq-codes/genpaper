@@ -10,7 +10,6 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -281,8 +280,8 @@ export function CitationEditModal({
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle>Edit Citation Metadata</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className="font-instrument text-lg tracking-tight">Edit Citation Metadata</DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
             Update the citation information for this reference. Changes only affect this project.
           </DialogDescription>
         </DialogHeader>
@@ -290,14 +289,14 @@ export function CitationEditModal({
         {/* Only show loading if we have no initial data AND we're fetching */}
         {isFetching && !initialData && !hasPopulatedInitial ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin mr-2" />
-            <span className="text-muted-foreground">Loading citation data...</span>
+            <Loader2 className="h-5 w-5 animate-spin mr-2 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Loading citation data...</span>
           </div>
         ) : (
-          <div className="space-y-6 py-4">
+          <div className="space-y-5 py-4">
             {/* Title */}
-            <div className="space-y-2">
-              <Label htmlFor="title">Title *</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="title" className="text-xs">Title *</Label>
               <Input
                 id="title"
                 value={title}
@@ -307,8 +306,8 @@ export function CitationEditModal({
             </div>
 
             {/* Publication Type */}
-            <div className="space-y-2">
-              <Label htmlFor="pub-type">Publication Type</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="pub-type" className="text-xs">Publication Type</Label>
               <Select value={pubType} onValueChange={setPubType}>
                 <SelectTrigger id="pub-type">
                   <SelectValue />
@@ -326,22 +325,20 @@ export function CitationEditModal({
             {/* Authors */}
             <fieldset className="space-y-2">
               <div className="flex items-center justify-between">
-                <legend className="text-sm font-medium">Authors *</legend>
-                <Button
+                <legend className="text-xs font-medium">Authors *</legend>
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   onClick={addAuthor}
-                  className="h-7 text-xs"
+                  className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full border border-border/40 text-[11px] text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors"
                 >
-                  <Plus className="h-3 w-3 mr-1" />
+                  <Plus className="h-3 w-3" />
                   Add Author
-                </Button>
+                </button>
               </div>
               <div className="space-y-2">
                 {authors.map((author, index) => (
                   <div key={index} className="flex items-center gap-2">
-                    <GripVertical className="h-4 w-4 text-muted-foreground/50 cursor-grab" />
+                    <GripVertical className="h-3.5 w-3.5 text-muted-foreground cursor-grab shrink-0" />
                     <Input
                       id={`author-family-${index}`}
                       name={`author-family-${index}`}
@@ -360,32 +357,30 @@ export function CitationEditModal({
                       onChange={(e) => updateAuthor(index, 'given', e.target.value)}
                       className="flex-1"
                     />
-                    <Button
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon"
                       onClick={() => removeAuthor(index)}
                       disabled={authors.length <= 1}
                       aria-label={`Remove author ${index + 1}`}
                       className={cn(
-                        "h-8 w-8 shrink-0",
-                        authors.length <= 1 && "opacity-30"
+                        "h-7 w-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shrink-0",
+                        authors.length <= 1 && "opacity-30 pointer-events-none"
                       )}
                     >
-                      <Trash2 className="h-4 w-4 text-muted-foreground" />
-                    </Button>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground">
                 Enter family name (surname) and given name(s) separately for proper formatting.
               </p>
             </fieldset>
 
             {/* Year and Journal in a row */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="year">Year</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="year" className="text-xs">Year</Label>
                 <Input
                   id="year"
                   type="number"
@@ -396,8 +391,8 @@ export function CitationEditModal({
                   placeholder="e.g., 2024"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="journal">Journal / Venue</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="journal" className="text-xs">Journal / Venue</Label>
                 <Input
                   id="journal"
                   value={journal}
@@ -408,9 +403,9 @@ export function CitationEditModal({
             </div>
 
             {/* Volume, Issue, Pages in a row */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="volume">Volume</Label>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="volume" className="text-xs">Volume</Label>
                 <Input
                   id="volume"
                   value={volume}
@@ -418,8 +413,8 @@ export function CitationEditModal({
                   placeholder="e.g., 42"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="issue">Issue</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="issue" className="text-xs">Issue</Label>
                 <Input
                   id="issue"
                   value={issue}
@@ -427,8 +422,8 @@ export function CitationEditModal({
                   placeholder="e.g., 3"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="pages">Pages</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="pages" className="text-xs">Pages</Label>
                 <Input
                   id="pages"
                   value={pages}
@@ -439,9 +434,9 @@ export function CitationEditModal({
             </div>
 
             {/* DOI and URL */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="doi">DOI</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="doi" className="text-xs">DOI</Label>
                 <Input
                   id="doi"
                   value={doi}
@@ -449,8 +444,8 @@ export function CitationEditModal({
                   placeholder="e.g., 10.1234/example"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="url">URL</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="url" className="text-xs">URL</Label>
                 <Input
                   id="url"
                   value={url}
@@ -462,8 +457,8 @@ export function CitationEditModal({
 
             {/* Publisher (for books) */}
             {(pubType === 'book' || pubType === 'chapter' || pubType === 'thesis' || pubType === 'report') && (
-              <div className="space-y-2">
-                <Label htmlFor="publisher">Publisher</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="publisher" className="text-xs">Publisher</Label>
                 <Input
                   id="publisher"
                   value={publisher}
@@ -475,14 +470,22 @@ export function CitationEditModal({
           </div>
         )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saveMutation.isPending}>
+        <DialogFooter className="gap-2">
+          <button
+            onClick={() => onOpenChange(false)}
+            disabled={saveMutation.isPending}
+            className="h-9 px-4 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors disabled:opacity-50"
+          >
             Cancel
-          </Button>
-          <Button onClick={handleSave} disabled={saveMutation.isPending || isFetching}>
-            {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saveMutation.isPending || isFetching}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-foreground/80 text-background text-xs font-medium hover:bg-foreground transition-colors disabled:opacity-50"
+          >
+            {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Save Changes
-          </Button>
+          </button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

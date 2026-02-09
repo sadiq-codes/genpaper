@@ -1,10 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
 import { Loader2, Check, User, Mail, Calendar } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -61,23 +59,24 @@ export function ProfileSection({ user }: ProfileSectionProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold">Profile</h2>
-        <p className="text-sm text-muted-foreground">
+        <h2 className="font-instrument text-xl tracking-tight">Profile</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
           Your account information
         </p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Personal Information</CardTitle>
-          <CardDescription>
+      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+        <div>
+          <h3 className="font-instrument text-base tracking-tight">Personal Information</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
             Update your profile details
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 sm:space-y-6">
+          </p>
+        </div>
+
+        <div className="space-y-4 sm:space-y-5">
           {/* Full Name */}
           <div className="space-y-2">
-            <Label htmlFor="fullName" className="flex items-center gap-2">
+            <Label htmlFor="fullName" className="flex items-center gap-2 text-xs">
               <User className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               Full Name
             </Label>
@@ -94,23 +93,23 @@ export function ProfileSection({ user }: ProfileSectionProps) {
 
           {/* Email (read-only) */}
           <div className="space-y-2">
-            <Label className="flex items-center gap-2">
+            <Label className="flex items-center gap-2 text-xs">
               <Mail className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               Email
             </Label>
             <Input
               value={user.email}
               disabled
-              className="w-full sm:max-w-md bg-muted"
+              className="w-full sm:max-w-md bg-muted/50"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11px] text-muted-foreground">
               Contact support to change your email address
             </p>
           </div>
 
           {/* Member Since */}
           <div className="space-y-2">
-            <Label className="flex items-center gap-2">
+            <Label className="flex items-center gap-2 text-xs">
               <Calendar className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               Member Since
             </Label>
@@ -118,25 +117,29 @@ export function ProfileSection({ user }: ProfileSectionProps) {
               {formatDate(user.createdAt)}
             </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Save Button */}
       {hasChanges && (
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={isSaving}>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-foreground/80 text-background text-sm font-medium hover:bg-foreground transition-colors disabled:opacity-50"
+          >
             {isSaving ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                 Saving…
               </>
             ) : (
               <>
-                <Check className="mr-2 h-4 w-4" aria-hidden="true" />
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
                 Save Changes
               </>
             )}
-          </Button>
+          </button>
         </div>
       )}
     </div>

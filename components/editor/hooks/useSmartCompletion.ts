@@ -97,24 +97,6 @@ function suggestionOverlapsDocument(
   return ratio >= overlapThreshold
 }
 
-// Find the last complete sentence in text
-// Returns the sentence text or empty string if no complete sentence found
-function findLastCompleteSentence(text: string): string {
-  if (!text.trim()) return ''
-  
-  // Match sentences ending with . ! or ? (followed by space or end of string)
-  // This regex finds all complete sentences
-  const sentenceEndPattern = /[^.!?]*[.!?](?:\s|$)/g
-  const matches = text.match(sentenceEndPattern)
-  
-  if (!matches || matches.length === 0) {
-    return '' // No complete sentence found
-  }
-  
-  // Return the last complete sentence, trimmed
-  return matches[matches.length - 1].trim()
-}
-
 // Extract context from editor - single pass document traversal
 function extractEditorContext(editor: Editor): EditorContext | null {
   if (!editor) return null
@@ -142,31 +124,34 @@ function extractEditorContext(editor: Editor): EditorContext | null {
   const charBeforeCursor = cursorOffset > 0 ? currentParagraph.charAt(cursorOffset - 1) : ''
   const cursorAtLineEnd = textAfterCursor.trim().length === 0
 
-  // Find the last complete sentence before cursor
-  let precedingText = findLastCompleteSentence(textBeforeCursor)
+  // Collect preceding text: up to ~800 chars of text before cursor.
+  // This gives the LLM enough context to see what's already been written
+  // and avoid generating repetitive content.
+  const MAX_PRECEDING_CHARS = 800
+  let precedingText = textBeforeCursor.trim()
   
-  // If no complete sentence in current paragraph, look at previous paragraphs
-  if (!precedingText) {
-    // Collect all paragraphs before cursor position, then search backwards
+  // If current paragraph text before cursor is short, collect from previous paragraphs
+  if (precedingText.length < MAX_PRECEDING_CHARS) {
     const paragraphsBefore: string[] = []
     
     doc.nodesBetween(0, cursorPos, (node) => {
-      // Only collect paragraphs that are before our current paragraph
       if (node.type.name === 'paragraph' && node !== paragraphNode && node.textContent.trim()) {
         paragraphsBefore.push(node.textContent)
       }
       return true
     })
     
-    // Search backwards through collected paragraphs
-    for (let i = paragraphsBefore.length - 1; i >= 0; i--) {
-      const lastSentence = findLastCompleteSentence(paragraphsBefore[i])
-      if (lastSentence) {
-        precedingText = lastSentence
-        break
-      }
+    // Prepend previous paragraphs until we have enough context
+    for (let i = paragraphsBefore.length - 1; i >= 0 && precedingText.length < MAX_PRECEDING_CHARS; i--) {
+      precedingText = paragraphsBefore[i] + ' ' + precedingText
     }
   }
+  
+  // Trim to last MAX_PRECEDING_CHARS characters
+  if (precedingText.length > MAX_PRECEDING_CHARS) {
+    precedingText = precedingText.slice(-MAX_PRECEDING_CHARS)
+  }
+  precedingText = precedingText.trim()
 
   // Single pass: find heading above cursor AND build outline
   let currentSection = ''
@@ -249,6 +234,11 @@ function contextualFilter(context: EditorContext): { shouldRequest: boolean; rea
   // ALLOW: Empty paragraph after a heading -> opening sentence
   if (isEmptyParagraph && hasHeadingAbove && currentSection !== 'Untitled Section') {
     return { shouldRequest: true, reason: 'empty paragraph after heading' }
+  }
+
+  // ALLOW: Empty document with no headings -> suggest first section heading
+  if (isEmptyParagraph && !hasHeadingAbove && context.documentOutline.length === 0) {
+    return { shouldRequest: true, reason: 'empty document - suggest first heading' }
   }
 
   // SKIP: No meaningful text to work with

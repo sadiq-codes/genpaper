@@ -2,9 +2,6 @@
 
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Progress } from '@/components/ui/progress'
 import { 
@@ -17,7 +14,7 @@ import {
   CheckCircle,
   PartyPopper
 } from 'lucide-react'
-import { useSubscription, getCheckoutUrl, getPortalUrl } from '@/lib/hooks/use-subscription'
+import { getCheckoutUrl, getPortalUrl, type SubscriptionData } from '@/lib/hooks/use-subscription'
 import { TIER_CONFIG } from '@/types/subscription'
 import type { SubscriptionTier, BillingInterval } from '@/types/subscription'
 import { toast } from 'sonner'
@@ -28,33 +25,58 @@ interface BillingSectionProps {
     id: string
     email: string
   }
+  /** Server-prefetched subscription data — renders instantly, no loading spinner */
+  initialSubscription?: {
+    tier: string
+    tierName: string
+    papersUsed: number
+    papersLimit: number
+    papersRemaining: number
+    periodEndsAt: string | null
+    features: string[]
+  } | null
 }
 
-export function BillingSection({ user }: BillingSectionProps) {
-  const { subscription, isLoading, refresh } = useSubscription()
+export function BillingSection({ user, initialSubscription }: BillingSectionProps) {
+  // Use server-prefetched data directly — no client-side fetch needed for initial render
+  const [subscription, setSubscription] = useState<SubscriptionData | null>(
+    initialSubscription
+      ? { ...initialSubscription, tier: initialSubscription.tier as SubscriptionData['tier'] }
+      : null
+  )
   const [redirectingTier, setRedirectingTier] = useState<'starter' | 'pro' | 'manage' | null>(null)
   const [billingInterval, setBillingInterval] = useState<BillingInterval>('yearly')
   const searchParams = useSearchParams()
   
+  // Refresh subscription data from API (only called after checkout success)
+  const refresh = async () => {
+    try {
+      const response = await fetch('/api/billing/subscription')
+      if (response.ok) {
+        const data = await response.json()
+        setSubscription(data)
+      }
+    } catch {
+      console.warn('Failed to refresh subscription')
+    }
+  }
+
   // Show success toast after checkout
   useEffect(() => {
     const checkoutSuccess = searchParams.get('checkout')
     if (checkoutSuccess === 'success') {
-      // Refresh subscription data
       refresh()
-      // Show success toast
       toast.success('Welcome to your new plan!', {
         description: 'Your subscription has been activated.',
         icon: <PartyPopper className="h-4 w-4" />,
       })
-      // Clean up URL
       const url = new URL(window.location.href)
       url.searchParams.delete('checkout')
       url.searchParams.delete('checkoutId')
       url.searchParams.delete('customer_session_token')
       window.history.replaceState({}, '', url.toString())
     }
-  }, [searchParams, refresh])
+  }, [searchParams])
   
   const handleUpgrade = (tier: 'starter' | 'pro') => {
     setRedirectingTier(tier)
@@ -70,127 +92,113 @@ export function BillingSection({ user }: BillingSectionProps) {
     window.location.href = getPortalUrl()
   }
   
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <CreditCard className="h-5 w-5" />
-            Billing & Subscription
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-center justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </CardContent>
-      </Card>
-    )
-  }
-  
   const currentTier = subscription?.tier || 'free'
   const tierConfig = TIER_CONFIG[currentTier]
   const isPaid = currentTier !== 'free'
   
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <CreditCard className="h-5 w-5" />
-          Billing & Subscription
-        </CardTitle>
-        <CardDescription>
+    <div className="space-y-6">
+      <div>
+        <h2 className="font-instrument text-xl tracking-tight">Billing & Subscription</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
           Manage your subscription and view usage
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-6">
         {/* Current Plan */}
-        <div className="flex items-center justify-between p-4 rounded-lg border bg-muted/30">
+        <div className="flex items-center justify-between p-4 rounded-lg bg-muted/30 border border-border/30">
           <div className="flex items-center gap-3">
             {currentTier === 'pro' ? (
-              <Crown className="h-6 w-6 text-primary" />
+              <div className="w-9 h-9 rounded-lg bg-foreground/5 flex items-center justify-center">
+                <Crown className="h-5 w-5 text-foreground" />
+              </div>
             ) : currentTier === 'starter' ? (
-              <Zap className="h-6 w-6 text-primary" />
+              <div className="w-9 h-9 rounded-lg bg-foreground/5 flex items-center justify-center">
+                <Zap className="h-5 w-5 text-foreground" />
+              </div>
             ) : (
-              <Sparkles className="h-6 w-6 text-muted-foreground" />
+              <div className="w-9 h-9 rounded-lg bg-muted/70 flex items-center justify-center">
+                <Sparkles className="h-5 w-5 text-muted-foreground" />
+              </div>
             )}
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-semibold">{tierConfig.name}</span>
+                <span className="font-instrument text-base tracking-tight">{tierConfig.name}</span>
                 {isPaid && (
-                  <Badge variant="secondary">
+                  <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
                     ${tierConfig.price}/month
-                  </Badge>
+                  </span>
                 )}
               </div>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {tierConfig.description}
               </p>
             </div>
           </div>
           {isPaid && (
-            <Button 
-              variant="outline" 
-              size="sm"
+            <button
               onClick={handleManageSubscription}
               disabled={redirectingTier !== null}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors disabled:opacity-50"
             >
               {redirectingTier === 'manage' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <>
                   Manage
-                  <ExternalLink className="h-3 w-3 ml-1" />
+                  <ExternalLink className="h-3 w-3" />
                 </>
               )}
-            </Button>
+            </button>
           )}
         </div>
         
         {/* Usage */}
         {subscription && (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground">Papers this month</span>
-              <span className="font-medium">
+              <span className="font-medium text-foreground">
                 {subscription.papersUsed} / {subscription.papersLimit}
               </span>
             </div>
             <Progress 
               value={(subscription.papersUsed / subscription.papersLimit) * 100} 
-              className="h-2"
+              className="h-1.5"
             />
             {subscription.periodEndsAt && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground">
                 Resets on {new Date(subscription.periodEndsAt).toLocaleDateString()}
               </p>
             )}
           </div>
         )}
         
-        <Separator />
+        <Separator className="bg-border/30" />
         
         {/* Upgrade Options */}
         {currentTier === 'free' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h4 className="font-medium">Upgrade your plan</h4>
+              <h4 className="font-instrument text-sm tracking-tight">Upgrade your plan</h4>
               <div className="flex items-center gap-2">
-                <span className={`text-xs ${billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                <span className={`text-[11px] ${billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'}`}>
                   Monthly
                 </span>
                 <Switch
                   checked={billingInterval === 'yearly'}
                   onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
                 />
-                <span className={`text-xs ${billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                <span className={`text-[11px] ${billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'}`}>
                   Yearly
                 </span>
                 {billingInterval === 'yearly' && (
-                  <Badge variant="secondary" className="text-xs">Save 33%</Badge>
+                  <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Save 33%</span>
                 )}
               </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              {/* Starter */}
+            <div className="grid gap-3 md:grid-cols-2">
               <PlanCard
                 tier="starter"
                 isCurrentTier={false}
@@ -199,7 +207,6 @@ export function BillingSection({ user }: BillingSectionProps) {
                 isDisabled={redirectingTier !== null}
                 billingInterval={billingInterval}
               />
-              {/* Pro */}
               <PlanCard
                 tier="pro"
                 isCurrentTier={false}
@@ -216,20 +223,20 @@ export function BillingSection({ user }: BillingSectionProps) {
         {currentTier === 'starter' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h4 className="font-medium">Upgrade to Pro</h4>
+              <h4 className="font-instrument text-sm tracking-tight">Upgrade to Pro</h4>
               <div className="flex items-center gap-2">
-                <span className={`text-xs ${billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                <span className={`text-[11px] ${billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'}`}>
                   Monthly
                 </span>
                 <Switch
                   checked={billingInterval === 'yearly'}
                   onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
                 />
-                <span className={`text-xs ${billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'}`}>
+                <span className={`text-[11px] ${billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'}`}>
                   Yearly
                 </span>
                 {billingInterval === 'yearly' && (
-                  <Badge variant="secondary" className="text-xs">Save 33%</Badge>
+                  <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Save 33%</span>
                 )}
               </div>
             </div>
@@ -246,13 +253,13 @@ export function BillingSection({ user }: BillingSectionProps) {
         )}
         
         {currentTier === 'pro' && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <CheckCircle className="h-4 w-4 text-green-500" />
-            You're on our highest tier. Thank you for your support!
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <CheckCircle className="h-4 w-4 text-emerald-500" />
+            You&apos;re on our highest tier. Thank you for your support!
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
 
@@ -275,54 +282,62 @@ function PlanCard({
 }) {
   const config = TIER_CONFIG[tier]
   
-  // Calculate display price based on billing interval
   const isYearly = billingInterval === 'yearly'
   const displayPrice = tier === 'free' 
     ? 0 
     : isYearly 
-      ? Math.round(config.yearlyPrice / 12) // Effective monthly price
+      ? Math.round(config.yearlyPrice / 12)
       : config.price
   const yearlyTotal = config.yearlyPrice
   
   return (
-    <div className={`relative p-4 rounded-lg border ${recommended ? 'border-primary' : ''}`}>
+    <div className={`relative rounded-xl border p-4 transition-all duration-200 ${
+      recommended 
+        ? 'border-foreground/30 hover:border-foreground/50' 
+        : 'border-border/40 hover:border-border/60'
+    }`}>
       {recommended && (
-        <Badge className="absolute -top-2 left-4">Recommended</Badge>
+        <span className="absolute -top-2.5 left-4 text-[10px] font-medium bg-foreground/80 text-background px-2 py-0.5 rounded-full">
+          Recommended
+        </span>
       )}
       <div className="space-y-3">
         <div>
-          <h5 className="font-semibold">{config.name}</h5>
-          <p className="text-2xl font-bold">
-            ${displayPrice}<span className="text-sm font-normal text-muted-foreground">/mo</span>
+          <h5 className="font-instrument text-base tracking-tight">{config.name}</h5>
+          <p className="text-2xl font-instrument tracking-tight mt-0.5">
+            ${displayPrice}<span className="text-xs font-normal text-muted-foreground">/mo</span>
           </p>
           {tier !== 'free' && isYearly && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[11px] text-muted-foreground">
               ${yearlyTotal} billed yearly
             </p>
           )}
         </div>
-        <ul className="space-y-1.5 text-sm">
+        <ul className="space-y-1.5 text-xs text-muted-foreground">
           {config.features.slice(0, 4).map((feature, i) => (
             <li key={i} className="flex items-start gap-2">
-              <CheckCircle className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+              <CheckCircle className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
               <span>{feature}</span>
             </li>
           ))}
         </ul>
-        <Button 
-          onClick={onUpgrade} 
+        <button
+          onClick={onUpgrade}
           disabled={isCurrentTier || isDisabled}
-          className="w-full"
-          variant={recommended ? 'default' : 'outline'}
+          className={`w-full h-9 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
+            recommended 
+              ? 'bg-foreground/80 text-background hover:bg-foreground' 
+              : 'border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60'
+          }`}
         >
           {isRedirecting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin mx-auto" />
           ) : isCurrentTier ? (
             'Current Plan'
           ) : (
             `Upgrade to ${config.name}`
           )}
-        </Button>
+        </button>
       </div>
     </div>
   )

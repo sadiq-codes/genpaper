@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "bun@1.3.5",
+  "trustedDependencies": ["inngest-cli"],
   "overrides": {
     "lightningcss": "1.29.1",
     "@tailwindcss/node": {
@@ -167,6 +168,7 @@
     "dotenv": "^17.2.3",
     "eslint": "^9",
     "eslint-config-next": "15.3.2",
+    "inngest-cli": "^1.16.2",
     "jsdom": "^26.1.0",
     "next-sitemap": "^4.2.3",
     "postcss": "^8.5.4",

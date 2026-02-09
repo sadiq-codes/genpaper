@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { Button } from '@/components/ui/button'
 import { Library } from 'lucide-react'
 import dynamic from 'next/dynamic'
 
@@ -15,15 +14,13 @@ export function LibraryButton() {
 
   return (
     <>
-      <Button
-        variant="outline"
-        size="sm"
+      <button
         onClick={() => setIsDrawerOpen(true)}
-        className="gap-2"
+        className="h-8 px-3 text-xs rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5"
       >
-        <Library className="h-4 w-4" />
+        <Library className="h-3.5 w-3.5" />
         My Library
-      </Button>
+      </button>
 
       <LibraryDrawer
         isOpen={isDrawerOpen}

@@ -58,17 +58,17 @@ export default function PricingPage() {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-md border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <Link href="/" className="flex items-center space-x-2 group">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center p-1.5">
+            <Link href="/" className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-foreground/80 flex items-center justify-center p-1.5">
                 <Image
                   src="/favicon-32x32.png"
                   alt="GenPaper"
                   width={20}
                   height={20}
-                  className="w-full h-full"
+                  className="w-full h-full invert dark:invert-0"
                 />
               </div>
-              <span className="text-xl font-bold text-foreground">GenPaper</span>
+              <span className="text-lg font-semibold tracking-tight text-foreground/80">GenPaper</span>
             </Link>
 
             <div className="hidden md:flex items-center space-x-8">
@@ -85,12 +85,10 @@ export default function PricingPage() {
                 Pricing
               </Link>
               {user ? (
-                <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-6" asChild>
-                  <Link href="/projects">
+                <Link href="/projects" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-5 py-2 text-sm font-medium transition-colors inline-flex items-center gap-1.5">
                     Dashboard
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
               ) : (
                 <>
                   <Link
@@ -99,15 +97,16 @@ export default function PricingPage() {
                   >
                     Sign In
                   </Link>
-                  <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-6" asChild>
-                    <Link href="/signup">Get Started</Link>
-                  </Button>
+                  <Link href="/signup" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-5 py-2 text-sm font-medium transition-colors">
+                    Get Started
+                  </Link>
                 </>
               )}
             </div>
 
             <button
               className="md:hidden p-2 rounded-lg hover:bg-muted transition-colors"
+              aria-label="Toggle menu"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             >
               {mobileMenuOpen ? (
@@ -136,12 +135,10 @@ export default function PricingPage() {
                   Pricing
                 </Link>
                 {user ? (
-                  <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg" asChild>
-                    <Link href="/projects">
-                      Dashboard
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </Link>
-                  </Button>
+                  <Link href="/projects" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-5 py-2 text-sm font-medium transition-colors inline-flex items-center gap-1.5 w-fit">
+                    Dashboard
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
                 ) : (
                   <>
                     <Link
@@ -151,9 +148,9 @@ export default function PricingPage() {
                     >
                       Sign In
                     </Link>
-                    <Button className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg" asChild>
-                      <Link href="/signup">Get Started</Link>
-                    </Button>
+                    <Link href="/signup" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-5 py-2 text-sm font-medium transition-colors w-fit">
+                      Get Started
+                    </Link>
                   </>
                 )}
               </div>
@@ -165,7 +162,7 @@ export default function PricingPage() {
       {/* Hero Section */}
       <section className="pt-32 pb-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h1 className="text-4xl sm:text-5xl font-bold text-foreground mb-4">
+          <h1 className="font-instrument text-4xl sm:text-5xl tracking-tight text-foreground mb-4">
             Simple, transparent pricing
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
@@ -229,7 +226,7 @@ export default function PricingPage() {
       {/* Feature Comparison */}
       <section className="py-24 bg-muted/30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-bold text-center text-foreground mb-12">
+          <h2 className="font-instrument text-3xl text-center tracking-tight text-foreground mb-12">
             Compare plans
           </h2>
           
@@ -301,7 +298,7 @@ export default function PricingPage() {
       {/* FAQ Section */}
       <section className="py-24">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl font-bold text-center text-foreground mb-12">
+          <h2 className="font-instrument text-3xl text-center tracking-tight text-foreground mb-12">
             Frequently asked questions
           </h2>
           
@@ -333,22 +330,16 @@ export default function PricingPage() {
       {/* CTA Section */}
       <section className="py-24 bg-muted/30">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl font-bold text-foreground mb-4">
+          <h2 className="font-instrument text-3xl tracking-tight text-foreground mb-4">
             Ready to write better papers?
           </h2>
           <p className="text-lg text-muted-foreground mb-8">
             Start with our free plan. No credit card required.
           </p>
-          <Button
-            size="lg"
-            className="bg-primary hover:bg-primary/90 text-primary-foreground px-8 py-6 text-base rounded-lg"
-            asChild
-          >
-            <Link href="/signup">
-              Get Started Free
-              <ArrowRight className="ml-2 h-5 w-5" />
-            </Link>
-          </Button>
+          <Link href="/signup" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-8 py-3 text-base font-medium transition-colors inline-flex items-center gap-2">
+            Get Started Free
+            <ArrowRight className="h-4 w-4" />
+          </Link>
         </div>
       </section>
 
@@ -356,20 +347,18 @@ export default function PricingPage() {
       <footer className="border-t border-border bg-background">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="flex flex-col md:flex-row justify-between items-center">
-            <div className="flex items-center space-x-3 mb-4 md:mb-0">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center p-1.5">
+            <div className="flex items-center gap-2.5 mb-4 md:mb-0">
+              <div className="w-7 h-7 rounded-lg bg-foreground/80 flex items-center justify-center p-1">
                 <Image
                   src="/favicon-32x32.png"
                   alt="GenPaper"
-                  width={20}
-                  height={20}
-                  className="w-full h-full"
+                  width={16}
+                  height={16}
+                  className="w-full h-full invert dark:invert-0"
                 />
               </div>
-              <div>
-                <span className="text-lg font-bold text-foreground block">GenPaper</span>
-                <span className="text-xs text-muted-foreground">AI-Powered Research Assistant</span>
-              </div>
+              <span className="text-sm font-medium text-foreground/80">GenPaper</span>
+              <span className="text-xs text-muted-foreground/50 ml-1">— AI Research Assistant</span>
             </div>
 
             <div className="flex items-center space-x-6 text-sm text-muted-foreground">
@@ -389,7 +378,7 @@ export default function PricingPage() {
           </div>
 
           <div className="border-t border-border mt-8 pt-8 text-center text-sm text-muted-foreground">
-            <p>&copy; 2025 GenPaper. Built for researchers, by researchers.</p>
+            <p>&copy; {new Date().getFullYear()} GenPaper</p>
           </div>
         </div>
       </footer>

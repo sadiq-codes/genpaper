@@ -103,19 +103,34 @@ export const generatePaperFunction = inngest.createFunction(
     },
     // Handle function failures - emit error to UI
     onFailure: async ({ event, error }) => {
-      const { runId, projectId } = event.data.event.data;
+      // Inngest's onFailure event shape can vary by SDK/runtime.
+      // We defensively read from the most common locations.
+      const data =
+        (event as any)?.data?.event?.data ??
+        (event as any)?.data ??
+        (event as any)?.event?.data ??
+        (event as any)?.event ??
+        {};
+
+      const runId: string | undefined = data.runId;
+      const projectId: string | undefined = data.projectId;
       const errorMessage = error instanceof Error ? error.message : "Generation failed";
       
       try {
         // Import dynamically to avoid circular deps
-        const { emitError } = await import("@/lib/generation/run-manager");
+        const { emitError, clearPipelineState } = await import("@/lib/generation/run-manager");
         const { updateResearchProjectStatus } = await import("@/lib/db/research");
         
-        await emitError(runId, errorMessage);
-        await updateResearchProjectStatus(projectId, "failed" as any);
-        console.error(`[generate-paper] Failed for run ${runId}:`, errorMessage);
+        if (runId) {
+          await emitError(runId, errorMessage);
+          await clearPipelineState(runId);
+        }
+        if (projectId) {
+          await updateResearchProjectStatus(projectId, "failed" as any);
+        }
+        console.error(`[generate-paper] Failed for run ${runId || "unknown"}:`, errorMessage);
       } catch (e) {
-        console.error(`[generate-paper] Failed to emit error for run ${runId}:`, e);
+        console.error(`[generate-paper] Failed to emit error on failure:`, e);
       }
     },
   },
@@ -167,12 +182,40 @@ export const generatePaperFunction = inngest.createFunction(
         length: config.length as "short" | "medium" | "long",
         useLibraryOnly: config.useLibraryOnly,
         libraryPaperIds: config.libraryPaperIds || [],
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        sources: config.sources,
       };
 
       const profile = await runProfilePhase(pipelineConfig, onProgress);
       
       // Store profile in state
       await updatePipelineState(runId, { profile });
+      
+      // Persist planned outline in generation_config so autocomplete can suggest headings
+      if (profile.outline?.sections?.length) {
+        try {
+          const { createServiceClient } = await import("@/lib/supabase/service");
+          const svc = createServiceClient();
+          const { data: proj } = await svc
+            .from("research_projects")
+            .select("generation_config")
+            .eq("id", projectId)
+            .single();
+          const existing = (proj?.generation_config as Record<string, unknown>) || {};
+          await svc
+            .from("research_projects")
+            .update({
+              generation_config: {
+                ...existing,
+                plannedOutline: profile.outline.sections.map((s: { title: string }) => s.title),
+              },
+            })
+            .eq("id", projectId);
+        } catch (e) {
+          console.warn("[generate-paper] Failed to persist planned outline:", e);
+        }
+      }
       
       return {
         sectionsCount: profile.outline?.sections.length || 0,
@@ -196,6 +239,9 @@ export const generatePaperFunction = inngest.createFunction(
         length: config.length as "short" | "medium" | "long",
         useLibraryOnly: config.useLibraryOnly,
         libraryPaperIds: config.libraryPaperIds || [],
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        sources: config.sources,
       };
 
       const papers = await runDiscoveryPhase(
@@ -344,6 +390,9 @@ export const generatePaperFunction = inngest.createFunction(
         length: config.length as "short" | "medium" | "long",
         useLibraryOnly: config.useLibraryOnly,
         libraryPaperIds: config.libraryPaperIds || [],
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        sources: config.sources,
       };
 
       const contexts = await runBuildContextsPhase(
@@ -411,6 +460,9 @@ export const generatePaperFunction = inngest.createFunction(
           length: config.length as "short" | "medium" | "long",
           useLibraryOnly: config.useLibraryOnly,
           libraryPaperIds: config.libraryPaperIds || [],
+          temperature: config.temperature,
+          maxTokens: config.maxTokens,
+          sources: config.sources,
         };
 
         // Rebuild contexts (necessary because they're too large to store)
@@ -495,6 +547,9 @@ export const generatePaperFunction = inngest.createFunction(
         length: config.length as "short" | "medium" | "long",
         useLibraryOnly: config.useLibraryOnly,
         libraryPaperIds: config.libraryPaperIds || [],
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        sources: config.sources,
       };
 
       const contexts = await runBuildContextsPhase(
@@ -567,6 +622,9 @@ export const generatePaperFunction = inngest.createFunction(
           length: config.length as "short" | "medium" | "long",
           useLibraryOnly: config.useLibraryOnly,
           libraryPaperIds: config.libraryPaperIds || [],
+          temperature: config.temperature,
+          maxTokens: config.maxTokens,
+          sources: config.sources,
         };
 
         const contexts = await runBuildContextsPhase(

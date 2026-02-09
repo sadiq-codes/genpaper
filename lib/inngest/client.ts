@@ -22,6 +22,9 @@ export interface GenerationStartEvent {
       paperType: string;
       length: string;
       citationStyle: string;
+      temperature?: number;
+      maxTokens?: number;
+      sources?: string[];
       hasOriginalResearch: boolean;
       customInstructions?: string;
       useLibraryOnly?: boolean;
