@@ -16,6 +16,19 @@ export interface AcademicPaper {
   issue?: string
   pages?: string
   publisher?: string
+  // Extended metadata
+  paper_type?: string
+  keywords?: string[]
+  fields_of_study?: string[]
+  tldr?: string
+  is_open_access?: boolean
+  open_access_status?: string
+  license?: string
+  influential_citation_count?: number
+  references_count?: number
+  is_retracted?: boolean
+  external_ids?: Record<string, string>
+  language?: string
 }
 
 export interface SearchOptions {
@@ -607,6 +620,8 @@ interface OpenAlexWork {
   publication_year?: number
   doi?: string
   abstract_inverted_index?: Record<string, number[]>
+  type?: string
+  is_retracted?: boolean
   primary_location?: {
     source?: { 
       display_name: string
@@ -614,11 +629,13 @@ interface OpenAlexWork {
     }
     landing_page_url?: string
     pdf_url?: string
+    license?: string
   }
   best_oa_location?: {
     pdf_url?: string
     landing_page_url?: string
     host_type?: string
+    license?: string
   }
   open_access?: {
     is_oa: boolean
@@ -626,6 +643,7 @@ interface OpenAlexWork {
     oa_status?: string
   }
   cited_by_count?: number
+  referenced_works_count?: number
   authorships?: Array<{
     author?: { display_name: string }
   }>
@@ -640,6 +658,21 @@ interface OpenAlexWork {
   host_venue?: {
     publisher?: string
   }
+  // Concepts / topics
+  concepts?: Array<{
+    display_name: string
+    level: number
+    score?: number
+  }>
+  keywords?: Array<{
+    keyword: string
+  }>
+  ids?: {
+    pmid?: string
+    pmcid?: string
+    mag?: string
+  }
+  language?: string
 }
 
 interface OpenAlexResponse {
@@ -665,11 +698,18 @@ interface CrossrefItem {
   'container-title'?: string[]
   URL?: string
   'is-referenced-by-count'?: number
+  'references-count'?: number
+  type?: string
+  subject?: string[]
   author?: Array<{
     given?: string
     family?: string
   }>
   link?: CrossrefLink[]
+  license?: Array<{
+    URL: string
+    'content-version'?: string
+  }>
   // Additional bibliographic fields
   volume?: string
   issue?: string
@@ -692,9 +732,14 @@ interface SemanticScholarPaper {
   doi?: string
   url?: string
   citationCount?: number
+  influentialCitationCount?: number
   authors?: Array<{ name: string }>
   openAccessPdf?: { url: string } | null
   isOpenAccess?: boolean
+  fieldsOfStudy?: string[]
+  tldr?: { text: string } | null
+  externalIds?: Record<string, string>
+  referenceCount?: number
 }
 
 interface SemanticScholarResponse {
@@ -737,6 +782,8 @@ interface ArxivEntry {
   id: string
   author: ArxivAuthor | ArxivAuthor[]
   link: ArxivLink | ArxivLink[]
+  'arxiv:primary_category'?: { '@_term': string }
+  category?: { '@_term': string } | Array<{ '@_term': string }>
 }
 
 // Centralized HTTP helper with timeout and rate limit handling
@@ -940,6 +987,21 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
         ? `${work.biblio.first_page}-${work.biblio.last_page}`
         : work.biblio?.first_page || undefined
 
+      // Extract keywords from both keywords and top-level concepts
+      const kws: string[] = []
+      if (work.keywords?.length) {
+        kws.push(...work.keywords.map(k => k.keyword))
+      }
+      const fieldsOfStudy = work.concepts
+        ?.filter(c => c.level <= 1 && (c.score ?? 0) > 0.3)
+        .map(c => c.display_name) || []
+
+      // External IDs
+      const externalIds: Record<string, string> = {}
+      if (work.ids?.pmid) externalIds.pmid = work.ids.pmid
+      if (work.ids?.pmcid) externalIds.pmcid = work.ids.pmcid
+      if (work.ids?.mag) externalIds.mag = work.ids.mag
+
       return {
         canonical_id: createCanonicalId(work.display_name, work.publication_year, work.doi, 'openalex'),
         title: work.display_name,
@@ -952,12 +1014,22 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
         citationCount: work.cited_by_count || 0,
         authors: work.authorships?.map((a) => a.author?.display_name).filter((name): name is string => Boolean(name)) || [],
         source: 'openalex' as const,
-        is_open_access: work.open_access?.is_oa || false,
         // Additional bibliographic fields for complete citations
         volume: work.biblio?.volume || undefined,
         issue: work.biblio?.issue || undefined,
         pages,
-        publisher: work.primary_location?.source?.publisher || work.host_venue?.publisher || undefined
+        publisher: work.primary_location?.source?.publisher || work.host_venue?.publisher || undefined,
+        // Extended metadata
+        paper_type: work.type || undefined,
+        keywords: kws.length > 0 ? kws : undefined,
+        fields_of_study: fieldsOfStudy.length > 0 ? fieldsOfStudy : undefined,
+        is_open_access: work.open_access?.is_oa || false,
+        open_access_status: work.open_access?.oa_status || undefined,
+        license: work.best_oa_location?.license || work.primary_location?.license || undefined,
+        is_retracted: work.is_retracted || false,
+        references_count: work.referenced_works_count || undefined,
+        external_ids: Object.keys(externalIds).length > 0 ? externalIds : undefined,
+        language: work.language || undefined,
       }
     }) || []
   })
@@ -1028,7 +1100,12 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
         volume: item.volume || undefined,
         issue: item.issue || undefined,
         pages: item.page || undefined,
-        publisher: item.publisher || undefined
+        publisher: item.publisher || undefined,
+        // Extended metadata
+        paper_type: item.type || undefined,
+        keywords: item.subject && item.subject.length > 0 ? item.subject : undefined,
+        license: item.license?.[0]?.URL || undefined,
+        references_count: item['references-count'] || undefined,
       }
     }) || []
   })
@@ -1045,7 +1122,7 @@ export async function searchSemanticScholar(query: string, options: SearchOption
   
   return simpleRetry(async () => {
     // Include openAccessPdf field to get direct PDF URLs when available
-    let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${effectiveLimit}&fields=paperId,title,abstract,year,venue,doi,url,citationCount,authors,openAccessPdf,isOpenAccess`
+    let url = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${effectiveLimit}&fields=paperId,title,abstract,year,venue,doi,url,citationCount,influentialCitationCount,authors,openAccessPdf,isOpenAccess,fieldsOfStudy,tldr,externalIds,referenceCount`
     
     // Build year filter: Semantic Scholar expects format like "2020-2023" or "2020-" or "-2023"
     if (fromYear || toYear) {
@@ -1074,19 +1151,36 @@ export async function searchSemanticScholar(query: string, options: SearchOption
     const authStatus = apiKey ? 'authenticated' : 'unauthenticated'
     console.log(`📚 Semantic Scholar (${authStatus}) returned ${data.data?.length || 0} results (total: ${data.total || 'unknown'})`)
     
-    return data.data?.map((paper: SemanticScholarPaper) => ({
-      canonical_id: createCanonicalId(paper.title, paper.year, paper.doi, 'semanticscholar'),
-      title: paper.title,
-      abstract: paper.abstract || '',
-      year: paper.year || 0,
-      venue: paper.venue,
-      doi: paper.doi,
-      url: paper.url,
-      pdf_url: paper.openAccessPdf?.url || '', // Extract PDF URL from openAccessPdf field
-      citationCount: paper.citationCount || 0,
-      authors: paper.authors?.map(a => a.name) || [],
-      source: 'semantic_scholar' as const
-    })) || []
+    return data.data?.map((paper: SemanticScholarPaper) => {
+      // Build external IDs map
+      const extIds: Record<string, string> = {}
+      if (paper.externalIds) {
+        for (const [key, val] of Object.entries(paper.externalIds)) {
+          if (val) extIds[key.toLowerCase()] = val
+        }
+      }
+
+      return {
+        canonical_id: createCanonicalId(paper.title, paper.year, paper.doi, 'semanticscholar'),
+        title: paper.title,
+        abstract: paper.abstract || '',
+        year: paper.year || 0,
+        venue: paper.venue,
+        doi: paper.doi,
+        url: paper.url,
+        pdf_url: paper.openAccessPdf?.url || '',
+        citationCount: paper.citationCount || 0,
+        authors: paper.authors?.map(a => a.name) || [],
+        source: 'semantic_scholar' as const,
+        // Extended metadata
+        fields_of_study: paper.fieldsOfStudy && paper.fieldsOfStudy.length > 0 ? paper.fieldsOfStudy : undefined,
+        tldr: paper.tldr?.text || undefined,
+        is_open_access: paper.isOpenAccess || false,
+        influential_citation_count: paper.influentialCitationCount || undefined,
+        references_count: paper.referenceCount || undefined,
+        external_ids: Object.keys(extIds).length > 0 ? extIds : undefined,
+      }
+    }) || []
   })
 }
 
@@ -1145,17 +1239,39 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
         const links = Array.isArray(entry.link) ? entry.link : [entry.link].filter(Boolean)
         const pdfLink = links.find((l) => l['@_type'] === 'application/pdf')
        
-       return {
+        // Extract arXiv ID and categories
+        const arxivId = entry.id?.replace('http://arxiv.org/abs/', '').replace(/v\d+$/, '') || ''
+        const categories: string[] = []
+        if (entry['arxiv:primary_category']?.['@_term']) {
+          categories.push(entry['arxiv:primary_category']['@_term'])
+        }
+        if (entry.category) {
+          const cats = Array.isArray(entry.category) ? entry.category : [entry.category]
+          for (const c of cats) {
+            if (c['@_term'] && !categories.includes(c['@_term'])) categories.push(c['@_term'])
+          }
+        }
+
+        const extIds: Record<string, string> = {}
+        if (arxivId) extIds.arxiv = arxivId
+
+        return {
          canonical_id: createCanonicalId(title, year, undefined, 'arxiv'),
          title,
          abstract,
          year,
          venue: 'arXiv',
          url: entry.id || '',
-         pdf_url: pdfLink?.['@_href'] || '', // Normalize to empty string
+         pdf_url: pdfLink?.['@_href'] || '',
          citationCount: 0,
          authors: authors.filter(Boolean),
-         source: 'arxiv' as const
+         source: 'arxiv' as const,
+         // Extended metadata
+         paper_type: 'preprint',
+         fields_of_study: categories.length > 0 ? categories : undefined,
+         is_open_access: true,
+         open_access_status: 'gold',
+         external_ids: Object.keys(extIds).length > 0 ? extIds : undefined,
        }
      })
     } finally {
@@ -1222,6 +1338,10 @@ export async function searchPubMedCentral(query: string, options: SearchOptions 
         const authors = article.authors?.map((a: { name: string }) => a.name) || []
         const doi = article.articleids?.find((id: { idtype: string; value: string }) => id.idtype === 'doi')?.value
         
+        const pmcExtIds: Record<string, string> = { pmcid: `PMC${pmcId}` }
+        const pmid = article.articleids?.find((id: { idtype: string; value: string }) => id.idtype === 'pmid')?.value
+        if (pmid) pmcExtIds.pmid = pmid
+
         papers.push({
           canonical_id: createCanonicalId(title, year, doi, 'pubmed_central'),
           title,
@@ -1233,7 +1353,11 @@ export async function searchPubMedCentral(query: string, options: SearchOptions 
           pdf_url: `https://www.ncbi.nlm.nih.gov/pmc/articles/PMC${pmcId}/pdf/`,
           citationCount: 0,
           authors,
-          source: 'pubmed_central' as const
+          source: 'pubmed_central' as const,
+          // Extended metadata
+          is_open_access: true,
+          open_access_status: 'gold',
+          external_ids: pmcExtIds,
         })
       }
       
@@ -1291,6 +1415,8 @@ export async function searchEuropePMC(query: string, options: SearchOptions = {}
         authorString?: string
         citedByCount?: number
         isOpenAccess?: string
+        keywordList?: { keyword: string[] }
+        pubType?: string
       }): AcademicPaper => {
         const title = article.title?.replace(/<[^>]*>/g, '').trim() || ''
         const year = article.pubYear ? parseInt(article.pubYear) || 0 : 0
@@ -1304,6 +1430,10 @@ export async function searchEuropePMC(query: string, options: SearchOptions = {}
           pdfUrl = `https://europepmc.org/backend/ptpmcrender.fcgi?accid=${article.pmcid}&blobtype=pdf`
         }
         
+        const epmcExtIds: Record<string, string> = {}
+        if (article.pmcid) epmcExtIds.pmcid = article.pmcid
+        if (article.pmid) epmcExtIds.pmid = article.pmid
+
         return {
           canonical_id: createCanonicalId(title, year, article.doi, 'europe_pmc'),
           title,
@@ -1319,7 +1449,12 @@ export async function searchEuropePMC(query: string, options: SearchOptions = {}
           pdf_url: pdfUrl,
           citationCount: article.citedByCount || 0,
           authors,
-          source: 'europe_pmc' as const
+          source: 'europe_pmc' as const,
+          // Extended metadata
+          keywords: article.keywordList?.keyword && article.keywordList.keyword.length > 0
+            ? article.keywordList.keyword : undefined,
+          is_open_access: article.isOpenAccess === 'Y',
+          external_ids: Object.keys(epmcExtIds).length > 0 ? epmcExtIds : undefined,
         }
       })
       
@@ -1390,7 +1525,10 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
         pdf_url: pdfUrl, // CORE often provides direct PDFs
         citationCount: 0,
         authors: work.authors?.map((a) => a.name).filter(Boolean) || [],
-        source: 'core' as const
+        source: 'core' as const,
+        // Extended metadata
+        paper_type: work.documentType || undefined,
+        is_open_access: true, // CORE only indexes OA papers
       }
     }) || []
   })

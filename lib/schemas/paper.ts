@@ -18,7 +18,20 @@ export const PaperDTOSchema = z.object({
   volume: z.string().max(50).optional(),
   issue: z.string().max(50).optional(),
   pages: z.string().max(50).optional(),
-  publisher: z.string().max(200).optional()
+  publisher: z.string().max(200).optional(),
+  // Extended metadata fields (stored in metadata JSONB)
+  paper_type: z.string().max(50).optional(),
+  keywords: z.array(z.string()).optional(),
+  fields_of_study: z.array(z.string()).optional(),
+  tldr: z.string().max(500).optional(),
+  is_open_access: z.boolean().optional(),
+  open_access_status: z.string().max(20).optional(),
+  license: z.string().max(200).optional(),
+  influential_citation_count: z.number().int().min(0).optional(),
+  references_count: z.number().int().min(0).optional(),
+  is_retracted: z.boolean().optional(),
+  external_ids: z.record(z.string()).optional(),
+  language: z.string().max(10).optional(), // ISO 639-1 language code (e.g., 'en', 'zh')
 })
 
 /**

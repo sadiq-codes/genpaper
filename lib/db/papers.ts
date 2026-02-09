@@ -473,13 +473,26 @@ export async function ingestPaper(
 export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string | null): Promise<string> {
   const supabase = getServiceClient()
   
-  // Store bibliographic fields in metadata JSONB column
-  // These are needed for complete citation generation (volume, issue, pages, publisher)
+  // Store bibliographic and extended fields in metadata JSONB column
   const metadata: Record<string, unknown> = {}
+  // Bibliographic fields (for citation generation)
   if (paperData.volume) metadata.volume = paperData.volume
   if (paperData.issue) metadata.issue = paperData.issue
   if (paperData.pages) metadata.pages = paperData.pages
   if (paperData.publisher) metadata.publisher = paperData.publisher
+  // Extended metadata
+  if (paperData.paper_type) metadata.paper_type = paperData.paper_type
+  if (paperData.keywords?.length) metadata.keywords = paperData.keywords
+  if (paperData.fields_of_study?.length) metadata.fields_of_study = paperData.fields_of_study
+  if (paperData.tldr) metadata.tldr = paperData.tldr
+  if (paperData.is_open_access !== undefined) metadata.is_open_access = paperData.is_open_access
+  if (paperData.open_access_status) metadata.open_access_status = paperData.open_access_status
+  if (paperData.license) metadata.license = paperData.license
+  if (paperData.influential_citation_count) metadata.influential_citation_count = paperData.influential_citation_count
+  if (paperData.references_count) metadata.references_count = paperData.references_count
+  if (paperData.is_retracted) metadata.is_retracted = paperData.is_retracted
+  if (paperData.external_ids && Object.keys(paperData.external_ids).length > 0) metadata.external_ids = paperData.external_ids
+  if (paperData.language) metadata.language = paperData.language
   
   // Insert paper metadata WITHOUT embedding (embeddings are stored in Qdrant only)
   // The papers.embedding column is nullable per migration 20260208000000

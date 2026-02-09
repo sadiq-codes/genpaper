@@ -517,14 +517,25 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
     },
     source: `academic_search_${paper.source}`,
     citation_count: paper.citationCount,
-    // Keep empty array if no authors - don't use placeholder 'Unknown' which pollutes the data
-    // The display layer handles empty authors appropriately (shows "Anonymous" per citation style)
     authors: (paper.authors && paper.authors.length > 0) ? paper.authors : [],
     // Additional bibliographic fields for complete citations
     volume: paper.volume || undefined,
     issue: paper.issue || undefined,
     pages: paper.pages || undefined,
-    publisher: paper.publisher || undefined
+    publisher: paper.publisher || undefined,
+    // Extended metadata
+    paper_type: paper.paper_type || undefined,
+    keywords: paper.keywords || undefined,
+    fields_of_study: paper.fields_of_study || undefined,
+    tldr: paper.tldr || undefined,
+    is_open_access: paper.is_open_access,
+    open_access_status: paper.open_access_status || undefined,
+    license: paper.license || undefined,
+    influential_citation_count: paper.influential_citation_count || undefined,
+    references_count: paper.references_count || undefined,
+    is_retracted: paper.is_retracted || undefined,
+    external_ids: paper.external_ids || undefined,
+    language: paper.language || undefined,
   }
 }
 

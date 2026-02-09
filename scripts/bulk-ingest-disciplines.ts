@@ -111,17 +111,59 @@ interface OpenAlexWork {
   id: string
   doi: string | null
   title: string
+  display_name?: string
   publication_date: string | null
+  publication_year?: number
   abstract_inverted_index: Record<string, number[]> | null
   authorships: Array<{ author: { display_name: string } }>
   primary_location: {
-    source?: { display_name: string }
+    source?: { 
+      display_name: string
+      publisher?: string
+      host_organization_name?: string
+    }
     pdf_url?: string
     landing_page_url?: string
+    license?: string
   } | null
-  open_access: { oa_url: string | null }
+  best_oa_location?: {
+    pdf_url?: string
+    landing_page_url?: string
+    license?: string
+    source?: {
+      display_name?: string
+      publisher?: string
+      host_organization_name?: string
+    }
+  } | null
+  open_access: { 
+    is_oa?: boolean
+    oa_status?: string
+    oa_url: string | null 
+  }
   cited_by_count: number
-  concepts: Array<{ id: string; display_name: string; score: number }>
+  concepts: Array<{ id: string; display_name: string; score: number; level?: number }>
+  // Bibliographic fields
+  biblio?: {
+    volume?: string
+    issue?: string
+    first_page?: string
+    last_page?: string
+  }
+  // Additional metadata
+  type?: string  // 'article', 'book', 'dataset', etc.
+  language?: string
+  is_retracted?: boolean
+  referenced_works_count?: number
+  keywords?: Array<{ keyword: string; score?: number }>
+  // External IDs
+  ids?: {
+    openalex?: string
+    doi?: string
+    pmid?: string
+    pmcid?: string
+    mag?: string
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -156,9 +198,12 @@ function invertedIndexToAbstract(index: Record<string, number[]> | null): string
 const isPdfFriendlyUrl = isPdfFriendlyDomain
 
 function getBestPdfUrl(work: OpenAlexWork): string | null {
+  // Priority: best_oa_location > primary_location > open_access.oa_url
   const candidates = [
+    work.best_oa_location?.pdf_url,
     work.primary_location?.pdf_url,
     work.open_access?.oa_url,
+    work.best_oa_location?.landing_page_url,
     work.primary_location?.landing_page_url,
   ].filter(Boolean) as string[]
   
@@ -168,6 +213,10 @@ function getBestPdfUrl(work: OpenAlexWork): string | null {
       // Convert arXiv abstract URLs to PDF URLs
       if (url.includes('arxiv.org/abs/')) {
         return url.replace('/abs/', '/pdf/') + '.pdf'
+      }
+      // Convert bioRxiv/medRxiv to full PDF URLs
+      if ((url.includes('biorxiv.org') || url.includes('medrxiv.org')) && !url.includes('.pdf')) {
+        return url + '.full.pdf'
       }
       return url
     }
@@ -416,7 +465,7 @@ async function ingestDiscipline(
       continue
     }
     
-    // Prepare paper data
+    // Prepare paper data with comprehensive metadata
     const papersToInsert = newWorks.slice(0, maxPapers - ingested).map(work => {
       const doi = work.doi?.replace(/^https?:\/\/doi\.org\//, '').trim() || null
       const paperId = generatePaperId(doi, work.title)
@@ -424,10 +473,75 @@ async function ingestDiscipline(
       const authors = work.authorships?.map(a => a.author?.display_name).filter(Boolean) || []
       const pdfUrl = getBestPdfUrl(work)
       
+      // Extract pages from biblio
+      const pages = work.biblio?.first_page && work.biblio?.last_page
+        ? `${work.biblio.first_page}-${work.biblio.last_page}`
+        : work.biblio?.first_page || undefined
+      
+      // Extract keywords
+      const keywords = work.keywords?.map(k => k.keyword).filter(Boolean) || []
+      
+      // Extract fields of study from concepts (level 0-1 with score > 0.3)
+      const fieldsOfStudy = work.concepts
+        ?.filter(c => (c.level ?? 0) <= 1 && (c.score ?? 0) > 0.3)
+        .map(c => c.display_name) || []
+      
+      // Extract external IDs
+      const externalIds: Record<string, string> = {}
+      if (work.ids?.pmid) externalIds.pmid = work.ids.pmid
+      if (work.ids?.pmcid) externalIds.pmcid = work.ids.pmcid
+      if (work.ids?.mag) externalIds.mag = work.ids.mag
+      
+      // Get publisher from multiple sources
+      const publisher = work.primary_location?.source?.publisher ||
+                       work.primary_location?.source?.host_organization_name ||
+                       work.best_oa_location?.source?.publisher ||
+                       work.best_oa_location?.source?.host_organization_name || undefined
+      
+      // Get license
+      const license = work.best_oa_location?.license || 
+                     work.primary_location?.license || undefined
+      
+      // Build comprehensive metadata object
+      const metadata: Record<string, unknown> = {
+        openalex_id: work.id,
+      }
+      
+      // Bibliographic fields (for citations)
+      if (work.biblio?.volume) metadata.volume = work.biblio.volume
+      if (work.biblio?.issue) metadata.issue = work.biblio.issue
+      if (pages) metadata.pages = pages
+      if (publisher) metadata.publisher = publisher
+      
+      // Publication type
+      if (work.type) metadata.paper_type = work.type
+      
+      // Open access info
+      if (work.open_access?.is_oa !== undefined) metadata.is_open_access = work.open_access.is_oa
+      if (work.open_access?.oa_status) metadata.open_access_status = work.open_access.oa_status
+      if (license) metadata.license = license
+      
+      // Additional metadata
+      if (work.language) metadata.language = work.language
+      if (work.is_retracted) metadata.is_retracted = work.is_retracted
+      if (work.referenced_works_count) metadata.references_count = work.referenced_works_count
+      
+      // Keywords and fields of study
+      if (keywords.length > 0) metadata.keywords = keywords
+      if (fieldsOfStudy.length > 0) metadata.fields_of_study = fieldsOfStudy
+      
+      // Legacy concepts (for backwards compatibility)
+      if (work.concepts?.length) {
+        metadata.concepts = work.concepts.slice(0, 5).map(c => c.display_name)
+      }
+      
+      // External IDs
+      if (Object.keys(externalIds).length > 0) metadata.external_ids = externalIds
+      
       return {
         id: paperId,
         doi,
-        title: work.title,
+        title: work.title || work.display_name || 'Untitled',
         abstract,
         authors,
         publication_date: work.publication_date || null,
@@ -435,10 +549,7 @@ async function ingestDiscipline(
         pdf_url: pdfUrl,
         source: 'openalex',
         citation_count: work.cited_by_count || 0,
-        metadata: {
-          openalex_id: work.id,
-          concepts: work.concepts?.slice(0, 5).map(c => c.display_name),
-        },
+        metadata,
         pdfUrl, // Keep for PDF processing
       }
     })
