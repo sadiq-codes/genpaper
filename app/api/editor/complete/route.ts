@@ -193,6 +193,56 @@ interface AIStructuredResponse {
   citations?: NumberedCitation[]
 }
 
+/**
+ * Try to repair truncated JSON by closing open brackets/braces
+ */
+function tryRepairJSON(text: string): string | null {
+  // Count open brackets
+  let braces = 0
+  let brackets = 0
+  let inString = false
+  let escaped = false
+  
+  for (const char of text) {
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (char === '\\') {
+      escaped = true
+      continue
+    }
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+    if (inString) continue
+    
+    if (char === '{') braces++
+    else if (char === '}') braces--
+    else if (char === '[') brackets++
+    else if (char === ']') brackets--
+  }
+  
+  // If we're inside a string, close it
+  let repaired = text
+  if (inString) {
+    repaired += '"'
+  }
+  
+  // Close open brackets and braces
+  while (brackets > 0) {
+    repaired += ']'
+    brackets--
+  }
+  while (braces > 0) {
+    repaired += '}'
+    braces--
+  }
+  
+  return repaired
+}
+
 function parseAIResponse(rawText: string): AIStructuredResponse | null {
   try {
     // Strip markdown code blocks if present
@@ -205,7 +255,26 @@ function parseAIResponse(rawText: string): AIStructuredResponse | null {
       return null
     }
     
-    const parsed = JSON.parse(jsonMatch[0])
+    let parsed: any
+    try {
+      parsed = JSON.parse(jsonMatch[0])
+    } catch (parseError) {
+      // JSON is truncated - try to repair it
+      console.log('[Autocomplete] JSON parse failed, attempting repair...')
+      const repaired = tryRepairJSON(jsonMatch[0])
+      if (repaired) {
+        try {
+          parsed = JSON.parse(repaired)
+          console.log('[Autocomplete] JSON repair successful')
+        } catch {
+          console.log('[Autocomplete] JSON repair failed:', parseError)
+          return null
+        }
+      } else {
+        console.log('[Autocomplete] Failed to parse AI response:', parseError)
+        return null
+      }
+    }
     
     // NEW FORMAT: sentences array
     if (Array.isArray(parsed.sentences) && parsed.sentences.length > 0) {
@@ -416,14 +485,71 @@ export async function POST(request: NextRequest) {
     // Extract library paper IDs for search boosting
     const boostedPaperIds = libraryRows?.map((r: { paper_id: string }) => r.paper_id) || []
     
-    // Extract voice profile from generation config
-    const generationConfig = (project as { generation_config?: { voiceProfileId?: string } | null }).generation_config
+    // Extract voice profile and planned outline from generation config
+    const generationConfig = (project as { generation_config?: { voiceProfileId?: string; plannedOutline?: string[] } | null }).generation_config
     const voiceProfileId = generationConfig?.voiceProfileId || null
+    const plannedOutline: string[] = generationConfig?.plannedOutline || []
     
     if (voiceProfileId) {
       console.log('[Autocomplete] Using project voice profile:', voiceProfileId)
     }
-    
+
+    // -----------------------------------------------------------------------
+    // OUTLINE-AWARE HEADING SUGGESTION
+    // If there's a planned outline and the next section heading is missing from
+    // the document, return it instantly — no LLM call needed.
+    // -----------------------------------------------------------------------
+    if (plannedOutline.length > 0) {
+      const docHeadingsLower = (context.documentOutline || []).map(h => h.toLowerCase().trim())
+      // Find the first planned heading not yet present in the document
+      const nextHeading = plannedOutline.find(
+        planned => !docHeadingsLower.some(
+          existing => existing === planned.toLowerCase().trim() || 
+                      existing.includes(planned.toLowerCase().trim()) ||
+                      planned.toLowerCase().trim().includes(existing)
+        )
+      )
+
+      // Suggest a heading when:
+      // - There's a next heading to suggest
+      // - The cursor is in an empty paragraph (currentParagraph is empty/whitespace)
+      // - Either the document has no headings at all, or we're at the end of a section
+      const isEmptyParagraph = !context.currentParagraph?.trim()
+      if (nextHeading && isEmptyParagraph) {
+        console.log(`[Autocomplete] Suggesting next heading: "${nextHeading}"`)
+        timings.total = Date.now() - requestStartTime
+
+        // Return heading as a markdown-formatted suggestion (## Heading)
+        const headingText = `## ${nextHeading}\n`
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'done',
+              sentences: [{
+                text: headingText,
+                displayText: nextHeading,
+                citations: []
+              }],
+              contextHint: 'Next section',
+              ragInfo: { chunksUsed: 0, claimsUsed: 0, papersReferenced: 0 },
+              timing: timings,
+              isHeadingSuggestion: true,
+            })}\n\n`))
+            controller.close()
+          }
+        })
+
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        })
+      }
+    }
+
     // RAG + citation style fetch in parallel
     // effectivePaperIds=[] triggers global corpus search in retrieveEditorContext
     const ragStartTime = Date.now()
@@ -487,9 +613,26 @@ export async function POST(request: NextRequest) {
       }))
     )
 
-    const outlineContext = context.documentOutline.length > 0
-      ? context.documentOutline.map(h => `- ${h}`).join('\n')
-      : 'No outline.'
+    // Build outline context: show current document headings + planned outline awareness
+    let outlineContext: string
+    if (context.documentOutline.length > 0) {
+      outlineContext = 'Current document sections:\n' + context.documentOutline.map(h => `- ${h}`).join('\n')
+      if (plannedOutline.length > 0) {
+        const docHeadingsLower = context.documentOutline.map(h => h.toLowerCase().trim())
+        const remaining = plannedOutline.filter(planned => !docHeadingsLower.some(
+          existing => existing === planned.toLowerCase().trim() || 
+                      existing.includes(planned.toLowerCase().trim()) ||
+                      planned.toLowerCase().trim().includes(existing)
+        ))
+        if (remaining.length > 0) {
+          outlineContext += '\n\nUpcoming planned sections:\n' + remaining.map(h => `- ${h}`).join('\n')
+        }
+      }
+    } else if (plannedOutline.length > 0) {
+      outlineContext = 'Planned paper outline:\n' + plannedOutline.map(h => `- ${h}`).join('\n')
+    } else {
+      outlineContext = 'No outline.'
+    }
 
     const paperType = project.paper_type || 'literatureReview'
 
@@ -532,7 +675,9 @@ export async function POST(request: NextRequest) {
         model,
         system,
         prompt: userPrompt,
-        maxOutputTokens: usesFastModel ? 150 : 250,
+        // Increased from 250 to 500 to allow complete JSON with citations
+        // The citedContent field can be long (quotes from papers)
+        maxOutputTokens: usesFastModel ? 150 : 500,
         temperature: 0.5,
         abortSignal: abortController.signal,
       })
