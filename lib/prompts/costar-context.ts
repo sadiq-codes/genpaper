@@ -54,33 +54,71 @@ const PAPER_TYPE_STYLES: Record<string, string> = {
 }
 
 // Section-specific writing guidance
-const SECTION_GUIDANCE: Record<string, string> = {
-  'introduction': 
-    'Focus on establishing context, defining key terms, and stating the research problem or motivation. Build from broad context to specific research questions.',
+const SECTION_GUIDANCE: Record<string, { purpose: string; opening: string }> = {
+  'introduction': {
+    purpose: 'Focus on establishing context, defining key terms, and stating the research problem or motivation. Build from broad context to specific research questions.',
+    opening: 'Start with a compelling hook about the topic\'s significance or a key problem. Jump directly into substance - do NOT write "This paper examines..." or meta-commentary. Example pattern: "[Topic] represents a significant challenge/opportunity because [reason with evidence]."'
+  },
   
-  'background': 
-    'Provide foundational knowledge and context. Define key concepts and establish the theoretical framework for the research.',
+  'background': {
+    purpose: 'Provide foundational knowledge and context. Define key concepts and establish the theoretical framework for the research.',
+    opening: 'Begin by establishing the foundational concept most central to understanding the research. Define key terms immediately and connect them to the broader field.'
+  },
   
-  'literature review': 
-    'Synthesize prior research, identify themes and gaps. Position the current work within the scholarly conversation. Critique and compare sources.',
+  'literature review': {
+    purpose: 'Synthesize prior research, identify themes and gaps. Position the current work within the scholarly conversation. Critique and compare sources.',
+    opening: 'Frame the scholarly conversation by identifying the major research themes or debates. Do NOT list studies chronologically. Example: "Research on [topic] has developed along several interconnected themes, with scholars particularly focusing on [theme 1] and [theme 2]."'
+  },
   
-  'methods': 
-    'Focus on describing procedures, materials, participants, or analytical approaches. Be precise and replicable. Justify methodological choices.',
+  'methods': {
+    purpose: 'Focus on describing procedures, materials, participants, or analytical approaches. Be precise and replicable. Justify methodological choices.',
+    opening: 'State the overall research design or approach first. Be specific to this study. Example: "This study employed a [specific design] to examine [specific focus], using [data source/participants] from [context]."'
+  },
   
-  'methodology': 
-    'Explain and justify the research approach. Connect methods to research questions. Address validity and reliability.',
+  'methodology': {
+    purpose: 'Explain and justify the research approach. Connect methods to research questions. Address validity and reliability.',
+    opening: 'Begin with the epistemological or theoretical foundation for the methodological choices, then transition to specific methods.'
+  },
   
-  'results': 
-    'Focus on reporting findings and observations without interpretation. Present data clearly with appropriate visualizations. Be objective.',
+  'results': {
+    purpose: 'Focus on reporting findings and observations without interpretation. Present data clearly with appropriate visualizations. Be objective.',
+    opening: 'Lead with the most important or central finding. Be specific and quantitative where possible. Example: "Analysis revealed that [specific finding with data], representing [context for significance]."'
+  },
   
-  'discussion': 
-    'Focus on interpreting results, comparing with prior work, and explaining implications. Address limitations. Connect findings to theory.',
+  'discussion': {
+    purpose: 'Focus on interpreting results, comparing with prior work, and explaining implications. Address limitations. Connect findings to theory.',
+    opening: 'Begin by restating the key finding and immediately connecting it to its broader meaning or prior research. Example: "The finding that [key result] suggests [interpretation], aligning with/challenging previous work by [citation]."'
+  },
   
-  'conclusion': 
-    'Focus on summarizing key findings and their broader significance. Suggest future directions. End with strong takeaway.',
+  'conclusion': {
+    purpose: 'Focus on summarizing key findings and their broader significance. Suggest future directions. End with strong takeaway.',
+    opening: 'Open with the central contribution or takeaway of the research. Be direct and substantive. Example: "This [study/review] demonstrates that [key contribution], with implications for [domain/practice]."'
+  },
   
-  'abstract': 
-    'Concise summary of the entire work. Include purpose, methods, key findings, and significance. Stand-alone and self-contained.',
+  'abstract': {
+    purpose: 'Concise summary of the entire work. Include purpose, methods, key findings, and significance. Stand-alone and self-contained.',
+    opening: 'Start with the research problem or purpose in one sentence. Every word must earn its place.'
+  },
+
+  'theoretical framework': {
+    purpose: 'Present the theoretical lens through which the research is conducted. Connect theory to research questions and methodology.',
+    opening: 'Introduce the primary theory or framework and its relevance to the research problem. Example: "[Theory name] provides a useful lens for understanding [topic] because [reason]."'
+  },
+
+  'findings': {
+    purpose: 'Present the outcomes of analysis, organized thematically or by research question. May include interpretation for qualitative work.',
+    opening: 'Introduce the organizational structure of findings, then present the first major theme or finding. Example: "Three major themes emerged from the analysis: [theme 1], [theme 2], and [theme 3]. [First theme] was evident in..."'
+  },
+
+  'implications': {
+    purpose: 'Discuss the practical and theoretical implications of findings. Connect research to practice, policy, or future research.',
+    opening: 'State the most significant implication directly. Example: "These findings have important implications for [domain], suggesting that [specific implication]."'
+  },
+
+  'limitations': {
+    purpose: 'Acknowledge constraints and boundaries of the research. Be honest but not self-deprecating.',
+    opening: 'Acknowledge limitations directly but constructively. Example: "Several limitations should be considered when interpreting these findings. First, [limitation] may have affected [aspect]."'
+  },
 }
 
 /**
@@ -165,20 +203,33 @@ export function getStyleGuidance(paperType: string): string {
 
 /**
  * Get section-specific writing guidance
+ * @param section - Section name
+ * @param isSectionOpening - Whether this is the start of a new section (empty paragraph after heading)
  */
-export function getSectionGuidance(section: string): string {
+export function getSectionGuidance(section: string, isSectionOpening: boolean = false): string {
   const sectionLower = section.toLowerCase()
   
-  // Check for exact matches first
-  if (SECTION_GUIDANCE[sectionLower]) {
-    return SECTION_GUIDANCE[sectionLower]
+  // Find matching guidance
+  let guidance = SECTION_GUIDANCE[sectionLower]
+  
+  // Check for partial matches if no exact match
+  if (!guidance) {
+    for (const [key, value] of Object.entries(SECTION_GUIDANCE)) {
+      if (sectionLower.includes(key) || key.includes(sectionLower)) {
+        guidance = value
+        break
+      }
+    }
   }
   
-  // Check for partial matches
-  for (const [key, guidance] of Object.entries(SECTION_GUIDANCE)) {
-    if (sectionLower.includes(key) || key.includes(sectionLower)) {
-      return guidance
+  // Return appropriate guidance based on context
+  if (guidance) {
+    if (isSectionOpening) {
+      // When starting a new section, include both purpose and opening guidance
+      return `${guidance.purpose}\n\n**Opening this section:** ${guidance.opening}`
     }
+    // When continuing within a section, just the purpose
+    return guidance.purpose
   }
   
   return 'Continue in an appropriate academic tone, maintaining consistency with the document.'
@@ -314,6 +365,8 @@ export function buildCompleteContext(params: {
   // Voice configuration (optional)
   // Pass the project's voiceProfileId to include voice guidance for completions
   voiceProfileId?: VoiceProfileId | null
+  // Section opening flag - when true, provide opening-specific guidance
+  isSectionOpening?: boolean
 }): CompleteCOStarContext {
   const {
     topic,
@@ -327,6 +380,7 @@ export function buildCompleteContext(params: {
     papersContext,
     documentContent = '',
     voiceProfileId,
+    isSectionOpening = false,
   } = params
   
   const base = buildBaseContext(topic, paperType, currentSection, documentContent)
@@ -338,7 +392,7 @@ export function buildCompleteContext(params: {
     ...base,
     precedingText: precedingText.slice(-800), // Enough context to detect repetition
     followingText,
-    sectionGuidance: getSectionGuidance(currentSection),
+    sectionGuidance: getSectionGuidance(currentSection, isSectionOpening),
     outlineContext,
     chunksText,
     claimsText,

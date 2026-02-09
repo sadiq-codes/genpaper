@@ -40,6 +40,8 @@ interface EditorContext {
   isInParagraph: boolean
   isEmptyParagraph: boolean
   hasHeadingAbove: boolean
+  /** True when starting a new section (empty paragraph right after heading) */
+  isSectionOpening: boolean
   // For contextual filter
   charBeforeCursor: string
   cursorAtLineEnd: boolean
@@ -184,6 +186,24 @@ function extractEditorContext(editor: Editor): EditorContext | null {
   }
   followingText = followingText.slice(0, 500).trim()
 
+  // Detect section opening: empty paragraph IMMEDIATELY after a heading
+  // This signals we should generate a section-appropriate opening sentence
+  // We check if the node directly before the current paragraph is a heading
+  let isImmediatelyAfterHeading = false
+  if (isEmptyParagraph) {
+    // Get the position of the current paragraph node
+    const paragraphPos = $from.before($from.depth)
+    // Check what's immediately before this paragraph
+    if (paragraphPos > 0) {
+      const nodeBefore = doc.resolve(paragraphPos).nodeBefore
+      if (nodeBefore && nodeBefore.type.name === 'heading') {
+        isImmediatelyAfterHeading = true
+      }
+    }
+  }
+  
+  const isSectionOpening = isEmptyParagraph && isImmediatelyAfterHeading && currentSection !== ''
+
   return {
     precedingText,
     followingText,
@@ -193,6 +213,7 @@ function extractEditorContext(editor: Editor): EditorContext | null {
     isInParagraph,
     isEmptyParagraph,
     hasHeadingAbove,
+    isSectionOpening,
     charBeforeCursor,
     cursorAtLineEnd
   }
@@ -211,8 +232,7 @@ function contextualFilter(context: EditorContext): { shouldRequest: boolean; rea
     precedingText, 
     followingText,
     isEmptyParagraph, 
-    hasHeadingAbove, 
-    currentSection,
+    hasHeadingAbove,
     charBeforeCursor,
     cursorAtLineEnd
   } = context
@@ -231,9 +251,9 @@ function contextualFilter(context: EditorContext): { shouldRequest: boolean; rea
     return { shouldRequest: false, reason: 'likely mid-word typing' }
   }
 
-  // ALLOW: Empty paragraph after a heading -> opening sentence
-  if (isEmptyParagraph && hasHeadingAbove && currentSection !== 'Untitled Section') {
-    return { shouldRequest: true, reason: 'empty paragraph after heading' }
+  // ALLOW: Section opening (empty paragraph immediately after heading) -> opening sentence
+  if (context.isSectionOpening) {
+    return { shouldRequest: true, reason: 'section opening - empty paragraph after heading' }
   }
 
   // ALLOW: Empty document with no headings -> suggest first section heading
@@ -599,7 +619,8 @@ export function useSmartCompletion({
               followingText: context.followingText,  // FIM: send suffix for better context
               currentParagraph: context.currentParagraph,
               currentSection: context.currentSection,
-              documentOutline: context.documentOutline
+              documentOutline: context.documentOutline,
+              isSectionOpening: context.isSectionOpening,  // Signal for section-appropriate opening
             },
             paperIds: prefs?.includeCitations ? currentPapers.map(p => p.id) : [],
             // Skip RAG entirely when citations are disabled - makes autocomplete much faster

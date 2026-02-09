@@ -50,6 +50,8 @@ interface CompletionRequest {
     currentParagraph: string
     currentSection: string
     documentOutline: string[]
+    /** True when cursor is in empty paragraph after a heading - signals section opening */
+    isSectionOpening?: boolean
   }
   paperIds: string[]
   topic: string
@@ -154,6 +156,7 @@ async function buildSystemPromptFromTemplate(
     claimsText: ragFormatted.claimsText,
     papersContext,
     voiceProfileId: validatedVoiceId,
+    isSectionOpening: context.isSectionOpening,  // Pass section opening flag for special handling
   })
 
   return PromptService.buildCompletePrompt(costarContext)
@@ -165,10 +168,19 @@ async function buildSystemPromptFromTemplate(
 function buildUserPrompt(context: CompletionRequest['context']): string {
   const preceding = context.precedingText.trim()
   
+  // Section opening with no prior content - clear signal to write opening sentence
   if (!preceding) {
     return `[START OF ${context.currentSection.toUpperCase()}]`
   }
   
+  // Section opening with prior content - signal new section while providing context
+  if (context.isSectionOpening) {
+    const snippet = preceding.slice(-200) // Less context for section opening
+    const ellipsis = preceding.length > 200 ? '...' : ''
+    return `${ellipsis}"${snippet}"\n\n[NEW SECTION: ${context.currentSection.toUpperCase()} - Write opening sentence]`
+  }
+  
+  // Normal continuation
   const snippet = preceding.slice(-300)
   const ellipsis = preceding.length > 300 ? '...' : ''
   
@@ -895,18 +907,16 @@ export async function POST(request: NextRequest) {
               allInstancesToCreate.push(...processResult.instancesToCreate)
               
               // Build citations array for this sentence with position offsets
-              const displayText = processResult.contentFormatted
               const sentenceCitations: CitationInSuggestion[] = []
               
               for (const c of processResult.processedCitations) {
-                // Find the position of this formatted citation in the display text
-                const searchStart = sentenceCitations.length > 0 
-                  ? sentenceCitations[sentenceCitations.length - 1].displayEndOffset 
-                  : 0
-                const displayStartOffset = displayText.indexOf(c.formatted, searchStart)
-                const displayEndOffset = displayStartOffset >= 0 
-                  ? displayStartOffset + c.formatted.length 
-                  : 0
+                // Use pre-calculated positions from processNumberedCitations
+                // These are accurate even for numeric citations like [1], [2]
+                // Skip citations with invalid positions (-1) rather than misplacing them
+                if (c.formattedStartOffset < 0 || c.formattedEndOffset < 0) {
+                  console.warn(`[Autocomplete] Skipping citation with invalid position: index=${c.index}, formatted="${c.formatted}"`)
+                  continue
+                }
                 
                 sentenceCitations.push({
                   paperId: c.paperId,
@@ -915,8 +925,8 @@ export async function POST(request: NextRequest) {
                   formatted: c.formatted,
                   citedContent: c.citedContent,
                   index: c.index,
-                  displayStartOffset: displayStartOffset >= 0 ? displayStartOffset : 0,
-                  displayEndOffset,
+                  displayStartOffset: c.formattedStartOffset,
+                  displayEndOffset: c.formattedEndOffset,
                   paper: c.paper
                 })
               }

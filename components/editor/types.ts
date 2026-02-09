@@ -162,6 +162,8 @@ export interface GenerationContext {
   currentSection: string
   documentOutline: string[]
   cursorOffset: number
+  /** True when cursor is in empty paragraph directly after a heading - signals section opening */
+  isSectionOpening?: boolean
 }
 
 export interface CursorPosition {

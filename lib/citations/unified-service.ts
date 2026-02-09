@@ -175,8 +175,11 @@ export interface ProcessNumberedCitationsResult {
     instanceId: string  // UUID for this instance
     citedContent: string
     marker: string      // [@paperId#instanceId]
-    formatted: string   // (Author, Year)
+    formatted: string   // (Author, Year) or [N] for numeric styles
     paper: PaperMetadata
+    // Position offsets in contentFormatted (for ghost text rendering)
+    formattedStartOffset: number
+    formattedEndOffset: number
   }>
   // Citations that failed (invalid paperId)
   failedCitations: Array<{
@@ -233,7 +236,8 @@ export function processNumberedCitations(
   // Track which citation indices we've seen in the text
   const seenIndices = new Set<number>()
   // Track orphaned markers (in text but not in citations array)
-  const orphanedMarkers: Array<{ index: number; position: number }> = []
+  // Store start and end positions for precise removal
+  const orphanedMarkers: Array<{ index: number; start: number; end: number }> = []
   
   // Find all [N] markers in text and collect replacements
   const replacements: Array<{
@@ -257,7 +261,8 @@ export function processNumberedCitations(
     const citation = citationMap.get(index)
     if (!citation) {
       // Marker in text but no citation in array - track as orphaned
-      orphanedMarkers.push({ index, position: match.index })
+      // Store both start and end positions for precise removal
+      orphanedMarkers.push({ index, start: match.index, end: match.index + match[0].length })
       continue
     }
     
@@ -345,18 +350,47 @@ export function processNumberedCitations(
       citedContent: r.citation.citedContent,
       marker: r.marker,
       formatted: r.formatted,
-      paper: r.paper
+      paper: r.paper,
+      // Placeholder - will be calculated after all transformations
+      formattedStartOffset: -1,
+      formattedEndOffset: -1,
     })
   }
   
-  // Strip any orphaned [N] markers that weren't matched to citations
-  contentWithMarkers = contentWithMarkers.replace(/\[(\d+)\]/g, '')
-  contentFormatted = contentFormatted.replace(/\[(\d+)\]/g, '')
+  // Strip only the tracked orphaned [N] markers (markers in text without matching citation)
+  // We build a Set of orphan indices and only remove markers matching those indices
+  // This avoids removing legitimate [N] citations or bracketed numbers in prose
+  if (orphanedMarkers.length > 0) {
+    const orphanIndices = new Set(orphanedMarkers.map(o => o.index))
+    // Pattern matches [N] and captures N; we only remove if N is an orphan index
+    contentWithMarkers = contentWithMarkers.replace(/\[(\d+)\]/g, (match, numStr) => {
+      const num = parseInt(numStr, 10)
+      return orphanIndices.has(num) ? '' : match
+    })
+    contentFormatted = contentFormatted.replace(/\[(\d+)\]/g, (match, numStr) => {
+      const num = parseInt(numStr, 10)
+      return orphanIndices.has(num) ? '' : match
+    })
+  }
   
   // Clean up extra whitespace
   // IMPORTANT: do not collapse newlines, or markdown headings/paragraphs break.
   contentWithMarkers = contentWithMarkers.replace(/[ \t]{2,}/g, ' ')
   contentFormatted = contentFormatted.replace(/[ \t]{2,}/g, ' ')
+  
+  // Calculate final positions of citations in contentFormatted
+  // processedCitations is in ascending order (due to unshift during reverse iteration)
+  // We scan from left to right, incrementing searchPos to find each citation in order
+  let searchPos = 0
+  for (const pc of processedCitations) {
+    const pos = contentFormatted.indexOf(pc.formatted, searchPos)
+    if (pos >= 0) {
+      pc.formattedStartOffset = pos
+      pc.formattedEndOffset = pos + pc.formatted.length
+      searchPos = pc.formattedEndOffset  // Next search starts after this citation
+    }
+    // If not found, offsets remain -1 (caller should handle gracefully)
+  }
   
   return {
     contentWithMarkers,

@@ -96,6 +96,28 @@ system: |-
   
   **CRITICAL: No generic openers.** Do NOT start with a broad definitional or framing sentence unless the preceding text is completely empty. If there is preceding text, continue its specific line of reasoning—do not "zoom out" to restate context the reader already has.
   
+  ## Special Case: Starting a New Section
+  
+  If the cursor is at the beginning of a new section (empty paragraph after a heading like "Introduction" or "Methods"):
+  
+  1. **Do NOT write meta-commentary** - Never write "This section discusses..." or "In this part, we will examine..."
+  2. **Jump directly into content** - Start with substantive text about the topic
+  3. **Follow the Section Purpose guidance** - The sectionGuidance above tells you how to open this specific section type
+  4. **Be specific to the topic** - Your opening should relate to "{{topic}}", not generic academic prose
+  5. **Use sources if available** - Even opening sentences can cite relevant context from source material
+  
+  Examples of BAD section openers (never write these):
+  - "This section introduces the topic of..."
+  - "In the following, we will discuss..."
+  - "The literature review will examine..."
+  - "This methodology section describes..."
+  
+  Examples of GOOD section openers (write like these, but specific to the topic):
+  - Introduction: "[Specific problem] poses significant challenges for [domain], with [quantified impact or trend]."
+  - Literature Review: "Research on [topic] has developed along several key themes, with particular focus on [theme]."
+  - Methods: "This study employed [specific design] to examine [focus] using [data/participants] from [context]."
+  - Discussion: "The finding that [key result] aligns with/challenges previous understanding of [topic]."
+  
   ---
   
   # STYLE
