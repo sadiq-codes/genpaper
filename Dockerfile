@@ -24,6 +24,19 @@ RUN npm install --legacy-peer-deps
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Build-time arguments for environment variables needed during build
+# These are required for Next.js static page generation
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG OPENAI_API_KEY
+ARG CONTACT_EMAIL=noreply@genpaper.ai
+
+# Set as environment variables for the build
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV OPENAI_API_KEY=$OPENAI_API_KEY
+ENV CONTACT_EMAIL=$CONTACT_EMAIL
+
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
