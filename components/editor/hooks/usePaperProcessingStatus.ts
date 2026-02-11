@@ -65,6 +65,7 @@ export function usePaperProcessingStatus({
 
   const previousStatusesRef = useRef<Record<string, ProcessingStatus>>({})
   const hasNotifiedCompleteRef = useRef(false)
+  const isFirstFetchRef = useRef(true)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   
   // Store callbacks in refs to avoid dependency issues
@@ -108,10 +109,17 @@ export function usePaperProcessingStatus({
       }))
 
       // Check if all processed
+      // Skip notification on first fetch — papers were already done before we started polling
       if (data.summary.allProcessed && !hasNotifiedCompleteRef.current) {
-        hasNotifiedCompleteRef.current = true
-        onAllProcessedRef.current?.()
+        if (isFirstFetchRef.current) {
+          // Already complete on load — suppress the toast
+          hasNotifiedCompleteRef.current = true
+        } else {
+          hasNotifiedCompleteRef.current = true
+          onAllProcessedRef.current?.()
+        }
       }
+      isFirstFetchRef.current = false
 
       return data.summary.allProcessed
     } catch (error) {

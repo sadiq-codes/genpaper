@@ -105,15 +105,13 @@ function SignupContent() {
       <div className="w-full max-w-sm mx-auto px-6 text-center">
         <div className="flex items-center justify-center mb-10">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-foreground/80 flex items-center justify-center p-1.5">
-              <Image
-                src="/favicon-32x32.png"
-                alt="GenPaper"
-                width={20}
-                height={20}
-                className="w-full h-full invert dark:invert-0"
-              />
-            </div>
+            <Image
+              src="/favicon-32x32.png"
+              alt="GenPaper"
+              width={24}
+              height={24}
+              className="dark:invert"
+            />
             <span className="text-lg font-semibold tracking-tight text-foreground/80">GenPaper</span>
           </Link>
         </div>
@@ -168,15 +166,13 @@ function SignupContent() {
       {/* Logo */}
       <div className="flex items-center justify-center mb-10">
         <Link href="/" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-foreground/80 flex items-center justify-center p-1.5">
-            <Image
-              src="/favicon-32x32.png"
-              alt="GenPaper"
-              width={20}
-              height={20}
-              className="w-full h-full invert dark:invert-0"
-            />
-          </div>
+          <Image
+            src="/favicon-32x32.png"
+            alt="GenPaper"
+            width={24}
+            height={24}
+            className="dark:invert"
+          />
           <span className="text-lg font-semibold tracking-tight text-foreground/80">GenPaper</span>
         </Link>
       </div>

@@ -14,8 +14,8 @@
 import 'server-only'
 import { v4 as uuidv4 } from 'uuid'
 import { collectPapers } from '@/lib/generation/discovery'
-import { generatePaperProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
-import { generateWithUnifiedTemplate, type StructuredCitation } from '@/lib/generation/unified-generator'
+import { generatePaperProfile, buildProfileGuidanceForPrompt, scaleProfileOutlineForLength } from '@/lib/generation/paper-profile'
+import { generateWithUnifiedTemplate, generateSectionBySubsections, type StructuredCitation } from '@/lib/generation/unified-generator'
 import { GenerationContextService } from '@/lib/rag/generation-context'
 import { SectionReviewer } from '@/lib/quality/section-reviewer'
 import { fourGramOverlapRatio } from '@/lib/utils/overlap'
@@ -83,12 +83,16 @@ export async function runProfilePhase(
   
   onProgress?.('profiling', 5, 'Analyzing your topic...')
   
-  const profile = await generatePaperProfile({
+  const rawProfile = await generatePaperProfile({
     topic: sanitizedTopic,
     paperType: config.paperType,
     hasOriginalResearch: config.originalResearch?.has_original_research,
-    userContext: undefined
+    userContext: config.customInstructions,
+    length: config.length,
+    researchQuestion: config.originalResearch?.research_question,
+    keyFindings: config.originalResearch?.key_findings,
   })
+  const profile = scaleProfileOutlineForLength(rawProfile, config.length)
   
   info({
     discipline: profile.discipline.primary,
@@ -144,7 +148,8 @@ export async function runDiscoveryPhase(
       length: config.length,
       paperType: config.paperType,
       useLibraryOnly: config.useLibraryOnly || false,
-      localRegion: undefined
+      localRegion: undefined,
+      original_research: config.originalResearch,
     },
     recencyProfile: profile.sourceExpectations.recencyProfile,
     searchYearRange: profile.sourceExpectations.searchYearRange,
@@ -442,10 +447,10 @@ export async function runSectionGenerationPhase(
     ? previousSections.map(s => `${s.title}: ${s.content.slice(0, 200)}...`).join('\n\n')
     : undefined
   
-  // Calculate token budget
-  const perSectionTokens = Math.max(2000, Math.round(
-    ((profile.outline?.totalEstimatedWords || 10000) / totalSections) * 1.5 * 1.4
-  ))
+  // Calculate token budget from this section's own word target (not averaged across sections).
+  // Generous 3× multiplier: ~1.5 tokens/word × 2× headroom so the LLM is never token-starved.
+  const sectionTargetWords = context.expectedWords || Math.round((profile.outline?.totalEstimatedWords || 10000) / totalSections)
+  const perSectionTokens = Math.max(4000, Math.round(sectionTargetWords * 3))
   
   // Build outline tree
   const outlineTree = profile.outline?.sections
@@ -453,27 +458,63 @@ export async function runSectionGenerationPhase(
     .join('\n') || ''
   
   const profileGuidance = buildProfileGuidanceForPrompt(profile)
-  
-  const result = await generateWithUnifiedTemplate({
-    context,
-    options: {
-      temperature: config.temperature || 0.2,
-      maxTokens: perSectionTokens,
-      outlineTree,
-      topic: sanitizedTopic,
-      paperType: config.paperType,
-      projectTitle: sanitizedTopic,
-      previousSectionsSummary: previousSummary,
-      profileGuidance,
-      voiceConfig: profile.voice,
-      profileCriteria: profile.qualityCriteria,
-      originalResearch: config.originalResearch?.has_original_research ? {
-        hasOriginalResearch: true,
-        researchQuestion: config.originalResearch.research_question,
-        keyFindings: config.originalResearch.key_findings
-      } : undefined
+
+  const baseOptions = {
+    temperature: config.temperature || 0.2,
+    maxTokens: perSectionTokens,
+    outlineTree,
+    topic: sanitizedTopic,
+    paperType: config.paperType,
+    projectTitle: sanitizedTopic,
+    previousSectionsSummary: previousSummary,
+    profileGuidance,
+    voiceConfig: profile.voice,
+    profileCriteria: profile.qualityCriteria,
+    customInstructions: config.customInstructions,
+    originalResearch: config.originalResearch?.has_original_research ? {
+      hasOriginalResearch: true,
+      researchQuestion: config.originalResearch.research_question,
+      keyFindings: config.originalResearch.key_findings
+    } : undefined
+  }
+
+  // With generateText (no JSON overhead, no early stopping), subsection splitting
+  // is only needed for very long sections (thesis/dissertation chapters).
+  const SUBSECTION_WORD_THRESHOLD = 2500
+  const shouldSplit = sectionTargetWords >= SUBSECTION_WORD_THRESHOLD
+
+  let contextForGeneration = context
+
+  // Auto-synthesize subsections if the profile didn't provide them
+  if (shouldSplit && (!context.subsections || context.subsections.length === 0)) {
+    const numSubs = Math.max(2, Math.min(5, Math.round(sectionTargetWords / 1000)))
+    const wordsPerSub = Math.round(sectionTargetWords / numSubs)
+    contextForGeneration = {
+      ...context,
+      subsections: Array.from({ length: numSubs }, (_, i) => ({
+        title: `Part ${i + 1}`,
+        expectedWords: wordsPerSub,
+        keyPoints: context.keyPoints
+          ? context.keyPoints.slice(
+              Math.round((i / numSubs) * context.keyPoints.length),
+              Math.round(((i + 1) / numSubs) * context.keyPoints.length)
+            )
+          : undefined
+      }))
     }
-  })
+  }
+
+  let result
+  if (shouldSplit && contextForGeneration.subsections && contextForGeneration.subsections.length > 0) {
+    info({ sectionIndex, title: sectionTitle, subsections: contextForGeneration.subsections.length, targetWords: sectionTargetWords },
+      'Using subsection splitting for section')
+    result = await generateSectionBySubsections(contextForGeneration, baseOptions)
+  } else {
+    result = await generateWithUnifiedTemplate({
+      context: contextForGeneration,
+      options: baseOptions
+    })
+  }
   
   // Ensure section has heading
   let content = result.content.trim()
@@ -542,7 +583,7 @@ export async function runQualityCheckPhase(
     
     // Check length
     const targetWords = context.expectedWords || 300
-    if (targetWords >= 800 && section.wordCount < targetWords * 0.7) {
+    if (targetWords >= 400 && section.wordCount < targetWords * 0.5) {
       issues.push({
         sectionIndex: i,
         issue: 'length',
@@ -580,9 +621,9 @@ export async function runSectionRewritePhase(
   
   onProgress?.('finishing', 91, `Improving "${sectionTitle}"...`)
   
-  const perSectionTokens = Math.max(2000, Math.round(
-    ((profile.outline?.totalEstimatedWords || 10000) / totalSections) * 1.5 * 1.4
-  ))
+  // Token budget from this section's own word target (generous 3× so rewrites can expand)
+  const sectionTargetWords = context.expectedWords || Math.round((profile.outline?.totalEstimatedWords || 10000) / totalSections)
+  const perSectionTokens = Math.max(4000, Math.round(sectionTargetWords * 3))
   
   const outlineTree = profile.outline?.sections
     .map(s => `• ${s.title}`)
@@ -598,22 +639,61 @@ export async function runSectionRewritePhase(
     const targetWords = context.expectedWords || 300
     rewriteInstructions = `IMPORTANT: This section needs to be longer. Write at least ${Math.round(targetWords * 0.8)} words with thorough coverage of all key points.`
   }
-  
-  const result = await generateWithUnifiedTemplate({
-    context,
-    options: {
-      temperature: config.temperature || 0.2,
-      maxTokens: perSectionTokens,
-      outlineTree,
-      topic: sanitizedTopic,
-      paperType: config.paperType,
-      projectTitle: sanitizedTopic,
-      previousSectionsSummary: rewriteInstructions,
-      profileGuidance,
-      voiceConfig: profile.voice,
-      profileCriteria: profile.qualityCriteria
+
+  const baseOptions = {
+    temperature: config.temperature || 0.2,
+    maxTokens: perSectionTokens,
+    outlineTree,
+    topic: sanitizedTopic,
+    paperType: config.paperType,
+    projectTitle: sanitizedTopic,
+    previousSectionsSummary: rewriteInstructions,
+    profileGuidance,
+    voiceConfig: profile.voice,
+    profileCriteria: profile.qualityCriteria,
+    customInstructions: config.customInstructions,
+    originalResearch: config.originalResearch?.has_original_research ? {
+      hasOriginalResearch: true,
+      researchQuestion: config.originalResearch.research_question,
+      keyFindings: config.originalResearch.key_findings
+    } : undefined
+  }
+
+  // Subsection splitting for rewrites — same 2500-word threshold as generation
+  const SUBSECTION_WORD_THRESHOLD = 2500
+  const shouldSplit = sectionTargetWords >= SUBSECTION_WORD_THRESHOLD
+
+  let contextForRewrite = context
+
+  if (shouldSplit && (!context.subsections || context.subsections.length === 0)) {
+    const numSubs = Math.max(2, Math.min(5, Math.round(sectionTargetWords / 1000)))
+    const wordsPerSub = Math.round(sectionTargetWords / numSubs)
+    contextForRewrite = {
+      ...context,
+      subsections: Array.from({ length: numSubs }, (_, i) => ({
+        title: `Part ${i + 1}`,
+        expectedWords: wordsPerSub,
+        keyPoints: context.keyPoints
+          ? context.keyPoints.slice(
+              Math.round((i / numSubs) * context.keyPoints.length),
+              Math.round(((i + 1) / numSubs) * context.keyPoints.length)
+            )
+          : undefined
+      }))
     }
-  })
+  }
+
+  let result
+  if (shouldSplit && contextForRewrite.subsections && contextForRewrite.subsections.length > 0) {
+    info({ sectionIndex, title: sectionTitle, subsections: contextForRewrite.subsections.length, targetWords: sectionTargetWords },
+      'Using subsection splitting for rewrite')
+    result = await generateSectionBySubsections(contextForRewrite, baseOptions)
+  } else {
+    result = await generateWithUnifiedTemplate({
+      context: contextForRewrite,
+      options: baseOptions
+    })
+  }
   
   let content = result.content.trim()
   const startsWithHeading = /^##?\s+\w/.test(content)
@@ -641,11 +721,12 @@ export async function runSectionRewritePhase(
 // =============================================================================
 
 /**
- * Convert numbered citations to storage format
+ * Convert inline [@paperId] citations to storage format [@paperId#instanceId].
+ * Also handles [@id1; @id2] multi-cite syntax by splitting into individual markers.
+ * Strips any markers referencing invalid/hallucinated paper IDs.
  */
-function convertNumberedCitationsToStorage(
+function convertInlineCitationsToStorage(
   content: string,
-  citations: StructuredCitation[],
   validPaperIds: Set<string>
 ): {
   content: string
@@ -653,39 +734,29 @@ function convertNumberedCitationsToStorage(
 } {
   const instances: CitationInstance[] = []
   
-  // Group citations by index and filter valid ones
-  const citationsByIndex = new Map<number, StructuredCitation[]>()
-  for (const citation of citations) {
-    if (!validPaperIds.has(citation.paperId)) continue
-    const existing = citationsByIndex.get(citation.index) || []
-    existing.push(citation)
-    citationsByIndex.set(citation.index, existing)
-  }
+  // Match [@paperId] and [@id1; @id2] patterns
+  const markerRegex = /\[@([^\]]+)\]/g
   
-  let result = content
-  
-  // Process each citation index
-  for (const [index, citationsForIndex] of citationsByIndex) {
-    const pattern = new RegExp(`\\[${index}\\]`, 'g')
-    let occurrenceCount = 0
+  let result = content.replace(markerRegex, (_match, inner: string) => {
+    // Split on semicolons for multi-cite markers: [@id1; @id2] → two separate markers
+    const ids = inner.split(/;\s*@?/).map((s: string) => s.replace(/^@/, '').trim()).filter(Boolean)
     
-    result = result.replace(pattern, () => {
-      const citation = citationsForIndex[occurrenceCount] || citationsForIndex[0]
-      occurrenceCount++
+    const replacements: string[] = []
+    for (const paperId of ids) {
+      if (!validPaperIds.has(paperId)) continue // Strip hallucinated IDs
       
       const instanceId = uuidv4()
       instances.push({
         instanceId,
-        paperId: citation.paperId,
-        quote: citation.quote,
+        paperId,
+        quote: '',
       })
-      
-      return `[@${citation.paperId}#${instanceId}]`
-    })
-  }
-  
-  // Remove orphan markers
-  result = result.replace(/\[\d+\]/g, '')
+      replacements.push(`[@${paperId}#${instanceId}]`)
+    }
+    
+    // If all IDs were invalid, remove the marker entirely
+    return replacements.length > 0 ? replacements.join('') : ''
+  })
   
   // Clean up double spaces
   result = result
@@ -710,17 +781,14 @@ export async function runFinalizePhase(
   // Combine all section content
   let fullContent = sections.map(s => s.content).join('\n\n')
   
-  // Collect all citations
-  const allCitations = sections.flatMap(s => s.citations)
-  
   // Clean non-citation artifacts
   const { cleanNonCitationArtifacts } = await import('@/lib/citations/post-processor')
   fullContent = cleanNonCitationArtifacts(fullContent)
   
-  // Convert citations to storage format
+  // Convert inline [@paperId] citations to storage format [@paperId#instanceId]
   const validPaperIds = new Set(papers.map(p => p.id))
   const { content: processedContent, instances: citationInstances } = 
-    convertNumberedCitationsToStorage(fullContent, allCitations, validPaperIds)
+    convertInlineCitationsToStorage(fullContent, validPaperIds)
   
   fullContent = processedContent
   

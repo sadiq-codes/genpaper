@@ -818,9 +818,9 @@ function executeInsertContent(
         // Determine if we need a space before the content
         let contentToInsert = content
         if (!isMarkdown && typeof content === 'string' && match.node) {
-          const nodeText = match.node.textContent
-          const charBefore = match.endOffset > 0 ? nodeText[match.endOffset - 1] : ''
-          const charAfter = match.endOffset < nodeText.length ? nodeText[match.endOffset] : ''
+          const nodeContentSize = match.node.content.size
+          const charBefore = match.endOffset > 0 ? match.node.textBetween(Math.max(0, match.endOffset - 1), match.endOffset) : ''
+          const charAfter = match.endOffset < nodeContentSize ? match.node.textBetween(match.endOffset, Math.min(match.endOffset + 1, nodeContentSize)) : ''
           const needsSpaceBefore = charBefore && !/\s/.test(charBefore) && !/\s/.test(content[0] || '')
           const needsSpaceAfter = charAfter && !/\s/.test(charAfter) && !/\s/.test(content[content.length - 1] || '')
           
@@ -1304,20 +1304,19 @@ function executeAddCitation(
       return { success: false, message: `Block not found: ${blockId}` }
     }
     
-    // Get text content of the block and search within it
-    const blockText = block.node.textContent
-    const phraseIndex = blockText.toLowerCase().indexOf(afterPhrase.toLowerCase())
-    
-    if (phraseIndex === -1) {
+    // Use structure-aware search scoped to the block (handles citation atoms correctly)
+    const match = findTextInStructure(editor, afterPhrase, { blockId })
+    if (!match.found) {
       const preview = afterPhrase.slice(0, 50)
       toast.error(`Could not find text in block: "${preview}..."`)
       return { success: false, message: `Could not find text in block: "${preview}..."` }
     }
     
-    // Calculate position within the block
-    // block.pos is the start of the block, +1 for the opening tag
-    // Then add the phrase index + phrase length to get end position
-    insertPos = block.pos + 1 + phraseIndex + afterPhrase.length
+    const range = matchToRange(match)
+    if (!range) {
+      return { success: false, message: 'Failed to calculate citation position' }
+    }
+    insertPos = range.to
   } else {
     // No blockId, search entire document using structure-aware search
     const match = findTextInStructure(editor, afterPhrase)

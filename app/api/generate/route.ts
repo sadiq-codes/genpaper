@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
     const url = new URL(request.url)
     const topic = url.searchParams.get('topic')
     let useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
-    const length = url.searchParams.get('length') || 'medium'
+    const length = parseInt(url.searchParams.get('length') || '5500', 10) || 5500
     const paperTypeParam = url.searchParams.get('paperType')
     let paperType = paperTypeParam || 'literatureReview'
     let libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
@@ -193,7 +193,6 @@ export async function GET(request: NextRequest) {
       const gateCheck = await checkCanStartGeneration(
         user.id,
         paperType as PaperTypeKey,
-        length as 'short' | 'medium' | 'long'
       )
       
       if (!gateCheck.allowed) {
@@ -246,7 +245,7 @@ export async function GET(request: NextRequest) {
         sources: ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
         limit: 25,
         library_papers_used: libraryPaperIds,
-        length: length as 'short' | 'medium' | 'long',
+        length,
         paperType: paperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation',
         useLibraryOnly,
         localRegion: undefined
@@ -280,7 +279,7 @@ export async function GET(request: NextRequest) {
     const pipelineConfig: PipelineConfig = {
       topic,
       paperType: paperType as PipelineConfig['paperType'],
-      length: length as 'short' | 'medium' | 'long',
+      length,
       useLibraryOnly,
       libraryPaperIds,
       sources: ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],

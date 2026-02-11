@@ -48,6 +48,55 @@ function formatMeta(authors: string[] | undefined, year?: number, journal?: stri
   return parts.join(' · ')
 }
 
+/** Human-readable paper type label */
+function formatPaperType(raw?: string): string | null {
+  if (!raw) return null
+  const map: Record<string, string> = {
+    'article': 'Article',
+    'journal-article': 'Article',
+    'conference-paper': 'Conference',
+    'preprint': 'Preprint',
+    'review': 'Review',
+    'book-chapter': 'Book Chapter',
+    'book': 'Book',
+    'dissertation': 'Dissertation',
+    'editorial': 'Editorial',
+    'letter': 'Letter',
+    'dataset': 'Dataset',
+  }
+  return map[raw.toLowerCase()] || raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+
+
+/** Metadata pills for paper cards */
+function PaperMetaBadges({ metadata }: { metadata?: Record<string, unknown> | null }) {
+  if (!metadata) return null
+
+  const paperType = formatPaperType(metadata.paper_type as string | undefined)
+  const fields = (metadata.fields_of_study as string[] | undefined)?.slice(0, 2)
+  const keywords = (metadata.keywords as string[] | undefined)?.slice(0, 2)
+  const tags = fields?.length ? fields : keywords
+
+  const hasBadges = paperType || tags?.length
+  if (!hasBadges) return null
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 mt-1.5">
+      {paperType && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-muted/50 text-muted-foreground">
+          {paperType}
+        </span>
+      )}
+      {tags?.map((tag) => (
+        <span key={tag} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] bg-foreground/5 text-muted-foreground truncate max-w-[100px]">
+          {tag}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 // =============================================================================
 // SOURCE ICON - Minimal, icon-only indicator
 // =============================================================================
@@ -166,9 +215,12 @@ const PaperCard = memo(function PaperCard({
         </p>
         <SourceIcon source={paper.source} />
       </div>
+
+      {/* Type / OA / Fields badges */}
+      <PaperMetaBadges metadata={paper.metadata} />
       
       {/* Actions Row */}
-      <div className="flex items-center gap-1 mt-2.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+      <div className="flex items-center gap-1 mt-2.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200">
         {/* Cite */}
         <button
           className="h-6 px-2.5 text-[10px] font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors disabled:opacity-40"
@@ -396,87 +448,109 @@ function PaperDetailView({
 
       {/* Scrollable content */}
       <ScrollArea className="flex-1 min-h-0">
-        <div className="p-4">
-          {/* Title */}
-          <h3 className="font-instrument text-base tracking-tight leading-snug">{paper.title}</h3>
+        <div className="p-4 space-y-5">
+          {/* Main Paper Info */}
+          <div className="space-y-3">
+            {/* Title */}
+            <h3 className="font-instrument text-lg tracking-tight leading-snug">{paper.title}</h3>
 
-          {/* Meta line */}
-          <p className="text-xs text-muted-foreground mt-2">
-            {allAuthors}
-            {paper.year && ` · ${paper.year}`}
-          </p>
-          {paper.journal && (
-            <p className="text-xs text-muted-foreground mt-0.5 italic">{paper.journal}</p>
-          )}
+            {/* Authors */}
+            <p className="text-xs text-muted-foreground">{allAuthors}</p>
 
-          {/* DOI inline */}
-          {paper.doi && (
-            <div className="flex items-center gap-2 mt-2">
-              <button
-                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors truncate"
-                onClick={() => {
-                  navigator.clipboard.writeText(paper.doi!)
-                  toast.success('DOI copied')
-                }}
-                title="Click to copy DOI"
-              >
-                <span className="font-mono">{paper.doi}</span>
-              </button>
-              <button
-                className="h-5 w-5 flex items-center justify-center text-muted-foreground hover:text-foreground rounded-full hover:bg-muted/50 transition-colors shrink-0"
-                onClick={() => {
-                  navigator.clipboard.writeText(`https://doi.org/${paper.doi}`)
-                  toast.success('Link copied')
-                }}
-                aria-label="Copy link"
-              >
-                <Copy className="h-2.5 w-2.5" aria-hidden="true" />
-              </button>
+            {/* Meta row */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[9px] text-muted-foreground uppercase tracking-wide font-medium">
+                {paper.source === 'upload' ? 'Uploaded' : 'Search'}
+              </span>
+              {paper.journal && (
+                <span className="text-[11px] text-muted-foreground font-instrument italic">{paper.journal}</span>
+              )}
+              {paper.year && (
+                <span className="text-[11px] text-muted-foreground">{paper.year}</span>
+              )}
             </div>
-          )}
 
-          {/* Quick actions row */}
-          <div className="flex items-center gap-1.5 mt-4">
-            {paper.pdfUrl && (
-              <button
-                className="h-7 px-3 text-[11px] rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5"
-                onClick={() => window.open(paper.pdfUrl, '_blank')}
-              >
-                <Eye className="h-3 w-3" aria-hidden="true" />
-                PDF
-              </button>
-            )}
-            {paper.doi && (
-              <button
-                className="h-7 px-3 text-[11px] rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5"
-                onClick={() => window.open(`https://doi.org/${paper.doi}`, '_blank')}
-              >
-                <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                Open
-              </button>
-            )}
+            {/* Type / OA / Fields badges */}
+            <PaperMetaBadges metadata={paper.metadata} />
+
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {paper.pdfUrl && (
+                <button
+                  className="h-7 px-3 text-[11px] font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors inline-flex items-center gap-1.5"
+                  onClick={() => window.open(paper.pdfUrl, '_blank')}
+                >
+                  <Eye className="h-3 w-3" aria-hidden="true" />
+                  View PDF
+                </button>
+              )}
+              {paper.doi && (
+                <button
+                  className="h-7 px-3 text-[11px] rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5"
+                  onClick={() => window.open(`https://doi.org/${paper.doi}`, '_blank')}
+                >
+                  <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                  DOI
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Abstract */}
           {paper.abstract && (
-            <div className="mt-5 pt-4 border-t border-border/30">
+            <div className="pt-4 border-t border-border/30">
+              <h4 className="font-instrument text-sm tracking-tight mb-2">Abstract</h4>
               <p className="text-xs text-muted-foreground leading-relaxed">
                 {paper.abstract}
               </p>
             </div>
           )}
 
-          {/* Source + Remove */}
-          <div className="flex items-center justify-between mt-5 pt-3 border-t border-border/30">
-            <span className="text-[10px] text-muted-foreground">
-              {paper.source === 'upload' ? 'Uploaded PDF' : 'From search'}
-            </span>
+          {/* Details grid */}
+          {(paper.doi || paper.year || paper.journal) && (
+            <div className="pt-4 border-t border-border/30">
+              <h4 className="font-instrument text-sm tracking-tight mb-3">Details</h4>
+              <div className="grid grid-cols-2 gap-3">
+                {paper.doi && (
+                  <div className="col-span-2">
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-wide font-medium mb-0.5">DOI</p>
+                    <button
+                      className="text-[11px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1 truncate max-w-full"
+                      onClick={() => {
+                        navigator.clipboard.writeText(paper.doi!)
+                        toast.success('DOI copied')
+                      }}
+                      title="Click to copy"
+                    >
+                      <span className="font-mono truncate">{paper.doi}</span>
+                      <Copy className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
+                {paper.journal && (
+                  <div>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-wide font-medium mb-0.5">Venue</p>
+                    <p className="text-[11px] text-muted-foreground font-instrument italic line-clamp-2">{paper.journal}</p>
+                  </div>
+                )}
+                {paper.year && (
+                  <div>
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-wide font-medium mb-0.5">Year</p>
+                    <p className="text-[11px] text-muted-foreground">{paper.year}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Remove */}
+          <div className="pt-3 border-t border-border/30">
             <button
               className="text-[11px] text-muted-foreground hover:text-destructive transition-colors inline-flex items-center gap-1"
               onClick={onRemove}
             >
               <Trash2 className="h-2.5 w-2.5" aria-hidden="true" />
-              Remove
+              Remove from project
             </button>
           </div>
         </div>

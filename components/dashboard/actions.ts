@@ -7,6 +7,7 @@ import { getUserResearchProjects, createResearchProject, deleteResearchProject }
 import { headers } from 'next/headers'
 import { getAbsoluteUrlFromHeaders } from '@/lib/config'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
+import { parseTopicInput } from '@/lib/generation/topic-parser'
 
 // Projects Actions
 export async function getProjectsAction(limit = 20, offset = 0) {
@@ -92,8 +93,50 @@ export async function createProjectAction(
     }
   }
 
+  // Validate "Use only my papers" mode: require uploaded PDFs
+  if (useLibraryOnly && generationMode !== 'write') {
+    if (allPaperIds.length === 0) {
+      return { success: false, error: 'You selected "Use only my papers" but haven\'t added any papers. Upload PDFs or select papers from your library first.' }
+    }
+
+    // Check that every selected paper has processed PDF content
+    const { data: paperRows, error: paperCheckError } = await supabase
+      .from('papers')
+      .select('id, title, pdf_content')
+      .in('id', allPaperIds)
+
+    if (paperCheckError) {
+      console.error('Failed to check paper PDF status:', paperCheckError)
+      return { success: false, error: 'Failed to verify paper status. Please try again.' }
+    }
+
+    const papersById = new Map((paperRows || []).map(p => [p.id, p]))
+    const missingPdf: string[] = []
+
+    for (const id of allPaperIds) {
+      const paper = papersById.get(id)
+      if (!paper || !paper.pdf_content || paper.pdf_content.trim().length === 0) {
+        missingPdf.push(paper?.title || 'Unknown paper')
+      }
+    }
+
+    if (missingPdf.length > 0) {
+      const titles = missingPdf.slice(0, 3).join(', ')
+      const extra = missingPdf.length > 3 ? ` and ${missingPdf.length - 3} more` : ''
+      return {
+        success: false,
+        error: `Upload PDFs before generating with "Use only my papers". Missing PDF content for: ${titles}${extra}`
+      }
+    }
+  }
+
   try {
     const isWriteMode = generationMode === 'write'
+    
+    // Parse freeform topic input to extract clean title + custom instructions
+    const parsed = await parseTopicInput(topic.trim())
+    const projectTitle = parsed.title
+    const customInstructions = parsed.customInstructions
     
     const generationConfig = {
       paper_settings: {
@@ -103,12 +146,14 @@ export async function createProjectAction(
       generation_mode: generationMode,
       // Paper source selection - if true, only use library papers (no online search)
       useLibraryOnly,
+      // Custom instructions extracted from user's freeform input
+      ...(customInstructions && { custom_instructions: customInstructions }),
       // Include original research data in config (for empirical papers)
       // The main topic input serves as the research question for empirical papers
       ...(hasOriginalResearch && {
         original_research: {
           has_original_research: true,
-          research_question: topic.trim(), // Main input IS the research question
+          research_question: projectTitle, // Use parsed title as research question
           key_findings: keyFindings?.trim(),
         }
       }),
@@ -117,7 +162,7 @@ export async function createProjectAction(
       ...(uploadedPaperIds.length > 0 && { uploaded_paper_ids: uploadedPaperIds })
     }
 
-    const project = await createResearchProject(user.id, topic.trim(), generationConfig)
+    const project = await createResearchProject(user.id, projectTitle, generationConfig)
     
     // Link all papers (uploaded + selected from library) to the project via CitationService
     if (allPaperIds.length > 0) {

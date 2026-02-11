@@ -626,6 +626,7 @@ export function useSmartCompletion({
             // Skip RAG entirely when citations are disabled - makes autocomplete much faster
             // Without this, empty paperIds triggers expensive library fallback + relevance RAG
             skipRAG: !prefs?.includeCitations,
+            useExternalSources: prefs?.useExternalSources ?? false,
             topic: projectTopic
           }),
           signal

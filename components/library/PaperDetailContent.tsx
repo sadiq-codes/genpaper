@@ -154,6 +154,19 @@ function ProcessingStatusLabel({ status, chunkCount }: { status: string | null; 
   return null
 }
 
+// Paper metadata helpers
+function formatPaperType(raw?: string): string | null {
+  if (!raw) return null
+  const map: Record<string, string> = {
+    'article': 'Article', 'journal-article': 'Article', 'conference-paper': 'Conference',
+    'preprint': 'Preprint', 'review': 'Review', 'book-chapter': 'Book Chapter',
+    'book': 'Book', 'dissertation': 'Dissertation', 'editorial': 'Editorial',
+  }
+  return map[raw.toLowerCase()] || raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+
+
 // Source label
 function SourceLabel({ source, ownerId }: { source: string | null; ownerId: string | null }) {
   return (
@@ -344,6 +357,30 @@ export function PaperDetailContent({
           )}
         </div>
 
+        {/* Type / OA / Fields badges */}
+        {paper.metadata && (() => {
+          const paperType = formatPaperType(paper.metadata?.paper_type as string | undefined)
+          const fields = (paper.metadata?.fields_of_study as string[] | undefined)?.slice(0, 4)
+          const keywords = (paper.metadata?.keywords as string[] | undefined)?.slice(0, 4)
+          const tags = fields?.length ? fields : keywords
+          const hasBadges = paperType || tags?.length
+          if (!hasBadges) return null
+          return (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {paperType && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted/50 text-muted-foreground">
+                  {paperType}
+                </span>
+              )}
+              {tags?.map((tag) => (
+                <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] bg-foreground/5 text-muted-foreground">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )
+        })()}
+
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-1.5 pt-1">
           {hasPdf && (
@@ -395,7 +432,7 @@ export function PaperDetailContent({
         <div className="pt-6 border-t border-border/20">
           <h2 className="font-instrument text-base tracking-tight mb-3">Abstract</h2>
           <p className="text-[13px] text-muted-foreground/60 leading-[1.7] whitespace-pre-wrap">
-            {paper.abstract}
+            {paper.abstract.replace(/<[^>]*>/g, '').trim()}
           </p>
         </div>
       )}

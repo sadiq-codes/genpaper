@@ -47,6 +47,7 @@ interface UnifiedPaper {
   citation_count: number | null
   processing_status: string | null
   owner_id: string | null
+  metadata: Record<string, unknown> | null
   isBookmarked: boolean
   libraryNotes: string | null
   libraryAddedAt: string | null
@@ -108,6 +109,18 @@ function formatDate(dateString: string | null): string {
     return ''
   }
 }
+
+function formatPaperType(raw?: string): string | null {
+  if (!raw) return null
+  const map: Record<string, string> = {
+    'article': 'Article', 'journal-article': 'Article', 'conference-paper': 'Conference',
+    'preprint': 'Preprint', 'review': 'Review', 'book-chapter': 'Book Chapter',
+    'book': 'Book', 'dissertation': 'Dissertation', 'editorial': 'Editorial',
+  }
+  return map[raw.toLowerCase()] || raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+
 
 // OPTIMIZATION: Hoist static skeleton JSX (rule: rendering-hoist-jsx)
 const paperListSkeleton = (
@@ -195,7 +208,7 @@ const PaperCard = memo(function PaperCard({
         </div>
 
         {/* Actions — show on hover */}
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
           {!paper.isBookmarked && (
             <TooltipProvider delayDuration={300}>
               <Tooltip>
@@ -238,9 +251,33 @@ const PaperCard = memo(function PaperCard({
       </div>
 
       {/* Title */}
-      <h3 className="font-instrument text-base tracking-tight leading-snug line-clamp-2 mb-3 group-hover:text-foreground transition-colors">
+      <h3 className="font-instrument text-base tracking-tight leading-snug line-clamp-2 mb-2 group-hover:text-foreground transition-colors">
         {paper.title}
       </h3>
+
+      {/* Type / OA / Fields badges */}
+      {paper.metadata && (() => {
+        const paperType = formatPaperType(paper.metadata?.paper_type as string | undefined)
+        const fields = (paper.metadata?.fields_of_study as string[] | undefined)?.slice(0, 2)
+        const keywords = (paper.metadata?.keywords as string[] | undefined)?.slice(0, 2)
+        const tags = fields?.length ? fields : keywords
+        const hasBadges = paperType || tags?.length
+        if (!hasBadges) return null
+        return (
+          <div className="flex flex-wrap items-center gap-1 mb-3">
+            {paperType && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-muted/50 text-muted-foreground">
+                {paperType}
+              </span>
+            )}
+            {tags?.map((tag) => (
+              <span key={tag} className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] bg-foreground/5 text-muted-foreground truncate max-w-[120px]">
+                {tag}
+              </span>
+            ))}
+          </div>
+        )
+      })()}
 
       {/* Footer: Meta row */}
       <div className="flex items-center justify-between pt-3 border-t border-border/40">

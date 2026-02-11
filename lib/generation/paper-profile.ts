@@ -42,15 +42,16 @@ const RETRY_DELAY_MS = 1000
 export async function generatePaperProfile(
   input: ProfileGenerationInput
 ): Promise<PaperProfile> {
-  const { topic, paperType, hasOriginalResearch, userContext } = input
+  const { topic, paperType, hasOriginalResearch, userContext, length } = input
   
-  info({ topic: topic.slice(0, 100), paperType, hasOriginalResearch }, 'Generating paper profile')
+  info({ topic: topic.slice(0, 100), paperType, hasOriginalResearch, length }, 'Generating paper profile')
   
   const prompt = await getPaperProfilePrompt({
     topic,
     paperType,
     hasOriginalResearch: hasOriginalResearch || false,
-    userContext
+    userContext,
+    length,
   })
   
   const model = getLanguageModel()
@@ -150,6 +151,55 @@ export async function generatePaperProfile(
   logError({ topic: topic.slice(0, 100), paperType, lastError: lastError?.message }, errorMessage)
   
   throw new Error(errorMessage)
+}
+
+/**
+ * Scale outline word targets to match the requested total word count.
+ * Computes a ratio (target / profile total) and applies it proportionally
+ * to every section and subsection.  Skips scaling when the profile is
+ * already within 5 % of the target.
+ */
+export function scaleProfileOutlineForLength(
+  profile: PaperProfile,
+  targetWords: number
+): PaperProfile {
+  if (!profile.outline?.sections || profile.outline.sections.length === 0) {
+    return profile
+  }
+
+  const currentTotal = profile.outline.totalEstimatedWords || 0
+  if (currentTotal <= 0 || targetWords <= 0) {
+    return profile
+  }
+
+  const ratio = targetWords / currentTotal
+
+  // If already within 5 %, skip unnecessary mutation
+  if (Math.abs(ratio - 1) < 0.05) {
+    return profile
+  }
+
+  const scaleWords = (n: number, min: number) => Math.max(min, Math.round(n * ratio))
+
+  const scaledSections = profile.outline.sections.map((section) => ({
+    ...section,
+    expectedWords: scaleWords(section.expectedWords || 300, 200),
+    subsections: section.subsections?.map((sub) => ({
+      ...sub,
+      expectedWords: scaleWords(sub.expectedWords || 150, 100),
+    })),
+  }))
+
+  const totalEstimatedWords = scaledSections.reduce((sum, s) => sum + (s.expectedWords || 0), 0)
+
+  return {
+    ...profile,
+    outline: {
+      ...profile.outline,
+      sections: scaledSections,
+      totalEstimatedWords,
+    },
+  }
 }
 
 /**

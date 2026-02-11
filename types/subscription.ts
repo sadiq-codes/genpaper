@@ -38,9 +38,6 @@ export interface TierLimits {
   /** Paper types available on this tier */
   allowedPaperTypes: PaperTypeKey[] | 'all'
   
-  /** Maximum paper length */
-  maxPaperLength: 'short' | 'medium' | 'long'
-  
   /** Number of references visible (rest blurred), or 'all' */
   referencesVisible: number | 'all'
   
@@ -82,7 +79,6 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     limits: {
       papersPerMonth: 1,
       allowedPaperTypes: ['literatureReview'],
-      maxPaperLength: 'short',
       referencesVisible: 3,
       editorChatEnabled: true, // Enabled with daily limits
       pdfExport: false,
@@ -92,7 +88,6 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     },
     features: [
       '1 literature review per month',
-      'Short papers only',
       'Preview of references (3 visible)',
       'Basic generation',
       '10 AI chat messages per day',
@@ -108,7 +103,6 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     limits: {
       papersPerMonth: 5,
       allowedPaperTypes: ['literatureReview', 'researchArticle', 'capstoneProject'],
-      maxPaperLength: 'medium',
       referencesVisible: 'all',
       editorChatEnabled: true,
       pdfExport: true,
@@ -119,7 +113,6 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     features: [
       '5 papers per month',
       'Literature reviews, research articles & capstones',
-      'Short & medium length papers',
       'Full references visible',
       'Unlimited AI editor chat',
       'Unlimited autocomplete',
@@ -135,7 +128,6 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     limits: {
       papersPerMonth: 15,
       allowedPaperTypes: 'all',
-      maxPaperLength: 'long',
       referencesVisible: 'all',
       editorChatEnabled: true,
       pdfExport: true,
@@ -146,7 +138,6 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     features: [
       '15 papers per month',
       'All paper types including theses',
-      'All paper lengths',
       'Full references visible',
       'Unlimited AI editor chat',
       'Unlimited autocomplete',
@@ -177,18 +168,6 @@ export function isPaperTypeAllowed(tier: SubscriptionTier, paperType: PaperTypeK
 }
 
 /**
- * Check if a paper length is allowed for a tier
- */
-export function isPaperLengthAllowed(
-  tier: SubscriptionTier, 
-  length: 'short' | 'medium' | 'long'
-): boolean {
-  const maxLength = TIER_CONFIG[tier].limits.maxPaperLength
-  const lengthOrder = { short: 1, medium: 2, long: 3 }
-  return lengthOrder[length] <= lengthOrder[maxLength]
-}
-
-/**
  * Get the number of papers remaining for a user
  */
 export function getPapersRemaining(tier: SubscriptionTier, used: number): number {
@@ -216,15 +195,6 @@ export function getVisibleReferencesCount(tier: SubscriptionTier): number | 'all
 export function getTierRequiredForPaperType(paperType: PaperTypeKey): SubscriptionTier {
   if (isPaperTypeAllowed('free', paperType)) return 'free'
   if (isPaperTypeAllowed('starter', paperType)) return 'starter'
-  return 'pro'
-}
-
-/**
- * Get the tier needed to unlock a specific paper length
- */
-export function getTierRequiredForPaperLength(length: 'short' | 'medium' | 'long'): SubscriptionTier {
-  if (isPaperLengthAllowed('free', length)) return 'free'
-  if (isPaperLengthAllowed('starter', length)) return 'starter'
   return 'pro'
 }
 

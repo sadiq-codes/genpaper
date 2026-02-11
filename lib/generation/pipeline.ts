@@ -13,7 +13,7 @@ import { classifyError, CancellationError } from '@/lib/generation/errors'
 import { warn, error as logError, info } from '@/lib/utils/logger'
 // Citation markers converted from [N] to [@paperId#instanceId] for storage
 // cleanRemainingArtifacts removes any leaked tool syntax
-import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt } from '@/lib/generation/paper-profile'
+import { generatePaperProfile, validatePaperWithProfile, buildProfileGuidanceForPrompt, scaleProfileOutlineForLength } from '@/lib/generation/paper-profile'
 import { logSectionCitations } from '@/lib/rag/relevance-feedback'
 import { mergeAnalysisResultIntoProfile } from '@/lib/generation/theme-extraction'
 import { extractThemesHybrid, enrichAndBuildContexts, type HybridThemeExtractionResult } from '@/lib/synthesis-engine/pipeline-integration'
@@ -88,7 +88,7 @@ export interface PipelineConfig {
   // Required
   topic: string
   paperType: PaperTypeKey
-  length: 'short' | 'medium' | 'long'
+  length: number
   
   // Optional
   useLibraryOnly?: boolean
@@ -96,6 +96,7 @@ export interface PipelineConfig {
   sources?: string[]
   temperature?: number
   maxTokens?: number
+  customInstructions?: string
   
   // Original research support
   originalResearch?: OriginalResearchConfig
@@ -211,7 +212,7 @@ function convertNumberedCitationsToStorage(
       instances.push({
         instanceId,
         paperId: citation.paperId,
-        quote: citation.quote,
+        quote: citation.quote || '',
       })
       
       return `[@${citation.paperId}#${instanceId}]`
@@ -342,12 +343,14 @@ export async function generatePaper(
       topic: sanitizedTopic.slice(0, 50)
     })
     
-    const paperProfile = await generatePaperProfile({
+    const rawProfile = await generatePaperProfile({
       topic: sanitizedTopic,
       paperType: config.paperType,
       hasOriginalResearch: config.originalResearch?.has_original_research,
-      userContext: undefined  // Could be extended to accept user context
+      userContext: config.customInstructions,
+      length: config.length,
     })
+    const paperProfile = scaleProfileOutlineForLength(rawProfile, config.length)
     
     info({
       discipline: paperProfile.discipline.primary,
@@ -804,7 +807,8 @@ export async function generatePaper(
         // Pass voice configuration for authorial persona variation
         voiceConfig: paperProfile.voice,
         // Pass quality criteria from profile - eliminates per-section LLM calls
-        profileCriteria: paperProfile.qualityCriteria
+        profileCriteria: paperProfile.qualityCriteria,
+        customInstructions: config.customInstructions
       },
       // Progress callback - called when section starts
       (completed, total, currentSection) => {
@@ -886,7 +890,8 @@ export async function generatePaper(
               // Preserve voice configuration during rewrite for consistent authorial persona
               voiceConfig: paperProfile.voice,
               // Pass quality criteria from profile
-              profileCriteria: paperProfile.qualityCriteria
+              profileCriteria: paperProfile.qualityCriteria,
+              customInstructions: config.customInstructions
             }
           })
         } catch (rewriteError) {
@@ -1039,7 +1044,8 @@ export async function generatePaper(
                   // Preserve voice configuration during rewrite for consistent authorial persona
                   voiceConfig: paperProfile.voice,
                   // Pass quality criteria from profile
-                  profileCriteria: paperProfile.qualityCriteria
+                  profileCriteria: paperProfile.qualityCriteria,
+                  customInstructions: config.customInstructions
                 }
               })
 

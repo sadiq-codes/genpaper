@@ -9,6 +9,7 @@ import pLimit from 'p-limit'
 import { generateDeterministicAuthorId, generateDeterministicPaperId } from '@/lib/utils/deterministic-id'
 import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
 import { simpleDeduplicatePapers } from '@/lib/search/deduplication'
+import { quickRelevanceCheck } from '@/lib/search/semantic-rerank'
 
 /**
  * @services/search-orchestrator
@@ -198,6 +199,19 @@ export async function unifiedSearch(
 
   // DEDUPLICATION - Critical for quality
   allPapers = dedupePapers(allPapers)
+
+  // Strict topical safety filter:
+  // Drop papers that do not overlap with the user's query to avoid
+  // "globally popular but off-topic" results contaminating generation.
+  const topicalPapers = allPapers.filter(p =>
+    quickRelevanceCheck(query, p.title, p.abstract, discipline)
+  )
+  if (topicalPapers.length > 0) {
+    console.log(`🎯 Topical filter: ${allPapers.length} → ${topicalPapers.length} papers`)
+    allPapers = topicalPapers
+  } else {
+    console.warn('⚠️ Topical filter removed all papers; keeping unfiltered results as fallback')
+  }
 
   // Note: Primary relevance filtering now happens at the source:
   // - hybridSearchPapers uses MIN_RELEVANCE_SCORE = 0.3 threshold

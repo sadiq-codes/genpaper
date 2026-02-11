@@ -27,6 +27,8 @@ import {
   appendSectionResult,
   markExtractionBatchComplete,
   clearPipelineState,
+  saveContextCache,
+  loadContextCache,
   type PipelineState,
 } from "@/lib/generation/run-manager";
 import {
@@ -140,7 +142,7 @@ export const generatePaperFunction = inngest.createFunction(
     const onProgress = createProgressCallback(runId);
 
     // =========================================================================
-    // Step 1: Initialize
+    // Step 1: Initialize (+ normalize findings if present)
     // =========================================================================
     await step.run("init", async () => {
       const run = await getRun(runId);
@@ -153,15 +155,34 @@ export const generatePaperFunction = inngest.createFunction(
         current_stage: "initialization",
       });
       await emitProgress(runId, "initialization", 0, "Starting paper generation...");
-      
-      // Store config in pipeline state
+
+      // Normalize original research findings if present
+      let normalizedOriginalResearch = config.originalResearch;
+      if (normalizedOriginalResearch?.has_original_research && normalizedOriginalResearch.key_findings) {
+        try {
+          const { normalizeFindings } = await import("@/lib/generation/findings-normalizer");
+          const normalized = await normalizeFindings(normalizedOriginalResearch);
+          normalizedOriginalResearch = {
+            has_original_research: true,
+            research_question: normalized.research_question,
+            key_findings: normalized.normalized_findings,
+          };
+          console.log(`[init] Findings normalized (${normalized.key_findings.length} → ${normalized.normalized_findings.length} chars)`);
+        } catch (e) {
+          console.warn("[init] Findings normalization failed, using raw:", e);
+        }
+      }
+
+      // Store config in pipeline state (including original research)
       await updatePipelineState(runId, {
         config: {
           topic: config.topic,
           paperType: config.paperType,
           length: config.length,
+          customInstructions: config.customInstructions,
           useLibraryOnly: config.useLibraryOnly,
           libraryPaperIds: config.libraryPaperIds || [],
+          originalResearch: normalizedOriginalResearch,
         },
       });
       
@@ -179,12 +200,14 @@ export const generatePaperFunction = inngest.createFunction(
       const pipelineConfig: PipelineConfig = {
         topic: config.topic,
         paperType: config.paperType as PaperTypeKey,
-        length: config.length as "short" | "medium" | "long",
+        length: Number(config.length) || 5500,
+        customInstructions: config.customInstructions,
         useLibraryOnly: config.useLibraryOnly,
         libraryPaperIds: config.libraryPaperIds || [],
         temperature: config.temperature,
         maxTokens: config.maxTokens,
         sources: config.sources,
+        originalResearch: config.originalResearch,
       };
 
       const profile = await runProfilePhase(pipelineConfig, onProgress);
@@ -236,12 +259,14 @@ export const generatePaperFunction = inngest.createFunction(
       const pipelineConfig: PipelineConfig = {
         topic: config.topic,
         paperType: config.paperType as PaperTypeKey,
-        length: config.length as "short" | "medium" | "long",
+        length: Number(config.length) || 5500,
+        customInstructions: config.customInstructions,
         useLibraryOnly: config.useLibraryOnly,
         libraryPaperIds: config.libraryPaperIds || [],
         temperature: config.temperature,
         maxTokens: config.maxTokens,
         sources: config.sources,
+        originalResearch: config.originalResearch,
       };
 
       const papers = await runDiscoveryPhase(
@@ -387,12 +412,13 @@ export const generatePaperFunction = inngest.createFunction(
       const pipelineConfig: PipelineConfig = {
         topic: config.topic,
         paperType: config.paperType as PaperTypeKey,
-        length: config.length as "short" | "medium" | "long",
+        length: Number(config.length) || 5500,
         useLibraryOnly: config.useLibraryOnly,
         libraryPaperIds: config.libraryPaperIds || [],
         temperature: config.temperature,
         maxTokens: config.maxTokens,
         sources: config.sources,
+        originalResearch: config.originalResearch,
       };
 
       const contexts = await runBuildContextsPhase(
@@ -403,7 +429,7 @@ export const generatePaperFunction = inngest.createFunction(
         onProgress
       );
 
-      // Store context summaries (not full contexts - too large)
+      // Store context summaries in pipeline state
       await updatePipelineState(runId, {
         contextSummaries: contexts.map((c) => ({
           sectionKey: c.sectionKey,
@@ -414,8 +440,9 @@ export const generatePaperFunction = inngest.createFunction(
         completedSectionIndices: [],
       });
 
-      // We need to pass contexts to section generation, but they're too large
-      // to store in state. We'll rebuild them in each section step.
+      // Cache full contexts so subsequent steps don't rebuild them
+      await saveContextCache(runId, contexts);
+
       return {
         contextCount: contexts.length,
         sectionKeys: contexts.map((c) => c.sectionKey),
@@ -457,21 +484,28 @@ export const generatePaperFunction = inngest.createFunction(
         const pipelineConfig: PipelineConfig = {
           topic: config.topic,
           paperType: config.paperType as PaperTypeKey,
-          length: config.length as "short" | "medium" | "long",
+          length: Number(config.length) || 5500,
+          customInstructions: config.customInstructions,
           useLibraryOnly: config.useLibraryOnly,
           libraryPaperIds: config.libraryPaperIds || [],
           temperature: config.temperature,
           maxTokens: config.maxTokens,
           sources: config.sources,
+          originalResearch: config.originalResearch,
         };
 
-        // Rebuild contexts (necessary because they're too large to store)
-        const contexts = await runBuildContextsPhase(
-          state.profile,
-          papers,
-          themeResult,
-          pipelineConfig
-        );
+        // Load cached contexts (fall back to rebuild if cache miss)
+        let contexts = await loadContextCache<SectionContext>(runId);
+        if (!contexts) {
+          console.log(`[section-${sectionIndex}] Context cache miss, rebuilding...`);
+          contexts = await runBuildContextsPhase(
+            state.profile,
+            papers,
+            themeResult,
+            pipelineConfig
+          );
+          await saveContextCache(runId, contexts);
+        }
 
         const context = contexts[sectionIndex];
         if (!context) {
@@ -544,24 +578,31 @@ export const generatePaperFunction = inngest.createFunction(
       const pipelineConfig: PipelineConfig = {
         topic: config.topic,
         paperType: config.paperType as PaperTypeKey,
-        length: config.length as "short" | "medium" | "long",
+        length: Number(config.length) || 5500,
+        customInstructions: config.customInstructions,
         useLibraryOnly: config.useLibraryOnly,
         libraryPaperIds: config.libraryPaperIds || [],
         temperature: config.temperature,
         maxTokens: config.maxTokens,
         sources: config.sources,
+        originalResearch: config.originalResearch,
       };
 
-      const contexts = await runBuildContextsPhase(
-        state.profile,
-        papers,
-        themeResult,
-        pipelineConfig
-      );
+      // Load cached contexts (fall back to rebuild if cache miss)
+      let contexts = await loadContextCache<SectionContext>(runId);
+      if (!contexts) {
+        console.log("[quality-check] Context cache miss, rebuilding...");
+        contexts = await runBuildContextsPhase(
+          state.profile,
+          papers,
+          themeResult,
+          pipelineConfig
+        );
+      }
 
       const issues = await runQualityCheckPhase(
         state.sectionResults,
-        contexts as SectionContext[],
+        contexts,
         onProgress
       );
 
@@ -619,20 +660,27 @@ export const generatePaperFunction = inngest.createFunction(
         const pipelineConfig: PipelineConfig = {
           topic: config.topic,
           paperType: config.paperType as PaperTypeKey,
-          length: config.length as "short" | "medium" | "long",
+          length: Number(config.length) || 5500,
+          customInstructions: config.customInstructions,
           useLibraryOnly: config.useLibraryOnly,
           libraryPaperIds: config.libraryPaperIds || [],
           temperature: config.temperature,
           maxTokens: config.maxTokens,
           sources: config.sources,
+          originalResearch: config.originalResearch,
         };
 
-        const contexts = await runBuildContextsPhase(
-          state.profile,
-          papers,
-          themeResult,
-          pipelineConfig
-        );
+        // Load cached contexts (fall back to rebuild if cache miss)
+        let contexts = await loadContextCache<SectionContext>(runId);
+        if (!contexts) {
+          console.log(`[rewrite-${issue.sectionIndex}] Context cache miss, rebuilding...`);
+          contexts = await runBuildContextsPhase(
+            state.profile,
+            papers,
+            themeResult,
+            pipelineConfig
+          );
+        }
 
         const context = contexts[issue.sectionIndex];
         if (!context) {
@@ -676,6 +724,151 @@ export const generatePaperFunction = inngest.createFunction(
         };
       });
     }
+
+    // =========================================================================
+    // Step M+2+K+1: Enforce Minimum Total Word Count (strict)
+    // =========================================================================
+    await step.run("enforce-min-total-words", async () => {
+      const run = await getRun(runId);
+      if (run?.status === "cancelled") throw new Error("Run was cancelled");
+
+      const state = await getPipelineState(runId);
+      if (!state.sectionResults || !state.paperIds || !state.profile) {
+        throw new Error("State incomplete for minimum word enforcement");
+      }
+
+      const targetTotalWords = state.profile.outline?.totalEstimatedWords || 0;
+      const minimumTotalWords = Math.round(targetTotalWords * 0.8);
+      if (minimumTotalWords <= 0) {
+        return { skipped: true, reason: "No minimum target available" };
+      }
+
+      let sectionResults = [...state.sectionResults];
+      let currentTotalWords = sectionResults.reduce((sum, s) => sum + (s.wordCount || 0), 0);
+
+      if (currentTotalWords >= minimumTotalWords) {
+        return {
+          skipped: true,
+          reason: "Already above minimum",
+          totalWords: currentTotalWords,
+          minimumTotalWords,
+        };
+      }
+
+      await onProgress(
+        "finishing",
+        93,
+        `Paper is short (${currentTotalWords} words). Expanding shortest sections toward ${minimumTotalWords}+ words...`
+      );
+
+      const papers = await getPapersByIds(state.paperIds);
+
+      const pipelineConfig: PipelineConfig = {
+        topic: config.topic,
+        paperType: config.paperType as PaperTypeKey,
+        length: Number(config.length) || 5500,
+        customInstructions: config.customInstructions,
+        useLibraryOnly: config.useLibraryOnly,
+        libraryPaperIds: config.libraryPaperIds || [],
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        sources: config.sources,
+        originalResearch: config.originalResearch,
+      };
+
+      // Load cached contexts (fall back to rebuild if cache miss)
+      let contexts = await loadContextCache<SectionContext>(runId);
+      if (!contexts) {
+        console.log("[enforce-min-total-words] Context cache miss, rebuilding...");
+        let themeResult: HybridThemeExtractionResult | null = null;
+        if (state.themeAnalysis) {
+          themeResult = {
+            analysisResult: state.themeAnalysis,
+            extractionStats: {
+              papersProcessed: papers.length,
+              papersExtracted: 0,
+              papersFromCache: 0,
+              totalFindings: analysisResult.totalFindings,
+              extractionTimeMs: 0,
+            },
+          };
+        }
+        contexts = await runBuildContextsPhase(
+          state.profile,
+          papers,
+          themeResult,
+          pipelineConfig
+        );
+      }
+
+      const MAX_LENGTH_REWRITES = 4;
+      let rewritesApplied = 0;
+
+      while (currentTotalWords < minimumTotalWords && rewritesApplied < MAX_LENGTH_REWRITES) {
+        // Pick the most under-target section first; tie-breaker: shortest section
+        const ranked = sectionResults
+          .map((section, idx) => {
+            const expected = contexts[idx]?.expectedWords || 300;
+            const gap = Math.max(0, expected - (section.wordCount || 0));
+            return { idx, gap, current: section.wordCount || 0 };
+          })
+          .sort((a, b) => {
+            if (b.gap !== a.gap) return b.gap - a.gap;
+            return a.current - b.current;
+          });
+
+        const candidate = ranked[0];
+        if (!candidate) break;
+
+        const context = contexts[candidate.idx];
+        if (!context) break;
+
+        const previousContent = sectionResults
+          .slice(0, candidate.idx)
+          .map((s) => s.content)
+          .join("\n\n");
+
+        const rewritten = await runSectionRewritePhase(
+          candidate.idx,
+          {
+            sectionIndex: candidate.idx,
+            issue: "length",
+            details: `Total paper length below minimum (${currentTotalWords}/${minimumTotalWords})`,
+          },
+          context as SectionContext,
+          previousContent,
+          state.profile,
+          pipelineConfig,
+          sectionCount,
+          onProgress
+        );
+
+        sectionResults[candidate.idx] = rewritten;
+        rewritesApplied++;
+        currentTotalWords = sectionResults.reduce((sum, s) => sum + (s.wordCount || 0), 0);
+      }
+
+      await updatePipelineState(runId, {
+        sectionResults,
+        rewrittenSections: [
+          ...(state.rewrittenSections || []),
+          ...sectionResults.map((_, i) => i).filter((i) => sectionResults[i] !== state.sectionResults?.[i]),
+        ],
+      });
+
+      if (currentTotalWords < minimumTotalWords) {
+        // Warn but don't fail — a short paper is better than no paper
+        console.warn(
+          `[generate-paper] Paper remained below minimum after ${rewritesApplied} rewrites (${currentTotalWords}/${minimumTotalWords} words). Proceeding anyway.`
+        );
+      }
+
+      return {
+        totalWords: currentTotalWords,
+        minimumTotalWords,
+        rewritesApplied,
+      };
+    });
 
     // =========================================================================
     // Final Step: Finalize

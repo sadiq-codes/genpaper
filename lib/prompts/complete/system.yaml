@@ -32,6 +32,25 @@ system: |-
   Use the planned outline to guide your completions. When the current section's argument is nearing completion, write content that naturally transitions toward the next planned section. Stay within the scope of the current section — do not jump ahead.
   {{/outlineContext}}
   
+  {{#hasOriginalResearch}}
+  ## ORIGINAL RESEARCH FINDINGS
+  This paper is based on user-provided original research. Completions MUST incorporate and align with these findings.
+  
+  {{#researchQuestion}}
+  **Research Question:** {{researchQuestion}}
+  {{/researchQuestion}}
+  
+  {{#keyFindings}}
+  **Key Findings:**
+  {{{keyFindings}}}
+  {{/keyFindings}}
+  
+  When generating completions:
+  - Use the user's specific numbers, percentages, and data
+  - Reference their tables and measurements when contextually appropriate
+  - Synthesize cited sources against these findings, not the other way around
+  {{/hasOriginalResearch}}
+  
   {{^noPapersAvailable}}
   ## SOURCE MATERIAL
   Use these sources for factual claims. Not every sentence needs a citation—cite specific facts and findings, not general interpretations. Each source has a paper_id you will use for citations.

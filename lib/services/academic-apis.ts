@@ -863,6 +863,12 @@ async function simpleRetry<T>(
   throw lastError || new Error('Retry failed with unknown error')
 }
 
+// Strip XML/HTML tags (e.g. JATS markup) and collapse whitespace from abstracts
+function cleanAbstract(raw: string | undefined | null): string {
+  if (!raw) return ''
+  return raw.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()
+}
+
 // Utility to reconstruct abstract from OpenAlex inverted index
 function deInvertAbstract(invertedIndex: Record<string, number[]>): string {
   const words: Array<{ word: string; position: number }> = []
@@ -1005,7 +1011,7 @@ export async function searchOpenAlex(query: string, options: SearchOptions = {})
       return {
         canonical_id: createCanonicalId(work.display_name, work.publication_year, work.doi, 'openalex'),
         title: work.display_name,
-        abstract: work.abstract_inverted_index ? deInvertAbstract(work.abstract_inverted_index) : '',
+        abstract: work.abstract_inverted_index ? cleanAbstract(deInvertAbstract(work.abstract_inverted_index)) : '',
         year: work.publication_year || 0,
         venue: work.primary_location?.source?.display_name,
         doi: work.doi,
@@ -1087,7 +1093,7 @@ export async function searchCrossref(query: string, options: SearchOptions = {})
       return {
         canonical_id: createCanonicalId(title, year, doi, 'crossref'),
         title,
-        abstract: item.abstract || '',
+        abstract: cleanAbstract(item.abstract),
         year,
         venue: item['container-title']?.[0] || '',
         doi,
@@ -1163,7 +1169,7 @@ export async function searchSemanticScholar(query: string, options: SearchOption
       return {
         canonical_id: createCanonicalId(paper.title, paper.year, paper.doi, 'semanticscholar'),
         title: paper.title,
-        abstract: paper.abstract || '',
+        abstract: cleanAbstract(paper.abstract),
         year: paper.year || 0,
         venue: paper.venue,
         doi: paper.doi,
@@ -1223,7 +1229,7 @@ export async function searchArxiv(query: string, options: SearchOptions = {}): P
       
       return entries.map((entry: ArxivEntry): AcademicPaper => {
         const title = entry.title?.replace(/\s+/g, ' ').trim() || ''
-        const abstract = entry.summary?.replace(/\s+/g, ' ').trim() || ''
+        const abstract = cleanAbstract(entry.summary)
         
         let year = 0
         if (entry.published) {
@@ -1437,7 +1443,7 @@ export async function searchEuropePMC(query: string, options: SearchOptions = {}
         return {
           canonical_id: createCanonicalId(title, year, article.doi, 'europe_pmc'),
           title,
-          abstract: article.abstractText?.replace(/<[^>]*>/g, '').trim() || '',
+          abstract: cleanAbstract(article.abstractText),
           year,
           venue: article.journalTitle || 'Europe PMC',
           doi: article.doi,
@@ -1517,7 +1523,7 @@ export async function searchCore(query: string, options: SearchOptions = {}): Pr
       return {
         canonical_id: createCanonicalId(work.title, work.yearPublished, work.doi, 'core'),
         title: work.title,
-        abstract: work.abstract || '',
+        abstract: cleanAbstract(work.abstract),
         year: work.yearPublished || 0,
         venue: work.publisher,
         doi: work.doi,

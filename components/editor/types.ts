@@ -25,6 +25,7 @@ export interface ProjectPaper {
   pdfUrl?: string
   content?: string
   source?: PaperSource
+  metadata?: Record<string, unknown> | null
 }
 
 // Claim types from analysis

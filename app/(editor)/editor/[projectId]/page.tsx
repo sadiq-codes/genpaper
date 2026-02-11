@@ -33,7 +33,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     // Join citations with papers in a single query
     supabase
       .from('project_citations')
-      .select('paper_id, csl_json, papers(id, title, authors, publication_date, venue, doi, source, pdf_url)')
+      .select('paper_id, csl_json, papers(id, title, authors, publication_date, venue, doi, source, pdf_url, metadata)')
       .eq('project_id', projectId)
   ])
 
@@ -54,6 +54,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     doi: string | null
     source: string | null
     pdf_url: string | null
+    metadata: Record<string, unknown> | null
   }
 
   type JoinedCitation = {
@@ -91,6 +92,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         doi: paper.doi || undefined,
         pdfUrl: paper.pdf_url || undefined,
         source: paper.source === 'upload' ? 'upload' : 'search',
+        metadata: paper.metadata || null,
       })
     } else if (cslJsonById.has(citation.paper_id)) {
       // Fallback to CSL JSON for papers not in DB

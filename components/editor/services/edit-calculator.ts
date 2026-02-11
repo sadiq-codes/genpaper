@@ -277,7 +277,7 @@ function calculateReplace(
       return { success: false, error: 'Failed to calculate edit range' }
     }
 
-    const oldContent = match.node?.textContent.slice(match.startOffset, match.endOffset) || ''
+    const oldContent = match.node?.textBetween(match.startOffset, match.endOffset) || ''
 
     return {
       success: true,
@@ -379,7 +379,7 @@ function calculateDelete(
       return { success: false, error: 'Failed to calculate delete range' }
     }
 
-    const oldContent = match.node?.textContent.slice(match.startOffset, match.endOffset) || ''
+    const oldContent = match.node?.textBetween(match.startOffset, match.endOffset) || ''
 
     return {
       success: true,

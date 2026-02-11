@@ -18,6 +18,37 @@ export interface PaperMetadata {
   search_query?: string
   found_at?: string
   relevance_score?: number
+  // Bibliographic
+  volume?: string
+  issue?: string
+  pages?: string
+  publisher?: string
+  // Classification
+  paper_type?: string // 'journal-article' | 'conference-paper' | 'preprint' | 'review' | 'book-chapter' | 'dissertation' | etc.
+  keywords?: string[]
+  fields_of_study?: string[]
+  // Summaries
+  tldr?: string // One-sentence summary (from Semantic Scholar)
+  // Access & licensing
+  is_open_access?: boolean
+  open_access_status?: string // 'gold' | 'green' | 'bronze' | 'hybrid' | 'closed'
+  license?: string // 'cc-by' | 'cc-by-nc' | etc.
+  // Integrity
+  is_retracted?: boolean
+  // Metrics
+  influential_citation_count?: number
+  references_count?: number
+  // Cross-reference identifiers
+  external_ids?: Record<string, string> // { arxiv: '2301.00001', pmid: '12345', pmcid: 'PMC123', mag: '...' }
+  // Ranking / search metadata
+  combined_score?: number
+  authority_score?: number
+  recency_score?: number
+  bm25_score?: number
+  canonical_id?: string
+  api_source?: string
+  preprint_id?: string
+  siblings?: string[]
   [key: string]: unknown
 }
 
@@ -43,7 +74,7 @@ export interface GenerationConfig {
   sources?: string[]
   limit?: number
   library_papers_used?: string[]
-  length?: 'short' | 'medium' | 'long'
+  length?: number
   paperType?: PaperTypeKey
   localRegion?: string
   useLibraryOnly?: boolean
@@ -58,6 +89,8 @@ export interface GenerationConfig {
   // Voice/Authorial persona - controls hedging, confidence, citation posture
   // Selected during paper profile generation or manually by user
   voiceProfileId?: VoiceProfileId
+  // Custom instructions extracted from user's freeform topic input
+  custom_instructions?: string
 }
 
 export interface Paper {
@@ -104,6 +137,23 @@ export const PAPER_TYPE_SEARCH_MULTIPLIERS: Record<PaperTypeKey, number> = {
   mastersThesis: 3,         // Substantial but focused
   capstoneProject: 3,       // Similar to thesis
   researchArticle: 2.5,     // Focused, fewer sources needed
+}
+
+/**
+ * Default target word count per paper type (midpoint of the accepted range).
+ *
+ * Literature Review:  3,000–8,000  → 5,500
+ * Research Article:   4,000–8,000  → 6,000
+ * Capstone Project:   5,000–10,000 → 7,500
+ * Master's Thesis:   15,000–25,000 → 20,000
+ * PhD Dissertation:  40,000–80,000 → 60,000
+ */
+export const DEFAULT_LENGTH_BY_PAPER_TYPE: Record<PaperTypeKey, number> = {
+  literatureReview: 3000,
+  researchArticle: 6000,
+  capstoneProject: 7500,
+  mastersThesis: 20000,
+  phdDissertation: 60000,
 }
 
 /**
@@ -193,7 +243,7 @@ export interface GenerateRequest {
   libraryPaperIds?: string[]
   useLibraryOnly?: boolean
   config?: {
-    length?: 'short' | 'medium' | 'long'
+    length?: number
     paperType?: 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation'
   }
 }

@@ -139,7 +139,8 @@ async function buildSystemPromptFromTemplate(
   papersContext: string,
   outlineContext: string,
   voiceProfileId?: string | null,
-  noPapersAvailable?: boolean
+  noPapersAvailable?: boolean,
+  originalResearch?: { has_original_research: boolean; research_question?: string; key_findings?: string } | null
 ): Promise<string> {
   // Validate voice profile ID
   type VoiceProfileId = 'conservative-reviewer' | 'confident-researcher' | 'senior-scholar' | 'balanced-academic'
@@ -161,6 +162,9 @@ async function buildSystemPromptFromTemplate(
     voiceProfileId: validatedVoiceId,
     isSectionOpening: context.isSectionOpening,  // Pass section opening flag for special handling
     noPapersAvailable,  // Suppress citation instructions when no papers available
+    hasOriginalResearch: originalResearch?.has_original_research,
+    researchQuestion: originalResearch?.research_question,
+    keyFindings: originalResearch?.key_findings,
   })
 
   return PromptService.buildCompletePrompt(costarContext)
@@ -529,10 +533,15 @@ export async function POST(request: NextRequest) {
       ? (libraryRows?.map((r: { paper_id: string }) => r.paper_id) || [])
       : []
     
-    // Extract voice profile and planned outline from generation config
-    const generationConfig = (project as { generation_config?: { voiceProfileId?: string; plannedOutline?: string[] } | null }).generation_config
+    // Extract voice profile, planned outline, and original research from generation config
+    const generationConfig = (project as { generation_config?: { 
+      voiceProfileId?: string
+      plannedOutline?: string[]
+      original_research?: { has_original_research: boolean; research_question?: string; key_findings?: string }
+    } | null }).generation_config
     const voiceProfileId = generationConfig?.voiceProfileId || null
     const plannedOutline: string[] = generationConfig?.plannedOutline || []
+    const originalResearch = generationConfig?.original_research || null
     
     if (voiceProfileId) {
       console.log('[Autocomplete] Using project voice profile:', voiceProfileId)
@@ -713,7 +722,8 @@ export async function POST(request: NextRequest) {
       papersContext,
       outlineContext,
       voiceProfileId,  // Pass voice profile for consistent completions
-      noPapersAvailable  // Suppress citation instructions when no papers available
+      noPapersAvailable,  // Suppress citation instructions when no papers available
+      originalResearch   // Pass original research for findings-anchored completions
     )
     
     const userPrompt = buildUserPrompt(context)

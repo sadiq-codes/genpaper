@@ -37,7 +37,7 @@ export function ProjectSettingsModal({
   const [citationStyle, setCitationStyle] = useState<string>(currentCitationStyle)
   const [isSaving, setIsSaving] = useState(false)
 
-  const { prefs, setAutoSuggestions, setIncludeCitations, setAcceptKey } = useAutocompletePrefs()
+  const { prefs, setAutoSuggestions, setIncludeCitations, setAcceptKey, setUseExternalSources } = useAutocompletePrefs()
 
   // Reset to current style when modal opens (in case user canceled previous edit)
   useEffect(() => {
@@ -151,6 +151,20 @@ export function ProjectSettingsModal({
                   id="project-include-citations"
                   checked={prefs.includeCitations}
                   onCheckedChange={setIncludeCitations}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <Label htmlFor="project-external-sources" className="text-xs cursor-pointer">
+                    Use external sources
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">Cite papers beyond this project from our database</p>
+                </div>
+                <Switch
+                  id="project-external-sources"
+                  checked={prefs.useExternalSources}
+                  onCheckedChange={setUseExternalSources}
                 />
               </div>
 

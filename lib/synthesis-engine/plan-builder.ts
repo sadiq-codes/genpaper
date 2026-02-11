@@ -14,7 +14,7 @@
  * @module lib/synthesis-engine/plan-builder
  */
 
-import { generateObject } from 'ai'
+import { generateText } from 'ai'
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
@@ -424,26 +424,53 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
   }, 'Building synthesis plan')
   
   try {
-    const { object } = await generateObject({
+    const { text } = await generateText({
       model: getLanguageModel(),
-      schema: SynthesisPlanSchema,
-      system: SYSTEM_PROMPT,
+      system: SYSTEM_PROMPT + '\n\nIMPORTANT: Respond with ONLY a valid JSON object. No markdown fences, no explanation, just the JSON.',
       prompt: buildPrompt(input),
       temperature: 0.3,
       maxOutputTokens: 16000,
     })
     
+    // Parse JSON from LLM response (strip markdown fences if present)
+    let jsonStr = text.trim()
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (fenceMatch) {
+      jsonStr = fenceMatch[1].trim()
+    }
+    
+    let rawParsed: unknown
+    try {
+      rawParsed = JSON.parse(jsonStr)
+    } catch {
+      // Try to find JSON object in the response
+      const jsonStart = jsonStr.indexOf('{')
+      const jsonEnd = jsonStr.lastIndexOf('}')
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        rawParsed = JSON.parse(jsonStr.slice(jsonStart, jsonEnd + 1))
+      } else {
+        throw new Error('No valid JSON found in plan-builder response')
+      }
+    }
+    
+    // Validate with Zod (lenient: strip unknown fields)
+    const object = SynthesisPlanSchema.parse(rawParsed)
+    
     const timeMs = Date.now() - startTime
     
-    // Validate section count matches outline if provided
+    // Log if section count doesn't match outline (should be rare with generateText)
     if (input.outlineSections && input.outlineSections.length > 0) {
-      if (object.sections.length !== input.outlineSections.length) {
+      const existingKeys = new Set(object.sections.map(s => s.outlineSectionKey))
+      const missingSections = input.outlineSections.filter(s => !existingKeys.has(s.sectionKey))
+      
+      if (missingSections.length > 0) {
         warn({
           expected: input.outlineSections.length,
           received: object.sections.length,
           outlineKeys: input.outlineSections.map(s => s.sectionKey),
-          planKeys: object.sections.map(s => s.outlineSectionKey)
-        }, 'Plan section count mismatch - LLM did not follow outline')
+          planKeys: object.sections.map(s => s.outlineSectionKey),
+          missing: missingSections.map(s => s.sectionKey)
+        }, 'Plan section count mismatch — LLM missed sections (no backfill)')
       }
     }
     

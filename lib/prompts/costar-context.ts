@@ -192,6 +192,12 @@ export interface CompleteCOStarContext extends COStarBaseContext {
   // When true, the prompt will instruct the LLM to NOT include any citations
   // This prevents hallucinated paper IDs when no sources are available
   noPapersAvailable?: boolean
+
+  // Original research findings (optional)
+  // When present, completions should anchor to user-provided data
+  hasOriginalResearch?: boolean
+  researchQuestion?: string
+  keyFindings?: string
 }
 
 /**
@@ -375,6 +381,10 @@ export function buildCompleteContext(params: {
   // No papers available flag - when true, suppress citation instructions
   // to prevent hallucinated paper IDs
   noPapersAvailable?: boolean
+  // Original research findings (optional)
+  hasOriginalResearch?: boolean
+  researchQuestion?: string
+  keyFindings?: string
 }): CompleteCOStarContext {
   const {
     topic,
@@ -390,6 +400,9 @@ export function buildCompleteContext(params: {
     voiceProfileId,
     isSectionOpening = false,
     noPapersAvailable = false,
+    hasOriginalResearch,
+    researchQuestion,
+    keyFindings,
   } = params
   
   const base = buildBaseContext(topic, paperType, currentSection, documentContent)
@@ -408,6 +421,9 @@ export function buildCompleteContext(params: {
     papersContext,
     voice,
     noPapersAvailable,
+    hasOriginalResearch,
+    researchQuestion,
+    keyFindings,
   }
 }
 

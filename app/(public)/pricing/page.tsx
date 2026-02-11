@@ -59,15 +59,13 @@ export default function PricingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <Link href="/" className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-foreground/80 flex items-center justify-center p-1.5">
-                <Image
-                  src="/favicon-32x32.png"
-                  alt="GenPaper"
-                  width={20}
-                  height={20}
-                  className="w-full h-full invert dark:invert-0"
-                />
-              </div>
+              <Image
+                src="/favicon-32x32.png"
+                alt="GenPaper"
+                width={24}
+                height={24}
+                className="dark:invert"
+              />
               <span className="text-lg font-semibold tracking-tight text-foreground/80">GenPaper</span>
             </Link>
 
@@ -254,12 +252,6 @@ export default function PricingPage() {
                   pro="All types incl. Theses"
                 />
                 <ComparisonRow
-                  feature="Paper length"
-                  free="Short"
-                  starter="Short & Medium"
-                  pro="All lengths"
-                />
-                <ComparisonRow
                   feature="References visible"
                   free="3 (rest blurred)"
                   starter="All"
@@ -348,15 +340,13 @@ export default function PricingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center gap-2.5 mb-4 md:mb-0">
-              <div className="w-7 h-7 rounded-lg bg-foreground/80 flex items-center justify-center p-1">
-                <Image
-                  src="/favicon-32x32.png"
-                  alt="GenPaper"
-                  width={16}
-                  height={16}
-                  className="w-full h-full invert dark:invert-0"
-                />
-              </div>
+              <Image
+                src="/favicon-32x32.png"
+                alt="GenPaper"
+                width={20}
+                height={20}
+                className="dark:invert"
+              />
               <span className="text-sm font-medium text-foreground/80">GenPaper</span>
               <span className="text-xs text-muted-foreground/50 ml-1">— AI Research Assistant</span>
             </div>

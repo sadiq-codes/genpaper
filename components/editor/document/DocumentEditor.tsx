@@ -467,10 +467,13 @@ export function DocumentEditor({
     // Initialize signature
     prevCitationSignatureRef.current = computeSignature()
 
-    const handleTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+    const handleTransaction = ({ transaction }: { transaction: { docChanged: boolean; getMeta: (key: string) => unknown } }) => {
       if (!transaction.docChanged) return
+      const isPaste = transaction.getMeta('paste')
       const nextSig = computeSignature()
-      if (nextSig === prevCitationSignatureRef.current) return
+      // Always rebuild on paste (pasted citations for existing papers won't change
+      // the unique-ID signature but still need numbers assigned)
+      if (!isPaste && nextSig === prevCitationSignatureRef.current) return
       prevCitationSignatureRef.current = nextSig
       editor.commands.setCitationStyle(citationStyle)
     }

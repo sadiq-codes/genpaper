@@ -423,7 +423,7 @@ export class ChunkRetriever {
     
     const queryEmbedding = embedding || await getCachedQueryEmbedding(query)
     
-    try {
+    const doSearch = async () => {
       const results = await qdrantSearchChunks(queryEmbedding, {
         limit: config.retrieveLimit,
         minScore: config.minScore,
@@ -438,9 +438,20 @@ export class ChunkRetriever {
         chunk_index: r.chunk_index,
         vector_score: normalizeScore(r.score)
       }))
+    }
+
+    try {
+      return await doSearch()
     } catch (err) {
-      console.error('Qdrant vector search failed:', err)
-      return []
+      // Single retry after 2s for transient Qdrant connection drops
+      console.warn('Qdrant vector search failed, retrying in 2s...', err)
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      try {
+        return await doSearch()
+      } catch (retryErr) {
+        console.error('Qdrant vector search retry failed:', retryErr)
+        return []
+      }
     }
   }
   

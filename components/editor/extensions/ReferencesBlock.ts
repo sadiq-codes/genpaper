@@ -88,13 +88,18 @@ export const ReferencesBlock = Node.create({
           
           // Check if this transaction would delete or modify a references block
           let wouldModifyReferences = false
+          const oldDoc = (tr.docs && tr.docs.length > 0 ? tr.docs[0] : tr.before) || null
           
           tr.steps.forEach((step) => {
             // Check the step's slice for references block
             const stepMap = step.getMap()
             stepMap.forEach((oldStart, oldEnd) => {
+              if (wouldModifyReferences || !oldDoc) return
+              const from = Math.max(0, Math.min(oldStart, oldDoc.content.size))
+              const to = Math.max(0, Math.min(oldEnd, oldDoc.content.size))
+              if (to <= from) return
               // Get the content being replaced in the old doc
-              tr.docs[0]?.nodesBetween(oldStart, oldEnd, (node) => {
+              oldDoc.nodesBetween(from, to, (node) => {
                 if (node.type.name === nodeName) {
                   wouldModifyReferences = true
                   return false

@@ -63,7 +63,7 @@ interface PromptOutput {
  * Generate the system and user prompts for paper profile generation
  */
 export async function getPaperProfilePrompt(input: ProfileGenerationInput): Promise<PromptOutput> {
-  const { topic, paperType, hasOriginalResearch, userContext } = input
+  const { topic, paperType, hasOriginalResearch, userContext, length, researchQuestion, keyFindings } = input
   
   // Get voice profile summaries for the prompt
   const voiceProfiles = getVoiceProfileSummaries()
@@ -113,11 +113,34 @@ IMPORTANT: Your response must be valid JSON matching the schema exactly. Do not 
 
   const paperTypeGuidance = await getPaperTypeGuidance(paperType, hasOriginalResearch || false)
   
+  const noOriginalResearchWarning = !hasOriginalResearch ? `
+⚠️ CRITICAL — NO ORIGINAL RESEARCH DATA PROVIDED:
+The user has NOT provided original research, datasets, or empirical data.
+This means:
+- The paper MUST use Mode B (Secondary Analysis / Synthesis) — NEVER Mode A (Primary Empirical)
+- Do NOT create a Methodology section that describes data collection, regression analysis, or experiments the author did not perform
+- Do NOT create a Results section that presents statistics (β values, p-values, means, etc.) as if from original analysis — those would be FABRICATED
+- If the paper type is "Research Article", the Methodology should describe the LITERATURE SEARCH strategy (databases searched, inclusion criteria, etc.) and the Results should SYNTHESIZE FINDINGS FROM CITED SOURCES
+- A "Methodology" that describes "secondary analysis" but then generates fake β values is ACADEMIC FRAUD — never do this
+- If the topic is better served as a Literature Review structure, use that structure even if the paper type says "Research Article"
+` : ''
+
+  // Build original research context block (paper-agnostic — the LLM decides how to use it)
+  const originalResearchContext = hasOriginalResearch && (researchQuestion || keyFindings) ? `
+ORIGINAL RESEARCH PROVIDED BY THE USER:
+${researchQuestion ? `Research Question: "${researchQuestion}"` : ''}
+${keyFindings ? `Key Findings (use these to determine what sections the paper needs and what the paper should cover):
+${keyFindings.slice(0, 2000)}${keyFindings.length > 2000 ? '\n[... truncated for profile generation]' : ''}` : ''}
+
+The sections, structure, and content coverage you design MUST be informed by these findings.
+Do not invent a generic structure — tailor it to what this specific research covers.
+` : ''
+
   const user = `ANALYZE THIS PAPER REQUEST AND CREATE A COMPREHENSIVE PROFILE:
 
 Topic: "${topic}"
 Paper Type: ${formatPaperType(paperType)}
-${hasOriginalResearch ? 'Note: This paper presents ORIGINAL RESEARCH with data collection.\n' : ''}${userContext ? `Additional Context: ${userContext}\n` : ''}
+${hasOriginalResearch ? 'Note: This paper presents ORIGINAL RESEARCH with data collection.\n' : ''}${noOriginalResearchWarning}${originalResearchContext}${userContext ? `Additional Context: ${userContext}\n` : ''}
 ${paperTypeGuidance}
 
 Create a comprehensive paper profile by analyzing:
@@ -176,7 +199,7 @@ Create a comprehensive paper profile by analyzing:
 2. STRUCTURE GUIDANCE
    
    WORD COUNT TARGET FOR THIS PAPER (CRITICAL - follow this range):
-   - ${getWordCountTarget(paperType)}
+   - ${getWordCountTarget(paperType, length)}
    
    Your minWords and maxWords for each section MUST sum to the appropriate total.
    Ensure total word count falls within the expected range above.
@@ -418,17 +441,26 @@ function formatPaperType(paperType: string): string {
 }
 
 /**
- * Return the word count target line for the current paper type only.
+ * Return the word count target line for the current paper type.
+ * When a specific word-count target is provided, use it directly.
+ * Otherwise fall back to the paper type's default range.
  */
-function getWordCountTarget(paperType: string): string {
-  const targets: Record<string, string> = {
-    'literatureReview': 'Literature Review: 3,000-8,000 words total (sections: 400-1,500 words each)',
-    'researchArticle': 'Research Article: 4,000-8,000 words total (sections: 500-1,500 words each)',
-    'capstoneProject': 'Capstone Project: 5,000-10,000 words total (sections: 600-2,000 words each)',
-    'mastersThesis': "Master's Thesis: 15,000-25,000 words total (sections: 1,500-4,000 words each)",
-    'phdDissertation': 'PhD Dissertation: 40,000-80,000 words total (sections: 3,000-10,000 words each)'
+function getWordCountTarget(paperType: string, length?: number): string {
+  // Fallback ranges when no explicit target is given
+  const defaults: Record<string, string> = {
+    'literatureReview': 'Literature Review: 3,000-8,000 words total',
+    'researchArticle': 'Research Article: 4,000-8,000 words total',
+    'capstoneProject': 'Capstone Project: 5,000-10,000 words total',
+    'mastersThesis': "Master's Thesis: 15,000-25,000 words total",
+    'phdDissertation': 'PhD Dissertation: 40,000-80,000 words total',
   }
-  return targets[paperType] || `${formatPaperType(paperType)}: Follow standard academic expectations`
+
+  if (length && length > 0) {
+    const fmt = (n: number) => n.toLocaleString('en-US')
+    return `${formatPaperType(paperType)}: Target exactly ${fmt(length)} words total. Distribute sections to sum to this target.`
+  }
+
+  return defaults[paperType] || `${formatPaperType(paperType)}: Follow standard academic expectations`
 }
 
 /**
@@ -436,59 +468,31 @@ function getWordCountTarget(paperType: string): string {
  */
 function getOutlineExample(paperType: string): string {
   if (paperType === 'mastersThesis' || paperType === 'phdDissertation' || paperType === 'capstoneProject') {
-    return `EXAMPLE outline for a ${formatPaperType(paperType)} (FULL outline — all sections need subsections):
-   - Introduction (2000 words)
-     - Background and Motivation (700 words)
-     - Research Objectives and Questions (700 words)
-     - Thesis Structure and Contributions (600 words)
-   - Literature Review (4000 words)
-     - Sentiment Analysis Approaches (1400 words)
-     - NLP for Social Media Text (1400 words)
-     - Prior Work on Sentiment Trends + Open Gaps (1200 words)
-   - Methodology (2500 words)
-     - Data Sources and Collection Strategy (900 words)
-     - Preprocessing and Feature/Representation Choices (800 words)
-     - Model Design + Training/Evaluation Protocol (800 words)
-   - Results (2000 words)
-     - Quantitative Performance and Baselines (700 words)
-     - Error Analysis and Robustness Checks (700 words)
-     - Trend Findings / Key Observations (600 words)
-   - Discussion (2500 words)
-     - Interpretation of Results and Link to Prior Work (900 words)
-     - Practical Implications / Stakeholders (800 words)
-     - Limitations and Threats to Validity (800 words)
-   - Conclusion (1000 words)
-     - Summary of Findings (400 words)
-     - Recommendations and Future Work (600 words)`
+    return `OUTLINE GUIDELINES for ${formatPaperType(paperType)}:
+   - EVERY section MUST have at least 2 subsections (academic standard for long-form work)
+   - Section count, titles, and organization should be driven by the TOPIC and DISCIPLINE — not a template
+   - The number of sections should reflect how THIS topic naturally divides, not a fixed formula
+   - Section word counts must sum to the total target
+   - Each subsection needs its own sectionKey, title, expectedWords, and keyPoints`
   }
 
   if (paperType === 'literatureReview') {
-    return `EXAMPLE outline for a Literature Review (subsections only where needed):
-   - Introduction (500 words) — NO subsections (too short)
-   - Theoretical Framework (800 words) — NO subsections
-   - Empirical Evidence on Productivity (1500 words)
-     - Quantitative Studies (800 words)
-     - Qualitative Studies (700 words)
-   - Methodological Approaches (1200 words)
-     - Systematic Review Methods (600 words)
-     - Meta-Analytic Techniques (600 words)
-   - Conclusion (400 words) — NO subsections`
+    return `OUTLINE GUIDELINES for Literature Review:
+   - The number of sections and their titles should be driven by the TOPIC — not a fixed template
+   - A 3,000-word review might have 3-4 sections; an 8,000-word review might have 5-7
+   - Section titles should reflect the actual themes/debates in the literature, not generic labels
+   - Do NOT include Methodology or Results sections unless this is a systematic/meta-analytic review
+   - Subsections are optional — only add them if a section exceeds ~1500 words and the content naturally divides
+   - Section word counts must sum to the total target`
   }
 
   // researchArticle or unknown
-  return `EXAMPLE outline for a Research Article (subsections where sections are long):
-   - Introduction (800 words) — NO subsections
-   - Literature Review (1500 words)
-     - Prior Work on the Topic (800 words)
-     - Identified Gaps (700 words)
-   - Methodology (1200 words)
-     - Data Collection (600 words)
-     - Analysis Approach (600 words)
-   - Results (1000 words) — NO subsections
-   - Discussion (1200 words)
-     - Key Findings (600 words)
-     - Limitations (600 words)
-   - Conclusion (500 words) — NO subsections`
+  return `OUTLINE GUIDELINES for Research Article:
+   - The number of sections and their titles should be driven by the TOPIC and DISCIPLINE — not a fixed template
+   - Different disciplines use different structures (IMRAD for sciences, thematic for humanities, etc.)
+   - Choose the structure that best serves THIS topic's argument or analysis
+   - Subsections are optional — only add them if a section exceeds ~1500 words and the content naturally divides
+   - Section word counts must sum to the total target`
 }
 
 /**

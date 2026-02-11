@@ -4,11 +4,9 @@ import { getUserSubscription, incrementPaperUsage } from './subscription-service
 import { 
   getTierLimits,
   isPaperTypeAllowed,
-  isPaperLengthAllowed,
   canGeneratePaper as canGeneratePaperByLimit,
   getPapersRemaining,
   getTierRequiredForPaperType,
-  getTierRequiredForPaperLength,
   TIER_CONFIG,
 } from '@/types/subscription'
 import type { SubscriptionTier, UserSubscription } from '@/types/subscription'
@@ -112,40 +110,6 @@ export async function checkCanUsePaperType(
 }
 
 /**
- * Check if user can use a specific paper length
- */
-export async function checkCanUsePaperLength(
-  userId: string, 
-  length: 'short' | 'medium' | 'long'
-): Promise<GateCheckResult> {
-  const subscription = await getUserSubscription(userId)
-  
-  if (!subscription) {
-    return {
-      allowed: false,
-      reason: 'Unable to verify subscription status',
-    }
-  }
-  
-  const { tier } = subscription
-  
-  if (!isPaperLengthAllowed(tier, length)) {
-    const requiredTier = getTierRequiredForPaperLength(length)
-    return {
-      allowed: false,
-      reason: `${length} papers require ${TIER_CONFIG[requiredTier].name} plan`,
-      currentTier: tier,
-      requiredTier,
-    }
-  }
-  
-  return {
-    allowed: true,
-    currentTier: tier,
-  }
-}
-
-/**
  * Check if user can use editor AI chat
  */
 export async function checkCanUseEditorChat(userId: string): Promise<GateCheckResult> {
@@ -213,12 +177,11 @@ export async function checkCanExportPdf(userId: string): Promise<GateCheckResult
 
 /**
  * Comprehensive check before starting paper generation
- * Validates quota, paper type, and length in one call
+ * Validates quota and paper type in one call
  */
 export async function checkCanStartGeneration(
   userId: string,
   paperType: PaperTypeKey,
-  length: 'short' | 'medium' | 'long'
 ): Promise<GateCheckResult> {
   // Check paper quota first
   const quotaCheck = await checkCanGeneratePaper(userId)
@@ -230,12 +193,6 @@ export async function checkCanStartGeneration(
   const typeCheck = await checkCanUsePaperType(userId, paperType)
   if (!typeCheck.allowed) {
     return typeCheck
-  }
-  
-  // Check length
-  const lengthCheck = await checkCanUsePaperLength(userId, length)
-  if (!lengthCheck.allowed) {
-    return lengthCheck
   }
   
   return {

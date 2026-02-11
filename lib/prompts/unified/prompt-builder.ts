@@ -43,6 +43,7 @@ export interface BuildPromptOptions extends TemplateOptions {
   // Project context (wired from pipeline)
   projectTitle?: string
   projectObjectives?: string
+  customInstructions?: string
   paperType?: string // e.g., 'researchArticle', 'literatureReview'
   topic?: string
   // Original research context (for empirical papers)
@@ -258,6 +259,7 @@ async function generatePromptData(
     exclusions,
     requiredPoints,
     qualityCriteria,
+    customInstructions: options.customInstructions,
     targetWords,
     subsectionsPlan: (context.subsections && context.subsections.length > 0)
       ? context.subsections.map(s => ({

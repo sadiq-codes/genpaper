@@ -94,14 +94,11 @@ export function useSubscription(): UseSubscriptionResult {
       setIsLoading(true)
       setError(null)
       
-      // Fetch subscription and usage in parallel
-      const [subResponse] = await Promise.all([
-        fetch('/api/billing/subscription'),
-        fetchUsage(),
-      ])
+      // Single request for both subscription + usage (avoids double auth check)
+      const response = await fetch('/api/billing/status')
       
-      if (!subResponse.ok) {
-        if (subResponse.status === 401) {
+      if (!response.ok) {
+        if (response.status === 401) {
           // Not logged in - that's fine, just no subscription
           setSubscription(null)
           setDailyUsage(null)
@@ -110,8 +107,9 @@ export function useSubscription(): UseSubscriptionResult {
         throw new Error('Failed to fetch subscription')
       }
       
-      const data = await subResponse.json()
-      setSubscription(data)
+      const data = await response.json()
+      setSubscription(data.subscription)
+      setDailyUsage(data.dailyUsage)
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -119,7 +117,7 @@ export function useSubscription(): UseSubscriptionResult {
     } finally {
       setIsLoading(false)
     }
-  }, [fetchUsage])
+  }, [])
   
   useEffect(() => {
     fetchSubscription()

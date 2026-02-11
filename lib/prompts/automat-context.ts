@@ -113,6 +113,12 @@ export interface ChatAUTOMATContext {
   // Project's authorial voice for content-generating actions
   // Only included for write/edit/cite actions that produce academic prose
   voice?: CondensedVoiceContext
+
+  // === ORIGINAL RESEARCH (optional) ===
+  // User-provided findings that should anchor all AI responses
+  hasOriginalResearch?: boolean
+  researchQuestion?: string
+  keyFindings?: string
 }
 
 /**
@@ -296,6 +302,11 @@ export function buildChatAUTOMATContext(params: {
   // Citation style (optional)
   // Used to determine conversational citation format (author-year vs numbered)
   citationStyle?: string
+  
+  // Original research findings (optional)
+  hasOriginalResearch?: boolean
+  researchQuestion?: string
+  keyFindings?: string
 }): ChatAUTOMATContext {
   const {
     userMessage,
@@ -312,6 +323,9 @@ export function buildChatAUTOMATContext(params: {
     tools = DEFAULT_CHAT_TOOLS,
     voiceProfileId,
     citationStyle = 'apa',
+    hasOriginalResearch,
+    researchQuestion,
+    keyFindings,
   } = params
   
   // Infer action from message
@@ -389,6 +403,11 @@ export function buildChatAUTOMATContext(params: {
     
     // VOICE (optional - only for content-generating actions)
     voice,
+
+    // ORIGINAL RESEARCH (optional)
+    hasOriginalResearch,
+    researchQuestion,
+    keyFindings,
   }
 }
 

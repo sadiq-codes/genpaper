@@ -479,9 +479,15 @@ export interface PipelineState {
   config?: {
     topic: string;
     paperType: string;
-    length: string;
+    length: number;
+    customInstructions?: string;
     useLibraryOnly?: boolean;
     libraryPaperIds?: string[];
+    originalResearch?: {
+      has_original_research: boolean;
+      research_question?: string;
+      key_findings?: string;
+    };
   };
 }
 
@@ -604,11 +610,77 @@ export async function clearPipelineState(runId: string): Promise<void> {
   
   const { error } = await supabase
     .from("generation_runs")
-    .update({ pipeline_state: {} })
+    .update({ pipeline_state: {}, context_cache: null })
     .eq("id", runId);
   
   if (error) {
     console.error(`Failed to clear pipeline state: ${error.message}`);
     // Don't throw - this is cleanup
+  }
+}
+
+// =============================================================================
+// Context Cache (avoids rebuilding contexts in every Inngest step)
+// =============================================================================
+
+import { gzipSync, gunzipSync } from "zlib";
+
+/**
+ * Save section contexts to a compressed cache column.
+ * Contexts include RAG chunks and enrichment data that are expensive to rebuild.
+ */
+export async function saveContextCache(
+  runId: string,
+  contexts: unknown[]
+): Promise<void> {
+  const supabase = createServiceClient();
+
+  try {
+    const json = JSON.stringify(contexts);
+    const compressed = gzipSync(Buffer.from(json, "utf-8"));
+    const encoded = compressed.toString("base64");
+
+    const { error } = await supabase
+      .from("generation_runs")
+      .update({ context_cache: encoded })
+      .eq("id", runId);
+
+    if (error) {
+      console.error(`[context-cache] Failed to save: ${error.message}`);
+    } else {
+      const rawKB = (json.length / 1024).toFixed(1);
+      const compKB = (encoded.length / 1024).toFixed(1);
+      console.log(`[context-cache] Saved ${contexts.length} contexts (${rawKB}KB → ${compKB}KB compressed)`);
+    }
+  } catch (err) {
+    console.error("[context-cache] Compression/save failed:", err);
+  }
+}
+
+/**
+ * Load section contexts from cache. Returns null if no cache exists.
+ */
+export async function loadContextCache<T = unknown>(
+  runId: string
+): Promise<T[] | null> {
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from("generation_runs")
+    .select("context_cache")
+    .eq("id", runId)
+    .single();
+
+  if (error || !data?.context_cache) {
+    return null;
+  }
+
+  try {
+    const compressed = Buffer.from(data.context_cache as string, "base64");
+    const json = gunzipSync(compressed).toString("utf-8");
+    return JSON.parse(json) as T[];
+  } catch (err) {
+    console.error("[context-cache] Decompression/parse failed:", err);
+    return null;
   }
 }

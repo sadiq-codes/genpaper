@@ -5,7 +5,6 @@ import dynamic from 'next/dynamic'
 import { SettingsSidebar, type SettingsSection, SETTINGS_SECTIONS } from './settings-sidebar'
 import { ProfileSection } from './sections/profile-section'
 import { WritingSection } from './sections/writing-section'
-import { EditorSection } from './sections/editor-section'
 import { AppearanceSection } from './sections/appearance-section'
 import { AccountSection } from './sections/account-section'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -88,11 +87,6 @@ export function SettingsPage({ user, preferences, subscription }: SettingsPagePr
           <WritingSection
             initialCitationStyle={preferences.citationStyle}
             initialPaperType={preferences.defaultPaperType}
-          />
-        )
-      case 'editor':
-        return (
-          <EditorSection
             initialAutoSuggestions={preferences.autoSuggestions}
             initialIncludeCitations={preferences.includeCitations}
             initialAcceptKey={preferences.acceptKey}

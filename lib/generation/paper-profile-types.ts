@@ -275,6 +275,12 @@ export interface ProfileGenerationInput {
   paperType: string
   hasOriginalResearch?: boolean
   userContext?: string
+  /** Target total word count for the paper */
+  length?: number
+  /** User's research question (if original research) */
+  researchQuestion?: string
+  /** User's key findings — raw or normalized (if original research) */
+  keyFindings?: string
 }
 
 /**

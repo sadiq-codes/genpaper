@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     const {
       topic,
       paperType = "literatureReview",
-      length = "medium",
+      length = 5500,
       useLibraryOnly = false,
       libraryPaperIds = [],
       projectId: existingProjectId,
@@ -105,7 +105,6 @@ export async function POST(request: NextRequest) {
       const gateCheck = await checkCanStartGeneration(
         user.id,
         paperType as PaperTypeKey,
-        length as "short" | "medium" | "long"
       );
 
       if (!gateCheck.allowed) {
@@ -125,6 +124,8 @@ export async function POST(request: NextRequest) {
     let finalPaperType = paperType;
     let finalUseLibraryOnly = useLibraryOnly;
     let finalLibraryPaperIds = libraryPaperIds;
+    let finalCustomInstructions = customInstructions;
+    let finalOriginalResearch: { has_original_research: boolean; research_question?: string; key_findings?: string } | undefined;
 
     if (existingProjectId) {
       // Verify ownership of existing project
@@ -177,6 +178,23 @@ export async function POST(request: NextRequest) {
         if (projectConfig.paper_type) {
           finalPaperType = projectConfig.paper_type;
         }
+
+        // Load custom instructions from generation config (set by topic parser)
+        if (typeof config.custom_instructions === "string" && config.custom_instructions) {
+          finalCustomInstructions = config.custom_instructions;
+        }
+
+        // Load original research config from DB (critical for findings-driven generation)
+        if (config.original_research && typeof config.original_research === "object") {
+          const or = config.original_research as Record<string, unknown>;
+          if (or.has_original_research) {
+            finalOriginalResearch = {
+              has_original_research: true,
+              research_question: typeof or.research_question === "string" ? or.research_question : undefined,
+              key_findings: typeof or.key_findings === "string" ? or.key_findings : undefined,
+            };
+          }
+        }
       }
     } else {
       // Create new project
@@ -186,7 +204,7 @@ export async function POST(request: NextRequest) {
         sources,
         limit: 25,
         library_papers_used: libraryPaperIds,
-        length: length as "short" | "medium" | "long",
+        length: typeof length === 'number' ? length : 5500,
         paperType: paperType as "researchArticle" | "literatureReview" | "capstoneProject" | "mastersThesis" | "phdDissertation",
         useLibraryOnly,
         localRegion: undefined,
@@ -239,8 +257,9 @@ export async function POST(request: NextRequest) {
           temperature,
           maxTokens,
           sources,
-          hasOriginalResearch,
-          customInstructions,
+          hasOriginalResearch: finalOriginalResearch?.has_original_research || hasOriginalResearch,
+          originalResearch: finalOriginalResearch,
+          customInstructions: finalCustomInstructions,
           useLibraryOnly: finalUseLibraryOnly,
           libraryPaperIds: finalLibraryPaperIds,
         },

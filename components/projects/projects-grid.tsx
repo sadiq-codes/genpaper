@@ -11,28 +11,32 @@ interface ProjectWithCount {
 }
 
 async function fetchProjects(): Promise<ProjectWithCount[]> {
-  const res = await fetch("/api/projects?limit=20&offset=0")
-  if (!res.ok) throw new Error("Failed to fetch projects")
-  const data = await res.json()
+  try {
+    const res = await fetch("/api/projects?limit=20&offset=0")
+    if (!res.ok) return []
+    const data = await res.json()
 
-  const projects = data.data?.projects || data.projects || []
-  if (projects.length === 0) return []
+    const projects = data.data?.projects || data.projects || []
+    if (projects.length === 0) return []
 
-  // Fetch paper counts
-  const projectIds = projects.map((p: { id: string }) => p.id)
-  const countsRes = await fetch(
-    `/api/projects/paper-counts?${projectIds.map((id: string) => `ids=${id}`).join("&")}`
-  )
-  let paperCountMap: Record<string, number> = {}
-  if (countsRes.ok) {
-    const countsData = await countsRes.json()
-    paperCountMap = countsData.counts || {}
+    // Fetch paper counts
+    const projectIds = projects.map((p: { id: string }) => p.id)
+    const countsRes = await fetch(
+      `/api/projects/paper-counts?${projectIds.map((id: string) => `ids=${id}`).join("&")}`
+    )
+    let paperCountMap: Record<string, number> = {}
+    if (countsRes.ok) {
+      const countsData = await countsRes.json()
+      paperCountMap = countsData.counts || {}
+    }
+
+    return projects.map((project: Record<string, unknown> & { id: string }) => ({
+      project,
+      paperCount: paperCountMap[project.id] || 0,
+    }))
+  } catch {
+    return []
   }
-
-  return projects.map((project: Record<string, unknown> & { id: string }) => ({
-    project,
-    paperCount: paperCountMap[project.id] || 0,
-  }))
 }
 
 function ProjectsGridSkeleton() {

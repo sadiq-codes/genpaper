@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { Label } from '@/components/ui/label'
-import { Loader2, Check } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
+import { Loader2, Check, Sparkles, BookOpen, Keyboard } from 'lucide-react'
 import { toast } from 'sonner'
 import { CitationStyleSelector } from '@/components/editor/CitationStyleSelector'
 import { getStyleById } from '@/lib/citations/csl-styles'
@@ -25,32 +26,65 @@ const PAPER_TYPES = [
 interface WritingSectionProps {
   initialCitationStyle: string
   initialPaperType: string
+  initialAutoSuggestions: boolean
+  initialIncludeCitations: boolean
+  initialAcceptKey: 'tab' | 'ctrlEnter'
 }
 
 export function WritingSection({ 
   initialCitationStyle, 
-  initialPaperType 
+  initialPaperType,
+  initialAutoSuggestions,
+  initialIncludeCitations,
+  initialAcceptKey,
 }: WritingSectionProps) {
   const [citationStyle, setCitationStyle] = useState(initialCitationStyle || 'apa')
   const [defaultPaperType, setDefaultPaperType] = useState(initialPaperType || 'literatureReview')
+  const [autoSuggestions, setAutoSuggestions] = useState(initialAutoSuggestions)
+  const [includeCitations, setIncludeCitations] = useState(initialIncludeCitations)
+  const [acceptKey, setAcceptKey] = useState<'tab' | 'ctrlEnter'>(initialAcceptKey)
   const [isSaving, setIsSaving] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
 
+  const checkForChanges = (
+    style: string,
+    paperType: string,
+    auto: boolean,
+    citations: boolean,
+    key: 'tab' | 'ctrlEnter',
+  ) => {
+    setHasChanges(
+      style !== initialCitationStyle || 
+      paperType !== initialPaperType ||
+      auto !== initialAutoSuggestions ||
+      citations !== initialIncludeCitations ||
+      key !== initialAcceptKey
+    )
+  }
+
   const handleStyleChange = (value: string) => {
     setCitationStyle(value)
-    checkForChanges(value, defaultPaperType)
+    checkForChanges(value, defaultPaperType, autoSuggestions, includeCitations, acceptKey)
   }
 
   const handlePaperTypeChange = (value: string) => {
     setDefaultPaperType(value)
-    checkForChanges(citationStyle, value)
+    checkForChanges(citationStyle, value, autoSuggestions, includeCitations, acceptKey)
   }
 
-  const checkForChanges = (style: string, paperType: string) => {
-    setHasChanges(
-      style !== initialCitationStyle || 
-      paperType !== initialPaperType
-    )
+  const handleAutoSuggestionsChange = (value: boolean) => {
+    setAutoSuggestions(value)
+    checkForChanges(citationStyle, defaultPaperType, value, includeCitations, acceptKey)
+  }
+
+  const handleIncludeCitationsChange = (value: boolean) => {
+    setIncludeCitations(value)
+    checkForChanges(citationStyle, defaultPaperType, autoSuggestions, value, acceptKey)
+  }
+
+  const handleAcceptKeyChange = (value: 'tab' | 'ctrlEnter') => {
+    setAcceptKey(value)
+    checkForChanges(citationStyle, defaultPaperType, autoSuggestions, includeCitations, value)
   }
 
   const handleSave = async () => {
@@ -61,7 +95,10 @@ export function WritingSection({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           citationStyle,
-          defaultPaperType 
+          defaultPaperType,
+          autoSuggestions,
+          includeCitations,
+          acceptKey,
         }),
       })
 
@@ -69,10 +106,7 @@ export function WritingSection({
         throw new Error('Failed to save preferences')
       }
 
-      const styleInfo = getStyleById(citationStyle)
-      toast.success('Writing preferences saved', {
-        description: `Citation style: ${styleInfo?.shortName || citationStyle}`,
-      })
+      toast.success('Writing & editor settings saved')
       setHasChanges(false)
     } catch (error) {
       console.error('Failed to save settings:', error)
@@ -87,9 +121,9 @@ export function WritingSection({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="font-instrument text-xl tracking-tight">Writing Preferences</h2>
+        <h2 className="font-instrument text-xl tracking-tight">Writing & Editor</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Default settings for new projects
+          Citation style, paper defaults, and AI autocomplete
         </p>
       </div>
 
@@ -153,6 +187,74 @@ export function WritingSection({
               ))}
             </SelectContent>
           </Select>
+        </div>
+      </div>
+
+      {/* AI Autocomplete */}
+      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+        <div>
+          <h3 className="font-instrument text-base tracking-tight">AI Autocomplete</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Control how AI suggestions appear while you write
+          </p>
+        </div>
+
+        <div className="space-y-5">
+          {/* Auto Suggestions Toggle */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5 min-w-0">
+              <Label htmlFor="auto-suggestions" className="flex items-center gap-2 text-xs">
+                <Sparkles className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
+                <span>Enable Auto Suggestions</span>
+              </Label>
+              <p className="text-[11px] text-muted-foreground ml-[22px]">
+                Show AI completions as you type
+              </p>
+            </div>
+            <Switch
+              id="auto-suggestions"
+              checked={autoSuggestions}
+              onCheckedChange={handleAutoSuggestionsChange}
+            />
+          </div>
+
+          {/* Include Citations Toggle */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5 min-w-0">
+              <Label htmlFor="include-citations" className="flex items-center gap-2 text-xs">
+                <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
+                <span>Include Citations</span>
+              </Label>
+              <p className="text-[11px] text-muted-foreground ml-[22px]">
+                AI suggestions include relevant citations from your library
+              </p>
+            </div>
+            <Switch
+              id="include-citations"
+              checked={includeCitations}
+              onCheckedChange={handleIncludeCitationsChange}
+            />
+          </div>
+
+          {/* Accept Key Selector */}
+          <div className="space-y-2">
+            <Label htmlFor="accept-key" className="flex items-center gap-2 text-xs">
+              <Keyboard className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+              Accept Suggestion Key
+            </Label>
+            <Select value={acceptKey} onValueChange={handleAcceptKeyChange}>
+              <SelectTrigger className="w-full sm:max-w-xs">
+                <SelectValue placeholder="Select key…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="tab">Tab</SelectItem>
+                <SelectItem value="ctrlEnter">Ctrl&nbsp;+&nbsp;Enter</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Keyboard shortcut to accept AI suggestions
+            </p>
+          </div>
         </div>
       </div>
 

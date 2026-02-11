@@ -27,9 +27,9 @@ import { getNodeTextWithCitations } from './ai-context-serializer'
 export interface StructureMatch {
   found: boolean
   node: ProseMirrorNode | null
-  pos: number              // Document position of the node start
-  startOffset: number      // Offset within node's text content
-  endOffset: number        // Offset within node's text content
+  pos: number              // Document position of the node content start (node pos + 1)
+  startOffset: number      // ProseMirror content offset within the node
+  endOffset: number        // ProseMirror content offset within the node
   similarity: number       // 0-1 match quality
   nodeType: string         // 'heading' | 'paragraph' | 'listItem' | etc.
   blockId?: string         // Block ID if available
@@ -200,6 +200,60 @@ export function findSectionBounds(
 // =============================================================================
 
 /**
+ * Convert a text offset from getNodeTextWithCitations() output back to
+ * a ProseMirror content offset within the node.
+ *
+ * getNodeTextWithCitations() expands citation atoms (nodeSize=1 in ProseMirror)
+ * into long marker strings like [@uuid#uuid]. Without this mapping, text offsets
+ * are inflated and can exceed the actual document size.
+ */
+function expandedTextOffsetToNodeOffset(node: ProseMirrorNode, textOffset: number): number {
+  let textPos = 0
+  let result = -1
+
+  node.descendants((child, pos) => {
+    if (result !== -1) return false
+
+    if (child.isText && child.text) {
+      const len = child.text.length
+      if (textPos + len >= textOffset) {
+        result = pos + (textOffset - textPos)
+        return false
+      }
+      textPos += len
+      return false
+    }
+
+    if (child.type.name === 'citation') {
+      const paperId = child.attrs.id || 'unknown'
+      const instanceId = child.attrs.instanceId
+      const marker = instanceId ? `[@${paperId}#${instanceId}]` : `[@${paperId}]`
+      const markerLen = marker.length
+      if (textPos + markerLen >= textOffset) {
+        // Offset falls within the expanded citation marker → map to after the citation node
+        result = pos + child.nodeSize
+        return false
+      }
+      textPos += markerLen
+      return false
+    }
+
+    if (child.type.name === 'hardBreak') {
+      if (textPos + 1 >= textOffset) {
+        result = pos + child.nodeSize
+        return false
+      }
+      textPos += 1
+      return false
+    }
+
+    return true
+  })
+
+  return result !== -1 ? result : node.content.size
+}
+
+/**
  * Search within a specific block by ID.
  */
 function findInBlock(
@@ -223,8 +277,8 @@ function findInBlock(
           found: true,
           node,
           pos: pos + 1, // +1 to skip the opening tag
-          startOffset: match.startOffset,
-          endOffset: match.endOffset,
+          startOffset: expandedTextOffsetToNodeOffset(node, match.startOffset),
+          endOffset: expandedTextOffsetToNodeOffset(node, match.endOffset),
           similarity: match.similarity,
           nodeType: node.type.name,
           blockId: node.attrs.blockId
@@ -272,8 +326,8 @@ function findInRange(
         found: true,
         node,
         pos: pos + 1, // +1 to skip the opening tag
-        startOffset: match.startOffset,
-        endOffset: match.endOffset,
+        startOffset: expandedTextOffsetToNodeOffset(node, match.startOffset),
+        endOffset: expandedTextOffsetToNodeOffset(node, match.endOffset),
         similarity: match.similarity,
         nodeType: node.type.name,
         blockId: node.attrs.blockId
@@ -451,11 +505,21 @@ export function findInSectionStructure(
 /**
  * Calculate document positions from a structure match.
  * Returns { from, to } ready for editor operations.
+ * Offsets are already converted to ProseMirror node offsets by findInBlock/findInRange.
  */
 export function matchToRange(match: StructureMatch): { from: number; to: number } | null {
   if (!match.found) return null
-  return {
-    from: match.pos + match.startOffset,
-    to: match.pos + match.endOffset
+
+  const from = match.pos + match.startOffset
+  let to = match.pos + match.endOffset
+
+  // Safety: clamp `to` to the end of the node if it overshoots
+  if (match.node) {
+    const nodeEnd = match.pos + match.node.content.size
+    if (to > nodeEnd) {
+      to = nodeEnd
+    }
   }
+
+  return { from, to }
 }

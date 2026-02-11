@@ -11,12 +11,15 @@ export interface AutocompletePrefs {
   includeCitations: boolean
   /** Accept key: 'tab' or 'ctrlEnter' - default 'tab' */
   acceptKey: 'tab' | 'ctrlEnter'
+  /** Use external sources (global database) for AI writing - default OFF */
+  useExternalSources: boolean
 }
 
 const DEFAULT_PREFS: AutocompletePrefs = {
   autoSuggestions: false,
   includeCitations: false,
   acceptKey: 'tab',
+  useExternalSources: false,
 }
 
 /**
@@ -77,6 +80,10 @@ export function useAutocompletePrefs() {
     setPrefs(prev => ({ ...prev, acceptKey: value }))
   }, [])
 
+  const setUseExternalSources = useCallback((value: boolean) => {
+    setPrefs(prev => ({ ...prev, useExternalSources: value }))
+  }, [])
+
   return {
     prefs,
     isLoaded,
@@ -84,5 +91,6 @@ export function useAutocompletePrefs() {
     setAutoSuggestions,
     setIncludeCitations,
     setAcceptKey,
+    setUseExternalSources,
   }
 }

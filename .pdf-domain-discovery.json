@@ -1,0 +1,146 @@
+{
+  "testedAt": "2026-02-09T21:06:40.327Z",
+  "config": {
+    "samplesPerDomain": 5,
+    "timeout": 10000,
+    "successThreshold": 0.3
+  },
+  "summary": {
+    "domainsDiscovered": 9,
+    "domainsToAdd": 2,
+    "domainsToSkip": 7,
+    "totalUrlsTested": 45
+  },
+  "domains": {
+    "www.nejm.org": {
+      "domain": "www.nejm.org",
+      "totalPapers": 36,
+      "tested": 5,
+      "success": 0,
+      "failed": 5,
+      "successRate": 0,
+      "errors": {
+        "HTTP 403": 5
+      },
+      "sampleUrls": [],
+      "verdict": "skip"
+    },
+    "www.cell.com": {
+      "domain": "www.cell.com",
+      "totalPapers": 29,
+      "tested": 5,
+      "success": 0,
+      "failed": 5,
+      "successRate": 0,
+      "errors": {
+        "HTTP 403": 5
+      },
+      "sampleUrls": [],
+      "verdict": "skip"
+    },
+    "hdl.handle.net": {
+      "domain": "hdl.handle.net",
+      "totalPapers": 16,
+      "tested": 5,
+      "success": 0,
+      "failed": 5,
+      "successRate": 0,
+      "errors": {
+        "HTML (paywall/landing page)": 4,
+        "Timeout": 1
+      },
+      "sampleUrls": [],
+      "verdict": "skip"
+    },
+    "www.science.org": {
+      "domain": "www.science.org",
+      "totalPapers": 15,
+      "tested": 5,
+      "success": 0,
+      "failed": 5,
+      "successRate": 0,
+      "errors": {
+        "HTTP 403": 5
+      },
+      "sampleUrls": [],
+      "verdict": "skip"
+    },
+    "www.pnas.org": {
+      "domain": "www.pnas.org",
+      "totalPapers": 15,
+      "tested": 5,
+      "success": 0,
+      "failed": 5,
+      "successRate": 0,
+      "errors": {
+        "HTTP 403": 5
+      },
+      "sampleUrls": [],
+      "verdict": "skip"
+    },
+    "jamanetwork.com": {
+      "domain": "jamanetwork.com",
+      "totalPapers": 7,
+      "tested": 5,
+      "success": 0,
+      "failed": 5,
+      "successRate": 0,
+      "errors": {
+        "HTTP 403": 5
+      },
+      "sampleUrls": [],
+      "verdict": "skip"
+    },
+    "genomebiology.biomedcentral.com": {
+      "domain": "genomebiology.biomedcentral.com",
+      "totalPapers": 6,
+      "tested": 5,
+      "success": 5,
+      "failed": 0,
+      "successRate": 1,
+      "errors": {},
+      "sampleUrls": [
+        "https://genomebiology.biomedcentral.com/track/pdf/10.1186/s13059-017-1349-1",
+        "https://genomebiology.biomedcentral.com/track/pdf/10.1186/s13059-016-0974-4",
+        "https://genomebiology.biomedcentral.com/counter/pdf/10.1186/s13059-017-1215-1"
+      ],
+      "verdict": "add"
+    },
+    "escholarship.org": {
+      "domain": "escholarship.org",
+      "totalPapers": 6,
+      "tested": 5,
+      "success": 1,
+      "failed": 4,
+      "successRate": 0.2,
+      "errors": {
+        "HTML (paywall/landing page)": 4
+      },
+      "sampleUrls": [
+        "https://escholarship.org/content/qt3gz3w9v7/qt3gz3w9v7.pdf?t=rfdtpb"
+      ],
+      "verdict": "maybe"
+    },
+    "www.osti.gov": {
+      "domain": "www.osti.gov",
+      "totalPapers": 6,
+      "tested": 5,
+      "success": 2,
+      "failed": 3,
+      "successRate": 0.4,
+      "errors": {
+        "HTML (paywall/landing page)": 2,
+        "Timeout": 1
+      },
+      "sampleUrls": [
+        "https://www.osti.gov/servlets/purl/1255873",
+        "https://www.osti.gov/servlets/purl/1574918"
+      ],
+      "verdict": "add"
+    }
+  },
+  "recommendedAdditions": [
+    "genomebiology.biomedcentral.com",
+    "www.osti.gov"
+  ]
+}

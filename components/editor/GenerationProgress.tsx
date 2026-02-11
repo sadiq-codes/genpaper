@@ -4,6 +4,7 @@ import { useEffect, useCallback, useRef, useReducer, useState } from "react"
 import { Loader2, Search, FileText, Sparkles, CheckCircle2, FileStack } from "lucide-react"
 import { GenerationLoadingUI, type ProgressStage, type CompletedSection } from "./GenerationLoadingUI"
 import { LimitReachedModal, type LimitType } from "@/components/billing/limit-modal"
+import { DEFAULT_LENGTH_BY_PAPER_TYPE } from "@/types/simplified"
 
 interface GenerationProgressProps {
   projectId: string
@@ -268,7 +269,7 @@ export function GenerationProgress({
           topic,
           paperType,
           projectId,
-          length: 'medium',
+          length: DEFAULT_LENGTH_BY_PAPER_TYPE[paperType || 'literatureReview'] || 5500,
         }),
       })
 

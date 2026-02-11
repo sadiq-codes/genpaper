@@ -18,8 +18,8 @@ import { useResearchEditor } from '../research-editor-context'
 // CITATION FORMATTING FOR CHAT
 // =============================================================================
 
-/** Citation marker regex: [@paperId#instanceId] or [@paperId] */
-const CITATION_MARKER_RE = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+))?\]/gi
+/** Citation marker regex: [@paperId#instanceId] or [@paperId] (also handles truncated #...) */
+const CITATION_MARKER_RE = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+|\.{1,3}))?\]/gi
 
 /**
  * Build the display label for a citation (e.g. "Smith et al., 2024").
@@ -144,7 +144,8 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
         if (paper) {
           return <ChatCitationSpan key={i} paper={paper} instanceId={part.instanceId} />
         }
-        return <span key={i}>{part.value}</span>
+        // Paper not found — show clean placeholder instead of raw UUID
+        return <span key={i} className="italic text-foreground/50">[citation]</span>
       }
       // Render text segment as markdown
       return (

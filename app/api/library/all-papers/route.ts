@@ -37,7 +37,8 @@ export async function GET(request: NextRequest) {
       source,
       citation_count,
       processing_status,
-      owner_id
+      owner_id,
+      metadata
     `
 
     // Start ALL queries in parallel (async-parallel) — no sequential dependencies.
@@ -116,6 +117,7 @@ export async function GET(request: NextRequest) {
       citation_count: number | null
       processing_status: string | null
       owner_id: string | null
+      metadata: Record<string, unknown> | null
       // Unified fields
       isBookmarked: boolean
       libraryNotes: string | null
@@ -143,6 +145,7 @@ export async function GET(request: NextRequest) {
         citation_count: paper.citation_count,
         processing_status: paper.processing_status,
         owner_id: paper.owner_id,
+        metadata: paper.metadata || null,
         isBookmarked: true,
         libraryNotes: lp.notes,
         libraryAddedAt: lp.added_at,
@@ -182,6 +185,7 @@ export async function GET(request: NextRequest) {
           citation_count: paper.citation_count,
           processing_status: paper.processing_status,
           owner_id: paper.owner_id,
+          metadata: paper.metadata || null,
           isBookmarked: false,
           libraryNotes: null,
           libraryAddedAt: null,

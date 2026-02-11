@@ -248,6 +248,31 @@ system: |-
   - Acknowledge limitations when present
   - Match the document's existing voice and terminology
   
+  {{#hasOriginalResearch}}
+  ---
+  
+  # ORIGINAL RESEARCH
+  ## User-Provided Findings
+  
+  This project is based on original research data provided by the user. 
+  **All AI responses MUST be grounded in these findings.**
+  
+  {{#researchQuestion}}
+  **Research Question:** {{researchQuestion}}
+  {{/researchQuestion}}
+  
+  {{#keyFindings}}
+  **Key Findings:**
+  {{{keyFindings}}}
+  {{/keyFindings}}
+  
+  When writing or editing content:
+  - Use the user's specific data, percentages, and statistics
+  - Reference their tables and measurements when relevant
+  - Synthesize cited literature against these findings
+  - Never contradict the user's original data
+  {{/hasOriginalResearch}}
+  
   {{#voice}}
   ---
   

@@ -63,7 +63,8 @@ async function buildSystemPrompt(
   mentionedPapers?: Array<{ id: string; title: string; authors?: string[]; year?: number; abstract?: string }>,
   ragChunks?: Array<{ paper_id: string; content: string }>,
   voiceProfileId?: string | null,
-  citationStyle?: string
+  citationStyle?: string,
+  originalResearch?: { has_original_research: boolean; research_question?: string; key_findings?: string } | null
 ): Promise<string> {
   // Build mentioned papers context if any
   const mentionedPapersContext = mentionedPapers && mentionedPapers.length > 0
@@ -77,7 +78,7 @@ async function buildSystemPrompt(
     ? voiceProfileId as VoiceProfileId
     : undefined
 
-  // Build AUTOMAT context with optional voice and citation style
+  // Build AUTOMAT context with optional voice, citation style, and original research
   const context = buildChatAUTOMATContext({
     userMessage,
     projectTopic: topic,
@@ -91,6 +92,9 @@ async function buildSystemPrompt(
     tools: DEFAULT_CHAT_TOOLS,
     voiceProfileId: validatedVoiceId,
     citationStyle,
+    hasOriginalResearch: originalResearch?.has_original_research,
+    researchQuestion: originalResearch?.research_question,
+    keyFindings: originalResearch?.key_findings,
   })
 
   // Build prompt from AUTOMAT template
@@ -154,7 +158,11 @@ async function getRAGContext(
   try {
     const retriever = new ChunkRetriever({
       // For chat, use a smaller token budget (faster responses)
-      maxEvidenceTokens: 8000
+      maxEvidenceTokens: 8000,
+      // Skip Cohere reranking for chat — Qdrant vector similarity is sufficient
+      // and reranking adds ~2-3s of latency for marginal quality gain
+      useReranking: false,
+      retrieveLimit: 100,
     })
 
     console.log('[Chat API] RAG query:', query?.slice(0, 100))
@@ -342,8 +350,7 @@ export async function POST(request: NextRequest) {
       console.log('[Chat API] Attached images:', attachedImages.length)
     }
 
-    // Get the last user message for intent classification FIRST
-    // This allows us to short-circuit expensive DB queries for trivial messages
+    // Get the last user message for intent classification
     const lastUserMessage = messages
       .filter(m => m.role === 'user')
       .pop()
@@ -353,33 +360,46 @@ export async function POST(request: NextRequest) {
       ? getTextFromUIMessage(lastUserMessage)
       : ''
 
-    // EARLY intent classification - do this BEFORE expensive DB queries
-    // Fast-path for trivial messages (greetings, meta questions) can skip paper lookup entirely
+    // Run intent classification + project fetch + papers fetch IN PARALLEL
+    // Intent doesn't depend on DB; project fetch doesn't depend on intent.
+    // Papers fetch is always started optimistically — we discard it if trivial.
     const intentStart = performance.now()
-    const { skip: skipRAG, classification: intentClassification } = await shouldSkipRAG(
-      ragQuery, 
-      mentionedPaperIds.length > 0
-    )
-    const intentEnd = performance.now()
-    console.log(`[Chat API] [TIMING] Intent classification: ${(intentEnd - intentStart).toFixed(0)}ms`)
-    console.log(`[Chat API] Intent: ${intentClassification.intent} (confidence: ${(intentClassification.confidence * 100).toFixed(0)}%) - ${intentClassification.reasoning}`)
-
-    // For chat/meta intents with no @mentions, skip expensive paper queries
-    // This provides a ~10s speedup for trivial messages like "hi" or "what can you do?"
-    const isTrivialMessage = (intentClassification.intent === 'chat' || intentClassification.intent === 'meta') 
-      && mentionedPaperIds.length === 0
-      && attachedImages.length === 0
-
-    // Verify user owns the project and get project details including voice config
     console.log('[Chat API] Looking up project:', projectId, 'for user:', user.id)
-    const dbStart = performance.now()
-    
-    const { data: project, error: projectError } = await supabase
-      .from('research_projects')
-      .select('id, topic, paper_type, generation_config')
-      .eq('id', projectId)
-      .eq('user_id', user.id)
-      .single()
+
+    const [intentResult, projectResult, papersResult] = await Promise.all([
+      // 1) Intent classification (may hit LLM or fast-path regex)
+      shouldSkipRAG(ragQuery, mentionedPaperIds.length > 0),
+      // 2) Project fetch (always needed)
+      supabase
+        .from('research_projects')
+        .select('id, topic, paper_type, generation_config')
+        .eq('id', projectId)
+        .eq('user_id', user.id)
+        .single(),
+      // 3) Papers fetch (optimistic — cheap to discard if trivial)
+      supabase
+        .from('project_citations')
+        .select(`
+          paper_id,
+          papers (
+            id,
+            title,
+            authors,
+            publication_date,
+            abstract,
+            processing_status
+          )
+        `)
+        .eq('project_id', projectId),
+    ])
+
+    const { skip: skipRAG, classification: intentClassification } = intentResult
+    const { data: project, error: projectError } = projectResult
+    const { data: projectPapers, error: papersError } = papersResult
+
+    const intentEnd = performance.now()
+    console.log(`[Chat API] [TIMING] Intent + DB (parallel): ${(intentEnd - intentStart).toFixed(0)}ms`)
+    console.log(`[Chat API] Intent: ${intentClassification.intent} (confidence: ${(intentClassification.confidence * 100).toFixed(0)}%) - ${intentClassification.reasoning}`)
 
     if (projectError || !project) {
       console.log('[Chat API] Project not found:', { projectError, projectId, userId: user.id })
@@ -388,6 +408,11 @@ export async function POST(request: NextRequest) {
         headers: { 'Content-Type': 'application/json' }
       })
     }
+
+    // For chat/meta intents with no @mentions, skip paper processing
+    const isTrivialMessage = (intentClassification.intent === 'chat' || intentClassification.intent === 'meta') 
+      && mentionedPaperIds.length === 0
+      && attachedImages.length === 0
 
     const extractYear = (publicationDate?: string | null): number | undefined => {
       if (!publicationDate) return undefined
@@ -411,26 +436,10 @@ export async function POST(request: NextRequest) {
     let processedPapers: PaperData[] = []
     let paperIds: string[] = []
     
-    // Skip expensive paper query for trivial messages (chat/meta intent)
+    // Process papers result (already fetched in parallel, just skip processing for trivial)
     if (isTrivialMessage) {
-      console.log('[Chat API] Skipping paper query - trivial message detected')
+      console.log('[Chat API] Skipping paper processing - trivial message detected')
     } else {
-      // Get project papers from project_citations table
-      const { data: projectPapers, error: papersError } = await supabase
-        .from('project_citations')
-        .select(`
-          paper_id,
-          papers (
-            id,
-            title,
-            authors,
-            publication_date,
-            abstract,
-            processing_status
-          )
-        `)
-        .eq('project_id', projectId)
-      
       if (papersError) {
         console.error('[Chat API] Error fetching project papers:', papersError)
       }
@@ -464,9 +473,6 @@ export async function POST(request: NextRequest) {
       paperIds = processedPapers.map(p => p.id)
       console.log('[Chat API] Processed paper IDs available for RAG:', paperIds.length)
     }
-    
-    const dbEnd = performance.now()
-    console.log(`[Chat API] [TIMING] DB queries: ${(dbEnd - dbStart).toFixed(0)}ms${isTrivialMessage ? ' (paper query skipped)' : ''}`)
     
     const ragStart = performance.now()
     let ragResult: RAGResult
@@ -549,9 +555,13 @@ export async function POST(request: NextRequest) {
       ragContext = `Note: Retrieved evidence has been summarized. ${ragResult.metadata.chunksRetrieved} excerpts from ${ragResult.metadata.papersCovered} paper(s) available.\n\n${ragResult.context}`
     }
 
-    // Extract voice profile from generation config
-    const generationConfig = project.generation_config as { voiceProfileId?: string } | null
+    // Extract voice profile and original research from generation config
+    const generationConfig = project.generation_config as { 
+      voiceProfileId?: string
+      original_research?: { has_original_research: boolean; research_question?: string; key_findings?: string }
+    } | null
     const voiceProfileId = generationConfig?.voiceProfileId || null
+    const originalResearch = generationConfig?.original_research || null
     
     if (voiceProfileId) {
       console.log('[Chat API] Using project voice profile:', voiceProfileId)
@@ -577,7 +587,8 @@ export async function POST(request: NextRequest) {
       mentionedPapers,
       ragResult.chunks,  // Pass raw chunks for mentioned papers context
       voiceProfileId,    // Pass voice profile for content-generating actions
-      citationStyle      // Pass citation style for correct format
+      citationStyle,     // Pass citation style for correct format
+      originalResearch   // Pass original research for findings-anchored responses
     )
 
     // Filter out tool-related parts from message history before converting
@@ -603,7 +614,7 @@ export async function POST(request: NextRequest) {
 
     // Log total time to first token (before streaming starts)
     const prepEnd = performance.now()
-    console.log(`[Chat API] [TIMING] Total prep time: ${(prepEnd - requestStart).toFixed(0)}ms (DB: ${(dbEnd - dbStart).toFixed(0)}ms, RAG: ${(ragEnd - ragStart).toFixed(0)}ms, prompt: ${(prepEnd - ragEnd).toFixed(0)}ms)`)
+    console.log(`[Chat API] [TIMING] Total prep time: ${(prepEnd - requestStart).toFixed(0)}ms (intent+DB: ${(intentEnd - intentStart).toFixed(0)}ms, RAG: ${(ragEnd - ragStart).toFixed(0)}ms, prompt: ${(prepEnd - ragEnd).toFixed(0)}ms)`)
 
     // Stream the response with tools
     // When this is a tool result follow-up, disable tools so AI just responds with text

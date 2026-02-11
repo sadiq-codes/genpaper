@@ -68,6 +68,7 @@ export interface PromptData {
   exclusions?: string
   requiredPoints?: string
   qualityCriteria?: string
+  customInstructions?: string
   
   // Writing task parameters
   targetWords: number
@@ -349,23 +350,14 @@ Provide specific, actionable feedback on:
     
     const selectedChunks = diverseChunks.slice(0, MAX_CHUNKS)
     
-    return JSON.stringify(
-      selectedChunks.map((chunk) => ({
-        // Note: Removed numeric "id" field to prevent AI from confusing snippet numbers with paper_id
-        // The paper_id is the ONLY identifier that should be used in [CITE: paper_id] markers
-        paper_id: chunk.paper_id,
-        title: chunk.title || 'Source',
-        // Evidence strength helps LLM weight citations appropriately
-        // - full_text: Can make strong claims, quote directly
-        // - abstract: Use cautiously, avoid strong claims ("According to...")
-        // - title_only: Mention existence only, no substantive claims
-        evidence_strength: chunk.evidence_strength || 'full_text',
-        // Tag content with paper_id so AI knows which ID to use for [CITE: paper_id]
-        content: `[CONTEXT FROM: ${chunk.paper_id}] ${chunk.content.slice(0, 500)}${chunk.content.length > 500 ? '...' : ''}`
-      })),
-      null,
-      2
-    )
+    // Format as plain text blocks with prominent paper_id for easy copying into [@paper_id] markers.
+    // No JSON wrapper — saves tokens and makes paper_id visually prominent.
+    return selectedChunks.map((chunk) => {
+      const strength = chunk.evidence_strength || 'full_text'
+      const title = chunk.title || 'Source'
+      const content = chunk.content.slice(0, 500) + (chunk.content.length > 500 ? '...' : '')
+      return `--- paper_id: ${chunk.paper_id} ---\nTitle: ${title}\nStrength: ${strength}\n${content}`
+    }).join('\n\n')
   }
 
   static buildSectionPath(sections: string[], currentSection: string): string {

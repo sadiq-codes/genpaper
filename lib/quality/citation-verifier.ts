@@ -77,7 +77,7 @@ const CLAIM_CONTEXT_CHARS = 200
 export interface StructuredCitationInput {
   index: number
   paperId: string
-  quote: string
+  quote?: string
 }
 
 // ============================================================================

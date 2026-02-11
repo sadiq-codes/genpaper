@@ -26,6 +26,11 @@ export interface GenerationStartEvent {
       maxTokens?: number;
       sources?: string[];
       hasOriginalResearch: boolean;
+      originalResearch?: {
+        has_original_research: boolean;
+        research_question?: string;
+        key_findings?: string;
+      };
       customInstructions?: string;
       useLibraryOnly?: boolean;
       libraryPaperIds?: string[];

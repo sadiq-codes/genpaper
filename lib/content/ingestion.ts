@@ -345,13 +345,26 @@ export async function createChunksForPaper(
     // Insert to Supabase WITHOUT embeddings (Qdrant only for embeddings)
     const chunkDataWithoutEmbeddings = chunkDataWithEmbeddings.map(({ embedding, ...rest }) => rest)
     
-    let { error } = await serviceClient
-      .from('paper_chunks')
-      .upsert(chunkDataWithoutEmbeddings, {
-        onConflict: 'paper_id,chunk_index',  // Match the actual unique constraint
-        ignoreDuplicates: false  // Update if exists (content may have changed)
-      })
-    
+    // Insert chunks in batches to reduce statement timeout risk on large payloads.
+    const DB_BATCH_SIZE = 100
+    let error: { message: string } | null = null
+    for (let i = 0; i < chunkDataWithoutEmbeddings.length; i += DB_BATCH_SIZE) {
+      const batch = chunkDataWithoutEmbeddings.slice(i, i + DB_BATCH_SIZE)
+      const { error: batchError } = await serviceClient
+        .from('paper_chunks')
+        .upsert(batch, {
+          // `paper_chunks` primary key is `id` (deterministic UUID). Conflict on id
+          // makes retries/idempotency safe without duplicate-key crashes.
+          onConflict: 'id',
+          ignoreDuplicates: false
+        })
+
+      if (batchError) {
+        error = { message: batchError.message }
+        break
+      }
+    }
+
     if (error) {
       // Log warning but don't throw - chunks might already exist from parallel processing
       console.warn(`Chunk insertion warning for paper ${paperId}:`, error.message)
