@@ -6,11 +6,12 @@
  */
 
 // Default models if not specified in environment
-const DEFAULT_MODEL = 'gpt-4o-2024-11-20' // Main model for paper generation
-const DEFAULT_CHAT_MODEL = 'gpt-4.1-2025-04-14' // Fast model for editor chat (good instruction following)
-const DEFAULT_AUTOCOMPLETE_MODEL = 'gpt-4.1-2025-04-14' // Faster model for inline completions
-const DEFAULT_FAST_AUTOCOMPLETE_MODEL = 'gpt-4o-mini' // Ultra-fast model for simple completions (no citations)
-const DEFAULT_EXTRACTION_MODEL = 'gpt-4o-mini' // Fast model for paper extraction (structured task)
+// GPT-4.1 family: smartest non-reasoning models with 1M context window
+const DEFAULT_MODEL = 'gpt-4.1' // Smartest non-reasoning model, 1M context, optimized for coding/long-context
+const DEFAULT_CHAT_MODEL = 'gpt-4.1' // Advanced model for editor chat (excellent instruction following)
+const DEFAULT_AUTOCOMPLETE_MODEL = 'gpt-4.1-mini' // Fast, cost-efficient for inline completions
+const DEFAULT_FAST_AUTOCOMPLETE_MODEL = 'gpt-4.1-nano' // Fastest, most cost-efficient for high-volume tasks
+const DEFAULT_EXTRACTION_MODEL = 'gpt-4.1-nano' // Fast model for paper extraction (structured task)
 
 /**
  * Get the configured AI model from environment
@@ -29,7 +30,7 @@ export function getModel(): string {
  * Uses a faster model by default for low-latency inline completions
  * 
  * Set AI_AUTOCOMPLETE_MODEL env var to override
- * Falls back to gpt-4o-mini for speed
+ * Falls back to gpt-4.1-mini for speed
  */
 export function getAutocompleteModel(): string {
   return process.env.AI_AUTOCOMPLETE_MODEL || DEFAULT_AUTOCOMPLETE_MODEL
@@ -40,7 +41,7 @@ export function getAutocompleteModel(): string {
  * Used when citations are disabled (skipRAG=true) for maximum speed
  * 
  * Set AI_FAST_AUTOCOMPLETE_MODEL env var to override
- * Falls back to gpt-4o-mini for lowest latency
+ * Falls back to gpt-4.1-nano for lowest latency
  */
 export function getFastAutocompleteModel(): string {
   return process.env.AI_FAST_AUTOCOMPLETE_MODEL || DEFAULT_FAST_AUTOCOMPLETE_MODEL
@@ -51,7 +52,7 @@ export function getFastAutocompleteModel(): string {
  * Uses a smaller, faster model since extraction is a structured task
  * 
  * Set AI_EXTRACTION_MODEL env var to override
- * Defaults to gpt-4o-mini for cost efficiency
+ * Defaults to gpt-4.1-nano for cost efficiency
  */
 export function getExtractionModel(): string {
   return process.env.AI_EXTRACTION_MODEL || DEFAULT_EXTRACTION_MODEL

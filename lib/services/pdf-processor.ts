@@ -1,5 +1,5 @@
 import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
-import { downloadPdfBuffer, getPDFContent } from '@/lib/pdf/pdf-utils'
+import { downloadPdfBuffer } from '@/lib/pdf/pdf-utils'
 import { getSB } from '@/lib/supabase/server'
 import { tryHtmlFallback } from '@/lib/content/html-extractor'
 
@@ -98,29 +98,11 @@ async function updateContentSource(paperId: string, source: ContentSource): Prom
 export async function getOrExtractFullText(options: PdfExtractionOptions): Promise<string | null> {
   const { pdfUrl, paperId, ocr = true, timeoutMs = 60000, maxRetries = 3, enableHtmlFallback = true } = options
 
-  // 1) If we have a DB id, skip only if paper has full-text content (≥5 chunks)
-  if (paperId) {
-    const supabase = await getSB()
-    const { count: chunkCount, error } = await supabase
-      .from('paper_chunks')
-      .select('*', { count: 'exact', head: true })
-      .eq('paper_id', paperId)
-    
-    if (!error && chunkCount && chunkCount >= 5) {
-      console.log(`PDF extraction skipped - paper already has full content (${chunkCount} chunks)`)
-      return null // indicates no need to extract again
-    } else if (!error && chunkCount && chunkCount > 0) {
-      console.log(`PDF extraction proceeding - upgrading paper with ${chunkCount} chunks`)
-    }
-  }
+  // NOTE: The pdf_content check is done UPSTREAM in paper-aggregation.ts
+  // This function is called when we've already decided we need to extract content
+  // (either new paper or explicit user request to re-download)
 
-  // 2) Prefer stored pdf_content when available
-  if (paperId) {
-    const stored = await getPDFContent(paperId)
-    if (stored && stored.length > 200) return stored
-  }
-
-  // 3) Try PDF download and extraction first
+  // Try PDF download and extraction first
   try {
     const pdfBuffer = await downloadWithRetry(pdfUrl, maxRetries)
     const extraction = await extractPdfMetadataTiered(pdfBuffer, {
@@ -195,46 +177,8 @@ export async function getOrExtractFullText(options: PdfExtractionOptions): Promi
 export async function getOrExtractFullTextWithSource(options: PdfExtractionOptions): Promise<ExtractionResult> {
   const { pdfUrl, paperId, ocr = true, timeoutMs = 60000, maxRetries = 3, enableHtmlFallback = true } = options
 
-  // Check for existing chunks
-  if (paperId) {
-    const supabase = await getSB()
-    const { count: chunkCount, error } = await supabase
-      .from('paper_chunks')
-      .select('*', { count: 'exact', head: true })
-      .eq('paper_id', paperId)
-    
-    if (!error && chunkCount && chunkCount >= 5) {
-      // Get existing content source
-      const { data: paper } = await supabase
-        .from('papers')
-        .select('content_source')
-        .eq('id', paperId)
-        .single()
-      
-      return { 
-        content: null, 
-        contentSource: (paper?.content_source as ContentSource) || null 
-      }
-    }
-  }
-
-  // Check stored content
-  if (paperId) {
-    const stored = await getPDFContent(paperId)
-    if (stored && stored.length > 200) {
-      const supabase = await getSB()
-      const { data: paper } = await supabase
-        .from('papers')
-        .select('content_source')
-        .eq('id', paperId)
-        .single()
-      
-      return { 
-        content: stored, 
-        contentSource: (paper?.content_source as ContentSource) || 'pdf' 
-      }
-    }
-  }
+  // NOTE: The pdf_content check is done UPSTREAM in paper-aggregation.ts
+  // This function is called when we've already decided we need to extract content
 
   // Try PDF extraction
   try {

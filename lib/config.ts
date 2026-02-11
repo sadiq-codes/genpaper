@@ -14,7 +14,7 @@ const clientSchema = z.object({
 // Server-only env (do not expose to client)
 const serverSchema = z.object({
   OPENAI_API_KEY: z.string().min(1).optional(),
-  AI_MODEL: z.string().optional(), // e.g., 'gpt-4o', 'gpt-4o-mini' - defaults to 'gpt-4o'
+  AI_MODEL: z.string().optional(), // e.g., 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano' - defaults to 'gpt-4.1'
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   GROBID_URL: z.string().url().optional(),
   ENABLE_GROBID: z.enum(['0', '1']).optional(), // '1' to enable, '0' to disable

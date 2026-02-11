@@ -57,6 +57,8 @@ interface CompletionRequest {
   topic: string
   // When true, skip RAG entirely for faster completions (no citations mode)
   skipRAG?: boolean
+  // When true, allow global corpus search and library boosting beyond project papers
+  useExternalSources?: boolean
 }
 
 // Citation info returned to client
@@ -136,7 +138,8 @@ async function buildSystemPromptFromTemplate(
   ragFormatted: { chunksText: string; claimsText: string },
   papersContext: string,
   outlineContext: string,
-  voiceProfileId?: string | null
+  voiceProfileId?: string | null,
+  noPapersAvailable?: boolean
 ): Promise<string> {
   // Validate voice profile ID
   type VoiceProfileId = 'conservative-reviewer' | 'confident-researcher' | 'senior-scholar' | 'balanced-academic'
@@ -157,6 +160,7 @@ async function buildSystemPromptFromTemplate(
     papersContext,
     voiceProfileId: validatedVoiceId,
     isSectionOpening: context.isSectionOpening,  // Pass section opening flag for special handling
+    noPapersAvailable,  // Suppress citation instructions when no papers available
   })
 
   return PromptService.buildCompletePrompt(costarContext)
@@ -463,7 +467,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 })
     }
 
-    const { projectId, context, paperIds, topic, skipRAG } = body
+    const { projectId, context, paperIds, topic, skipRAG, useExternalSources } = body
 
     if (!projectId) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
@@ -483,13 +487,14 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .single()
     
-    // Fetch user's library paper IDs (lightweight — IDs only, max 50)
-    // Used to boost library papers in global search results
-    const libraryIdsPromise = supabase
-      .from('library_papers')
-      .select('paper_id')
-      .eq('user_id', user.id)
-      .limit(50)
+    // Only fetch library IDs when external sources are enabled (used for boosting)
+    const libraryIdsPromise = useExternalSources
+      ? supabase
+          .from('library_papers')
+          .select('paper_id')
+          .eq('user_id', user.id)
+          .limit(50)
+      : Promise.resolve({ data: null })
     
     // Use project paper IDs if provided; otherwise search global corpus
     let effectivePaperIds = paperIds || []
@@ -499,9 +504,13 @@ export async function POST(request: NextRequest) {
       console.log('[Autocomplete] skipRAG=true - skipping RAG for fast completion')
       effectivePaperIds = []
     }
-    // No project papers → search the global pre-indexed corpus (empty array = global search)
+    // No project papers → search the global pre-indexed corpus only if external sources enabled
     else if (effectivePaperIds.length === 0) {
-      console.log('[Autocomplete] No project papers — using global corpus search')
+      if (useExternalSources) {
+        console.log('[Autocomplete] No project papers — using global corpus search')
+      } else {
+        console.log('[Autocomplete] No project papers and external sources disabled — no RAG')
+      }
     }
 
     // Wait for project + library fetches (both started in parallel above)
@@ -515,8 +524,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
     
-    // Extract library paper IDs for search boosting
-    const boostedPaperIds = libraryRows?.map((r: { paper_id: string }) => r.paper_id) || []
+    // Extract library paper IDs for search boosting (only when external sources enabled)
+    const boostedPaperIds = useExternalSources
+      ? (libraryRows?.map((r: { paper_id: string }) => r.paper_id) || [])
+      : []
     
     // Extract voice profile and planned outline from generation config
     const generationConfig = (project as { generation_config?: { voiceProfileId?: string; plannedOutline?: string[] } | null }).generation_config
@@ -591,8 +602,11 @@ export async function POST(request: NextRequest) {
     let citationStyle: CitationStyle | null = null
     let usesFastModel = false
     
-    if (skipRAG) {
-      // No RAG, no citation style fetch (citations disabled)
+    // Skip RAG when: citations disabled, OR no project papers and external sources off
+    const shouldSkipRAG = skipRAG || (effectivePaperIds.length === 0 && !useExternalSources)
+    
+    if (shouldSkipRAG) {
+      // No RAG, no citation style fetch
       ragContext = {
         hasContent: true,
         chunks: [],
@@ -601,7 +615,7 @@ export async function POST(request: NextRequest) {
       }
       usesFastModel = true
       timings.rag = Date.now() - ragStartTime
-      console.log('[Autocomplete] RAG skipped — citations disabled')
+      console.log(`[Autocomplete] RAG skipped — ${skipRAG ? 'citations disabled' : 'no project papers & external sources off'}`)
     } else {
       // Extract recently cited paper IDs from preceding text for de-boosting
       // Look back ~1000 chars to capture recent citations in current context
@@ -643,8 +657,9 @@ export async function POST(request: NextRequest) {
     // Log timing breakdown
     console.log('[Autocomplete] Timing breakdown (ms):', {
       ...timings,
-      skipRAG: !!skipRAG,
-      globalSearch: effectivePaperIds.length === 0,
+      skipRAG: shouldSkipRAG,
+      useExternalSources: !!useExternalSources,
+      globalSearch: effectivePaperIds.length === 0 && !!useExternalSources,
       chunksRetrieved: ragContext.chunks.length,
       papersUsed: ragContext.papers.size
     })
@@ -682,6 +697,14 @@ export async function POST(request: NextRequest) {
 
     const paperType = project.paper_type || 'literatureReview'
 
+    // Determine if no papers are available for citation
+    // This flag tells the prompt template to suppress citation instructions
+    // to prevent hallucinated paper IDs
+    const noPapersAvailable = shouldSkipRAG || ragContext.papers.size === 0
+    if (noPapersAvailable) {
+      console.log('[Autocomplete] No papers available - citations disabled in prompt')
+    }
+
     const system = await buildSystemPromptFromTemplate(
       context,
       topic || project.topic,
@@ -689,7 +712,8 @@ export async function POST(request: NextRequest) {
       ragFormatted,
       papersContext,
       outlineContext,
-      voiceProfileId  // Pass voice profile for consistent completions
+      voiceProfileId,  // Pass voice profile for consistent completions
+      noPapersAvailable  // Suppress citation instructions when no papers available
     )
     
     const userPrompt = buildUserPrompt(context)

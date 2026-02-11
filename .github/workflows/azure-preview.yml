@@ -1,0 +1,178 @@
+# =============================================================================
+# Azure Preview Deployments
+# Creates preview environments for pull requests (similar to Vercel preview)
+# =============================================================================
+
+name: Preview Deployment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+env:
+  AZURE_CONTAINER_REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+  RESOURCE_GROUP: genpaper-rg
+  IMAGE_NAME: genpaper
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build Preview Image
+  # ---------------------------------------------------------------------------
+  build-preview:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: pr-${{ github.event.pull_request.number }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.AZURE_CONTAINER_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push preview image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Deploy Preview Environment
+  # ---------------------------------------------------------------------------
+  deploy-preview:
+    runs-on: ubuntu-latest
+    needs: build-preview
+    
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy preview Container App
+        run: |
+          PREVIEW_NAME="genpaper-pr-${{ github.event.pull_request.number }}"
+          
+          # Check if preview app exists
+          EXISTS=$(az containerapp show --name $PREVIEW_NAME --resource-group ${{ env.RESOURCE_GROUP }} --query "name" -o tsv 2>/dev/null || echo "")
+          
+          if [ -z "$EXISTS" ]; then
+            # Create new preview app
+            az containerapp create \
+              --name $PREVIEW_NAME \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment ${{ secrets.AZURE_CONTAINER_APPS_ENV }} \
+              --image ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} \
+              --registry-server ${{ env.AZURE_CONTAINER_REGISTRY }} \
+              --registry-username ${{ secrets.ACR_USERNAME }} \
+              --registry-password ${{ secrets.ACR_PASSWORD }} \
+              --target-port 3000 \
+              --ingress external \
+              --min-replicas 0 \
+              --max-replicas 1 \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --env-vars \
+                NODE_ENV=production \
+                NEXT_PUBLIC_SUPABASE_URL=${{ secrets.NEXT_PUBLIC_SUPABASE_URL }} \
+                NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          else
+            # Update existing preview app
+            az containerapp update \
+              --name $PREVIEW_NAME \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --image ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+          fi
+
+      - name: Get preview URL
+        id: preview-url
+        run: |
+          PREVIEW_NAME="genpaper-pr-${{ github.event.pull_request.number }}"
+          URL=$(az containerapp show --name $PREVIEW_NAME --resource-group ${{ env.RESOURCE_GROUP }} --query "properties.configuration.ingress.fqdn" -o tsv)
+          echo "url=https://$URL" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR with preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.preview-url.outputs.url }}';
+            const body = `## Preview Deployment Ready!
+            
+            Your preview is available at: ${url}
+            
+            This preview will be automatically deleted when the PR is closed.`;
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('Preview Deployment Ready')
+            );
+            
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Logout from Azure
+        run: az logout
+        if: always()
+
+  # ---------------------------------------------------------------------------
+  # Cleanup Preview on PR Close
+  # ---------------------------------------------------------------------------
+  cleanup-preview:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Delete preview Container App
+        run: |
+          PREVIEW_NAME="genpaper-pr-${{ github.event.pull_request.number }}"
+          az containerapp delete \
+            --name $PREVIEW_NAME \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --yes || true
+
+      - name: Delete preview image from ACR
+        run: |
+          az acr repository delete \
+            --name $(echo ${{ env.AZURE_CONTAINER_REGISTRY }} | cut -d'.' -f1) \
+            --image ${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }} \
+            --yes || true
+
+      - name: Logout from Azure
+        run: az logout
+        if: always()

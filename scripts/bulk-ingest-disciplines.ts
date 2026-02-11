@@ -38,6 +38,8 @@ const EMBED_BATCH = 50
 const DB_BATCH = 100
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 const PROGRESS_FILE = '.bulk-ingest-disciplines-progress.json'
+const MAX_RATE_LIMIT_RETRIES = 5  // Max retries before moving on
+const OPENALEX_EMAIL = 'api@genpaper.io'  // For polite pool access
 
 // OpenAlex concept IDs for major disciplines
 // Format: { name: conceptId }
@@ -253,7 +255,8 @@ function saveProgress(progress: Progress): void {
 async function fetchOpenAlexPage(
   conceptId: string,
   cursor: string | null,
-  minCitations: number = 5
+  minCitations: number = 5,
+  retryCount: number = 0
 ): Promise<{ works: OpenAlexWork[]; nextCursor: string | null }> {
   const params = new URLSearchParams({
     filter: `concepts.id:${conceptId},has_abstract:true,cited_by_count:>${minCitations},publication_year:>2014`,
@@ -262,17 +265,21 @@ async function fetchOpenAlexPage(
     cursor: cursor || '*',
   })
   
-  if (process.env.CONTACT_EMAIL) {
-    params.set('mailto', process.env.CONTACT_EMAIL)
-  }
+  // Always use email for polite pool (10x higher rate limit)
+  params.set('mailto', process.env.CONTACT_EMAIL || OPENALEX_EMAIL)
   
   const url = `${OPENALEX_BASE}?${params}`
   const res = await fetch(url)
   
   if (res.status === 429) {
-    console.warn('  ⏳ Rate limited, waiting 60s...')
-    await sleep(60000)
-    return fetchOpenAlexPage(conceptId, cursor, minCitations)
+    if (retryCount >= MAX_RATE_LIMIT_RETRIES) {
+      console.error(`  ❌ Rate limited ${MAX_RATE_LIMIT_RETRIES} times, skipping this page`)
+      return { works: [], nextCursor: null }
+    }
+    const waitTime = Math.min(60 + retryCount * 30, 180)  // 60s, 90s, 120s, 150s, 180s
+    console.warn(`  ⏳ Rate limited (attempt ${retryCount + 1}/${MAX_RATE_LIMIT_RETRIES}), waiting ${waitTime}s...`)
+    await sleep(waitTime * 1000)
+    return fetchOpenAlexPage(conceptId, cursor, minCitations, retryCount + 1)
   }
   
   if (!res.ok) {

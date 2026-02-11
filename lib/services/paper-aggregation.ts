@@ -671,21 +671,38 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
       console.log(`📚 Created new paper: ${paperId}`)
     }
     
-    // Step 2: Check if chunks already exist - but allow PDF upgrade for low-chunk papers
+    // Step 2: Check if paper already has full-text content (pdf_content field)
+    // This is more reliable than counting chunks - directly checks if we have extracted text
     const supabase = await getSB()
-    const { count: existingChunkCount, error: chunksErr } = await supabase
-      .from('paper_chunks')
-      .select('*', { count: 'exact', head: true })
-      .eq('paper_id', paperId)
+    const { data: paperRecord } = await supabase
+      .from('papers')
+      .select('pdf_content, content_source')
+      .eq('id', paperId)
+      .single()
     
-    if (!chunksErr && existingChunkCount && existingChunkCount >= 5) {
-      // Paper has full-text content already (≥5 chunks), skip processing
-      console.log(`📚 Full content already exists for paper (${existingChunkCount} chunks, skipping): ${paperDTO.title}`)
+    const hasFullText = paperRecord?.pdf_content && paperRecord.pdf_content.length > 500
+    
+    if (hasFullText) {
+      // Paper has full-text content already (from PDF or HTML)
+      // But verify chunks exist — pdf_content can exist without chunks if a previous run
+      // failed mid-way or chunks were lost (Qdrant reindex, migration, etc.)
+      const serviceClient = getServiceClient()
+      const { count: chunkCount } = await serviceClient
+        .from('paper_chunks')
+        .select('*', { count: 'exact', head: true })
+        .eq('paper_id', paperId)
+
+      if (chunkCount && chunkCount > 0) {
+        console.log(`📚 Full-text + ${chunkCount} chunks exist (${paperRecord.pdf_content.length} chars, source: ${paperRecord.content_source}), skipping: ${paperDTO.title}`)
+      } else {
+        // Has content but no chunks — re-chunk from existing pdf_content
+        console.warn(`⚠️ Full-text exists but 0 chunks for ${paperId}, re-chunking...`)
+        const rechunked = await createChunksForPaper(paperId, paperRecord.pdf_content)
+        console.log(`📚 Re-chunked existing content: ${rechunked} chunks for ${paperDTO.title}`)
+      }
       
       // Ensure processing_status is 'processed' for papers with full content
-      // This handles papers that may have been processed before this fix was added
       try {
-        const serviceClient = getServiceClient()
         await serviceClient
           .from('papers')
           .update({ processing_status: 'processed' })
@@ -707,23 +724,10 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
       }
       
       return { paperId, paper: ingestedPaper }
-    } else if (!chunksErr && existingChunkCount && existingChunkCount > 0) {
-      // Paper has some content but <5 chunks (probably just abstract) - allow PDF upgrade
-      console.log(`📄 Paper has ${existingChunkCount} chunks - attempting PDF upgrade: ${paperDTO.title}`)
-      
-      // Clear existing abstract-only chunks before adding full-text content
-      // Use service client to bypass RLS (paper_chunks requires service_role for writes)
-      try {
-        const serviceClient = getServiceClient()
-        await serviceClient
-          .from('paper_chunks')
-          .delete()
-          .eq('paper_id', paperId)
-        console.log(`🗑️ Cleared ${existingChunkCount} existing chunks for upgrade`)
-      } catch (deleteErr) {
-        console.warn('Failed to clear existing chunks for upgrade:', deleteErr)
-      }
     }
+    
+    // No full-text content yet - proceed with extraction
+    console.log(`📄 No full-text content (${paperRecord?.pdf_content?.length || 0} chars) - attempting extraction: ${paperDTO.title}`)
     
     // Step 3: Collect all content (title, abstract, PDF text)
     // SIMPLIFIED: No separate abstract chunking - createChunksForPaper handles all content uniformly

@@ -108,9 +108,16 @@ system: |-
   - Use author-year format: "Smith et al. (2023) found that..." or "Lanteigne (2017) argues..."
   - Or title references: "The study 'Arctic Governance' discusses..."
   
-  ⚠️ **CRITICAL - NEVER expose paper IDs to users:**
-  Paper IDs (UUIDs) are INTERNAL for tool parameters ONLY.
-  NEVER include raw UUIDs in conversational responses.
+  ⚠️ **CRITICAL - NEVER expose internal formats to users:**
+  The following are INTERNAL implementation details - NEVER mention, describe, or reference them in responses:
+  - Paper IDs (UUIDs like `9b3a0210-f79c-4b76-a675-2b3de888dd6b`)
+  - Citation markers (`[@...]`, `[@paperId#instanceId]`)
+  - Block IDs or internal document structure identifiers
+  
+  When discussing citations with users:
+  - Refer to them as users see them: "[1]", "(Author, Year)", or by paper title/author
+  - NEVER say "citations follow the format [@...]" or describe internal marker syntax
+  - If asked about citation format, describe the USER-FACING format only
   
   ❌ **WRONG formats (citations will be STRIPPED):**
   ```

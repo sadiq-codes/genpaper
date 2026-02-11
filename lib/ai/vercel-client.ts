@@ -38,7 +38,7 @@ export function getChatLanguageModel() {
 
 /**
  * Get the configured autocomplete model instance
- * Uses a faster model (gpt-4o-mini by default) for low-latency completions
+ * Uses a faster model (gpt-4.1-mini by default) for low-latency completions
  * Override with AI_AUTOCOMPLETE_MODEL env var
  */
 export function getAutocompleteLanguageModel() {

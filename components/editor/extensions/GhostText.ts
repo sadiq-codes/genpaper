@@ -262,19 +262,13 @@ export const GhostText = Extension.create({
               }
             }
 
-            // Clear if selection moved away from ghost text position
-            if (value.position !== null && tr.selection.from !== value.position) {
-              return {
-                rawText: null,
-                displayText: null,
-                citations: [],
-                papers: [],
-                position: null,
-                queueCount: 0,
-                isLoading: false,
-                loadingMessage: null
-              }
-            }
+            // DON'T clear ghost text just because selection moved (e.g., on click)
+            // Only clear on:
+            // 1. Document changes with conflicting text (handled above)
+            // 2. Explicit clearGhostText command
+            // 3. Escape key press
+            // 4. Arrow key navigation (handled in handleKeyDown)
+            // This allows clicking in the editor without losing the suggestion
 
             return value
           }
@@ -310,11 +304,10 @@ export const GhostText = Extension.create({
                 span.addEventListener('pointerdown', (e) => {
                   e.preventDefault()
                   e.stopPropagation()
-                  requestAnimationFrame(() => {
-                    if (!editor.isDestroyed) {
-                      editor.commands.acceptGhostText()
-                    }
-                  })
+                  // Execute synchronously to avoid mismatched transaction errors
+                  if (!editor.isDestroyed) {
+                    editor.commands.acceptGhostText()
+                  }
                 })
                 span.style.cursor = 'pointer'
 
@@ -359,44 +352,37 @@ export const GhostText = Extension.create({
             
             if (isTabAccept || isCtrlEnterAccept) {
               event.preventDefault()
-              // Use requestAnimationFrame to ensure state is synchronized
-              requestAnimationFrame(() => {
-                if (!editor.isDestroyed) {
-                  editor.commands.acceptGhostText()
-                }
-              })
+              // Execute synchronously to avoid mismatched transaction errors
+              // that occur when state changes between reading and dispatching
+              if (!editor.isDestroyed) {
+                editor.commands.acceptGhostText()
+              }
               return true
             }
 
             // Escape - clear ghost text
             if (event.key === 'Escape') {
               event.preventDefault()
-              requestAnimationFrame(() => {
-                if (!editor.isDestroyed) {
-                  editor.commands.clearGhostText()
-                }
-              })
+              if (!editor.isDestroyed) {
+                editor.commands.clearGhostText()
+              }
               return true
             }
 
             // Ctrl+Right Arrow - accept next word of ghost text
             if (event.key === 'ArrowRight' && event.ctrlKey) {
               event.preventDefault()
-              requestAnimationFrame(() => {
-                if (!editor.isDestroyed) {
-                  editor.commands.acceptNextWord()
-                }
-              })
+              if (!editor.isDestroyed) {
+                editor.commands.acceptNextWord()
+              }
               return true
             }
 
             // Arrow keys - clear ghost text and let default behavior happen
             if (event.key.startsWith('Arrow')) {
-              requestAnimationFrame(() => {
-                if (!editor.isDestroyed) {
-                  editor.commands.clearGhostText()
-                }
-              })
+              if (!editor.isDestroyed) {
+                editor.commands.clearGhostText()
+              }
               return false
             }
 
@@ -446,6 +432,17 @@ export const GhostText = Extension.create({
           // Capture all needed data before any state changes
           const { rawText, citations, papers, position } = pluginState
 
+          // Validate position is still valid in current document
+          // If document has changed (e.g., due to async delay), position might be out of bounds
+          const currentDocSize = editor.state.doc.content.size
+          
+          // Use current selection if saved position is invalid
+          let insertPosition = position
+          if (position > currentDocSize) {
+            console.warn('[GhostText] Saved position out of bounds, using current selection')
+            insertPosition = editor.state.selection.from
+          }
+
           // NOTE: We don't manually clear ghost text here.
           // The insert operation changes the doc, which triggers docChanged in the plugin,
           // which automatically clears the ghost text state.
@@ -456,18 +453,26 @@ export const GhostText = Extension.create({
 
             if (isFullDoc && processedContent.content) {
               // Full document - insert the content array
-              editor.chain().focus().insertContentAt(position, processedContent.content).run()
+              editor.chain().focus().insertContentAt(insertPosition, processedContent.content).run()
             } else if (Array.isArray(processedContent) && processedContent.length > 0) {
               // Content fragment - insert directly
-              editor.chain().focus().insertContentAt(position, processedContent).run()
+              editor.chain().focus().insertContentAt(insertPosition, processedContent).run()
             } else {
               // Fallback: simple text insert (no citations to process)
-              editor.chain().focus().insertContentAt(position, rawText).run()
+              editor.chain().focus().insertContentAt(insertPosition, rawText).run()
             }
           } catch (error) {
-            // If content processing fails, insert as plain text
+            // If content processing or insertion fails, try at current selection as fallback
             console.error('Ghost text content processing error:', error)
-            editor.chain().focus().insertContentAt(position, rawText).run()
+            try {
+              const fallbackPosition = editor.state.selection.from
+              editor.chain().focus().insertContentAt(fallbackPosition, rawText).run()
+            } catch (fallbackError) {
+              console.error('Ghost text fallback insert also failed:', fallbackError)
+              // Clear ghost text state to avoid stale state
+              editor.commands.clearGhostText()
+              return false
+            }
           }
 
           // Emit event for citations that were accepted (so citedContent can be saved)
@@ -498,6 +503,14 @@ export const GhostText = Extension.create({
 
           const { rawText, citations, papers, position, queueCount } = pluginState
 
+          // Validate position is still valid in current document
+          const currentDocSize = editor.state.doc.content.size
+          let insertPosition = position
+          if (position > currentDocSize) {
+            console.warn('[GhostText] acceptNextWord: position out of bounds, using current selection')
+            insertPosition = editor.state.selection.from
+          }
+
           // Split rawText into tokens (words and citation markers)
           // Citation markers like [@paperId#instanceId] are treated as single units
           const tokens = rawText.match(/\[@[\w#-]+\]|\S+/g) || []
@@ -511,11 +524,17 @@ export const GhostText = Extension.create({
           const remainingTokens = tokens.slice(1)
           const remainingText = remainingTokens.join(' ')
 
-          // Insert the next token at the current position
-          editor.chain().focus().insertContentAt(position, nextToken).run()
+          // Insert the next token at the validated position
+          try {
+            editor.chain().focus().insertContentAt(insertPosition, nextToken).run()
+          } catch (error) {
+            console.error('[GhostText] acceptNextWord insert failed:', error)
+            editor.commands.clearGhostText()
+            return false
+          }
 
           // Calculate new position (after the inserted token)
-          const newPosition = position + nextToken.length
+          const newPosition = insertPosition + nextToken.length
 
           // Filter citations to only include those still in the remaining text
           const remainingCitations = citations.filter(citation => {

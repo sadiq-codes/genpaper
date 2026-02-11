@@ -35,8 +35,8 @@ export interface IntentClassification {
 // CONFIGURATION
 // =============================================================================
 
-// Use GPT-4o-mini for fast, cheap classification
-const CLASSIFIER_MODEL = 'gpt-4o-mini'
+// Use GPT-4.1-nano for fast, cheap classification (fastest, most cost-efficient)
+const CLASSIFIER_MODEL = 'gpt-4.1-nano'
 
 // Confidence threshold - if below this, default to research (safer)
 const CONFIDENCE_THRESHOLD = 0.7
@@ -92,7 +92,7 @@ Examples:
 - "yes" / "no" / "sure"
 - "nice" / "great"
 
-**meta** - Questions about the assistant itself or how to use it.
+**meta** - Questions about the assistant itself or how to use it. ONLY for questions about the tool, NOT about the user's project or papers.
 Examples:
 - "what can you do?"
 - "how do I add papers?"
@@ -100,10 +100,11 @@ Examples:
 - "how does this work?"
 
 IMPORTANT RULES:
-1. When in doubt between "research" and "editing", choose "research" - it's safer to retrieve context than miss it.
-2. If the message mentions specific paper content, findings, or asks for citations → "research"
-3. Short vague messages like "help me with this" without context → "editing" (operating on selection)
-4. Any mention of "cite", "citation", "paper", "source", "evidence", "reference" → "research"
+1. When in doubt between ANY category and "research", choose "research" - it's safer to retrieve context than miss it.
+2. If the message mentions citations, papers, sources, references, findings, or any project content → ALWAYS "research"
+3. Questions about "how many", counts, or status of the user's project/papers/citations → "research" (NOT meta)
+4. Short vague messages like "help me with this" without context → "editing" (operating on selection)
+5. "meta" is ONLY for questions about the assistant tool itself (e.g. "what can you do?"), never about project content
 
 Respond with your classification, confidence (0.0-1.0), and brief reasoning.`
 
@@ -167,6 +168,29 @@ export async function classifyIntent(
       confidence: 0.85,
       needsRetrieval: false,
       reasoning: 'Very short message, likely greeting or acknowledgment',
+    }
+  }
+
+  // Fast path: Keywords that clearly indicate research intent (matches LLM prompt rules)
+  // Includes common misspellings (cications, refrences, etc.)
+  const RESEARCH_KEYWORDS = /\b(cit(e|ation|ations|ing)|cication(s)?|paper(s)?|source(s)?|evidence|ref(e)?rence(s)?|finding(s)?|summarize|literature|study|studies|author(s)?|et al|abstract|doi|how many.*(citation|paper|source|reference))\b/i
+  if (RESEARCH_KEYWORDS.test(trimmed)) {
+    return {
+      intent: 'research',
+      confidence: 0.92,
+      needsRetrieval: true,
+      reasoning: 'Research keyword detected in message',
+    }
+  }
+
+  // Fast path: Keywords that clearly indicate editing intent
+  const EDITING_KEYWORDS = /^(make (this|it) (shorter|longer|concise|formal|informal|better|clearer)|fix (the )?(grammar|spelling|typos?|punctuation)|rewrite|rephrase|shorten|paraphrase|split this|combine these|simplify)\b/i
+  if (EDITING_KEYWORDS.test(trimmed)) {
+    return {
+      intent: 'editing',
+      confidence: 0.90,
+      needsRetrieval: false,
+      reasoning: 'Editing keyword detected in message',
     }
   }
 

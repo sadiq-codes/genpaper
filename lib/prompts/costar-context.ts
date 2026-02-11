@@ -187,6 +187,11 @@ export interface CompleteCOStarContext extends COStarBaseContext {
   // Voice context (optional)
   // Project's authorial voice for consistent completions
   voice?: CondensedVoiceContext
+  
+  // No papers available flag
+  // When true, the prompt will instruct the LLM to NOT include any citations
+  // This prevents hallucinated paper IDs when no sources are available
+  noPapersAvailable?: boolean
 }
 
 /**
@@ -367,6 +372,9 @@ export function buildCompleteContext(params: {
   voiceProfileId?: VoiceProfileId | null
   // Section opening flag - when true, provide opening-specific guidance
   isSectionOpening?: boolean
+  // No papers available flag - when true, suppress citation instructions
+  // to prevent hallucinated paper IDs
+  noPapersAvailable?: boolean
 }): CompleteCOStarContext {
   const {
     topic,
@@ -381,6 +389,7 @@ export function buildCompleteContext(params: {
     documentContent = '',
     voiceProfileId,
     isSectionOpening = false,
+    noPapersAvailable = false,
   } = params
   
   const base = buildBaseContext(topic, paperType, currentSection, documentContent)
@@ -398,6 +407,7 @@ export function buildCompleteContext(params: {
     claimsText,
     papersContext,
     voice,
+    noPapersAvailable,
   }
 }
 
