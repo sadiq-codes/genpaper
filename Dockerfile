@@ -1,32 +1,28 @@
 # =============================================================================
 # GenPaper Production Dockerfile
 # Multi-stage build optimized for Azure Container Apps
-# Uses Bun for faster builds
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # Stage 1: Dependencies
 # -----------------------------------------------------------------------------
-FROM oven/bun:1.1-alpine AS deps
+FROM node:20-alpine AS deps
 WORKDIR /app
 
 # Install dependencies needed for native modules
 RUN apk add --no-cache libc6-compat python3 make g++
 
 # Copy package files
-COPY package.json bun.lock ./
+COPY package.json package-lock.json ./
 
-# Install dependencies using Bun
-RUN bun install --frozen-lockfile
+# Install dependencies using npm
+RUN npm ci --legacy-peer-deps
 
 # -----------------------------------------------------------------------------
 # Stage 2: Builder
 # -----------------------------------------------------------------------------
-FROM oven/bun:1.1-alpine AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
-
-# Install Node.js for Next.js build (Bun's Next.js support is experimental)
-RUN apk add --no-cache nodejs npm
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
@@ -39,7 +35,7 @@ RUN cp node_modules/@dqbd/tiktoken/tiktoken_bg.wasm public/ 2>/dev/null || true
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
-# Build the application using npm (more stable for Next.js)
+# Build the application
 RUN npm run build
 
 # -----------------------------------------------------------------------------
@@ -67,7 +63,7 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Install sharp for image optimization (optional but recommended)
+# Install sharp for image optimization
 RUN npm install sharp 2>/dev/null || true
 
 # Switch to non-root user
