@@ -12,11 +12,11 @@ WORKDIR /app
 # Install dependencies needed for native modules
 RUN apk add --no-cache libc6-compat python3 make g++
 
-# Copy package files
-COPY package.json package-lock.json ./
+# Copy package files (not using package-lock to avoid platform-specific issues)
+COPY package.json ./
 
-# Install dependencies using npm
-RUN npm ci --legacy-peer-deps
+# Install dependencies - generates fresh lockfile for Linux
+RUN npm install --legacy-peer-deps
 
 # -----------------------------------------------------------------------------
 # Stage 2: Builder
