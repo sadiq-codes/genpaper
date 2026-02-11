@@ -75,6 +75,17 @@ interface GenerationState {
   processedEventIds: Set<number>
 }
 
+/**
+ * Hide internal citation markers in streaming UI previews.
+ * Keep this UI-only; persisted content remains unchanged.
+ */
+function sanitizeStreamingCitations(text: string): string {
+  if (!text) return text
+  // Matches pandoc-style citation blocks like:
+  // [@paperId], [@paperId; @paperId], [@paperId#instanceId]
+  return text.replace(/\[@[^\]]+\]/g, '[citation]')
+}
+
 type GenerationAction =
   | { type: 'PROGRESS_UPDATE'; payload: { progress?: number; stage: string; message: string; papersFound?: number; eventId?: number } }
   | { type: 'STREAMING_CHUNK'; payload: { sectionTitle?: string; chunkText: string; eventId?: number } }
@@ -151,7 +162,7 @@ function generationReducer(state: GenerationState, action: GenerationAction): Ge
         ...state,
         currentSection: sectionTitle ?? state.currentSection,
         // Append chunk to existing content
-        currentSectionContent: state.currentSectionContent + chunkText,
+        currentSectionContent: state.currentSectionContent + sanitizeStreamingCitations(chunkText),
         processedEventIds: markEventProcessed(eventId),
       }
     }
@@ -162,7 +173,7 @@ function generationReducer(state: GenerationState, action: GenerationAction): Ge
       return {
         ...state,
         currentSection: sectionTitle ?? state.currentSection,
-        currentSectionContent: streamingContent,
+        currentSectionContent: sanitizeStreamingCitations(streamingContent),
       }
     }
     
@@ -175,7 +186,10 @@ function generationReducer(state: GenerationState, action: GenerationAction): Ge
       }
       return {
         ...state,
-        completedSections: [...state.completedSections, { title: sectionTitle, content: sectionContent }],
+        completedSections: [
+          ...state.completedSections,
+          { title: sectionTitle, content: sanitizeStreamingCitations(sectionContent) },
+        ],
         currentSection: null,
         currentSectionContent: "",
         processedEventIds: markEventProcessed(eventId),

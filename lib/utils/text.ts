@@ -315,7 +315,8 @@ export async function chunkByTokens(
             const mergedContent = prevChunk.content + ' ' + currentChunk.trim()
             const mergedTokens = tokenCounter.count(mergedContent)
             
-            // Update previous chunk with merged content
+            // Recompute ID for the merged content so it stays deterministic
+            prevChunk.id = createDeterministicChunkId(paperId, mergedContent, prevChunk.position)
             prevChunk.content = mergedContent
             prevChunk.metadata = {
               ...prevChunk.metadata,

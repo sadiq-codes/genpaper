@@ -33,22 +33,25 @@ export async function generateQueryRewrites(query: string, k = 3, discipline?: s
 
   // Build discipline-aware prompt context - fully dynamic, no hardcoded discipline examples
   const disciplineContext = discipline 
-    ? `\n\nIMPORTANT DISCIPLINE CONTEXT:
-The topic is in the discipline of "${discipline}".
-- Generate queries that specifically target ${discipline} scholarship
-- Include names of major scholars, key authors/researchers, important works, and terminology specific to ${discipline}
-- AVOID generating queries that would return papers from adjacent or unrelated disciplines
-- Focus on the core methodology and discourse patterns of ${discipline}
-- Consider what databases, journals, and publication types are most relevant for ${discipline}`
+    ? `\n\nSTRICT DISCIPLINE CONSTRAINT:
+The topic is in "${discipline}".
+- ALL queries MUST stay within ${discipline} — do NOT generate queries that could match papers from other fields
+- Use terminology, journal names, and methodology keywords specific to ${discipline}
+- If the topic involves a term that exists in multiple fields (e.g., "contamination", "growth", "culture"), always pair it with domain-specific terms to disambiguate`
     : ''
 
   try {
     const { text } = await generateText({
       model: getLanguageModel(),
-      system: 'You are an academic search assistant specializing in finding scholarly papers in specific disciplines.',
+      system: 'You are an academic search assistant. Generate keyword queries that are narrowly focused on the exact topic — never drift into adjacent or unrelated disciplines.',
       prompt: `First, correct any spelling errors in this query: "${trimmedQuery}"
 
-Then generate ${k} alternative keyword-style academic search queries that would find papers similar to the CORRECTED query.${disciplineContext}
+Then generate ${k} alternative keyword-style academic search queries that would find papers on the SAME specific topic.${disciplineContext}
+
+RULES:
+- Every query must be about the same subject as the original
+- Use specific scientific/academic terms, not generic words
+- Do NOT broaden to adjacent fields or methodologies from other domains
 
 Return a JSON array where:
 - The FIRST element is the spell-corrected version of the original query
@@ -57,7 +60,7 @@ Return a JSON array where:
 Example format: ["corrected original query", "alternative 1", "alternative 2", "alternative 3"]
 
 Return ONLY the raw JSON array. Do not use markdown code blocks or any formatting.`,
-      temperature: 0.7,
+      temperature: 0.3,
       maxOutputTokens: 250
     })
 
@@ -127,27 +130,34 @@ export async function buildEnhancedSearchQueries(
     return Array.from(new Set(queries)).filter(Boolean)
   }
 
+  const disciplineHint = discipline ? `\nDISCIPLINE: ${discipline} — ALL queries must stay within this field.` : ''
+
   try {
     const { text } = await generateText({
       model: getLanguageModel(),
-      system: 'You are an academic search assistant helping find relevant research papers.',
+      system: 'You are an academic search assistant. Generate search queries that are narrowly focused on the exact topic and discipline — never drift into unrelated fields.',
       prompt: `A researcher is writing a paper with:
 
-RESEARCH QUESTION: "${topic}"
+RESEARCH QUESTION: "${topic}"${disciplineHint}
 
-KEY FINDINGS: "${originalResearch.keyFindings}"
+KEY FINDINGS (excerpt): "${originalResearch.keyFindings.slice(0, 500)}"
 
-Generate 4 different academic search queries to find relevant papers:
+Generate 4 keyword-style academic search queries to find papers directly relevant to this specific research:
 
-1. BACKGROUND: A query to find general background/context papers on this topic
-2. METHODS: A query to find papers using similar methodologies
-3. COMPARISON: A query to find papers with comparable findings to compare/contrast
-4. RELATED: A query to find closely related recent work
+1. BACKGROUND: General context papers on this exact topic (not adjacent fields)
+2. METHODS: Papers using the same type of methodology described in the findings
+3. COMPARISON: Papers with comparable findings in the same domain
+4. RELATED: Closely related recent work in the same field
 
-Return ONLY a JSON array of 4 search query strings, one for each category.
+RULES:
+- Every query must be about the same subject as the research question
+- Use domain-specific terminology from the findings (species names, technique names, etc.)
+- Do NOT generate queries that could match papers from unrelated disciplines
+
+Return ONLY a JSON array of 4 search query strings.
 Each query should be 5-15 words, keyword-focused (no full sentences).
 Example format: ["query 1", "query 2", "query 3", "query 4"]`,
-      temperature: 0.5,
+      temperature: 0.3,
       maxOutputTokens: 300
     })
     

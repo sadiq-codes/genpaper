@@ -276,9 +276,11 @@ export function quickRelevanceCheck(query: string, title: string, abstract?: str
   const matchCount = [...queryStemsSet].filter(stem => textStemsSet.has(stem)).length
   const matchRatio = queryStemsSet.size > 0 ? matchCount / queryStemsSet.size : 0
   
-  // TIGHTER threshold: Require at least 2 meaningful stems AND 25% ratio
-  // This prevents single-word matches (e.g., "cancer" alone) from passing
-  // Papers must have genuine topical overlap, not just one common term
-  // For a 5-word query like "hormone therapy on cancer", need 2+ stems (e.g., "hormone" + "cancer")
-  return matchRatio >= 0.25 && matchCount >= 2
+  // Adaptive threshold based on query length:
+  // Short queries (2-3 stems): require 2 matches at 40% — prevents polysemy mismatches
+  //   e.g., "fungal contamination tomatoes" (3 stems) needs 2+ matching, not just "tomato"
+  // Long queries (4+ stems): require 3 matches at 40% — stricter for more specific topics
+  //   e.g., "hormone replacement therapy breast cancer" (5 stems) needs 3+ matching
+  const minMatches = queryStemsSet.size <= 3 ? 2 : 3
+  return matchRatio >= 0.4 && matchCount >= minMatches
 }

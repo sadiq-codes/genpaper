@@ -367,16 +367,17 @@ export function DocumentEditor({
     editor.chain().focus().insertCitation(citation).run()
   }, [editor])
 
-  // Track the papers count we used for initial content processing
-  const [processedWithPapersCount, setProcessedWithPapersCount] = useState<number>(-1)
+  // Track what we last processed to avoid redundant re-renders
+  const [processedKey, setProcessedKey] = useState<string>('')
   
   // Set initial content after editor is created - handles markdown processing
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
     if (!initialContent || initialContent.trim() === '') return
     
-    // Skip if we already processed with the same papers count
-    if (processedWithPapersCount === papers.length) return
+    // Skip if we already processed the same content + papers combination
+    const key = `${initialContent.length}:${papers.length}:${papers[0]?.id ?? ''}`
+    if (processedKey === key) return
     
     // Process and set the initial content
     const processed = processInitialContent(initialContent, papers)
@@ -409,8 +410,8 @@ export function DocumentEditor({
     // Set the processed content, then apply citation style to build numbers
     editor.commands.setContent(processed)
     editor.commands.setCitationStyle(citationStyle)
-    setProcessedWithPapersCount(papers.length)
-  }, [editor, initialContent, papers, processedWithPapersCount, processInitialContent, citationStyle])
+    setProcessedKey(key)
+  }, [editor, initialContent, papers, processedKey, processInitialContent, citationStyle])
 
   // Track previous citation style to detect changes
   const prevCitationStyleRef = useRef(citationStyle)
@@ -532,7 +533,7 @@ export function DocumentEditor({
   // This populates citedContent for hover previews
   useEffect(() => {
     if (!editor || editor.isDestroyed || !projectId || !initialContent) return
-    if (processedWithPapersCount === -1) return // Wait for initial content to be set
+    if (!processedKey) return // Wait for initial content to be set
     
     const instanceIds = extractInstanceIds(initialContent)
     if (instanceIds.length === 0) return
@@ -563,7 +564,7 @@ export function DocumentEditor({
         console.log(`[DocumentEditor] Populated citedContent for ${quotesMap.size} citation instances`)
       }
     })
-  }, [editor, projectId, initialContent, processedWithPapersCount])
+  }, [editor, projectId, initialContent, processedKey])
 
   // Smart completion hook - ghost text appears seamlessly
   // Autocomplete preferences

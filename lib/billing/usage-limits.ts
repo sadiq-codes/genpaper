@@ -131,6 +131,30 @@ export async function checkAndIncrementAutocompleteUsage(userId: string): Promis
   }
 }
 
+/**
+ * Check if user can use autocomplete WITHOUT incrementing usage.
+ * Use this before generating suggestions so usage is only counted on accept.
+ */
+export async function checkAutocompleteUsage(userId: string): Promise<UsageCheckResult> {
+  const stats = await getDailyUsageStats(userId)
+  const currentUses = stats.autocomplete.used
+  const dailyLimit = stats.autocomplete.limit
+  const isUnlimited = stats.autocomplete.isUnlimited
+  const allowed = isUnlimited || currentUses < dailyLimit
+
+  if (!allowed) {
+    info({ userId, currentUses, limit: dailyLimit }, 'Autocomplete daily limit reached')
+  }
+
+  return {
+    allowed,
+    currentUses,
+    dailyLimit,
+    resetsAt: stats.resetsAt,
+    isUnlimited,
+  }
+}
+
 // =============================================================================
 // Read-Only Usage Stats
 // =============================================================================

@@ -16,7 +16,7 @@ import {
 import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 import { PromptService } from '@/lib/prompts/prompt-service'
 import { buildCompleteContext, formatPapersForContext } from '@/lib/prompts/costar-context'
-import { checkAndIncrementAutocompleteUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
+import { checkAutocompleteUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
 
 // Note: SuggestionType removed - the unified prompt now handles all cases
 // by having the LLM analyze writing intent semantically
@@ -437,8 +437,8 @@ export async function POST(request: NextRequest) {
     }
     timings.auth = Date.now() - authStartTime
 
-    // Check daily usage limits (free tier: 10 autocompletes/day, paid: unlimited)
-    const usageCheck = await checkAndIncrementAutocompleteUsage(user.id)
+    // Check daily usage limits (read-only). Usage is incremented on explicit accept.
+    const usageCheck = await checkAutocompleteUsage(user.id)
     if (!usageCheck.allowed) {
       const timeUntilReset = formatTimeUntilReset(usageCheck.resetsAt)
       return NextResponse.json({ 

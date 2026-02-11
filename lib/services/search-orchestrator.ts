@@ -263,9 +263,19 @@ export async function unifiedSearch(
         const existingIds = new Set(allPapers.map(p => p.id))
         const newKeywordPapers = formattedKeywordPapers.filter(p => !existingIds.has(p.id))
         
-        allPapers.push(...newKeywordPapers)
-        if (newKeywordPapers.length > 0) searchStrategies.push('keyword')
-        console.log(`✅ Keyword fallback: ${newKeywordPapers.length} papers`)
+        // Apply topical filter to keyword fallback — prevents off-topic DB papers
+        // from contaminating results (e.g., ML papers matching "tomato" from ImageNet)
+        const topicalKeywordPapers = newKeywordPapers.filter(p =>
+          quickRelevanceCheck(query, p.title, p.abstract, discipline)
+        )
+        const dropped = newKeywordPapers.length - topicalKeywordPapers.length
+        if (dropped > 0) {
+          console.log(`🎯 Keyword fallback topical filter: dropped ${dropped}/${newKeywordPapers.length} off-topic papers`)
+        }
+        
+        allPapers.push(...topicalKeywordPapers)
+        if (topicalKeywordPapers.length > 0) searchStrategies.push('keyword')
+        console.log(`✅ Keyword fallback: ${topicalKeywordPapers.length} papers (${dropped} filtered)`)
       }
     } catch (error) {
       console.warn('Keyword search failed:', error)

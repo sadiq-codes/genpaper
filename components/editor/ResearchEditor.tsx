@@ -384,20 +384,26 @@ export function ResearchEditor({
     async (generatedContent: string) => {
       setIsGenerating(false)
 
-      // Fetch fresh papers from the API so citations and references render immediately
+      // Fetch fresh papers from the API so citations and references render immediately.
+      // Retry with back-off because project_papers associations may still be committing.
       let freshPapers = papers
       if (projectId) {
-        try {
-          const res = await fetch(`/api/editor/papers?projectId=${projectId}`)
-          if (res.ok) {
-            const data = await res.json()
-            if (Array.isArray(data.papers) && data.papers.length > 0) {
-              freshPapers = data.papers
-              setPapers(freshPapers)
+        const delays = [0, 1500, 3000] // immediate, 1.5s, 3s
+        for (const delay of delays) {
+          if (delay > 0) await new Promise(r => setTimeout(r, delay))
+          try {
+            const res = await fetch(`/api/editor/papers?projectId=${projectId}`)
+            if (res.ok) {
+              const data = await res.json()
+              if (Array.isArray(data.papers) && data.papers.length > 0) {
+                freshPapers = data.papers
+                setPapers(freshPapers)
+                break
+              }
             }
+          } catch (err) {
+            console.warn('[Generation] Failed to fetch papers after generation:', err)
           }
-        } catch (err) {
-          console.warn('[Generation] Failed to fetch papers after generation:', err)
         }
       }
 

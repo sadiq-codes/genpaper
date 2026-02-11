@@ -335,7 +335,7 @@ async function main() {
             })
 
             await supabase.from('papers').upsert(paperRows, { onConflict: 'id', ignoreDuplicates: true })
-            await supabase.from('paper_chunks').upsert(chunkRows, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+            await supabase.from('paper_chunks').upsert(chunkRows, { onConflict: 'id', ignoreDuplicates: true })
             
             progress.totalIngested += batch.length
           } catch (err) {

@@ -559,9 +559,8 @@ export async function createPaperMetadata(paperData: PaperDTO, ownerId?: string 
           paper_id: paperId,
           chunk_index: 0,
           content: abstractText,
-          // embedding: null - embeddings go to Qdrant only
         }, {
-          onConflict: 'paper_id,chunk_index',
+          onConflict: 'id',
           ignoreDuplicates: true,
         })
       

@@ -1057,11 +1057,24 @@ export function useSmartCompletion({
     showNextQueuedSentenceRef.current = showNextQueuedSentence
   }, [scheduleAutoTrigger, cancelPendingRequest, showNextQueuedSentence])
 
+  // Count usage only when the user explicitly accepts ghost text.
+  const trackAutocompleteAccepted = useCallback(() => {
+    fetch('/api/editor/complete/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId }),
+      keepalive: true,
+    }).catch(() => {
+      // Non-blocking telemetry call - ignore network errors.
+    })
+  }, [projectId])
+
   // Listen for ghost text acceptance to show next queued sentence
   useEffect(() => {
     if (!editor || !enabled) return
 
     const handleGhostTextAccepted = () => {
+      trackAutocompleteAccepted()
       // Small delay to let the accepted text be inserted first
       setTimeout(() => {
         if (!editor || editor.isDestroyed || !mountedRef.current) return
@@ -1075,7 +1088,7 @@ export function useSmartCompletion({
     return () => {
       editorDom.removeEventListener('ghosttext:accepted', handleGhostTextAccepted)
     }
-  }, [editor, enabled])
+  }, [editor, enabled, trackAutocompleteAccepted])
 
   // Track edits with debounced auto-trigger
   useEffect(() => {

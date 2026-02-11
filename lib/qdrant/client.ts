@@ -94,10 +94,15 @@ export async function upsertChunks(
     } as ChunkPayload,
   }))
   
-  await qdrant.upsert(COLLECTIONS.PAPER_CHUNKS, {
-    wait: true,
-    points,
-  })
+  // Batch upserts to avoid timeout / connection drops on large papers (100+ chunks)
+  const QDRANT_BATCH_SIZE = 50
+  for (let i = 0; i < points.length; i += QDRANT_BATCH_SIZE) {
+    const batch = points.slice(i, i + QDRANT_BATCH_SIZE)
+    await qdrant.upsert(COLLECTIONS.PAPER_CHUNKS, {
+      wait: true,
+      points: batch,
+    })
+  }
 }
 
 /**
