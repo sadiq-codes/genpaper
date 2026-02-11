@@ -408,7 +408,7 @@ async function processSinglePdf(
     const chunkRowsWithoutEmbedding = chunkRows.map(({ embedding, ...rest }) => rest)
     const { error: chunkError } = await supabase
       .from('paper_chunks')
-      .upsert(chunkRowsWithoutEmbedding, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+      .upsert(chunkRowsWithoutEmbedding, { onConflict: 'id', ignoreDuplicates: true })
     
     if (chunkError) {
       return { success: false, chunksCreated: 0, error: `Chunk insert: ${chunkError.message}` }
@@ -691,7 +691,7 @@ async function batchInsertChunks(
   
   const { error } = await supabase
     .from('paper_chunks')
-    .upsert(rowsWithoutEmbedding, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+    .upsert(rowsWithoutEmbedding, { onConflict: 'id', ignoreDuplicates: true })
 
   if (error) {
     throw new Error(`Chunks insert failed: ${error.message}`)

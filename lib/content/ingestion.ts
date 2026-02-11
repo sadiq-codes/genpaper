@@ -264,10 +264,9 @@ export async function createChunksForPaper(
           paper_id: paperId,
           chunk_index: 0,
           content: normalizedContent,
-          // embedding: removed - Qdrant only
         }, {
-          onConflict: 'paper_id,chunk_index',  // Match the actual unique constraint
-          ignoreDuplicates: false  // Update if exists (content may have changed)
+          onConflict: 'id',
+          ignoreDuplicates: false
         })
 
       if (error) {

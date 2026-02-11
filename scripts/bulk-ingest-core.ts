@@ -457,9 +457,12 @@ async function batchInsertChunks(
 ) {
   const supabase = getServiceClient()
 
+  // Strip embeddings — Supabase stores text only; Qdrant stores vectors
+  const rowsWithoutEmbedding = chunks.map(({ embedding, ...rest }) => rest)
+
   const { error } = await supabase
     .from('paper_chunks')
-    .upsert(chunks, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+    .upsert(rowsWithoutEmbedding, { onConflict: 'id', ignoreDuplicates: true })
 
   if (error) {
     throw new Error(`Chunks insert failed: ${error.message}`)
@@ -694,9 +697,10 @@ async function main() {
       
       // Insert chunks
       const supabase = getServiceClient()
+      const chunkRowsNoEmbedding = chunkRows.map(({ embedding, ...rest }) => rest)
       const { error: chunkError } = await supabase
         .from('paper_chunks')
-        .upsert(chunkRows, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+        .upsert(chunkRowsNoEmbedding, { onConflict: 'id', ignoreDuplicates: true })
       
       if (chunkError) {
         console.warn(`    ⚠️ Chunk insert failed for ${title.slice(0, 30)}: ${chunkError.message}`)

@@ -345,7 +345,7 @@ async function processPdf(
     const chunkRowsNoEmbedding = chunkRows.map(({ embedding, ...rest }) => rest)
     const { error: chunkError } = await supabase
       .from('paper_chunks')
-      .upsert(chunkRowsNoEmbedding, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+      .upsert(chunkRowsNoEmbedding, { onConflict: 'id', ignoreDuplicates: true })
     
     if (chunkError) {
       return { success: false, chunks: 0, error: `DB: ${chunkError.message}` }
@@ -603,7 +603,7 @@ async function ingestDiscipline(
     
     await supabase
       .from('paper_chunks')
-      .upsert(chunkRowsForSupabase, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
+      .upsert(chunkRowsForSupabase, { onConflict: 'id', ignoreDuplicates: true })
     
     // Insert embeddings ONLY into Qdrant
     if (isQdrantConfigured()) {
