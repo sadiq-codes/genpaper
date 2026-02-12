@@ -34,8 +34,8 @@ import fs from 'fs'
 
 const OPENALEX_BASE = 'https://api.openalex.org/works'
 const PAGE_SIZE = 200
-const EMBED_BATCH = 50
-const DB_BATCH = 100
+const EMBED_BATCH = 100  // Increased from 50 for faster embedding
+const DB_BATCH = 200     // Increased from 100 for faster DB writes
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 const PROGRESS_FILE = '.bulk-ingest-disciplines-progress.json'
 const MAX_RATE_LIMIT_RETRIES = 5  // Max retries before moving on
