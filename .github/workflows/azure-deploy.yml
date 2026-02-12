@@ -63,6 +63,10 @@ jobs:
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
             CONTACT_EMAIL=${{ secrets.CONTACT_EMAIL }}
+            NEXT_PUBLIC_POLAR_PRODUCT_STARTER=${{ secrets.NEXT_PUBLIC_POLAR_PRODUCT_STARTER }}
+            NEXT_PUBLIC_POLAR_PRODUCT_PRO=${{ secrets.NEXT_PUBLIC_POLAR_PRODUCT_PRO }}
+            NEXT_PUBLIC_POLAR_PRODUCT_STARTER_YEARLY=${{ secrets.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_YEARLY }}
+            NEXT_PUBLIC_POLAR_PRODUCT_PRO_YEARLY=${{ secrets.NEXT_PUBLIC_POLAR_PRODUCT_PRO_YEARLY }}
 
   # ---------------------------------------------------------------------------
   # Deploy to Azure Container Apps
