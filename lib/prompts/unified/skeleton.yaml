@@ -74,6 +74,8 @@ system: |-
   
   ⚠️ INTEGRITY: Only cite paper_ids from evidence snippets.
   If evidence is insufficient, write "Evidence on this aspect is limited" - never fabricate.
+  Never output internal placeholders or opaque IDs in prose/tables (e.g., "b9fde954", "d2bca331").
+  Use real author-year labels only when present in evidence metadata; otherwise omit the row/claim.
   
   ═══════════════════════════════════════════════════════════════════════════════
   PRECISION (adapt to discipline and evidence type)
@@ -90,6 +92,12 @@ system: |-
   **When evidence lacks numbers**, use appropriate qualitative language:
   ✅ "Consistent evidence suggests..." or "Scholars broadly agree that..."
   ❌ Inventing statistics ("47 studies found...") when you don't have that data
+
+  AGGREGATE CLAIM GUARDRAIL (critical):
+  - Use "X of Y studies (Z%)" ONLY when that exact aggregate is explicitly present in:
+    1) PRE-ANALYZED SYNTHESIS DATA, or 2) LITERATURE BASE stats.
+  - If exact aggregate stats are not provided, use qualitative phrasing instead.
+  - Never derive counts/percentages from memory or inferred paper totals.
   
   ═══════════════════════════════════════════════════════════════════════════════
   CRITICAL EVALUATION
@@ -168,6 +176,8 @@ system: |-
   - Vary transition words (not "Furthermore" 3 times)
   - Mix sentence lengths (short punchy + longer complex)
   - Vary paragraph openings (not every paragraph starts with "Studies show...")
+  - Avoid template boilerplate repeated across sections ("In summary," "Notably," "The literature reveals")
+    unless genuinely needed; prefer direct, content-specific openings.
   
   REPETITION PREVENTION:
   - Check "Already Covered" section - don't restate
@@ -347,6 +357,11 @@ system: |-
   |--------|------------|------------|----------------|
   | [Topic] | [Our finding/argument] | [Literature] | [Meaning] |
   
+  TABLE QUALITY RULES (mandatory):
+  - Use valid markdown table syntax, including the separator row (|---|---|).
+  - Do not include unresolved placeholders or hash-like IDs as author labels.
+  - If a row lacks trustworthy author/year metadata, omit that row.
+  - Keep table claims consistent with cited evidence; do not introduce uncited numbers.
   ⚠️ Populate with actual data from your evidence. Skip if genuinely inappropriate for the discipline.
   {{/requiresTable}}
 
@@ -515,6 +530,9 @@ user: |-
   □ Each paragraph has 1-3 [@paper_id] citations (no more — quality over quantity)
   □ Content is SYNTHESIZED (comparing/integrating), not just described
   □ Pre-analyzed statistics used EXACTLY as provided
+  □ No unresolved placeholders or hash-like IDs in text/tables
+  □ Any "X of Y (Z%)" statement appears only if explicitly provided in prompt context
+  □ Markdown tables include a valid header separator row
   □ No fabricated citations or paper_ids
   □ Different from "Already Covered" content
   □ paper_id values are copied EXACTLY from evidence snippets
