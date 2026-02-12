@@ -82,11 +82,16 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Deploy to Azure Container Apps
-        uses: azure/container-apps-deploy-action@v1
-        with:
-          resourceGroup: ${{ env.RESOURCE_GROUP }}
-          containerAppName: ${{ env.CONTAINER_APP_NAME }}
-          imageToDeploy: ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        run: |
+          # Use short SHA for unique revision naming
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          
+          # Force a new revision by using the SHA tag (unique per commit)
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.AZURE_CONTAINER_REGISTRY }}/${{ env.IMAGE_NAME }}:${SHORT_SHA} \
+            --revision-suffix "sha-${SHORT_SHA}"
 
       - name: Logout from Azure
         run: az logout

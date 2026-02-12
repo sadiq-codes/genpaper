@@ -1,9 +1,12 @@
 import type React from "react"
 import type { Metadata } from "next"
 import { Geist, Geist_Mono, Caveat, Instrument_Serif } from "next/font/google"
+import Script from "next/script"
 import "./globals.css"
 import { AuthProvider } from "@/components/providers/AuthProvider"
 import { getUser } from "@/lib/auth/cached"
+
+const GA_MEASUREMENT_ID = "G-ZYDPFH365F"
 
 // Global error handler removed - using unified API error handling
 
@@ -96,7 +99,21 @@ export default async function RootLayout({
   const user = await getUser()
   return (
     <html lang="en">
-        <body className={`${geistSans.variable} ${geistMono.variable} ${caveat.variable} ${instrumentSerif.variable} antialiased`} suppressHydrationWarning={true}>
+      <head>
+        <Script
+          src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`}
+          strategy="afterInteractive"
+        />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', '${GA_MEASUREMENT_ID}');
+          `}
+        </Script>
+      </head>
+      <body className={`${geistSans.variable} ${geistMono.variable} ${caveat.variable} ${instrumentSerif.variable} antialiased`} suppressHydrationWarning={true}>
         <AuthProvider initialUser={user}>
           {children}
         </AuthProvider>
