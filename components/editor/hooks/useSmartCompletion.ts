@@ -643,11 +643,10 @@ export function useSmartCompletion({
         ) {
           return
         }
-        // Network error - show toast
+        // Network error — silently skip (offline indicator handles this)
         if (fetchError instanceof Error) {
-          showErrorToast('Connection lost', () => {
-            generateCompletion(context)
-          })
+          console.warn('[Autocomplete] Network error, skipping:', fetchError.message)
+          return
         }
         // Re-throw non-abort errors
         throw fetchError

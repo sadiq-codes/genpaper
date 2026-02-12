@@ -8,6 +8,7 @@ import { ArrowRight, Loader2, BookOpen } from 'lucide-react'
 import { createProjectAction } from '@/components/dashboard/actions'
 import { cn } from '@/lib/utils'
 import { PaperTypeSelect, type PaperTypeValue } from './paper-type-select'
+import { useSubscription } from '@/lib/hooks/use-subscription'
 import { GenerationModeSelect, type GenerationMode } from './generation-mode-select'
 import { AddSourceMenu } from './add-source-menu'
 import { AdvancedOptionsPopover } from './advanced-options-popover'
@@ -31,6 +32,7 @@ const PLACEHOLDER_CONFIG: Record<PaperTypeValue, string> = {
 
 export function ProjectInput() {
   const router = useRouter()
+  const { subscription } = useSubscription()
   const [state, formAction, isPending] = useActionState(createProjectAction, null)
   const [isNavigating, startTransition] = useTransition()
 
@@ -189,6 +191,7 @@ export function ProjectInput() {
                 value={paperType}
                 onValueChange={setPaperType}
                 disabled={isLoading}
+                userTier={subscription?.tier}
               />
               <GenerationModeSelect
                 value={generationMode}

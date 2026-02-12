@@ -100,25 +100,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check billing limits for new projects (skip for regenerations)
-    if (!existingProjectId) {
-      const gateCheck = await checkCanStartGeneration(
-        user.id,
-        paperType as PaperTypeKey,
-      );
-
-      if (!gateCheck.allowed) {
-        return NextResponse.json(
-          { 
-            error: gateCheck.reason || "You have reached your generation limit. Please upgrade your plan.",
-            code: "LIMIT_EXCEEDED",
-            requiredTier: gateCheck.requiredTier,
-          },
-          { status: 403, headers: getCorsHeaders(request) }
-        );
-      }
-    }
-
     // Determine project ID (use existing or create new)
     let projectId: string;
     let finalPaperType = paperType;
@@ -126,11 +107,12 @@ export async function POST(request: NextRequest) {
     let finalLibraryPaperIds = libraryPaperIds;
     let finalCustomInstructions = customInstructions;
     let finalOriginalResearch: { has_original_research: boolean; research_question?: string; key_findings?: string } | undefined;
+    let existingProject: Awaited<ReturnType<typeof getResearchProject>> | null = null;
 
     if (existingProjectId) {
       // Verify ownership of existing project
-      const existing = await getResearchProject(existingProjectId, user.id);
-      if (!existing) {
+      existingProject = await getResearchProject(existingProjectId, user.id);
+      if (!existingProject) {
         return NextResponse.json(
           { error: "Project not found or access denied" },
           { status: 404, headers: getCorsHeaders(request) }
@@ -138,12 +120,12 @@ export async function POST(request: NextRequest) {
       }
 
       // Return early if project is already complete with content
-      if (existing.status === "complete") {
-        const existingWithContent = await getProjectWithContent(existing.id);
+      if (existingProject.status === "complete") {
+        const existingWithContent = await getProjectWithContent(existingProject.id);
         if (existingWithContent?.content) {
           return NextResponse.json(
             {
-              projectId: existing.id,
+              projectId: existingProject.id,
               runId: null,
               status: "already_complete",
               content: existingWithContent.content,
@@ -153,7 +135,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      projectId = existing.id;
+      projectId = existingProject.id;
 
       // Load config from database (source of truth)
       const supabase = createServiceClient();
@@ -211,6 +193,34 @@ export async function POST(request: NextRequest) {
       };
       const project = await createProject(user.id, topic, config);
       projectId = project.id;
+    }
+
+    // Billing gate:
+    // - Enforce on first-time generations (new project OR existing not yet generated)
+    // - Skip only true regenerations of already-generated projects
+    const wasAlreadyGenerated = Boolean(
+      existingProject &&
+      (
+        existingProject.status === "complete" ||
+        existingProject.has_generated === true
+      )
+    );
+    if (!wasAlreadyGenerated) {
+      const gateCheck = await checkCanStartGeneration(
+        user.id,
+        finalPaperType as PaperTypeKey,
+      );
+
+      if (!gateCheck.allowed) {
+        return NextResponse.json(
+          {
+            error: gateCheck.reason || "You have reached your generation limit. Please upgrade your plan.",
+            code: "LIMIT_EXCEEDED",
+            requiredTier: gateCheck.requiredTier,
+          },
+          { status: 403, headers: getCorsHeaders(request) }
+        );
+      }
     }
 
     // Check if there's already a running generation

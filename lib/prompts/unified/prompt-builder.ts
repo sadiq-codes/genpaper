@@ -664,18 +664,18 @@ function generateBasicSectionSummary(sectionTitle: string, chunkCount: number): 
  * Different paper types have different expectations for source breadth
  */
 function calculateSourceDiversityTarget(paperType: string, availablePapers: number): { percentage: number; minPapers: number } {
-  // Paper type to minimum citation percentage mapping
+  // Paper type to minimum citation percentage mapping (across entire paper, not per section)
   const diversityTargets: Record<string, number> = {
-    'literatureReview': 80,      // Lit reviews need to cite most available sources
-    'literature-review': 80,
-    'phdDissertation': 90,       // PhD requires exhaustive coverage
-    'phd-dissertation': 90,
-    'mastersThesis': 70,         // Master's needs comprehensive coverage
-    'masters-thesis': 70,
-    'capstoneProject': 65,       // Capstone needs thorough coverage
-    'capstone-project': 65,
-    'researchArticle': 50,       // Research articles focus on relevant prior work
-    'research-article': 50,
+    'literatureReview': 60,      // Lit reviews: cite most sources but don't force-cite
+    'literature-review': 60,
+    'phdDissertation': 70,       // PhD: comprehensive but natural coverage
+    'phd-dissertation': 70,
+    'mastersThesis': 55,         // Master's: thorough coverage
+    'masters-thesis': 55,
+    'capstoneProject': 50,       // Capstone: solid coverage
+    'capstone-project': 50,
+    'researchArticle': 40,       // Research articles: focused on relevant prior work
+    'research-article': 40,
   }
   
   // Default to 50% if paper type not found

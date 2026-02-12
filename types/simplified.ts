@@ -179,6 +179,7 @@ export interface ResearchProject {
   user_id: string
   topic: string
   status: PaperStatus
+  has_generated?: boolean
   generation_config?: GenerationConfig
   content?: string
   created_at: string

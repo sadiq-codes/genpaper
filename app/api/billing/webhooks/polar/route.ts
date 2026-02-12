@@ -7,6 +7,7 @@ import {
   logSubscriptionEvent,
   getUserIdByPolarCustomerId,
   getUserIdByEmail,
+  getUserSubscription,
   getTierFromPolarProduct,
 } from '@/lib/billing/subscription-service'
 import type { SubscriptionTier } from '@/types/subscription'
@@ -132,6 +133,7 @@ export const POST = Webhooks({
     
     const productId = subscription.productId
     const tier = getTierFromPolarProduct(productId)
+    const previous = await getUserSubscription(userId)
     
     // Determine status
     let status: 'active' | 'canceled' | 'past_due' = 'active'
@@ -151,10 +153,13 @@ export const POST = Webhooks({
         : undefined,
     })
     
-    // If this is a renewal (new period), reset usage
-    // Check if period_start changed
+    // Reset usage only when billing period advances (renewal), not every update.
     if (subscription.currentPeriodEnd) {
-      await resetPaperUsage(userId, new Date(subscription.currentPeriodEnd))
+      const nextPeriodEnd = new Date(subscription.currentPeriodEnd)
+      const prevPeriodEndMs = previous?.periodEndsAt ? new Date(previous.periodEndsAt).getTime() : 0
+      if (!prevPeriodEndMs || nextPeriodEnd.getTime() > prevPeriodEndMs) {
+        await resetPaperUsage(userId, nextPeriodEnd)
+      }
     }
   },
   

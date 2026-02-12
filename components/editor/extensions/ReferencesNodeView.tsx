@@ -4,6 +4,8 @@ import { useMemo, useEffect, useState, useRef } from 'react'
 import { NodeViewWrapper } from '@tiptap/react'
 import type { NodeViewProps } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
+import { Lock } from 'lucide-react'
+import { UpgradeButton } from '@/components/billing/upgrade-button'
 import { 
   formatBibliography, 
   isNumericStyle,
@@ -60,7 +62,7 @@ export function ReferencesNodeView({ editor }: NodeViewProps) {
     // Also listen for citation style changes
     const handleTransaction = ({ transaction }: { transaction: unknown }) => {
       const tr = transaction as { getMeta?: (key: string) => unknown }
-      if (tr.getMeta?.('citationStyleChange') || tr.getMeta?.('papersUpdated')) {
+      if (tr.getMeta?.('citationStyleChange') || tr.getMeta?.('papersUpdated') || tr.getMeta?.('referencesVisibleChange')) {
         // Force update on style/papers change
         const newSignature = computeCitationSignature() + '-' + Date.now()
         prevSignatureRef.current = newSignature
@@ -83,11 +85,13 @@ export function ReferencesNodeView({ editor }: NodeViewProps) {
     citationStyle: string
     citationNumbers: Map<string, number>
     papers: ProjectPaper[]
+    referencesVisible?: number | 'all'
   } | undefined
   
   const style = citationStorage?.citationStyle || 'apa'
   const citationNumbers = citationStorage?.citationNumbers || new Map<string, number>()
   const papers = citationStorage?.papers || []
+  const referencesVisible: number | 'all' = citationStorage?.referencesVisible ?? 'all'
   
   // Extract all unique cited paper IDs from the document
   // Uses citationSignature as dependency - only recomputes when citations actually change
@@ -175,6 +179,11 @@ export function ReferencesNodeView({ editor }: NodeViewProps) {
     )
   }
   
+  const visibleCount = referencesVisible === 'all' ? bibliographyEntries.length : referencesVisible
+  const visibleEntries = bibliographyEntries.slice(0, visibleCount)
+  const blurredEntries = bibliographyEntries.slice(visibleCount)
+  const hasBlurred = blurredEntries.length > 0
+
   return (
     <NodeViewWrapper
       as="div"
@@ -188,9 +197,9 @@ export function ReferencesNodeView({ editor }: NodeViewProps) {
           References
         </h2>
         
-        {/* Bibliography Entries */}
+        {/* Visible Bibliography Entries */}
         <div className="space-y-3">
-          {bibliographyEntries.map((entry, index) => (
+          {visibleEntries.map((entry, index) => (
             <div
               key={`ref-${index}`}
               className="reference-entry text-sm text-foreground/90 leading-relaxed pl-8 -indent-8"
@@ -199,6 +208,36 @@ export function ReferencesNodeView({ editor }: NodeViewProps) {
             </div>
           ))}
         </div>
+
+        {/* Blurred entries with upgrade overlay (free tier) */}
+        {hasBlurred && (
+          <div className="relative mt-4">
+            <div className="space-y-3 select-none" style={{ filter: 'blur(4px)' }}>
+              {blurredEntries.slice(0, 5).map((entry, index) => (
+                <div
+                  key={`blurred-ref-${index}`}
+                  className="reference-entry text-sm text-muted-foreground leading-relaxed pl-8 -indent-8"
+                >
+                  {entry}
+                </div>
+              ))}
+              {blurredEntries.length > 5 && (
+                <div className="text-sm text-muted-foreground pl-8">
+                  ... and {blurredEntries.length - 5} more references
+                </div>
+              )}
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-[2px]">
+              <div className="text-center space-y-2 p-4">
+                <div className="flex items-center justify-center gap-2 text-sm font-medium text-foreground">
+                  <Lock className="h-4 w-4" />
+                  <span>{blurredEntries.length} more references</span>
+                </div>
+                <UpgradeButton label="Upgrade to See All" size="sm" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </NodeViewWrapper>
   )

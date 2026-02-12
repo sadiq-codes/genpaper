@@ -22,6 +22,8 @@ export interface CitationOptions {
   citationNumbers: Map<string, number>
   /** Papers array for looking up paper metadata at render time */
   papers: ProjectPaper[]
+  /** Number of references visible in bibliography, or 'all' for unlimited */
+  referencesVisible: number | 'all'
 }
 
 declare module '@tiptap/core' {
@@ -30,6 +32,7 @@ declare module '@tiptap/core' {
       insertCitation: (attrs: CitationAttributes) => ReturnType
       setCitationStyle: (style: CitationStyleType) => ReturnType
       setPapers: (papers: ProjectPaper[]) => ReturnType
+      setReferencesVisible: (count: number | 'all') => ReturnType
     }
   }
 }
@@ -55,6 +58,8 @@ export const Citation = Node.create<CitationOptions>({
       citationStyle: 'apa' as CitationStyleType,
       citationNumbers: new Map<string, number>(),
       papers: [] as ProjectPaper[],
+      /** Number of references visible to free tier, or 'all' */
+      referencesVisible: 'all' as number | 'all',
     }
   },
 
@@ -63,6 +68,7 @@ export const Citation = Node.create<CitationOptions>({
       citationStyle: this.options.citationStyle,
       citationNumbers: this.options.citationNumbers,
       papers: this.options.papers,
+      referencesVisible: this.options.referencesVisible,
     }
   },
 
@@ -194,6 +200,13 @@ export const Citation = Node.create<CitationOptions>({
         const tr = editor.state.tr.setMeta('papersUpdated', true)
         editor.view.dispatch(tr)
         
+        return true
+      },
+
+      setReferencesVisible: (count: number | 'all') => ({ editor }) => {
+        this.storage.referencesVisible = count
+        const tr = editor.state.tr.setMeta('referencesVisibleChange', true)
+        editor.view.dispatch(tr)
         return true
       },
     }

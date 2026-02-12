@@ -23,6 +23,16 @@ interface UpdateSubscriptionParams {
   periodEndsAt?: Date
 }
 
+interface ProfileSubscriptionRow {
+  subscription_tier: string
+  subscription_status: string
+  polar_customer_id: string | null
+  polar_subscription_id: string | null
+  papers_used_this_period: number
+  period_started_at: string | null
+  period_ends_at: string | null
+}
+
 interface LogEventParams {
   userId: string
   eventType: SubscriptionEventType
@@ -74,15 +84,20 @@ export async function getUserSubscription(userId: string): Promise<UserSubscript
     warn({ userId, error }, 'Failed to fetch user subscription')
     return null
   }
+
+  // Root fix: make monthly usage reset self-healing.
+  // This keeps counters correct even if webhooks are delayed/missed.
+  const row = data as unknown as ProfileSubscriptionRow
+  const alignedRow = await alignUsagePeriodIfNeeded(userId, row)
   
   return {
-    tier: data.subscription_tier as SubscriptionTier,
-    status: data.subscription_status as SubscriptionStatus,
-    polarCustomerId: data.polar_customer_id,
-    polarSubscriptionId: data.polar_subscription_id,
-    papersUsedThisPeriod: data.papers_used_this_period,
-    periodStartedAt: data.period_started_at,
-    periodEndsAt: data.period_ends_at,
+    tier: alignedRow.subscription_tier as SubscriptionTier,
+    status: alignedRow.subscription_status as SubscriptionStatus,
+    polarCustomerId: alignedRow.polar_customer_id,
+    polarSubscriptionId: alignedRow.polar_subscription_id,
+    papersUsedThisPeriod: alignedRow.papers_used_this_period,
+    periodStartedAt: alignedRow.period_started_at,
+    periodEndsAt: alignedRow.period_ends_at,
   }
 }
 
@@ -207,6 +222,68 @@ export async function resetPaperUsage(userId: string, periodEndsAt: Date): Promi
 }
 
 /**
+ * Ensure usage period boundaries are current and reset counters when a period elapsed.
+ * This is authoritative for both free and paid tiers:
+ * - free: monthly rolling period (UTC) even without billing webhooks
+ * - paid: fallback reset if period has elapsed and webhook was missed
+ */
+async function alignUsagePeriodIfNeeded(
+  userId: string,
+  row: ProfileSubscriptionRow
+): Promise<ProfileSubscriptionRow> {
+  const now = new Date()
+  const tier = row.subscription_tier as SubscriptionTier
+
+  const parsedPeriodEnd = row.period_ends_at ? new Date(row.period_ends_at) : null
+  const parsedPeriodStart = row.period_started_at ? new Date(row.period_started_at) : null
+
+  let shouldReset = false
+  let nextPeriodEnd: Date | null = null
+
+  // Free users don't rely on subscription webhooks; enforce monthly periods here.
+  if (tier === 'free') {
+    const effectiveStart = parsedPeriodStart || now
+    const effectiveEnd = parsedPeriodEnd || addUtcMonths(effectiveStart, 1)
+    if (!row.period_started_at || !row.period_ends_at || now >= effectiveEnd) {
+      shouldReset = true
+      nextPeriodEnd = addUtcMonths(now, 1)
+    }
+  } else {
+    // Paid users should be updated by webhook period ends, but if not, self-heal.
+    if (!parsedPeriodEnd || now >= parsedPeriodEnd) {
+      shouldReset = true
+      nextPeriodEnd = addUtcMonths(now, 1)
+    }
+  }
+
+  if (!shouldReset || !nextPeriodEnd) {
+    return row
+  }
+
+  const resetOk = await resetPaperUsage(userId, nextPeriodEnd)
+  if (!resetOk) {
+    return row
+  }
+
+  const supabase = getServiceClient()
+  const { data: refreshed } = await supabase
+    .from('profiles')
+    .select(`
+      subscription_tier,
+      subscription_status,
+      polar_customer_id,
+      polar_subscription_id,
+      papers_used_this_period,
+      period_started_at,
+      period_ends_at
+    `)
+    .eq('id', userId)
+    .single()
+
+  return (refreshed as ProfileSubscriptionRow) || row
+}
+
+/**
  * Increment paper usage count
  * Returns true if increment succeeded, false if limit reached
  */
@@ -293,4 +370,16 @@ export function getTierFromPolarProduct(productId: string): SubscriptionTier {
   // Default to starter if unknown product
   warn({ productId }, 'Unknown Polar product ID, defaulting to starter')
   return 'starter'
+}
+
+function addUtcMonths(base: Date, months: number): Date {
+  return new Date(Date.UTC(
+    base.getUTCFullYear(),
+    base.getUTCMonth() + months,
+    base.getUTCDate(),
+    base.getUTCHours(),
+    base.getUTCMinutes(),
+    base.getUTCSeconds(),
+    base.getUTCMilliseconds()
+  ))
 }

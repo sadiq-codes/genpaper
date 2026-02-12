@@ -25,6 +25,8 @@ import type {
   Citation,
 } from "./types"
 import { cn } from "@/lib/utils"
+import { useSubscription } from "@/lib/hooks/use-subscription"
+import { getVisibleReferencesCount } from "@/types/subscription"
 import { ResearchEditorProvider, type ResearchEditorContextValue } from "./research-editor-context"
 import { processContent } from "./utils/content-processor"
 import { editorToMarkdown } from "./utils/tiptap-to-markdown"
@@ -84,6 +86,9 @@ export function ResearchEditor({
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
   const [currentTitle, setCurrentTitle] = useState(projectTitle)
   const router = useRouter()
+  const { subscription } = useSubscription()
+  // Default to locked while subscription is loading — unlocks once tier is confirmed
+  const exportLocked = !subscription || subscription.tier === 'free'
 
   // Rename project title (optimistic update + persist to API)
   const handleTitleChange = useCallback(async (newTitle: string) => {
@@ -121,6 +126,7 @@ export function ResearchEditor({
   const {
     content: _content, // Content tracked for auto-save but not directly used here
     hasUnsavedChanges,
+    isOffline,
     setContent,
     markAsEdited,
     setContentSilent,
@@ -550,6 +556,8 @@ export function ResearchEditor({
           onHistory={() => toast.info("History feature coming soon")}
           onSettings={() => setSettingsModalOpen(true)}
           saveStatus={hasUnsavedChanges ? "unsaved" : "saved"}
+          isOffline={isOffline}
+          exportLocked={exportLocked}
         />
 
         {/* Generation Progress Overlay */}

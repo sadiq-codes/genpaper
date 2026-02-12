@@ -13,6 +13,7 @@ import type { ChatMessageMetadata } from '@/app/api/editor/chat/route'
 import { cn } from '@/lib/utils'
 import { useChatImageUpload } from '../hooks/useChatImageUpload'
 import { useResearchEditor } from '../research-editor-context'
+import { useSubscription } from '@/lib/hooks/use-subscription'
 
 // =============================================================================
 // CITATION FORMATTING FOR CHAT
@@ -418,6 +419,7 @@ export function ChatTab() {
   
   // Image upload hook
   const { uploadImage, isUploading } = useChatImageUpload({ projectId })
+  const { canChat } = useSubscription()
   
   // Get length of the last message content (for streaming detection)
   const lastMessage = messages[messages.length - 1]
@@ -597,7 +599,7 @@ export function ChatTab() {
       <div className="shrink-0">
         <RichChatInput 
           onSend={handleSend} 
-          disabled={isLoading}
+          disabled={isLoading || !canChat}
           papers={papers}
           projectId={projectId}
           onCitePaper={handleCitePaper}

@@ -10,7 +10,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { FileText, MessageSquare, Sparkles, ChevronRight, Zap } from 'lucide-react'
+import { FileText, MessageSquare, Sparkles, ChevronRight } from 'lucide-react'
+import { UpgradeButton } from '@/components/billing/upgrade-button'
 import { useSubscription } from '@/lib/hooks/use-subscription'
 import { cn } from '@/lib/utils'
 
@@ -140,14 +141,7 @@ export function UsageIndicator({ className }: { className?: string }) {
           {!isPaid && (
             <>
               <div className="h-px bg-border" />
-              
-              <Button asChild size="sm" className="w-full gap-2">
-                <Link href="/settings#billing">
-                  <Zap className="h-4 w-4" />
-                  Upgrade for More
-                  <ChevronRight className="h-4 w-4 ml-auto" />
-                </Link>
-              </Button>
+              <UpgradeButton label="Upgrade for More" size="sm" className="w-full" />
             </>
           )}
           

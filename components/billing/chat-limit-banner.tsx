@@ -1,8 +1,8 @@
 'use client'
 
-import { AlertCircle, Sparkles, Clock } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { useSubscription, getCheckoutUrl } from '@/lib/hooks/use-subscription'
+import { AlertCircle, Clock } from 'lucide-react'
+import { useSubscription } from '@/lib/hooks/use-subscription'
+import { UpgradeButton } from '@/components/billing/upgrade-button'
 import { cn } from '@/lib/utils'
 
 interface ChatLimitBannerProps {
@@ -52,16 +52,7 @@ export function ChatLimitBanner({
         </div>
         
         <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            className="h-8 gap-1.5 bg-gradient-to-r from-primary to-primary/80"
-            onClick={() => {
-              window.location.href = getCheckoutUrl('starter', { interval: 'yearly' })
-            }}
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            Upgrade to Starter
-          </Button>
+          <UpgradeButton label="Upgrade to Starter" size="sm" />
           
           {dailyUsage && !dailyUsage.chat.isUnlimited && (
             <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
@@ -110,17 +101,7 @@ export function ChatLimitBanner({
             : `message${chatRemaining !== 1 ? 's' : ''} left today`}
         </span>
         
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 text-xs px-2"
-          onClick={() => {
-            window.location.href = getCheckoutUrl('starter', { interval: 'yearly' })
-          }}
-        >
-          <Sparkles className="h-3 w-3 mr-1" />
-          Upgrade
-        </Button>
+        <UpgradeButton size="inline" />
       </div>
     )
   }

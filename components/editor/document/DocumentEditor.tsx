@@ -45,6 +45,8 @@ import type { ProjectPaper } from '../types'
 import { isNumericStyle, clearCaches as clearCitationCaches, resolveStyleId, isStyleAvailable, loadStyle } from '@/lib/citations/local-formatter'
 import { toast } from 'sonner'
 import { useResearchEditor } from '../research-editor-context'
+import { useSubscription } from '@/lib/hooks/use-subscription'
+import { getVisibleReferencesCount } from '@/types/subscription'
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
@@ -142,6 +144,9 @@ export function DocumentEditor({
     mobileMenuOpen,
     toggleSidebar: onToggleMobileMenu,
   } = useResearchEditor()
+  const { subscription } = useSubscription()
+  // Default to free-tier limit (1) while loading; opens up once subscription confirms paid tier
+  const referencesVisible = subscription ? getVisibleReferencesCount(subscription.tier) : 1
   // Ref for debouncing markdown conversion - prevents typing lag in large documents
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   
@@ -305,6 +310,7 @@ export function DocumentEditor({
       Typography,
       Citation.configure({
         citationStyle: citationStyle,
+        referencesVisible: referencesVisible,
       }),
       Mathematics,
       GhostText,
@@ -528,6 +534,12 @@ export function DocumentEditor({
       console.log(`[DocumentEditor] Synced ${papers.length} papers to Citation extension storage`)
     }
   }, [editor, papers, getPaperSignature])
+
+  // Sync referencesVisible to Citation extension storage when subscription loads
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    editor.commands.setReferencesVisible(referencesVisible)
+  }, [editor, referencesVisible])
   
   // Fetch citation instance quotes after content is loaded
   // This populates citedContent for hover previews

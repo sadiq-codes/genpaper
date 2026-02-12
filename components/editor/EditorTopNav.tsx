@@ -23,10 +23,10 @@ import {
   FileText,
   FileCode,
   File,
-  Check,
-  Loader2,
+  Lock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { UpgradeButton } from '@/components/billing/upgrade-button'
 
 interface EditorTopNavProps {
   onExport: (format: 'pdf' | 'docx' | 'latex') => void
@@ -37,6 +37,10 @@ interface EditorTopNavProps {
   projectId?: string
   onTitleChange?: (newTitle: string) => void
   saveStatus?: 'saved' | 'saving' | 'unsaved'
+  /** Whether the app is currently offline */
+  isOffline?: boolean
+  /** When true, export buttons show a lock and are non-functional */
+  exportLocked?: boolean
 }
 
 export function EditorTopNav({
@@ -48,6 +52,8 @@ export function EditorTopNav({
   projectId,
   onTitleChange,
   saveStatus = 'saved',
+  isOffline = false,
+  exportLocked = false,
 }: EditorTopNavProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(projectTitle)
@@ -123,27 +129,27 @@ export function EditorTopNav({
             </button>
           )}
 
-          {/* Save Status — inline next to title */}
-          <div className={cn(
-            "flex items-center gap-1 text-[11px] shrink-0 transition-opacity",
-            saveStatus === 'saved' ? "text-muted-foreground/50" : "text-foreground"
-          )}>
-          {saveStatus === 'saving' && (
-            <>
-              <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden="true" />
-              <span className="hidden sm:inline">Saving…</span>
-            </>
-          )}
-          {saveStatus === 'saved' && (
-            <>
-              <Check className="h-2.5 w-2.5" aria-hidden="true" />
-              <span className="hidden sm:inline">Saved</span>
-            </>
-          )}
-          {saveStatus === 'unsaved' && (
-            <span className="text-amber-500 dark:text-amber-400">Unsaved</span>
-          )}
-          </div>
+          {/* Connection status dot */}
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className={cn(
+                    "inline-block h-2 w-2 shrink-0 rounded-full transition-colors",
+                    isOffline
+                      ? "bg-red-500"
+                      : saveStatus === 'saving'
+                        ? "bg-amber-400 animate-pulse"
+                        : "bg-emerald-500"
+                  )}
+                  aria-label={isOffline ? "Offline — changes saved locally" : saveStatus === 'saving' ? "Saving…" : "All changes saved"}
+                />
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">
+                {isOffline ? "Offline — changes saved locally" : saveStatus === 'saving' ? "Saving…" : "All changes saved"}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
 
@@ -163,18 +169,40 @@ export function EditorTopNav({
               <TooltipContent>Export</TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuItem onClick={() => onExport('pdf')}>
-                <File className="mr-2 h-3.5 w-3.5" />
-                Export as PDF
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onExport('docx')}>
-                <FileText className="mr-2 h-3.5 w-3.5" />
-                Export as DOCX
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onExport('latex')}>
-                <FileCode className="mr-2 h-3.5 w-3.5" />
-                Export as LaTeX
-              </DropdownMenuItem>
+              {exportLocked ? (
+                <>
+                  <DropdownMenuItem disabled className="opacity-50">
+                    <Lock className="mr-2 h-3.5 w-3.5" />
+                    Export as PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled className="opacity-50">
+                    <Lock className="mr-2 h-3.5 w-3.5" />
+                    Export as DOCX
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled className="opacity-50">
+                    <Lock className="mr-2 h-3.5 w-3.5" />
+                    Export as LaTeX
+                  </DropdownMenuItem>
+                  <div className="px-2 py-1.5 border-t mt-1 pt-1.5">
+                    <UpgradeButton label="Upgrade to Export" size="inline" />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <DropdownMenuItem onClick={() => onExport('pdf')}>
+                    <File className="mr-2 h-3.5 w-3.5" />
+                    Export as PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onExport('docx')}>
+                    <FileText className="mr-2 h-3.5 w-3.5" />
+                    Export as DOCX
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onExport('latex')}>
+                    <FileCode className="mr-2 h-3.5 w-3.5" />
+                    Export as LaTeX
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 

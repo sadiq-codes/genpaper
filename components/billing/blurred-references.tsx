@@ -1,8 +1,7 @@
 'use client'
 
-import { Button } from '@/components/ui/button'
 import { Lock } from 'lucide-react'
-import { getCheckoutUrl } from '@/lib/hooks/use-subscription'
+import { UpgradeButton } from '@/components/billing/upgrade-button'
 import { cn } from '@/lib/utils'
 
 interface BlurredReferencesProps {
@@ -29,17 +28,11 @@ interface BlurredReferencesProps {
 export function BlurredReferences({
   references,
   visibleCount,
-  userEmail,
-  userId,
   className,
 }: BlurredReferencesProps) {
   const visibleRefs = references.slice(0, visibleCount)
   const blurredRefs = references.slice(visibleCount)
   const hasBlurred = blurredRefs.length > 0
-  
-  const handleUpgrade = () => {
-    window.location.href = getCheckoutUrl('starter', { email: userEmail, userId, interval: 'yearly' })
-  }
   
   return (
     <div className={cn("space-y-4", className)}>
@@ -76,9 +69,7 @@ export function BlurredReferences({
                 <Lock className="h-4 w-4" />
                 <span>{blurredRefs.length} more references</span>
               </div>
-              <Button size="sm" onClick={handleUpgrade}>
-                Upgrade to See All
-              </Button>
+              <UpgradeButton label="Upgrade to See All" size="sm" />
             </div>
           </div>
         </div>

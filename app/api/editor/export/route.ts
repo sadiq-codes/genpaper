@@ -11,6 +11,7 @@ import { parseDocument } from '@/lib/export/document-parser'
 import { generateDocx } from '@/lib/export/docx-generator'
 import { generateLatexZip } from '@/lib/export/latex-generator'
 import { generatePdf } from '@/lib/export/pdf-generator'
+import { checkCanExportPdf } from '@/lib/billing/gates'
 import type { TipTapDocument, ExportPaper, ExportFormat } from '@/lib/export/types'
 
 // =============================================================================
@@ -39,6 +40,15 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Check export permission (free tier cannot export)
+    const exportCheck = await checkCanExportPdf(user.id)
+    if (!exportCheck.allowed) {
+      return NextResponse.json(
+        { error: exportCheck.reason || 'Export requires a paid plan.', code: 'EXPORT_GATED', requiredTier: exportCheck.requiredTier },
+        { status: 403 }
+      )
     }
 
     const body: ExportRequest = await request.json()

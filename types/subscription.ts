@@ -79,7 +79,7 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     limits: {
       papersPerMonth: 1,
       allowedPaperTypes: ['literatureReview'],
-      referencesVisible: 3,
+      referencesVisible: 1,
       editorChatEnabled: true, // Enabled with daily limits
       pdfExport: false,
       priorityGeneration: false,
@@ -88,7 +88,7 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     },
     features: [
       '1 literature review per month',
-      'Preview of references (3 visible)',
+      'Preview of references (1 visible)',
       'Basic generation',
       '10 AI chat messages per day',
       '10 autocompletes per day',
@@ -114,8 +114,8 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
       '5 papers per month',
       'Literature reviews, research articles & capstones',
       'Full references visible',
-      'Unlimited AI editor chat',
       'Unlimited autocomplete',
+      'Unlimited AI editor chat',
       'PDF export',
     ],
   },
@@ -139,8 +139,8 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
       '15 papers per month',
       'All paper types including theses',
       'Full references visible',
-      'Unlimited AI editor chat',
       'Unlimited autocomplete',
+      'Unlimited AI editor chat',
       'PDF export',
       'Priority generation queue',
     ],

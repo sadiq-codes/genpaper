@@ -7,7 +7,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Lock } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { isPaperTypeAllowed, getTierRequiredForPaperType, TIER_CONFIG } from '@/types/subscription'
+import type { SubscriptionTier } from '@/types/subscription'
 
 export type PaperTypeValue = 
   | 'researchArticle' 
@@ -60,17 +63,28 @@ interface PaperTypeSelectProps {
   value: PaperTypeValue
   onValueChange: (value: PaperTypeValue) => void
   disabled?: boolean
+  /** Current user tier — when provided, locks types above their tier */
+  userTier?: SubscriptionTier
 }
 
 export function PaperTypeSelect({ 
   value, 
   onValueChange, 
   disabled,
+  userTier,
 }: PaperTypeSelectProps) {
   const selectedOption = paperTypeOptions.find(opt => opt.value === value)
 
   return (
-    <Select value={value} onValueChange={onValueChange} disabled={disabled}>
+    <Select
+      value={value}
+      onValueChange={(v) => {
+        // Prevent selection of locked types
+        if (userTier && !isPaperTypeAllowed(userTier, v as PaperTypeValue)) return
+        onValueChange(v as PaperTypeValue)
+      }}
+      disabled={disabled}
+    >
       <SelectTrigger 
         className={cn(
           'h-8 px-3 text-xs',
@@ -86,20 +100,31 @@ export function PaperTypeSelect({
         </SelectValue>
       </SelectTrigger>
       <SelectContent align="start" className="rounded-xl">
-        {paperTypeOptions.map((option) => (
-          <SelectItem 
-            key={option.value} 
-            value={option.value}
-            className="py-2.5 rounded-lg"
-          >
-            <div className="flex flex-col gap-0.5">
-              <span className="font-medium text-sm">{option.label}</span>
-              <span className="text-[11px] text-muted-foreground/60">
-                {option.description}
-              </span>
-            </div>
-          </SelectItem>
-        ))}
+        {paperTypeOptions.map((option) => {
+          const locked = userTier ? !isPaperTypeAllowed(userTier, option.value) : false
+          const requiredTier = locked ? getTierRequiredForPaperType(option.value) : null
+
+          return (
+            <SelectItem 
+              key={option.value} 
+              value={option.value}
+              className={cn("py-2.5 rounded-lg", locked && "opacity-50 cursor-not-allowed")}
+              disabled={locked}
+            >
+              <div className="flex items-center gap-2">
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium text-sm">{option.label}</span>
+                  <span className="text-[11px] text-muted-foreground/60">
+                    {locked && requiredTier
+                      ? `Requires ${TIER_CONFIG[requiredTier].name} plan`
+                      : option.description}
+                  </span>
+                </div>
+                {locked && <Lock className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />}
+              </div>
+            </SelectItem>
+          )
+        })}
       </SelectContent>
     </Select>
   )

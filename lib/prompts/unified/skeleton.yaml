@@ -46,23 +46,31 @@ system: |-
   Studies show Aspergillus and Fusarium are prevalent [@cf44b32a-6ba0-4732-a0d3-696565f81cf2; @df8e4fc6-b5d6-4e60-bf18-54f49c0d703e]."
   
   DENSITY TARGETS:
-  - Literature-focused sections: 3-5 citations per paragraph
+  - Literature-focused sections: 2-3 citations per paragraph (NOT more)
   - Other sections: 1-2 citations per paragraph
-  - Never more than 3 sentences of claims without a citation
+  - Never more than 4 sentences of claims without a citation
   
-  MUST CITE: Statistics, findings, theories, methods, definitions, claims about research.
-  NO CITATION: Your own synthesis, transitions, universally accepted facts.
+  MUST CITE: Specific statistics, empirical findings, named theories, methodological choices.
+  NO CITATION NEEDED: Your own synthesis, transitions, universally accepted facts, general
+  background knowledge in the field, claims already cited in the same paragraph.
   
   CITATION PLACEMENT:
-  Place citation markers in the same sentence as the claim they support.
+  Place ONE citation per distinct claim. Do NOT stack multiple citations on the same claim
+  unless you are explicitly comparing conflicting findings from different studies.
+  ❌ Citation stacking: "Fungi cause spoilage [@a][@b][@c]" — one generic claim does not need 3 sources
+  ✅ Single best source: "Fungi cause spoilage [@a]."
+  ✅ Stacking only for contested points: "Some studies report positive effects [@a; @b], while others found no effect [@c]."
+  
   ❌ Citation dumping: "The field has evolved. Methods vary. Results differ. [@a; @b; @c]"
-  ✅ Integrated: "The field has evolved [@a], with methods varying across contexts [@b] and results differing by population [@c]."
+  ✅ Integrated: "The field has evolved [@a], with methods varying across contexts [@b]."
   
   ANTI-PATTERNS:
   ❌ Uncited claims: "Studies show..." without [@paper_id]
   ❌ Invented paper_ids not in evidence
   ❌ End-of-paragraph citation dumps after vague sentences
   ❌ Using anything other than the exact paper_id from evidence snippets
+  ❌ Citing 2+ sources for one general claim (pick the strongest single source)
+  ❌ Repeating the same fact with different citations across sentences
   
   ⚠️ INTEGRITY: Only cite paper_ids from evidence snippets.
   If evidence is insufficient, write "Evidence on this aspect is limited" - never fabricate.
@@ -117,10 +125,11 @@ system: |-
   SOURCE DIVERSITY
   ═══════════════════════════════════════════════════════════════════════════════
   
-  - Literature reviews: cite 70-100% of available papers
-  - Other sections: cite at least 50% of available papers
+  - Literature reviews: cite 50-80% of available papers across the ENTIRE paper (not every section)
+  - Other sections: cite at least 30% of available papers
   - Avoid citing same paper 3+ times consecutively
-  - Breadth demonstrates thorough scholarship: 10 papers once > 2 papers 5 times
+  - Spread sources across sections — each section uses different papers where possible
+  - Quality over quantity: one well-placed citation beats three redundant ones
   
   ═══════════════════════════════════════════════════════════════════════════════
   WRITING QUALITY
@@ -503,7 +512,7 @@ user: |-
   Do NOT output JSON. Do NOT output a citations array. Just write the section as markdown.
   
   **FINAL CHECKLIST:**
-  □ Every paragraph has 2-3+ [@paper_id] citations from evidence
+  □ Each paragraph has 1-3 [@paper_id] citations (no more — quality over quantity)
   □ Content is SYNTHESIZED (comparing/integrating), not just described
   □ Pre-analyzed statistics used EXACTLY as provided
   □ No fabricated citations or paper_ids
