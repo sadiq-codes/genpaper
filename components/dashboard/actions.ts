@@ -133,6 +133,15 @@ export async function createProjectAction(
   try {
     const isWriteMode = generationMode === 'write'
     
+    // Billing gate: check paper quota before creating the project (skip for write-only mode)
+    if (!isWriteMode) {
+      const { checkCanStartGeneration } = await import('@/lib/billing/gates')
+      const gateCheck = await checkCanStartGeneration(user.id, paperType as import('@/types/simplified').PaperTypeKey)
+      if (!gateCheck.allowed) {
+        return { success: false, error: gateCheck.reason || 'You have reached your paper generation limit. Please upgrade your plan.' }
+      }
+    }
+    
     // Parse freeform topic input to extract clean title + custom instructions
     const parsed = await parseTopicInput(topic.trim())
     const projectTitle = parsed.title

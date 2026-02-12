@@ -86,7 +86,7 @@ export function ResearchEditor({
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
   const [currentTitle, setCurrentTitle] = useState(projectTitle)
   const router = useRouter()
-  const { subscription } = useSubscription()
+  const { subscription, refresh: refreshSubscription } = useSubscription()
   // Default to locked while subscription is loading — unlocks once tier is confirmed
   const exportLocked = !subscription || subscription.tier === 'free'
 
@@ -414,6 +414,10 @@ export function ResearchEditor({
       }
 
       if (editor && !editor.isDestroyed) {
+        // Sync papers to Citation extension storage BEFORE setting content,
+        // so ReferencesNodeView can resolve paper metadata immediately.
+        editor.commands.setPapers(freshPapers)
+
         const { json, isFullDoc } = processContent(generatedContent, freshPapers)
 
         if (isFullDoc && json) {
@@ -454,8 +458,11 @@ export function ResearchEditor({
 
       // Refresh server data for any remaining state
       router.refresh()
+
+      // Refresh subscription data so paper count reflects the new generation
+      refreshSubscription()
     },
-    [editor, papers, projectId, setPapers, setContentSilent, markAsEdited, router]
+    [editor, papers, projectId, setPapers, setContentSilent, markAsEdited, router, refreshSubscription]
   )
 
   // Handle generation error
