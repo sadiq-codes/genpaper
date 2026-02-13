@@ -50,12 +50,8 @@ export async function sendDraftNotification(post: {
   }
   
   try {
-    // Use Resend's default domain until genpaper.ai is verified
-    // To verify: go to https://resend.com/domains and add genpaper.ai
-    const fromEmail = process.env.RESEND_FROM_EMAIL || 'GenPaper <onboarding@resend.dev>'
-    
     const { error } = await client.emails.send({
-      from: fromEmail,
+      from: 'GenPaper <noreply@genpaper.ai>',
       to: adminEmail,
       subject: `[GenPaper] New blog draft: ${post.title}`,
       html: `
