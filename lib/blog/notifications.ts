@@ -53,7 +53,7 @@ export async function sendDraftNotification(post: {
     const { error } = await client.emails.send({
       from: 'GenPaper <noreply@genpaper.ai>',
       to: adminEmail,
-      subject: `[GenPaper] New blog draft: ${post.title}`,
+      subject: `New blog draft: ${post.title}`,
       html: `
         <!DOCTYPE html>
         <html>
@@ -61,31 +61,30 @@ export async function sendDraftNotification(post: {
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
           </head>
-          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0;">
-              <h1 style="color: white; margin: 0; font-size: 24px;">New Blog Draft</h1>
-            </div>
-            
-            <div style="background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 10px 10px;">
-              <p style="margin-top: 0;">A new blog post draft has been created by your AI agent:</p>
-              
-              <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #e5e7eb; margin: 20px 0;">
-                <h2 style="margin: 0 0 10px 0; font-size: 18px;">${post.title}</h2>
-                <p style="color: #6b7280; margin: 0;">${post.description}</p>
+          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 480px; margin: 0 auto; padding: 40px 20px; background-color: #fafafa;">
+            <div style="background: #ffffff; border-radius: 8px; border: 1px solid #e5e5e5; padding: 40px;">
+              <div style="text-align: center; margin-bottom: 32px;">
+                <h1 style="font-size: 20px; font-weight: 600; margin: 0; letter-spacing: -0.02em;">GenPaper</h1>
               </div>
               
-              <a href="${BASE_URL}/admin/blog/${post.slug}" 
-                 style="display: inline-block; background: #4f46e5; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 500;">
-                Review & Publish
-              </a>
+              <p style="margin: 0 0 16px 0; color: #1a1a1a;">New blog draft created</p>
               
-              <p style="color: #6b7280; font-size: 14px; margin-top: 20px;">
-                This post is saved as a draft and won't be visible on your blog until you publish it.
-              </p>
+              <p style="margin: 0 0 24px 0; color: #666666;">Your AI agent has created a new blog post draft for review.</p>
+              
+              <div style="background: #fafafa; padding: 16px; border-radius: 6px; border: 1px solid #e5e5e5; margin: 24px 0;">
+                <p style="margin: 0 0 4px 0; font-weight: 500; color: #1a1a1a;">${post.title}</p>
+                <p style="margin: 0; color: #666666; font-size: 14px;">${post.description}</p>
+              </div>
+              
+              <div style="text-align: center; margin: 32px 0;">
+                <a href="${BASE_URL}/admin/blog/${post.slug}" style="display: inline-block; background: #1a1a1a; color: #ffffff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500;">Review & publish</a>
+              </div>
+              
+              <p style="margin: 24px 0 0 0; color: #999999; font-size: 13px;">This draft won't be visible until you publish it.</p>
             </div>
             
-            <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 20px;">
-              Sent from GenPaper Blog System
+            <p style="color: #999999; font-size: 12px; text-align: center; margin-top: 24px;">
+              <a href="https://genpaper.ai" style="color: #999999; text-decoration: none;">genpaper.ai</a>
             </p>
           </body>
         </html>
