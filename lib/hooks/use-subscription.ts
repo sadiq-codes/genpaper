@@ -156,6 +156,14 @@ export function useSubscription(): UseSubscriptionResult {
 /**
  * Get checkout URL for a specific tier and billing interval
  */
+// Product IDs - these get inlined at build time by Next.js
+const PRODUCT_IDS = {
+  starter: process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER,
+  starter_yearly: process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_YEARLY,
+  pro: process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO,
+  pro_yearly: process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_YEARLY,
+} as const
+
 export function getCheckoutUrl(
   tier: 'starter' | 'pro',
   options?: {
@@ -170,12 +178,17 @@ export function getCheckoutUrl(
   let productId: string | undefined
   if (tier === 'pro') {
     productId = interval === 'yearly'
-      ? process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO_YEARLY
-      : process.env.NEXT_PUBLIC_POLAR_PRODUCT_PRO
+      ? PRODUCT_IDS.pro_yearly
+      : PRODUCT_IDS.pro
   } else {
     productId = interval === 'yearly'
-      ? process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER_YEARLY
-      : process.env.NEXT_PUBLIC_POLAR_PRODUCT_STARTER
+      ? PRODUCT_IDS.starter_yearly
+      : PRODUCT_IDS.starter
+  }
+  
+  // Debug: log if product ID is missing
+  if (!productId) {
+    console.error(`[Checkout] Missing product ID for tier=${tier}, interval=${interval}`, PRODUCT_IDS)
   }
   
   const params = new URLSearchParams()
