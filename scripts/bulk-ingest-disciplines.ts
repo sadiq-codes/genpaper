@@ -33,9 +33,10 @@ import fs from 'fs'
 // ---------------------------------------------------------------------------
 
 const OPENALEX_BASE = 'https://api.openalex.org/works'
-const PAGE_SIZE = 200
-const EMBED_BATCH = 100  // Increased from 50 for faster embedding
-const DB_BATCH = 200     // Increased from 100 for faster DB writes
+const PAGE_SIZE = 50     // Reduced from 200 to ease DB load
+const EMBED_BATCH = 25   // Reduced from 100 to ease DB load
+const DB_BATCH = 50      // Reduced from 200 to ease DB load
+const DB_DELAY_MS = 2000 // Delay between DB batches to let Supabase breathe
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 const PROGRESS_FILE = '.bulk-ingest-disciplines-progress.json'
 const MAX_RATE_LIMIT_RETRIES = 5  // Max retries before moving on
@@ -588,9 +589,14 @@ async function ingestDiscipline(
     
     if (paperError) {
       console.error(`  ❌ Paper insert error: ${paperError.message}`)
+      // On error, wait longer before retrying
+      await sleep(DB_DELAY_MS * 2)
       cursor = nextCursor
       continue
     }
+    
+    // Delay to let Supabase breathe
+    await sleep(DB_DELAY_MS)
     
     // Insert abstract chunks to Supabase (WITHOUT embeddings - Qdrant only)
     const chunkRowsForSupabase = papersToInsert.map((p) => ({
@@ -604,6 +610,9 @@ async function ingestDiscipline(
     await supabase
       .from('paper_chunks')
       .upsert(chunkRowsForSupabase, { onConflict: 'id', ignoreDuplicates: true })
+    
+    // Delay to let Supabase breathe
+    await sleep(DB_DELAY_MS)
     
     // Insert embeddings ONLY into Qdrant
     if (isQdrantConfigured()) {
@@ -671,8 +680,8 @@ async function ingestDiscipline(
     cursor = nextCursor
     if (!cursor) break
     
-    // Small delay to be nice to API
-    await sleep(100)
+    // Delay between pages to be nice to APIs and let DB recover
+    await sleep(DB_DELAY_MS)
   }
   
   console.log(`  ✅ ${name} complete: ${ingested} papers, ${pdfsProcessed} PDFs`)
