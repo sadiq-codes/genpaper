@@ -30,6 +30,7 @@ const NAV_LINKS = [
   { href: "#features", label: "Features" },
   { href: "#how-it-works", label: "How it Works" },
   { href: "#pricing", label: "Pricing" },
+  { href: "/blog", label: "Blog" },
 ]
 
 // ─── Scroll-triggered reveal ───────────────────────────────────────────────────
