@@ -46,18 +46,27 @@ export async function GET(request: NextRequest) {
     console.log(`[Checkout] API URL: ${apiUrl}`)
     console.log(`[Checkout] Success URL: ${appUrl}/settings?checkout=success#billing`)
 
+    // Build request body - only include email if provided and valid
+    const requestBody: Record<string, unknown> = {
+      products: [productId],
+      success_url: `${appUrl}/settings?checkout=success#billing`,
+    }
+    
+    // Only add customer fields if they're provided
+    if (customerEmail) {
+      requestBody.customer_email = customerEmail
+    }
+    if (customerExternalId) {
+      requestBody.customer_external_id = customerExternalId
+    }
+
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${polarToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        product_id: productId,
-        success_url: `${appUrl}/settings?checkout=success#billing`,
-        customer_email: customerEmail || undefined,
-        customer_external_id: customerExternalId || undefined,
-      }),
+      body: JSON.stringify(requestBody),
     })
 
     if (!response.ok) {
