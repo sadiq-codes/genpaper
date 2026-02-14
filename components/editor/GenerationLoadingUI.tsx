@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useRef, useMemo, memo, useState } from "react"
+import { useEffect, useRef, useMemo, memo } from "react"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { 
@@ -14,8 +14,7 @@ import {
   XCircle, 
   AlertCircle, 
   X,
-  FileStack,
-  Smartphone
+  FileStack
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -340,28 +339,6 @@ function LiveContentPreview({
 // STATUS PANEL
 // =============================================================================
 
-// Mobile detection hook
-function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(false)
-  
-  useEffect(() => {
-    const checkMobile = () => {
-      const userAgent = navigator.userAgent || navigator.vendor
-      const isMobileUA = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase())
-      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
-      const isSmallScreen = window.innerWidth < 768
-      
-      setIsMobile(isMobileUA || (isTouchDevice && isSmallScreen))
-    }
-    
-    checkMobile()
-    window.addEventListener('resize', checkMobile)
-    return () => window.removeEventListener('resize', checkMobile)
-  }, [])
-  
-  return isMobile
-}
-
 function StatusPanel({
   topic,
   progress,
@@ -374,30 +351,9 @@ function StatusPanel({
   onCancel,
   onRetry,
 }: Omit<GenerationLoadingUIProps, 'currentStage' | 'currentSectionContent' | 'generatedContent' | 'completedSections'>) {
-  const isMobile = useIsMobile()
-  const [dismissedWarning, setDismissedWarning] = useState(false)
-  
   return (
-    <div className="flex flex-col h-full p-6 space-y-5">
-      {/* Mobile Warning Banner */}
-      {isMobile && !dismissedWarning && !error && progress < 100 && (
-        <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
-          <Smartphone className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-          <div className="flex-1 text-xs">
-            <p className="font-medium">Keep this tab open</p>
-            <p className="text-amber-600 dark:text-amber-500 mt-0.5">
-              Switching apps may interrupt generation
-            </p>
-          </div>
-          <button 
-            onClick={() => setDismissedWarning(true)}
-            className="text-amber-600 hover:text-amber-700 dark:text-amber-500"
-            aria-label="Dismiss warning"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      )}
+    <div className="flex flex-col h-full p-4 md:p-6 space-y-3 md:space-y-5">
+
 
       {/* Header */}
       <div className="space-y-1">
@@ -452,7 +408,7 @@ function StatusPanel({
       </div>
 
       {/* Stage list */}
-      <div className="flex-1 space-y-0.5 overflow-y-auto">
+      <div className="space-y-0.5 overflow-y-auto">
         {stages.map((stage) => (
           <div
             key={stage.id}
@@ -487,7 +443,7 @@ function StatusPanel({
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2 pt-3 border-t border-border/30">
+      <div className="flex gap-2 pt-2 md:pt-3 border-t border-border/30 mt-auto">
         {error ? (
           <>
             <button
@@ -537,8 +493,8 @@ export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
   const showLiveContent = isGenerating && (hasContent || currentSection)
 
   return (
-    <div className="absolute inset-0 z-50 bg-background/98 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-5xl h-[min(85vh,700px)] bg-card border border-border/40 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="absolute inset-0 z-50 bg-background/98 backdrop-blur-sm flex items-center justify-center p-2 md:p-4">
+      <div className="w-full max-w-5xl h-[min(70vh,550px)] md:h-[min(85vh,700px)] bg-card border border-border/40 rounded-2xl shadow-2xl overflow-hidden">
         <div className="h-full flex flex-col md:flex-row">
           {/* Left: Paper Preview or Skeleton */}
           <div className="flex-1 border-b md:border-b-0 md:border-r border-border/30 overflow-hidden bg-muted/20">
