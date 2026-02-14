@@ -6,16 +6,7 @@ export const inngest = new Inngest({
   id: "genpaper",
   // In development, Inngest Dev Server runs locally
   // In production, uses INNGEST_EVENT_KEY and INNGEST_SIGNING_KEY from env
-  
-  // Enable checkpointing for better performance with long-running steps
-  // This executes steps eagerly on the server and checkpoints progress to Inngest
-  // Dramatically reduces latency and avoids "stream timeout" errors from HTTP timeouts
-  // See: https://www.inngest.com/docs/setup/checkpointing
-  checkpointing: {
-    // Azure Container Apps has no hard timeout limit, but we set a reasonable max
-    // to ensure the function eventually returns and checkpoints are sent
-    maxRuntime: "10m",
-  },
+
 });
 
 // Event types for type safety
