@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useRef, useMemo, memo } from "react"
+import { useEffect, useRef, useMemo, memo, useState } from "react"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { 
@@ -353,8 +353,6 @@ function StatusPanel({
 }: Omit<GenerationLoadingUIProps, 'currentStage' | 'currentSectionContent' | 'generatedContent' | 'completedSections'>) {
   return (
     <div className="flex flex-col h-full p-4 md:p-6 space-y-3 md:space-y-5">
-
-
       {/* Header */}
       <div className="space-y-1">
         <h2 className="font-instrument text-lg tracking-tight">Generating Paper</h2>
