@@ -18,7 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 import type {
   ProjectPaper,
@@ -55,6 +55,8 @@ interface ResearchEditorProps {
   citationStyle?: string
   onSave?: (content: string) => void
   isGenerating?: boolean
+  /** Project failed mid-generation — show regenerate option */
+  isFailed?: boolean
   /** Write mode - user wants to write themselves, papers found in background */
   isWriteMode?: boolean
 }
@@ -69,6 +71,7 @@ export function ResearchEditor({
   citationStyle = "apa",
   onSave,
   isGenerating: initialIsGenerating = false,
+  isFailed = false,
   isWriteMode = false,
 }: ResearchEditorProps) {
   // ============================================================================
@@ -482,6 +485,11 @@ export function ResearchEditor({
     window.location.href = "/projects"
   }, [])
 
+  // Handle regenerate for failed projects
+  const handleRegenerate = useCallback(() => {
+    setIsGenerating(true)
+  }, [])
+
   // Handle adding paper from library drawer
   const handleAddPaperToProject = useCallback(
     (paperId: string, title: string) => {
@@ -577,6 +585,20 @@ export function ResearchEditor({
             onError={handleGenerationError}
             onCancel={handleGenerationCancel}
           />
+        )}
+
+        {/* Failed generation banner */}
+        {isFailed && !isGenerating && (
+          <div className="flex items-center justify-center gap-3 px-4 py-3 bg-destructive/5 border-b border-destructive/10">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+            <p className="text-sm text-muted-foreground">
+              Generation failed. You can try again or start writing manually.
+            </p>
+            <Button size="sm" variant="outline" className="shrink-0 gap-1.5" onClick={handleRegenerate}>
+              <RotateCcw className="h-3.5 w-3.5" />
+              Regenerate
+            </Button>
+          </div>
         )}
 
         {/* Main Content Area */}

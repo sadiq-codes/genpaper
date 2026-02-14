@@ -136,6 +136,9 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     project.status === 'generating' && 
     !project.content
 
+  // Determine if project failed mid-generation and needs a retry option
+  const isFailed = project.status === 'failed' && !project.content
+
   // Determine paperType
   const resolvedPaperType = (() => {
     if (project.paper_type) {
@@ -160,6 +163,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         citationStyle={citationStyle}
         onSave={undefined}
         isGenerating={shouldShowGeneration}
+        isFailed={isFailed}
         isWriteMode={isWriteMode}
       />
     </div>

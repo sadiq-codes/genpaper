@@ -426,6 +426,22 @@ export const generatePaperFunction = inngest.createFunction(
     // Steps N+3 to M: Generate Sections
     // =========================================================================
     const sectionCount = contextsResult.contextCount;
+
+    // Validate context cache before entering section steps.
+    // If this is missing, section-0 can spend most of its budget rebuilding contexts
+    // and then time out before writing starts.
+    await step.run("verify-context-cache", async () => {
+      const cachedContexts = await loadContextCache<SectionContext>(runId);
+      if (!cachedContexts || cachedContexts.length === 0) {
+        throw new Error("Context cache missing before section generation");
+      }
+      if (cachedContexts.length < sectionCount) {
+        throw new Error(
+          `Context cache incomplete before section generation (${cachedContexts.length}/${sectionCount})`
+        );
+      }
+      return { cachedContextCount: cachedContexts.length };
+    });
     
     for (let sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
       await step.run(`section-${sectionIndex}`, async () => {
@@ -433,25 +449,8 @@ export const generatePaperFunction = inngest.createFunction(
         if (run?.status === "cancelled") throw new Error("Run was cancelled");
 
         const state = await getPipelineState(runId);
-        if (!state.paperIds || !state.profile) {
+        if (!state.profile) {
           throw new Error("State incomplete for section generation");
-        }
-
-        const papers = await getPapersByIds(state.paperIds);
-        
-        // Rebuild theme result
-        let themeResult: HybridThemeExtractionResult | null = null;
-        if (state.themeAnalysis) {
-          themeResult = {
-            analysisResult: state.themeAnalysis,
-            extractionStats: {
-              papersProcessed: papers.length,
-              papersExtracted: 0,
-              papersFromCache: 0,
-              totalFindings: contextsResult.totalFindings,
-              extractionTimeMs: 0,
-            },
-          };
         }
 
         const pipelineConfig: PipelineConfig = {
@@ -467,17 +466,11 @@ export const generatePaperFunction = inngest.createFunction(
           originalResearch: config.originalResearch,
         };
 
-        // Load cached contexts (fall back to rebuild if cache miss)
-        let contexts = await loadContextCache<SectionContext>(runId);
-        if (!contexts) {
-          console.log(`[section-${sectionIndex}] Context cache miss, rebuilding...`);
-          contexts = await runBuildContextsPhase(
-            state.profile,
-            papers,
-            themeResult,
-            pipelineConfig
-          );
-          await saveContextCache(runId, contexts);
+        // Load cached contexts only. Do not rebuild inside section steps; that
+        // fallback makes section-0 too expensive and causes cloud timeouts.
+        const contexts = await loadContextCache<SectionContext>(runId);
+        if (!contexts || contexts.length === 0) {
+          throw new Error(`Context cache missing during section-${sectionIndex}`);
         }
 
         const context = contexts[sectionIndex];

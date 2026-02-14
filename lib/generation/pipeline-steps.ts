@@ -448,9 +448,9 @@ export async function runSectionGenerationPhase(
     : undefined
   
   // Calculate token budget from this section's own word target (not averaged across sections).
-  // Generous 3× multiplier: ~1.5 tokens/word × 2× headroom so the LLM is never token-starved.
+  // Keep this bounded so a single section step doesn't run into platform request timeouts.
   const sectionTargetWords = context.expectedWords || Math.round((profile.outline?.totalEstimatedWords || 10000) / totalSections)
-  const perSectionTokens = Math.max(4000, Math.round(sectionTargetWords * 3))
+  const perSectionTokens = Math.min(1800, Math.max(1100, Math.round(sectionTargetWords * 1.8)))
   
   // Build outline tree
   const outlineTree = profile.outline?.sections
@@ -480,7 +480,7 @@ export async function runSectionGenerationPhase(
 
   // With generateText (no JSON overhead, no early stopping), subsection splitting
   // is only needed for very long sections (thesis/dissertation chapters).
-  const SUBSECTION_WORD_THRESHOLD = 2500
+  const SUBSECTION_WORD_THRESHOLD = 1800
   const shouldSplit = sectionTargetWords >= SUBSECTION_WORD_THRESHOLD
 
   let contextForGeneration = context
@@ -844,7 +844,7 @@ export async function runFinalizePhase(
   }
   
   // Update project status
-  await updateResearchProjectStatus(projectId, 'completed' as PaperStatus)
+  await updateResearchProjectStatus(projectId, 'complete' as PaperStatus)
   
   info({
     wordCount: fullContent.split(/\s+/).length,

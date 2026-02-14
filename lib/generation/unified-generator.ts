@@ -92,6 +92,27 @@ function resolveGenOptions(options: BuildPromptOptions): Required<Pick<BuildProm
   }
 }
 
+const SECTION_LLM_TIMEOUT_MS = 120_000
+
+async function generateTextWithTimeout(input: Parameters<typeof generateText>[0]) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), SECTION_LLM_TIMEOUT_MS)
+
+  try {
+    return await generateText({
+      ...input,
+      abortSignal: controller.signal,
+    })
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`Section generation timed out after ${Math.round(SECTION_LLM_TIMEOUT_MS / 1000)}s`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 // Direct prompt building - no caching complexity
 async function buildPromptData(
   context: SectionContext, 
@@ -161,7 +182,7 @@ export async function generateWithUnifiedTemplate(
   
   const resolvedOptions = resolveGenOptions(options)
 
-  const { text, usage } = await generateText({
+  const { text, usage } = await generateTextWithTimeout({
     model: getLanguageModel(),
     system: promptData.system,
     prompt: promptData.user,
@@ -292,8 +313,8 @@ export async function generateSectionBySubsections(
     // Build options for this subsection
     const subOptions: BuildPromptOptions = { ...options }
     subOptions.targetWords = subTargetWords
-    // Generous 3× multiplier so subsections are never token-starved
-    subOptions.maxTokens = Math.max(4000, Math.round(subTargetWords * 3))
+    // Keep subsection calls bounded for cloud runtime reliability.
+    subOptions.maxTokens = Math.min(1600, Math.max(900, Math.round(subTargetWords * 1.8)))
 
     // Inject parent section context so the model knows this is a subsection, not a top-level section
     const parentFraming = `You are writing subsection "${sub.title}" (${i + 1} of ${subsections.length}) inside section "${parentContext.title}". Stay within the subsection scope — do not reintroduce broad context that belongs to the parent section or earlier subsections.`
