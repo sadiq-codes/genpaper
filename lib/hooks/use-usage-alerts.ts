@@ -83,7 +83,7 @@ export function useUsageAlerts() {
       alertKey = `${type}-0`
       message = `You've used all ${limit} ${config.plural} ${config.period}.`
       variant = 'error'
-    } else if (remaining === 1) {
+    } else if (remaining === 1 && used > 0) {
       alertKey = `${type}-1`
       message = `Only 1 ${config.singular} remaining ${config.period}.`
       variant = 'warning'

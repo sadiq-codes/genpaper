@@ -103,6 +103,11 @@ export const generatePaperFunction = inngest.createFunction(
       limit: 1,
       key: "event.data.userId",
     },
+    // Allow up to 30 minutes for the entire paper generation process
+    // Individual steps can take several minutes (LLM generation for long sections)
+    timeouts: {
+      finish: "30m",
+    },
     // Handle function failures - emit error to UI
     onFailure: async ({ event, error }) => {
       // Inngest's onFailure event shape can vary by SDK/runtime.
