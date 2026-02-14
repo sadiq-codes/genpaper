@@ -1303,3 +1303,26 @@ kbd {
 .ProseMirror .references-block.ProseMirror-selectednode {
   @apply outline outline-2 outline-primary/20 outline-offset-2 rounded-lg;
 }
+
+/* Blog anchor links for headings */
+.anchor-link {
+  @apply no-underline text-inherit;
+}
+
+.anchor-link:hover {
+  @apply text-inherit;
+}
+
+/* Show hash link icon on hover */
+.prose h2:hover .anchor-link::before,
+.prose h3:hover .anchor-link::before,
+.prose h4:hover .anchor-link::before {
+  content: "#";
+  @apply absolute -ml-6 text-muted-foreground/50 font-normal;
+}
+
+.prose h2,
+.prose h3,
+.prose h4 {
+  @apply relative;
+}

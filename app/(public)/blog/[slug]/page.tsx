@@ -2,6 +2,8 @@ import { notFound } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { MDXRemote } from "next-mdx-remote/rsc"
+import rehypeSlug from "rehype-slug"
+import rehypeAutolinkHeadings from "rehype-autolink-headings"
 import { getAllPostSlugs, getPostBySlug, getRelatedPosts } from "@/lib/blog/mdx"
 import { formatDate } from "@/lib/utils"
 import type { Metadata } from "next"
@@ -50,13 +52,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 // Custom MDX components
 const components = {
   h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h1 className="font-instrument text-3xl md:text-4xl tracking-tight mt-8 mb-4" {...props} />
+    <h1 className="font-instrument text-3xl md:text-4xl tracking-tight mt-8 mb-4 scroll-mt-20" {...props} />
   ),
   h2: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h2 className="font-instrument text-2xl md:text-3xl tracking-tight mt-8 mb-4" {...props} />
+    <h2 className="font-instrument text-2xl md:text-3xl tracking-tight mt-8 mb-4 scroll-mt-20 group" {...props} />
   ),
   h3: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h3 className="font-instrument text-xl md:text-2xl tracking-tight mt-6 mb-3" {...props} />
+    <h3 className="font-instrument text-xl md:text-2xl tracking-tight mt-6 mb-3 scroll-mt-20 group" {...props} />
   ),
   p: (props: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p className="text-muted-foreground leading-relaxed mb-4" {...props} />
@@ -235,7 +237,23 @@ export default async function BlogPostPage({ params }: Props) {
 
           {/* Content */}
           <div className="prose prose-neutral dark:prose-invert max-w-none">
-            <MDXRemote source={post.content} components={components} />
+            <MDXRemote 
+              source={post.content} 
+              components={components}
+              options={{
+                mdxOptions: {
+                  rehypePlugins: [
+                    rehypeSlug,
+                    [rehypeAutolinkHeadings, { 
+                      behavior: "wrap",
+                      properties: {
+                        className: ["anchor-link"],
+                      }
+                    }],
+                  ],
+                },
+              }}
+            />
           </div>
 
           {/* CTA */}
