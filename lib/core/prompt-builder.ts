@@ -327,7 +327,9 @@ Provide specific, actionable feedback on:
   }>): string {
     // Ensure paper diversity: select at least one chunk per unique paper first,
     // then fill remaining slots with highest-relevance chunks
-    const MAX_CHUNKS = 50
+    const MAX_CHUNKS = 24
+    const MAX_CHARS_PER_CHUNK = 320
+    const MAX_TOTAL_EVIDENCE_CHARS = 18_000
     const seenPapers = new Set<string>()
     const diverseChunks: typeof chunks = []
     const remainingChunks: typeof chunks = []
@@ -352,12 +354,20 @@ Provide specific, actionable feedback on:
     
     // Format as plain text blocks with prominent paper_id for easy copying into [@paper_id] markers.
     // No JSON wrapper — saves tokens and makes paper_id visually prominent.
-    return selectedChunks.map((chunk) => {
+    let usedChars = 0
+    const lines: string[] = []
+    for (const chunk of selectedChunks) {
       const strength = chunk.evidence_strength || 'full_text'
       const title = chunk.title || 'Source'
-      const content = chunk.content.slice(0, 500) + (chunk.content.length > 500 ? '...' : '')
-      return `--- paper_id: ${chunk.paper_id} ---\nTitle: ${title}\nStrength: ${strength}\n${content}`
-    }).join('\n\n')
+      const content = chunk.content.slice(0, MAX_CHARS_PER_CHUNK) + (chunk.content.length > MAX_CHARS_PER_CHUNK ? '...' : '')
+      const block = `--- paper_id: ${chunk.paper_id} ---\nTitle: ${title}\nStrength: ${strength}\n${content}`
+      if (usedChars + block.length > MAX_TOTAL_EVIDENCE_CHARS) {
+        break
+      }
+      lines.push(block)
+      usedChars += block.length + 2
+    }
+    return lines.join('\n\n')
   }
 
   static buildSectionPath(sections: string[], currentSection: string): string {

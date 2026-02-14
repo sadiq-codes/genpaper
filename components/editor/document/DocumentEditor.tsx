@@ -381,8 +381,10 @@ export function DocumentEditor({
     if (!editor || editor.isDestroyed) return
     if (!initialContent || initialContent.trim() === '') return
     
-    // Skip if we already processed the same content + papers combination
-    const key = `${initialContent.length}:${papers.length}:${papers[0]?.id ?? ''}`
+    // Skip if we already processed the same content payload.
+    // Do not key this by papers, otherwise late paper-sync updates can
+    // overwrite in-progress user edits by reapplying initial content.
+    const key = `${initialContent.length}:${initialContent.slice(0, 80)}:${initialContent.slice(-80)}`
     if (processedKey === key) return
     
     // Process and set the initial content

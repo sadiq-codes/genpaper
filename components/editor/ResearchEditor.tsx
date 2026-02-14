@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useCallback, useEffect, useRef } from "react"
-import { useRouter } from "next/navigation"
 import type { Editor } from "@tiptap/react"
 import { EditorTopNav } from "./EditorTopNav"
 import { EditorSidebar } from "./sidebar/EditorSidebar"
@@ -88,7 +87,7 @@ export function ResearchEditor({
   const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
   const [currentTitle, setCurrentTitle] = useState(projectTitle)
-  const router = useRouter()
+  const [generatedContentOverride, setGeneratedContentOverride] = useState<string | null>(null)
   const { subscription, refresh: refreshSubscription } = useSubscription()
   // Default to locked while subscription is loading — unlocks once tier is confirmed
   const exportLocked = !subscription || subscription.tier === 'free'
@@ -391,37 +390,19 @@ export function ResearchEditor({
   // Handle generation completion
   const handleGenerationComplete = useCallback(
     async (generatedContent: string) => {
-      setIsGenerating(false)
+      // Ensure DocumentEditor always has a concrete content source, even if the TipTap
+      // instance is not ready yet at completion time.
+      setGeneratedContentOverride(generatedContent)
 
-      // Fetch fresh papers from the API so citations and references render immediately.
-      // Retry with back-off because project_papers associations may still be committing.
-      let freshPapers = papers
-      if (projectId) {
-        const delays = [0, 1500, 3000] // immediate, 1.5s, 3s
-        for (const delay of delays) {
-          if (delay > 0) await new Promise(r => setTimeout(r, delay))
-          try {
-            const res = await fetch(`/api/editor/papers?projectId=${projectId}`)
-            if (res.ok) {
-              const data = await res.json()
-              if (Array.isArray(data.papers) && data.papers.length > 0) {
-                freshPapers = data.papers
-                setPapers(freshPapers)
-                break
-              }
-            }
-          } catch (err) {
-            console.warn('[Generation] Failed to fetch papers after generation:', err)
-          }
-        }
-      }
-
+      // Render generated content immediately with whatever papers we have right now.
+      // Do NOT block on delayed paper association fetches.
+      const immediatePapers = papers
       if (editor && !editor.isDestroyed) {
         // Sync papers to Citation extension storage BEFORE setting content,
         // so ReferencesNodeView can resolve paper metadata immediately.
-        editor.commands.setPapers(freshPapers)
+        editor.commands.setPapers(immediatePapers)
 
-        const { json, isFullDoc } = processContent(generatedContent, freshPapers)
+        const { json, isFullDoc } = processContent(generatedContent, immediatePapers)
 
         if (isFullDoc && json) {
           editor.commands.setContent(json)
@@ -449,6 +430,8 @@ export function ResearchEditor({
         markAsEdited()
       }
 
+      // Stop the generation overlay only after the content has been applied.
+      setIsGenerating(false)
       toast.success("Paper generated successfully!")
 
       // Collapse sidebar so the user sees the full generated document
@@ -459,13 +442,35 @@ export function ResearchEditor({
       url.searchParams.delete("created")
       window.history.replaceState({}, "", url.toString())
 
-      // Refresh server data for any remaining state
-      router.refresh()
-
       // Refresh subscription data so paper count reflects the new generation
       refreshSubscription()
+
+      // Backfill paper metadata in the background so references/citation details become
+      // complete without requiring a manual page refresh.
+      if (projectId) {
+        void (async () => {
+          const delays = [0, 1200, 2500, 4500, 7000]
+          for (const delay of delays) {
+            if (delay > 0) await new Promise(r => setTimeout(r, delay))
+            try {
+              const res = await fetch(`/api/editor/papers?projectId=${projectId}`)
+              if (!res.ok) continue
+              const data = await res.json()
+              if (!Array.isArray(data.papers) || data.papers.length === 0) continue
+
+              setPapers(data.papers)
+              if (editor && !editor.isDestroyed) {
+                editor.commands.setPapers(data.papers)
+              }
+              return
+            } catch (err) {
+              console.warn('[Generation] Deferred paper sync failed:', err)
+            }
+          }
+        })()
+      }
     },
-    [editor, papers, projectId, setPapers, setContentSilent, markAsEdited, router, refreshSubscription]
+    [editor, papers, projectId, setPapers, setContentSilent, markAsEdited, refreshSubscription]
   )
 
   // Handle generation error
@@ -651,7 +656,7 @@ export function ResearchEditor({
             {/* Editor */}
             <div className="flex-1 overflow-hidden">
               <DocumentEditor
-                initialContent={initialContent}
+                initialContent={generatedContentOverride ?? initialContent}
                 onUpdate={(newContent) => {
                   setContent(newContent)
                 }}

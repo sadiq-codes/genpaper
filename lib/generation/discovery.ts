@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { getPapersByIds as getLibraryPapersByIds } from '@/lib/db/library'
 import type { EnhancedGenerationOptions } from './types'
 import { isDirectPdfUrl, isLandingPageUrl } from '@/lib/config/pdf-domains'
+import pLimit from 'p-limit'
 
 // Helper function to check if URL is likely a direct PDF or open access article
 // Uses centralized domain lists from lib/config/pdf-domains.ts
@@ -149,36 +150,59 @@ export async function collectPapers(
         console.log(`🎓 Discipline filter: ${discipline}`)
       }
       
-      // Search with multiple queries and merge results
+      // Search with phased query caps to avoid source-overload storms.
       const allPaperIds = new Set<string>()
       const allPapers: PaperWithAuthors[] = []
-      
-      for (const query of searchQueries) {
-        // Adjust max results per query to avoid too many total
-        const perQueryMax = Math.ceil(remainingSlots / searchQueries.length) + 5
-        const queryOptions = { ...searchOptions, maxResults: perQueryMax }
-        
-        console.log(`🔍 Searching: "${query.slice(0, 60)}${query.length > 60 ? '...' : ''}"`)
-        
-        const searchResult = await unifiedSearch(query, queryOptions)
-        
-        // Add unique papers
-        for (const paper of searchResult.papers as PaperWithAuthors[]) {
-          if (!allPaperIds.has(paper.id)) {
-            allPaperIds.add(paper.id)
-            allPapers.push(paper)
+      const QUERY_PHASE_SIZES = [1, 2, 3] // Remaining queries after these phases are skipped.
+      const QUERY_PHASE_CONCURRENCY = 2
+      const limit = pLimit(QUERY_PHASE_CONCURRENCY)
+      let queryCursor = 0
+
+      for (let phaseIndex = 0; phaseIndex < QUERY_PHASE_SIZES.length; phaseIndex++) {
+        if (allPapers.length >= remainingSlots || queryCursor >= searchQueries.length) break
+
+        const take = QUERY_PHASE_SIZES[phaseIndex]
+        const phaseQueries = searchQueries.slice(queryCursor, queryCursor + take)
+        queryCursor += phaseQueries.length
+        if (phaseQueries.length === 0) continue
+
+        const slotsLeft = Math.max(0, remainingSlots - allPapers.length)
+        const perQueryMax = Math.max(5, Math.ceil(slotsLeft / phaseQueries.length) + 4)
+        console.log(`🔍 Discovery phase ${phaseIndex + 1}: ${phaseQueries.length} query(ies), per-query cap ${perQueryMax}`)
+
+        const phaseResults = await Promise.allSettled(
+          phaseQueries.map(query => limit(async () => {
+            const queryOptions = { ...searchOptions, maxResults: perQueryMax }
+            console.log(`🔎 Searching: "${query.slice(0, 60)}${query.length > 60 ? '...' : ''}"`)
+            const searchResult = await unifiedSearch(query, queryOptions)
+            return { query, searchResult }
+          }))
+        )
+
+        for (const result of phaseResults) {
+          if (result.status === 'rejected') {
+            console.warn(`   ⚠️ Query failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`)
+            continue
+          }
+
+          const { query, searchResult } = result.value
+          if (searchResult.metadata.errors.length > 0) {
+            console.warn(`   ⚠️ Query warnings for "${query.slice(0, 40)}${query.length > 40 ? '...' : ''}": ${searchResult.metadata.errors.join(', ')}`)
+          }
+
+          for (const paper of searchResult.papers as PaperWithAuthors[]) {
+            if (!allPaperIds.has(paper.id)) {
+              allPaperIds.add(paper.id)
+              allPapers.push(paper)
+            }
           }
         }
-        
-        if (searchResult.metadata.errors.length > 0) {
-          console.warn(`   ⚠️ Query warnings: ${searchResult.metadata.errors.join(', ')}`)
-        }
-        
-        // Stop if we have enough papers
-        if (allPapers.length >= remainingSlots) {
-          console.log(`   ✅ Reached target paper count (${allPapers.length})`)
-          break
-        }
+
+        console.log(`   📚 Discovery phase ${phaseIndex + 1} yielded ${allPapers.length} unique papers so far`)
+      }
+
+      if (allPapers.length >= remainingSlots) {
+        console.log(`   ✅ Reached target paper count (${allPapers.length})`)
       }
       
       discoveredPapers = allPapers.slice(0, remainingSlots)

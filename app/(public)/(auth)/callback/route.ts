@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getAbsoluteUrlFromHeaders } from '@/lib/config'
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/projects'
+  const toRedirectUrl = (path: string) => getAbsoluteUrlFromHeaders(request.headers, path)
 
   if (code) {
     try {
@@ -38,21 +40,21 @@ export async function GET(request: NextRequest) {
         }
         
         // Authentication successful, redirect to destination
-        return NextResponse.redirect(new URL(next, request.url))
+        return NextResponse.redirect(toRedirectUrl(next))
       } else {
         console.error('Code exchange failed:', error)
         return NextResponse.redirect(
-          new URL(`/login?error=${encodeURIComponent('Authentication failed. Please try again.')}`, request.url)
+          toRedirectUrl(`/login?error=${encodeURIComponent('Authentication failed. Please try again.')}`)
         )
       }
     } catch (error) {
       console.error('Callback error:', error)
       return NextResponse.redirect(
-        new URL(`/login?error=${encodeURIComponent('Network error. Please check your connection and try again.')}`, request.url)
+        toRedirectUrl(`/login?error=${encodeURIComponent('Network error. Please check your connection and try again.')}`)
       )
     }
   }
 
   // No code provided, redirect to login
-  return NextResponse.redirect(new URL('/login', request.url))
+  return NextResponse.redirect(toRedirectUrl('/login'))
 } 

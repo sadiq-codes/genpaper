@@ -6,7 +6,7 @@
  * 
  * Key principles:
  * - No hardcoded categories - LLM discovers patterns
- * - Single LLM call for analysis (simple, effective)
+ * - Decomposed structured generation to reduce JSON truncation risk
  * - Works with flexible Finding type from extraction
  * 
  * @module lib/analysis/cross-document/analyzer
@@ -31,7 +31,7 @@ import type {
 // Zod Schema - Flexible, No Hardcoded Enums
 // =============================================================================
 
-const PaperSupportSchema = z.object({
+const _PaperSupportSchema = z.object({
   paperId: z.string(),
   paperTitle: z.string(),
   findingId: z.string(),
@@ -43,13 +43,13 @@ const PaperSupportSchema = z.object({
 })
 
 const PatternSchema = z.object({
-  claim: z.string().describe('SPECIFIC pattern statement - what multiple papers found, including magnitude and context'),
-  summary: z.string().describe('Brief explanation of this pattern and its significance'),
-  supportingPaperIds: z.array(z.string()).describe('Paper IDs that support this pattern'),
-  supportingFindingIds: z.array(z.string()).describe('Finding IDs that support this pattern'),
+  claim: z.string().max(220).describe('SPECIFIC pattern statement - what multiple papers found, including magnitude and context'),
+  summary: z.string().max(220).describe('Brief explanation of this pattern and its significance'),
+  supportingPaperIds: z.array(z.string()).max(8).describe('Paper IDs that support this pattern'),
+  supportingFindingIds: z.array(z.string()).max(14).describe('Finding IDs that support this pattern'),
   direction: z.string().nullable().describe('Nature: "positive", "negative", "descriptive", "no_effect", etc.'),
   consistency: z.string().describe('How consistent: "consistent" (all agree), "mostly_consistent" (75%+), "mixed" (<75%)'),
-  valuesSummary: z.string().nullable().describe('SPECIFIC value summary: "effect sizes ranged from d=0.3 to d=0.9 (median d=0.55)" or "3 of 5 qualitative studies identified this as primary theme"'),
+  valuesSummary: z.string().max(180).nullable().describe('SPECIFIC value summary: "effect sizes ranged from d=0.3 to d=0.9 (median d=0.55)" or "3 of 5 qualitative studies identified this as primary theme"'),
   valueRange: z.object({
     min: z.string().nullable(),
     max: z.string().nullable(),
@@ -58,11 +58,11 @@ const PatternSchema = z.object({
   }).nullable().describe('Structured value range when quantitative data available'),
   strength: z.enum(['strong', 'moderate', 'emerging']).describe('Pattern strength: strong (≥50% or ≥4 papers), moderate (3 papers or 30-49%), emerging (2 papers)'),
   confidence: z.number().min(0).max(1),
-  limitations: z.string().nullable().describe('Specific caveats about this pattern')
+  limitations: z.string().max(180).nullable().describe('Specific caveats about this pattern')
 })
 
 const ContradictionSchema = z.object({
-  description: z.string().describe('SPECIFIC description of what is contradictory'),
+  description: z.string().max(220).describe('SPECIFIC description of what is contradictory'),
   contradictionType: z.enum([
     'direct',        // Opposite conclusions: X causes Y vs X does not cause Y
     'magnitude',     // Same direction, different strength: large effect vs small effect
@@ -70,19 +70,19 @@ const ContradictionSchema = z.object({
     'methodological' // Different methods yield different conclusions
   ]).describe('Type of contradiction'),
   sides: z.array(z.object({
-    position: z.string().describe('One side of the disagreement with specific claim'),
-    paperIds: z.array(z.string()).describe('Papers supporting this position'),
-    findingIds: z.array(z.string()).describe('Finding IDs for this position'),
+    position: z.string().max(160).describe('One side of the disagreement with specific claim'),
+    paperIds: z.array(z.string()).max(8).describe('Papers supporting this position'),
+    findingIds: z.array(z.string()).max(16).describe('Finding IDs for this position'),
     evidenceStrength: z.enum(['strong', 'moderate', 'weak']).describe('Quality of evidence for this position')
-  })),
-  possibleExplanation: z.string().nullable().describe('SPECIFIC explanation: methodology difference, population difference, temporal context, etc.'),
+  })).max(3),
+  possibleExplanation: z.string().max(180).nullable().describe('SPECIFIC explanation: methodology difference, population difference, temporal context, etc.'),
   severity: z.enum(['minor', 'moderate', 'major']).describe('minor (nuance), moderate (significant but reconcilable), major (fundamental disagreement)'),
-  resolutionSuggestion: z.string().nullable().describe('How might this contradiction be resolved?'),
+  resolutionSuggestion: z.string().max(180).nullable().describe('How might this contradiction be resolved?'),
   confidence: z.number().min(0).max(1)
 })
 
 const GapSchema = z.object({
-  description: z.string().describe('SPECIFIC description of what is missing'),
+  description: z.string().max(220).describe('SPECIFIC description of what is missing'),
   type: z.enum([
     'population',      // Who is not studied: certain demographics, regions, contexts
     'methodological',  // How: study designs, measures, durations not used
@@ -91,223 +91,273 @@ const GapSchema = z.object({
     'theoretical',     // What: mechanisms, frameworks, explanations not explored
     'replication'      // Whether: findings not replicated or confirmed
   ]).describe('Type of gap'),
-  relevance: z.string().describe('WHY this gap matters for understanding the topic'),
-  suggestedResearchQuestion: z.string().describe('CONCRETE research question that would address this gap. Example: "How does [factor] affect [outcome] in [underrepresented population]?"'),
-  suggestedByPaperIds: z.array(z.string()).describe('Papers that mention or imply this gap'),
+  relevance: z.string().max(180).describe('WHY this gap matters for understanding the topic'),
+  suggestedResearchQuestion: z.string().max(180).describe('CONCRETE research question that would address this gap. Example: "How does [factor] affect [outcome] in [underrepresented population]?"'),
+  suggestedByPaperIds: z.array(z.string()).max(10).describe('Papers that mention or imply this gap'),
   priority: z.enum(['high', 'medium', 'low']).describe('How important is filling this gap?'),
   confidence: z.number().min(0).max(1)
 })
 
-const AnalysisSchema = z.object({
-  patterns: z.array(PatternSchema).describe('Patterns found across papers - aim for 5-15 patterns'),
-  contradictions: z.array(ContradictionSchema).describe('Contradictions between papers - identify all disagreements'),
-  gaps: z.array(GapSchema).describe('Gaps in the literature - at least one per gap type if applicable'),
-  summary: z.string().describe('Overall synthesis narrative of what the literature shows'),
-  keyInsights: z.array(z.string()).describe('Top 5-7 key takeaways with specific evidence'),
+const SynthesisStrengthSchema = z.object({
+  overallConfidence: z.enum(['high', 'moderate', 'low']).describe('Overall confidence in synthesis'),
+  evidenceBase: z.string().max(120).describe('Description: "8 empirical studies, 3 theoretical papers"'),
+  methodologicalDiversity: z.enum(['high', 'moderate', 'low']).describe('Variety in study designs'),
+  geographicDiversity: z.enum(['high', 'moderate', 'low']).describe('Variety in study locations'),
+  temporalSpread: z.string().max(60).nullable().describe('Time range: "2015-2023"')
+}).describe('Assessment of evidence base quality')
+
+const FieldMaturitySchema = z.enum([
+  'emerging',     // Few studies, many gaps, fundamental questions open
+  'developing',   // Growing body, some consensus, significant gaps remain
+  'established',  // Strong consensus, well-replicated, incremental questions
+  'contested'     // Many studies but fundamental disagreements persist
+]).describe('Maturity level of this research area')
+
+const _AnalysisSchema = z.object({
+  patterns: z.array(PatternSchema).max(8).describe('Patterns found across papers - aim for 4-8 patterns'),
+  contradictions: z.array(ContradictionSchema).max(6).describe('Contradictions between papers - identify key disagreements'),
+  gaps: z.array(GapSchema).max(6).describe('Gaps in the literature - prioritize the most important gaps'),
+  summary: z.string().max(640).describe('Overall synthesis narrative of what the literature shows'),
+  keyInsights: z.array(z.string().max(180)).max(5).describe('Top 4-5 key takeaways with specific evidence'),
   
   // NEW: Synthesis quality metadata
-  synthesisStrength: z.object({
-    overallConfidence: z.enum(['high', 'moderate', 'low']).describe('Overall confidence in synthesis'),
-    evidenceBase: z.string().describe('Description: "8 empirical studies, 3 theoretical papers"'),
-    methodologicalDiversity: z.enum(['high', 'moderate', 'low']).describe('Variety in study designs'),
-    geographicDiversity: z.enum(['high', 'moderate', 'low']).describe('Variety in study locations'),
-    temporalSpread: z.string().nullable().describe('Time range: "2015-2023"')
-  }).describe('Assessment of evidence base quality'),
+  synthesisStrength: SynthesisStrengthSchema,
   
-  fieldMaturity: z.enum([
-    'emerging',     // Few studies, many gaps, fundamental questions open
-    'developing',   // Growing body, some consensus, significant gaps remain
-    'established',  // Strong consensus, well-replicated, incremental questions
-    'contested'     // Many studies but fundamental disagreements persist
-  ]).describe('Maturity level of this research area')
+  fieldMaturity: FieldMaturitySchema
 })
 
 // =============================================================================
 // Prompt
 // =============================================================================
 
-const SYSTEM_PROMPT = `You are an expert research analyst performing cross-document synthesis. Your task is to analyze findings across multiple academic papers to identify patterns, contradictions, and gaps with MAXIMUM SPECIFICITY.
+const SYSTEM_PROMPT = `You perform cross-document synthesis across academic findings.
 
-═══════════════════════════════════════════════════════════════════════════════
-1. PATTERNS - Findings that appear across multiple papers
-═══════════════════════════════════════════════════════════════════════════════
+Output must be specific, evidence-grounded, and use IDs exactly as provided.
 
-PATTERN STRENGTH THRESHOLDS:
-- STRONG: ≥50% of papers OR ≥4 papers support it
-- MODERATE: 3 papers OR 30-49% support it
-- EMERGING: 2 papers support it
+Rules:
+- PATTERNS: identify recurring findings; quantify support (count + percentage), include value ranges when available, and classify strength:
+  - strong: >=50% of papers or >=4 papers
+  - moderate: 3 papers or 30-49%
+  - emerging: 2 papers
+- CONTRADICTIONS: identify disagreements and classify each as direct, magnitude, conditional, or methodological.
+- GAPS: identify concrete missing areas (population, methodological, temporal, geographic, theoretical, replication) and include a concrete research question for each.
+- SUMMARY + KEY INSIGHTS: synthesize, do not list.
+- SYNTHESIS QUALITY: assess confidence, evidence base, diversity, and field maturity.
 
-FOR QUANTITATIVE PATTERNS:
-- Report the RANGE of values: "Effect sizes ranged from d=0.3 to d=0.9"
-- Report MEDIAN if ≥3 values available: "median d=0.55"
-- Note HETEROGENEITY: if range exceeds 2x, mark as "high"
-- Report CONSISTENCY: "All 5 studies found positive effects" vs "3 positive, 2 null"
+Specificity requirements:
+- Use provided paper IDs and finding IDs.
+- Prefer quantified wording ("6 of 8 (75%)") over vague claims.
+- Include concrete values/context when available.
+- Avoid generic statements like "more research is needed."
 
-FOR QUALITATIVE PATTERNS:
-- Count how many studies identified similar themes: "4 of 6 studies identified this as primary theme"
-- Note variations in how themes manifested across contexts
+Output compactness requirements:
+- Keep text concise and avoid long prose.
+- Prefer only the strongest supporting IDs per item.
+- Stay within schema maxima (patterns<=8, contradictions<=6, gaps<=6, keyInsights<=5).`
 
-PATTERN CLAIM FORMAT:
-✅ GOOD: "6 of 8 studies (75%) found positive correlation between X and Y, with effect sizes ranging from r=0.45 to r=0.72 (median r=0.58)"
-❌ BAD: "Multiple studies found a relationship between X and Y"
+type AnalysisObject = z.infer<typeof _AnalysisSchema>
 
-═══════════════════════════════════════════════════════════════════════════════
-2. CONTRADICTIONS - Where papers disagree
-═══════════════════════════════════════════════════════════════════════════════
+const ANALYSIS_PART_MAX_OUTPUT_TOKENS = 2200
+const ANALYSIS_PART_RETRY_MAX_OUTPUT_TOKENS = 3200
+const ANALYSIS_PART_FINAL_RETRY_MAX_OUTPUT_TOKENS = 4200
+const MAX_CLAIM_CHARS = 220
+const MAX_EVIDENCE_CHARS = 160
+const MAX_CONTEXT_CHARS = 110
+const MAX_TITLE_CHARS = 80
 
-CLASSIFY EACH CONTRADICTION BY TYPE:
+const PatternsOnlySchema = z.object({
+  patterns: z.array(PatternSchema).max(8),
+})
 
-DIRECT: Opposite conclusions
-- Paper A: "X causes Y" vs Paper B: "X does not cause Y"
+const ContradictionsOnlySchema = z.object({
+  contradictions: z.array(ContradictionSchema).max(6),
+})
 
-MAGNITUDE: Same direction, different strength
-- Paper A: "Strong effect (d=0.8)" vs Paper B: "Weak effect (d=0.2)"
+const GapsOnlySchema = z.object({
+  gaps: z.array(GapSchema).max(6),
+})
 
-CONDITIONAL: Works in some contexts, not others
-- Paper A: "Effect in population X" vs Paper B: "No effect in population Y"
+const AnalysisMetaSchema = z.object({
+  summary: z.string().max(640),
+  keyInsights: z.array(z.string().max(180)).max(5),
+  synthesisStrength: SynthesisStrengthSchema,
+  fieldMaturity: FieldMaturitySchema,
+})
 
-METHODOLOGICAL: Different methods, different conclusions
-- Quantitative studies find X, qualitative studies find Y
+const PART_INSTRUCTIONS = {
+  patterns: `Return ONLY this schema: { "patterns": Pattern[] }.
+Do not include contradictions, gaps, summary, keyInsights, synthesisStrength, or fieldMaturity.
+Use only paperId/findingId values present in input.`,
+  contradictions: `Return ONLY this schema: { "contradictions": Contradiction[] }.
+Do not include patterns, gaps, summary, keyInsights, synthesisStrength, or fieldMaturity.
+Use only paperId/findingId values present in input.`,
+  gaps: `Return ONLY this schema: { "gaps": Gap[] }.
+Do not include patterns, contradictions, summary, keyInsights, synthesisStrength, or fieldMaturity.
+Use only paperId values present in input.`,
+  meta: `Return ONLY this schema: { "summary": string, "keyInsights": string[], "synthesisStrength": object, "fieldMaturity": string }.
+Do not include patterns, contradictions, or gaps.
+Base all statements on the provided findings.`,
+} as const
 
-FOR EACH CONTRADICTION:
-- State the SPECIFIC disagreement with values
-- Classify the type
-- List papers on each side with their evidence strength
-- Propose SPECIFIC explanation: "This may be due to differences in [methodology/context/scope]"
-- Assess severity: minor (nuance), moderate (reconcilable), major (fundamental)
-- Suggest how it might be resolved
+type AnalysisPartName = keyof typeof PART_INSTRUCTIONS
 
-═══════════════════════════════════════════════════════════════════════════════
-3. GAPS - What's CONSPICUOUSLY ABSENT given what was found
-═══════════════════════════════════════════════════════════════════════════════
+function getErrorText(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message
+  }
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
 
-IDENTIFY GAPS BY ASKING:
-- Given these findings, what SHOULD have been studied but wasn't?
-- What populations/contexts/methods are missing?
+function isLikelyLengthOrParseTruncation(error: unknown): boolean {
+  const text = getErrorText(error).toLowerCase()
+  return (
+    text.includes('finishreason') && text.includes('length')
+  ) || text.includes('unterminated string') ||
+    text.includes('unexpected end') ||
+    text.includes('unexpected end of json') ||
+    text.includes('expected \',\' or \'}\'') ||
+    text.includes('unexpected non-whitespace character after json') ||
+    text.includes('json parsing failed') ||
+    text.includes('no object generated')
+}
 
-GAP TYPES (identify at least one of each type if applicable):
-- POPULATION/SAMPLE: "Studies limited to [specific context]; [other contexts] unexplored"
-- METHODOLOGICAL: "Predominantly [method type]; [alternative methods] needed"
-- TEMPORAL: "No studies after [year]; effects of recent developments unknown"
-- GEOGRAPHIC/CONTEXTUAL: "Limited to [regions/settings]; other contexts unexplored"
-- THEORETICAL: "Mechanism linking X to Y remains unspecified"
-- REPLICATION: "Key findings have not been independently replicated"
+async function generateAnalysisPartWithRetry<T>(
+  schema: z.ZodType<T>,
+  findings: FindingWithPaper[],
+  topic: string | undefined,
+  scope: string,
+  partName: AnalysisPartName
+): Promise<T> {
+  const basePrompt = buildPrompt(findings, topic)
+  const prompt = `${basePrompt}
 
-FOR EACH GAP - MUST INCLUDE:
-- Description: What specifically is missing?
-- Why it matters: How does this limit understanding?
-- CONCRETE research question: "How does [factor] affect [outcome] in [underrepresented population]?"
-- Priority: How important is filling this gap?
+Part-specific output requirement:
+${PART_INSTRUCTIONS[partName]}
 
-✅ GOOD: "No studies examined [specific context/population]. Given [related finding], understanding this is critical. Research question: How does [factor] affect [outcome] in [underrepresented context]?"
-❌ BAD: "More research is needed" (too vague, no specific direction)
+Only return JSON matching the provided schema.`
+  const tokenBudgets = [
+    ANALYSIS_PART_MAX_OUTPUT_TOKENS,
+    ANALYSIS_PART_RETRY_MAX_OUTPUT_TOKENS,
+    ANALYSIS_PART_FINAL_RETRY_MAX_OUTPUT_TOKENS,
+  ]
+  let lastError: unknown = null
 
-═══════════════════════════════════════════════════════════════════════════════
-4. SYNTHESIS QUALITY ASSESSMENT
-═══════════════════════════════════════════════════════════════════════════════
+  for (let attempt = 0; attempt < tokenBudgets.length; attempt++) {
+    const maxOutputTokens = tokenBudgets[attempt]
+    try {
+      const { object } = await generateObject({
+        model: getLanguageModel(),
+        schema,
+        system: SYSTEM_PROMPT,
+        prompt,
+        temperature: 0.2,
+        maxOutputTokens,
+      })
+      return object
+    } catch (error) {
+      lastError = error
+      const canRetry = attempt < tokenBudgets.length - 1 && isLikelyLengthOrParseTruncation(error)
+      if (canRetry) {
+        console.warn(`⚠️ ${scope} (${partName}) produced truncated/invalid JSON at ${maxOutputTokens} tokens; retrying with ${tokenBudgets[attempt + 1]} tokens`)
+        continue
+      }
+      throw error
+    }
+  }
 
-Assess the overall evidence base:
-- Overall confidence: Based on study quality, consistency, replication
-- Evidence base: Count by type (empirical, theoretical, review)
-- Methodological diversity: Variety in study designs used
-- Geographic diversity: Variety in study locations
-- Temporal spread: Range of publication years
+  throw lastError || new Error(`${scope} (${partName}) failed: unknown error`)
+}
 
-Field maturity:
-- EMERGING: Few studies, many gaps, fundamental questions open
-- DEVELOPING: Growing body, some consensus, significant gaps remain
-- ESTABLISHED: Strong consensus, well-replicated findings
-- CONTESTED: Many studies but fundamental disagreements persist
+async function generateAnalysisObjectWithRetry(
+  findings: FindingWithPaper[],
+  topic: string | undefined,
+  scope: string
+): Promise<AnalysisObject> {
+  const [patternsPart, contradictionsPart, gapsPart, metaPart] = await Promise.all([
+    generateAnalysisPartWithRetry(PatternsOnlySchema, findings, topic, scope, 'patterns'),
+    generateAnalysisPartWithRetry(ContradictionsOnlySchema, findings, topic, scope, 'contradictions'),
+    generateAnalysisPartWithRetry(GapsOnlySchema, findings, topic, scope, 'gaps'),
+    generateAnalysisPartWithRetry(AnalysisMetaSchema, findings, topic, scope, 'meta'),
+  ])
 
-═══════════════════════════════════════════════════════════════════════════════
-5. SPECIFICITY REQUIREMENTS
-═══════════════════════════════════════════════════════════════════════════════
+  return {
+    patterns: patternsPart.patterns,
+    contradictions: contradictionsPart.contradictions,
+    gaps: gapsPart.gaps,
+    summary: metaPart.summary,
+    keyInsights: metaPart.keyInsights,
+    synthesisStrength: metaPart.synthesisStrength,
+    fieldMaturity: metaPart.fieldMaturity,
+  }
+}
 
-- Use paper IDs and finding IDs in ALL references
-- Include SPECIFIC values: "r=0.67" not "significant correlation"
-- Quantify support: "6 of 8 studies" not "most studies"
-- Name specific populations, methods, contexts
-- NO generic statements like "further research is needed"`
+function truncateForPrompt(value: string | undefined, maxChars: number): string {
+  if (!value) return ''
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxChars) return normalized
+  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
+}
 
 function buildPrompt(findings: FindingWithPaper[], topic?: string): string {
   const uniquePapers = new Set(findings.map(f => f.paperId)).size
-  
+
+  const paperRegistry = Array.from(
+    new Map(findings.map(f => [f.paperId, truncateForPrompt(f.paperTitle, MAX_TITLE_CHARS)])).entries()
+  )
+    .map(([paperId, paperTitle]) => `- ${paperId}: ${paperTitle}`)
+    .join('\n')
+
   const findingsText = findings.map((f) => {
-    let text = `[Paper: ${f.paperTitle} (${f.paperId})]
-  Finding ID: ${f.id}
-  Claim: ${f.claim}
-  Evidence: "${f.evidence}"`
-    
+    const pieces = [
+      `paperId=${f.paperId}`,
+      `findingId=${f.id}`,
+      `claim="${truncateForPrompt(f.claim, MAX_CLAIM_CHARS)}"`,
+      `evidence="${truncateForPrompt(f.evidence, MAX_EVIDENCE_CHARS)}"`,
+    ]
+
     if (f.value) {
-      text += `\n  Value: ${f.value} (${f.valueType || 'unspecified type'})`
+      pieces.push(`value="${truncateForPrompt(f.value, 64)}"`)
+      if (f.valueType) {
+        pieces.push(`valueType=${truncateForPrompt(f.valueType, 48)}`)
+      }
     }
+
     if (f.direction) {
-      text += `\n  Direction: ${f.direction}`
+      pieces.push(`direction=${truncateForPrompt(f.direction, 32)}`)
     }
+
     if (f.context) {
-      text += `\n  Context: ${f.context}`
+      pieces.push(`context="${truncateForPrompt(f.context, MAX_CONTEXT_CHARS)}"`)
     }
-    // Include evidence type if available
+
     if ((f as { evidenceType?: string }).evidenceType) {
-      text += `\n  Evidence Type: ${(f as { evidenceType?: string }).evidenceType}`
+      pieces.push(`evidenceType=${truncateForPrompt((f as { evidenceType?: string }).evidenceType, 48)}`)
     }
-    
-    return text
-  }).join('\n\n')
 
-  const topicLine = topic ? `\nTopic/Focus: ${topic}\n` : ''
+    return `- ${pieces.join(' | ')}`
+  }).join('\n')
 
-  return `Analyze the following ${findings.length} findings from ${uniquePapers} papers:
-${topicLine}
----
+  const topicLine = topic ? `Topic: ${truncateForPrompt(topic, 180)}\n` : ''
+
+  return `Analyze ${findings.length} findings across ${uniquePapers} papers.
+${topicLine}Paper registry:
+${paperRegistry}
+
+Findings:
 ${findingsText}
----
 
-═══════════════════════════════════════════════════════════════════════════════
-ANALYSIS TASKS (be SPECIFIC and EXHAUSTIVE)
-═══════════════════════════════════════════════════════════════════════════════
+Tasks:
+1) Identify patterns with support counts/percentages and value ranges when available.
+2) Identify contradictions and classify each as direct, magnitude, conditional, or methodological.
+3) Identify concrete gaps and include a concrete research question per gap.
+4) Write overall summary + 5-7 key insights.
+5) Assess synthesis quality and field maturity.
 
-1. PATTERNS (aim for 5-15 patterns)
-   - What findings appear across multiple papers?
-   - For each: How many papers support it? What are the specific values?
-   - Use pattern strength: strong (≥50% or ≥4), moderate (3 or 30-49%), emerging (2)
-
-2. CONTRADICTIONS (identify ALL disagreements)
-   - Where do papers disagree?
-   - Classify each: direct, magnitude, conditional, or methodological
-   - Explain WHY they might disagree with specific factors
-
-3. GAPS (at least one per type if applicable)
-   - Population gaps: Who is not studied?
-   - Methodological gaps: What designs are missing?
-   - Temporal gaps: What time periods are not covered?
-   - Geographic gaps: Where hasn't been studied?
-   - Theoretical gaps: What mechanisms are unexplained?
-   - Replication gaps: What hasn't been confirmed?
-   - Each gap MUST include a concrete research question
-
-4. SUMMARY
-   - Overall synthesis narrative (not just listing)
-   - What does the literature collectively show?
-
-5. KEY INSIGHTS (5-7 specific takeaways)
-   - Include specific values/counts where available
-   - "6 of 8 studies found..." not "most studies found..."
-
-6. SYNTHESIS QUALITY
-   - Assess overall confidence, evidence base, diversity
-   - Determine field maturity: emerging, developing, established, contested
-
-═══════════════════════════════════════════════════════════════════════════════
-SPECIFICITY CHECK
-═══════════════════════════════════════════════════════════════════════════════
-
-Before submitting, verify:
-□ Every pattern includes paper count AND percentage: "6 of 8 (75%)"
-□ Quantitative patterns include value ranges and medians where possible
-□ Every contradiction has a specific explanation
-□ Every gap has a concrete research question
-□ No generic statements like "more research is needed"`
+Use paperId/findingId values exactly as provided in input.`
 }
 
 // =============================================================================
@@ -354,13 +404,7 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
   console.log(`\n🔍 Analyzing ${findings.length} findings from ${uniquePapers} papers...`)
   
   try {
-    const { object } = await generateObject({
-      model: getLanguageModel(),
-      schema: AnalysisSchema,
-      system: SYSTEM_PROMPT,
-      prompt: buildPrompt(findings, topic),
-      temperature: 0.2,
-    })
+    const object = await generateAnalysisObjectWithRetry(findings, topic, 'Cross-document analysis')
     
     // Build lookup maps for enriching results
     const findingsMap = new Map(findings.map(f => [f.id, f]))
@@ -513,12 +557,205 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
  * Maximum findings per batch to avoid token overflow
  * ~150 findings × ~200 tokens = ~30k tokens, leaving room for response
  */
-const MAX_FINDINGS_PER_BATCH = 150
+const MAX_FINDINGS_PER_BATCH = 90
 
 /**
  * Threshold above which we use batched analysis
  */
-const BATCH_THRESHOLD = 200
+const BATCH_THRESHOLD = 120
+const MIN_FINDINGS_TO_SPLIT = 30
+const MAX_BATCH_SPLIT_DEPTH = 3
+
+type TransformedBatchResult = {
+  patterns: Pattern[]
+  contradictions: Contradiction[]
+  gaps: Gap[]
+  summary: string
+  keyInsights: string[]
+}
+
+function splitBatchByPaper(findings: FindingWithPaper[]): [FindingWithPaper[], FindingWithPaper[]] {
+  const byPaper = new Map<string, FindingWithPaper[]>()
+  for (const finding of findings) {
+    const paperFindings = byPaper.get(finding.paperId) || []
+    paperFindings.push(finding)
+    byPaper.set(finding.paperId, paperFindings)
+  }
+
+  const left: FindingWithPaper[] = []
+  const right: FindingWithPaper[] = []
+  let leftCount = 0
+  let rightCount = 0
+
+  for (const paperFindings of byPaper.values()) {
+    if (leftCount <= rightCount) {
+      left.push(...paperFindings)
+      leftCount += paperFindings.length
+    } else {
+      right.push(...paperFindings)
+      rightCount += paperFindings.length
+    }
+  }
+
+  return [left, right]
+}
+
+function splitBatchByIndex(findings: FindingWithPaper[]): [FindingWithPaper[], FindingWithPaper[]] {
+  const midpoint = Math.floor(findings.length / 2)
+  return [findings.slice(0, midpoint), findings.slice(midpoint)]
+}
+
+function transformBatchObject(
+  object: AnalysisObject,
+  batch: FindingWithPaper[],
+  batchPapers: number
+): TransformedBatchResult {
+  const findingsMap = new Map(batch.map(f => [f.id, f]))
+  const paperTitles = new Map(batch.map(f => [f.paperId, f.paperTitle]))
+
+  const patterns: Pattern[] = object.patterns.map(p => {
+    const papers: PaperSupport[] = p.supportingFindingIds
+      .map(fid => findingsMap.get(fid))
+      .filter((f): f is FindingWithPaper => f !== undefined)
+      .map(f => ({
+        paperId: f.paperId,
+        paperTitle: f.paperTitle,
+        findingId: f.id,
+        claim: f.claim,
+        value: f.value,
+        valueType: f.valueType,
+        evidence: f.evidence,
+        confidence: f.confidence
+      }))
+
+    for (const pid of p.supportingPaperIds) {
+      if (!papers.some(ps => ps.paperId === pid)) {
+        const paperFinding = batch.find(f => f.paperId === pid)
+        if (paperFinding) {
+          papers.push({
+            paperId: pid,
+            paperTitle: paperTitles.get(pid) || 'Unknown',
+            findingId: paperFinding.id,
+            claim: paperFinding.claim,
+            value: paperFinding.value,
+            valueType: paperFinding.valueType,
+            evidence: paperFinding.evidence,
+            confidence: paperFinding.confidence
+          })
+        }
+      }
+    }
+
+    return {
+      id: uuidv4(),
+      claim: p.claim,
+      summary: p.summary,
+      support: {
+        papers,
+        count: papers.length,
+        total: batchPapers // Will be corrected during merge
+      },
+      direction: p.direction || undefined,
+      consistency: p.consistency,
+      strength: p.strength,
+      values: p.valuesSummary ? {
+        summary: p.valuesSummary,
+        individual: papers.map(ps => ps.value).filter((v): v is string => v !== undefined),
+        range: p.valueRange ? {
+          min: p.valueRange.min || undefined,
+          max: p.valueRange.max || undefined,
+          median: p.valueRange.median || undefined,
+          heterogeneity: p.valueRange.heterogeneity || undefined
+        } : undefined
+      } : undefined,
+      confidence: p.confidence,
+      limitations: p.limitations || undefined
+    }
+  })
+
+  const contradictions: Contradiction[] = object.contradictions.map(c => ({
+    id: uuidv4(),
+    description: c.description,
+    contradictionType: c.contradictionType,
+    sides: c.sides.map(s => ({
+      position: s.position,
+      papers: s.findingIds
+        .map(fid => findingsMap.get(fid))
+        .filter((f): f is FindingWithPaper => f !== undefined)
+        .map(f => ({
+          paperId: f.paperId,
+          paperTitle: f.paperTitle,
+          findingId: f.id,
+          claim: f.claim,
+          value: f.value,
+          valueType: f.valueType,
+          evidence: f.evidence,
+          confidence: f.confidence
+        })),
+      evidenceStrength: s.evidenceStrength
+    })),
+    possibleExplanation: c.possibleExplanation || undefined,
+    resolutionSuggestion: c.resolutionSuggestion || undefined,
+    severity: c.severity,
+    confidence: c.confidence
+  }))
+
+  const gaps: Gap[] = object.gaps.map(g => ({
+    id: uuidv4(),
+    description: g.description,
+    type: g.type,
+    relevance: g.relevance,
+    suggestedResearchQuestion: g.suggestedResearchQuestion,
+    suggestedBy: g.suggestedByPaperIds,
+    priority: g.priority,
+    confidence: g.confidence
+  }))
+
+  return {
+    patterns,
+    contradictions,
+    gaps,
+    summary: object.summary,
+    keyInsights: object.keyInsights
+  }
+}
+
+async function analyzeBatchAdaptive(
+  batch: FindingWithPaper[],
+  topic: string | undefined,
+  scope: string,
+  depth = 0
+): Promise<TransformedBatchResult[]> {
+  const batchPapers = new Set(batch.map(f => f.paperId)).size
+
+  try {
+    const object = await generateAnalysisObjectWithRetry(batch, topic, scope)
+    return [transformBatchObject(object, batch, batchPapers)]
+  } catch (error) {
+    const canSplit =
+      isLikelyLengthOrParseTruncation(error) &&
+      batch.length >= MIN_FINDINGS_TO_SPLIT &&
+      depth < MAX_BATCH_SPLIT_DEPTH
+
+    if (!canSplit) {
+      throw error
+    }
+
+    let [left, right] = splitBatchByPaper(batch)
+    if (left.length === 0 || right.length === 0) {
+      ;[left, right] = splitBatchByIndex(batch)
+    }
+
+    if (left.length === 0 || right.length === 0) {
+      throw error
+    }
+
+    console.warn(`⚠️ ${scope} still overflowed; splitting into ${left.length} and ${right.length} findings`)
+    const leftResults = await analyzeBatchAdaptive(left, topic, `${scope}a`, depth + 1)
+    const rightResults = await analyzeBatchAdaptive(right, topic, `${scope}b`, depth + 1)
+    return [...leftResults, ...rightResults]
+  }
+}
 
 /**
  * Analyze findings in batches and merge results
@@ -559,13 +796,7 @@ async function analyzeFindingsBatched(
   console.log(`\n🔍 Analyzing ${findings.length} findings in ${batches.length} batches...`)
   
   // Analyze each batch
-  const batchResults: Array<{
-    patterns: Pattern[]
-    contradictions: Contradiction[]
-    gaps: Gap[]
-    summary: string
-    keyInsights: string[]
-  }> = []
+  const batchResults: TransformedBatchResult[] = []
   
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i]
@@ -573,128 +804,13 @@ async function analyzeFindingsBatched(
     console.log(`   📦 Batch ${i + 1}/${batches.length}: ${batch.length} findings from ${batchPapers} papers`)
     
     try {
-      const { object } = await generateObject({
-        model: getLanguageModel(),
-        schema: AnalysisSchema,
-        system: SYSTEM_PROMPT,
-        prompt: buildPrompt(batch, topic),
-        temperature: 0.2,
-      })
-      
-      // Build lookup maps for this batch
-      const findingsMap = new Map(batch.map(f => [f.id, f]))
-      const paperTitles = new Map(batch.map(f => [f.paperId, f.paperTitle]))
-      
-      // Transform patterns
-      const patterns: Pattern[] = object.patterns.map(p => {
-        const papers: PaperSupport[] = p.supportingFindingIds
-          .map(fid => findingsMap.get(fid))
-          .filter((f): f is FindingWithPaper => f !== undefined)
-          .map(f => ({
-            paperId: f.paperId,
-            paperTitle: f.paperTitle,
-            findingId: f.id,
-            claim: f.claim,
-            value: f.value,
-            valueType: f.valueType,
-            evidence: f.evidence,
-            confidence: f.confidence
-          }))
-        
-        for (const pid of p.supportingPaperIds) {
-          if (!papers.some(ps => ps.paperId === pid)) {
-            const paperFinding = batch.find(f => f.paperId === pid)
-            if (paperFinding) {
-              papers.push({
-                paperId: pid,
-                paperTitle: paperTitles.get(pid) || 'Unknown',
-                findingId: paperFinding.id,
-                claim: paperFinding.claim,
-                value: paperFinding.value,
-                valueType: paperFinding.valueType,
-                evidence: paperFinding.evidence,
-                confidence: paperFinding.confidence
-              })
-            }
-          }
-        }
-        
-        return {
-          id: uuidv4(),
-          claim: p.claim,
-          summary: p.summary,
-          support: {
-            papers,
-            count: papers.length,
-            total: batchPapers // Will be corrected during merge
-          },
-          direction: p.direction || undefined,
-          consistency: p.consistency,
-          strength: p.strength,
-          values: p.valuesSummary ? {
-            summary: p.valuesSummary,
-            individual: papers.map(ps => ps.value).filter((v): v is string => v !== undefined),
-            range: p.valueRange ? {
-              min: p.valueRange.min || undefined,
-              max: p.valueRange.max || undefined,
-              median: p.valueRange.median || undefined,
-              heterogeneity: p.valueRange.heterogeneity || undefined
-            } : undefined
-          } : undefined,
-          confidence: p.confidence,
-          limitations: p.limitations || undefined
-        }
-      })
-      
-      // Transform contradictions
-      const contradictions: Contradiction[] = object.contradictions.map(c => ({
-        id: uuidv4(),
-        description: c.description,
-        contradictionType: c.contradictionType,
-        sides: c.sides.map(s => ({
-          position: s.position,
-          papers: s.findingIds
-            .map(fid => findingsMap.get(fid))
-            .filter((f): f is FindingWithPaper => f !== undefined)
-            .map(f => ({
-              paperId: f.paperId,
-              paperTitle: f.paperTitle,
-              findingId: f.id,
-              claim: f.claim,
-              value: f.value,
-              valueType: f.valueType,
-              evidence: f.evidence,
-              confidence: f.confidence
-            })),
-          evidenceStrength: s.evidenceStrength
-        })),
-        possibleExplanation: c.possibleExplanation || undefined,
-        resolutionSuggestion: c.resolutionSuggestion || undefined,
-        severity: c.severity,
-        confidence: c.confidence
-      }))
-      
-      // Transform gaps
-      const gaps: Gap[] = object.gaps.map(g => ({
-        id: uuidv4(),
-        description: g.description,
-        type: g.type,
-        relevance: g.relevance,
-        suggestedResearchQuestion: g.suggestedResearchQuestion,
-        suggestedBy: g.suggestedByPaperIds,
-        priority: g.priority,
-        confidence: g.confidence
-      }))
-      
-      batchResults.push({
-        patterns,
-        contradictions,
-        gaps,
-        summary: object.summary,
-        keyInsights: object.keyInsights
-      })
-      
-      console.log(`   ✅ Batch ${i + 1}: ${patterns.length} patterns, ${contradictions.length} contradictions, ${gaps.length} gaps`)
+      const scopedResults = await analyzeBatchAdaptive(batch, topic, `Batch ${i + 1}/${batches.length}`)
+      batchResults.push(...scopedResults)
+
+      const scopedPatterns = scopedResults.reduce((sum, r) => sum + r.patterns.length, 0)
+      const scopedContradictions = scopedResults.reduce((sum, r) => sum + r.contradictions.length, 0)
+      const scopedGaps = scopedResults.reduce((sum, r) => sum + r.gaps.length, 0)
+      console.log(`   ✅ Batch ${i + 1}: ${scopedPatterns} patterns, ${scopedContradictions} contradictions, ${scopedGaps} gaps`)
       
     } catch (error) {
       console.error(`   ❌ Batch ${i + 1} failed:`, error)

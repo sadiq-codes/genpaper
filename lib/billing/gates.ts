@@ -4,13 +4,13 @@ import { getUserSubscription, incrementPaperUsage } from './subscription-service
 import { 
   getTierLimits,
   isPaperTypeAllowed,
-  canGeneratePaper as canGeneratePaperByLimit,
   getPapersRemaining,
   getTierRequiredForPaperType,
   TIER_CONFIG,
 } from '@/types/subscription'
 import type { SubscriptionTier, UserSubscription } from '@/types/subscription'
 import type { PaperTypeKey } from '@/types/simplified'
+import { createServiceClient } from '@/lib/supabase/service'
 import { warn } from '@/lib/utils/logger'
 
 // =============================================================================
@@ -23,6 +23,98 @@ export interface GateCheckResult {
   requiredTier?: SubscriptionTier
   currentTier?: SubscriptionTier
   papersRemaining?: number
+}
+
+function addUtcMonths(base: Date, months: number): Date {
+  return new Date(Date.UTC(
+    base.getUTCFullYear(),
+    base.getUTCMonth() + months,
+    base.getUTCDate(),
+    base.getUTCHours(),
+    base.getUTCMinutes(),
+    base.getUTCSeconds(),
+    base.getUTCMilliseconds()
+  ))
+}
+
+function startOfUtcMonth(base: Date): Date {
+  return new Date(Date.UTC(
+    base.getUTCFullYear(),
+    base.getUTCMonth(),
+    1,
+    0,
+    0,
+    0,
+    0
+  ))
+}
+
+function resolveUsageWindow(subscription: UserSubscription): { start: Date; end: Date } {
+  const now = new Date()
+  const monthStart = startOfUtcMonth(now)
+
+  const parsedStart = subscription.periodStartedAt ? new Date(subscription.periodStartedAt) : null
+  const parsedEnd = subscription.periodEndsAt ? new Date(subscription.periodEndsAt) : null
+
+  const hasValidStart = Boolean(parsedStart && !Number.isNaN(parsedStart.getTime()))
+  const hasValidEnd = Boolean(parsedEnd && !Number.isNaN(parsedEnd.getTime()))
+
+  // Free-tier fallback should always remain calendar-month based.
+  if (subscription.tier === 'free' && (!hasValidStart || !hasValidEnd)) {
+    const start = monthStart
+    const end = addUtcMonths(start, 1)
+    return { start, end }
+  }
+
+  const start = hasValidStart ? (parsedStart as Date) : monthStart
+  let end = hasValidEnd ? (parsedEnd as Date) : addUtcMonths(start, 1)
+  if (end <= start) {
+    end = addUtcMonths(start, 1)
+  }
+  return { start, end }
+}
+
+async function getAuthoritativePapersUsedThisPeriod(
+  userId: string,
+  subscription: UserSubscription
+): Promise<number> {
+  const supabase = createServiceClient()
+  const { start, end } = resolveUsageWindow(subscription)
+
+  const { count, error } = await supabase
+    .from('research_projects')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('status', 'complete')
+    .not('completed_at', 'is', null)
+    .gte('completed_at', start.toISOString())
+    .lt('completed_at', end.toISOString())
+
+  if (error) {
+    warn({ userId, error }, 'Failed to compute authoritative paper usage; falling back to profile counter')
+    return subscription.papersUsedThisPeriod
+  }
+
+  const authoritativeUsed = count ?? 0
+  const effectiveUsed = Math.max(authoritativeUsed, subscription.papersUsedThisPeriod)
+
+  // Self-heal stale counters so UI and gate checks stay aligned.
+  if (effectiveUsed !== subscription.papersUsedThisPeriod) {
+    const { error: syncError } = await supabase
+      .from('profiles')
+      .update({
+        papers_used_this_period: effectiveUsed,
+        period_started_at: start.toISOString(),
+        period_ends_at: end.toISOString(),
+      })
+      .eq('id', userId)
+
+    if (syncError) {
+      warn({ userId, error: syncError }, 'Failed to sync profile usage counter from authoritative project count')
+    }
+  }
+
+  return effectiveUsed
 }
 
 // =============================================================================
@@ -43,7 +135,7 @@ export async function checkCanGeneratePaper(userId: string): Promise<GateCheckRe
     }
   }
   
-  const { tier, papersUsedThisPeriod, status } = subscription
+  const { tier, status } = subscription
   
   // Check subscription status
   if (status !== 'active' && status !== 'trialing') {
@@ -54,10 +146,12 @@ export async function checkCanGeneratePaper(userId: string): Promise<GateCheckRe
     }
   }
   
+  const papersUsedThisPeriod = await getAuthoritativePapersUsedThisPeriod(userId, subscription)
+
   // Check paper limit
   const papersRemaining = getPapersRemaining(tier, papersUsedThisPeriod)
   
-  if (!canGeneratePaperByLimit(tier, papersUsedThisPeriod)) {
+  if (papersRemaining <= 0) {
     const limit = TIER_CONFIG[tier].limits.papersPerMonth
     return {
       allowed: false,
@@ -224,30 +318,42 @@ export async function recordPaperGenerated(userId: string): Promise<boolean> {
  * @returns false if already generated or project not found
  */
 export async function recordProjectGenerated(projectId: string, userId: string): Promise<boolean> {
-  const { getServiceClient } = await import('@/lib/supabase/service')
-  const { info, error: logError } = await import('@/lib/utils/logger')
+  const { info, warn: logWarn, error: logError } = await import('@/lib/utils/logger')
   
-  const supabase = getServiceClient()
-  
-  const { data, error } = await supabase.rpc('mark_project_generated_and_bill', {
-    p_project_id: projectId,
-    p_user_id: userId,
-  })
-  
-  if (error) {
-    logError({ projectId, userId, error }, 'Failed to mark project as generated')
+  const supabase = createServiceClient()
+
+  // Atomic compare-and-set: only the first successful generation of a project
+  // can flip has_generated from false -> true and trigger billing increment.
+  const { data: markedRows, error: markError } = await supabase
+    .from('research_projects')
+    .update({ has_generated: true })
+    .eq('id', projectId)
+    .eq('user_id', userId)
+    .eq('has_generated', false)
+    .select('id')
+    .limit(1)
+
+  if (markError) {
+    logError({ projectId, userId, error: markError }, 'Failed to atomically mark project as generated')
     return false
   }
-  
-  const wasFirstGeneration = data as boolean
-  
-  if (wasFirstGeneration) {
-    info({ projectId, userId }, 'Project marked as generated, billing incremented')
-  } else {
+
+  const wasFirstGeneration = Array.isArray(markedRows) && markedRows.length > 0
+  if (!wasFirstGeneration) {
     info({ projectId, userId }, 'Project was already generated, no billing change')
+    return false
   }
-  
-  return wasFirstGeneration
+
+  const incremented = await incrementPaperUsage(userId)
+  if (!incremented) {
+    // Increment can fail if DB-side usage function is unavailable; generation gate
+    // remains protected by authoritative project-count checks.
+    logWarn({ projectId, userId }, 'Project marked generated but usage counter increment failed')
+    return false
+  }
+
+  info({ projectId, userId }, 'Project marked as generated, billing incremented')
+  return true
 }
 
 // =============================================================================
@@ -271,14 +377,16 @@ export async function getSubscriptionForDisplay(userId: string): Promise<{
   if (!subscription) {
     return null
   }
+
+  const papersUsedThisPeriod = await getAuthoritativePapersUsedThisPeriod(userId, subscription)
   
   const tierConfig = TIER_CONFIG[subscription.tier]
-  const papersRemaining = getPapersRemaining(subscription.tier, subscription.papersUsedThisPeriod)
+  const papersRemaining = getPapersRemaining(subscription.tier, papersUsedThisPeriod)
   
   return {
     tier: subscription.tier,
     tierName: tierConfig.name,
-    papersUsed: subscription.papersUsedThisPeriod,
+    papersUsed: papersUsedThisPeriod,
     papersLimit: tierConfig.limits.papersPerMonth,
     papersRemaining,
     periodEndsAt: subscription.periodEndsAt,

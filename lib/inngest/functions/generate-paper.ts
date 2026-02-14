@@ -36,11 +36,15 @@ import {
   runDiscoveryPhase,
   runExtractionCheckPhase,
   runExtractionBatchPhase,
+  runPreflightContentPhase,
   runAnalysisPhase,
   runBuildContextsPhase,
   runSectionGenerationPhase,
+  runQualityCheckPhase,
+  runSectionRewritePhase,
   runFinalizePhase,
   getPapersByIds,
+  type QualityIssue,
   type SectionResult,
 } from "@/lib/generation/pipeline-steps";
 import { updateResearchProjectStatus, savePartialContent } from "@/lib/db/research";
@@ -342,6 +346,29 @@ export const generatePaperFunction = inngest.createFunction(
     }
 
     // =========================================================================
+    // Step N: Preflight Content Gate
+    // =========================================================================
+    await step.run("preflight-content", async () => {
+      const run = await getRun(runId);
+      if (run?.status === "cancelled") throw new Error("Run was cancelled");
+
+      const state = await getPipelineState(runId);
+      if (!state.paperIds) {
+        throw new Error("Paper IDs not found for content preflight");
+      }
+
+      const papers = await getPapersByIds(state.paperIds);
+      const preflight = await runPreflightContentPhase(state.paperIds, papers, onProgress);
+
+      // Narrow downstream analysis/retrieval to papers that are actually chunk-ready.
+      if (preflight.readyPaperIds.length > 0 && preflight.readyPaperIds.length !== state.paperIds.length) {
+        await updatePipelineState(runId, { paperIds: preflight.readyPaperIds });
+      }
+
+      return preflight;
+    });
+
+    // =========================================================================
     // Step N+1: Analyze Findings & Build Contexts (merged for efficiency)
     // =========================================================================
     const contextsResult = await step.run("analyze-and-build-contexts", async (): Promise<{
@@ -510,11 +537,94 @@ export const generatePaperFunction = inngest.createFunction(
     }
 
     // =========================================================================
+    // Completion Gate: lightweight truncation repair only
+    // =========================================================================
+    await step.run("completion-gate", async () => {
+      const run = await getRun(runId);
+      if (run?.status === "cancelled") throw new Error("Run was cancelled");
+
+      const state = await getPipelineState(runId);
+      if (!state.sectionResults || !state.profile) {
+        return { checked: 0, truncationIssues: 0, rewritten: 0 };
+      }
+
+      const contexts = await loadContextCache<SectionContext>(runId);
+      if (!contexts || contexts.length === 0) {
+        return { checked: state.sectionResults.length, truncationIssues: 0, rewritten: 0 };
+      }
+
+      const issues = await runQualityCheckPhase(state.sectionResults, contexts, onProgress);
+      const truncationIssues = issues
+        .filter((i: QualityIssue) => i.issue === "truncation")
+        // Avoid duplicate rewrites for the same section
+        .filter((issue, idx, arr) => arr.findIndex(i => i.sectionIndex === issue.sectionIndex) === idx);
+
+      if (truncationIssues.length === 0) {
+        return { checked: state.sectionResults.length, truncationIssues: 0, rewritten: 0 };
+      }
+
+      // Keep this bounded for runtime safety; truncation should be rare.
+      const maxRepairs = 2;
+      const toRepair = truncationIssues.slice(0, maxRepairs);
+
+      const pipelineConfig: PipelineConfig = {
+        topic: config.topic,
+        paperType: config.paperType as PaperTypeKey,
+        length: Number(config.length) || 5500,
+        customInstructions: config.customInstructions,
+        useLibraryOnly: config.useLibraryOnly,
+        libraryPaperIds: config.libraryPaperIds || [],
+        temperature: config.temperature,
+        maxTokens: config.maxTokens,
+        sources: config.sources,
+        originalResearch: config.originalResearch,
+      };
+
+      let rewritten = 0;
+      for (const issue of toRepair) {
+        const latestState = await getPipelineState(runId);
+        if (!latestState.profile || !latestState.sectionResults) break;
+
+        const context = contexts[issue.sectionIndex];
+        if (!context) continue;
+
+        const previousContent = latestState.sectionResults
+          .slice(0, issue.sectionIndex)
+          .map((s) => s.content)
+          .join("\n\n");
+
+        const repaired = await runSectionRewritePhase(
+          issue.sectionIndex,
+          issue,
+          context,
+          previousContent,
+          latestState.profile,
+          pipelineConfig,
+          contexts.length,
+          onProgress
+        );
+
+        await appendSectionResult(runId, issue.sectionIndex, repaired);
+
+        // Persist partial content after each repair for recovery resilience.
+        const repairedState = await getPipelineState(runId);
+        const allContent = (repairedState.sectionResults || [])
+          .map((s) => s.content)
+          .join("\n\n");
+        await savePartialContent(projectId, allContent, issue.sectionIndex + 1);
+
+        rewritten++;
+      }
+
+      return {
+        checked: state.sectionResults.length,
+        truncationIssues: truncationIssues.length,
+        rewritten,
+      };
+    });
+
+    // =========================================================================
     // Final Step: Finalize
-    // 
-    // NOTE: Quality check, rewrite, and enforce-min-total-words steps have been
-    // removed to simplify the pipeline and avoid timeout issues. Users can edit
-    // the generated content in the editor if adjustments are needed.
     // =========================================================================
     const finalResult = await step.run("finalize", async () => {
       const run = await getRun(runId);

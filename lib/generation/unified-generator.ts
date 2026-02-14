@@ -93,6 +93,20 @@ function resolveGenOptions(options: BuildPromptOptions): Required<Pick<BuildProm
 }
 
 const SECTION_LLM_TIMEOUT_MS = 120_000
+const MAX_INPUT_TOKENS_PER_CALL = 18_000
+const MAX_TRUNCATION_RETRY_TOKENS = 4200
+
+function stripTrailingCitationMarkers(text: string): string {
+  return text.replace(/(?:\s*\[@[^\]]+\]\s*)+$/g, '').trim()
+}
+
+function looksTruncated(text: string): boolean {
+  const cleaned = stripTrailingCitationMarkers(text.trim())
+  if (!cleaned) return false
+  const lastChar = cleaned.slice(-1)
+  // Consider sentence punctuation, table row terminator, and closing delimiters as complete endings.
+  return !/[.!?;:|)\]"'`]/.test(lastChar)
+}
 
 async function generateTextWithTimeout(input: Parameters<typeof generateText>[0]) {
   const controller = new AbortController()
@@ -111,6 +125,28 @@ async function generateTextWithTimeout(input: Parameters<typeof generateText>[0]
   } finally {
     clearTimeout(timeoutId)
   }
+}
+
+function estimateTokens(text: string): number {
+  // Fast conservative estimate for English prose/prompt text.
+  return Math.ceil(text.length / 3.8)
+}
+
+function enforceInputTokenBudget(system: string, user: string): { system: string; user: string } {
+  const sysTokens = estimateTokens(system)
+  const userTokens = estimateTokens(user)
+  const total = sysTokens + userTokens
+
+  if (total <= MAX_INPUT_TOKENS_PER_CALL) {
+    return { system, user }
+  }
+
+  // Keep system intact and trim user prompt body.
+  const allowedUserTokens = Math.max(2000, MAX_INPUT_TOKENS_PER_CALL - sysTokens)
+  const approxChars = Math.max(7000, Math.floor(allowedUserTokens * 3.8))
+  const trimmedUser = user.slice(0, approxChars)
+
+  return { system, user: trimmedUser }
 }
 
 // Direct prompt building - no caching complexity
@@ -182,16 +218,50 @@ export async function generateWithUnifiedTemplate(
   
   const resolvedOptions = resolveGenOptions(options)
 
-  const { text, usage } = await generateTextWithTimeout({
+  const boundedPrompt = enforceInputTokenBudget(promptData.system, promptData.user)
+
+  const initialResponse = await generateTextWithTimeout({
     model: getLanguageModel(),
-    system: promptData.system,
-    prompt: promptData.user,
+    system: boundedPrompt.system,
+    prompt: boundedPrompt.user,
     temperature: resolvedOptions.temperature,
     maxOutputTokens: resolvedOptions.maxTokens
   })
 
-  fullContent = text
-  tokensUsed = usage?.totalTokens || 0
+  let finalResponse = initialResponse
+  const initialFinishReason = String((initialResponse as { finishReason?: unknown }).finishReason || '')
+  const shouldRetryForTruncation =
+    (initialFinishReason === 'length' || looksTruncated(initialResponse.text)) &&
+    resolvedOptions.maxTokens < MAX_TRUNCATION_RETRY_TOKENS
+
+  if (shouldRetryForTruncation) {
+    const expandedMaxTokens = Math.min(MAX_TRUNCATION_RETRY_TOKENS, Math.max(
+      resolvedOptions.maxTokens + 500,
+      Math.round(resolvedOptions.maxTokens * 1.6)
+    ))
+
+    progress('generation', 30, 'Detected possible truncation, retrying with larger output budget...')
+
+    const retryResponse = await generateTextWithTimeout({
+      model: getLanguageModel(),
+      system: boundedPrompt.system,
+      prompt: boundedPrompt.user,
+      temperature: resolvedOptions.temperature,
+      maxOutputTokens: expandedMaxTokens
+    })
+
+    // Prefer retry if it is more complete or materially longer.
+    const retryLooksBetter =
+      (!looksTruncated(retryResponse.text) && looksTruncated(initialResponse.text)) ||
+      retryResponse.text.length > Math.round(initialResponse.text.length * 1.08)
+
+    if (retryLooksBetter) {
+      finalResponse = retryResponse
+    }
+  }
+
+  fullContent = finalResponse.text
+  tokensUsed = finalResponse.usage?.totalTokens || 0
 
   // Clean any artifacts that shouldn't be in output
   fullContent = cleanNonCitationArtifacts(fullContent)
@@ -313,8 +383,8 @@ export async function generateSectionBySubsections(
     // Build options for this subsection
     const subOptions: BuildPromptOptions = { ...options }
     subOptions.targetWords = subTargetWords
-    // Keep subsection calls bounded for cloud runtime reliability.
-    subOptions.maxTokens = Math.min(1600, Math.max(900, Math.round(subTargetWords * 1.8)))
+    // Increased subsection ceilings to reduce truncation while keeping calls bounded.
+    subOptions.maxTokens = Math.min(2400, Math.max(1100, Math.round(subTargetWords * 2.2)))
 
     // Inject parent section context so the model knows this is a subsection, not a top-level section
     const parentFraming = `You are writing subsection "${sub.title}" (${i + 1} of ${subsections.length}) inside section "${parentContext.title}". Stay within the subsection scope — do not reintroduce broad context that belongs to the parent section or earlier subsections.`

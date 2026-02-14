@@ -10,8 +10,7 @@ import {
 } from './base-retrieval'
 import { ChunkRetriever } from './chunk-retriever'
 import { ContextBuilder } from './context-builder'
-import { getContentStatus, ensureBulkContentIngestion } from '@/lib/content'
-import { getPapersByIds } from '@/lib/db/library'
+import { getContentStatus } from '@/lib/content'
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
 import { 
   ContentRetrievalError, 
@@ -309,85 +308,33 @@ export class GenerationContextService {
     console.log(`   🎯 Query: "${topic}"`)
     console.log(`   📋 Paper IDs: [${paperIds.slice(0, 3).join(', ')}${paperIds.length > 3 ? '...' : ''}]`)
     
-    // Get content status for all papers first
+    // Retrieval-only path: ingestion/chunking is handled upstream by pipeline preflight.
+    // We only read available chunked papers here.
     const statusMap = await getContentStatus(paperIds)
-    let papersWithContent = paperIds.filter(id => {
-      const status = statusMap.get(id)
-      return status?.hasContent && (status.chunkCount > 0 || status.contentType === 'abstract')
-    })
-
-    // If some papers have content but no chunks, trigger chunking/embedding ingestion for those.
-    // Without chunks, RAG retrieval will reliably return 0 results (RPCs query `paper_chunks`).
-    const papersNeedingChunks = paperIds.filter(id => {
-      const status = statusMap.get(id)
-      return !!status?.hasContent && status.contentType !== 'none' && status.chunkCount === 0
-    })
-    if (papersNeedingChunks.length > 0) {
-      console.warn(`⚠️ ${papersNeedingChunks.length} papers have content but 0 chunks. Triggering ingestion...`)
-      const fromProvided = allPapers.filter(p => papersNeedingChunks.includes(p.id))
-      const papersToIngest = fromProvided.length > 0 ? fromProvided : (await getPapersByIds(papersNeedingChunks)).map(lp => ({
-        ...lp.paper,
-        authors: lp.paper.authors || [],
-        author_names: lp.paper.authors?.map(a => a.name) || []
-      } as PaperWithAuthors))
-
-      if (papersToIngest.length > 0) {
-        await ensureBulkContentIngestion(papersToIngest)
-      }
-
-      const retryStatus = await getContentStatus(paperIds)
-      papersWithContent = paperIds.filter(id => {
-        const status = retryStatus.get(id)
-        return status?.hasContent && (status.chunkCount > 0 || status.contentType === 'abstract')
+    const papersWithChunks = paperIds.filter(id => (statusMap.get(id)?.chunkCount || 0) > 0)
+    
+    console.log(`📊 Chunk availability: ${papersWithChunks.length}/${paperIds.length} papers`)
+    
+    let retrievedChunks: RetrievedChunk[] = []
+    if (papersWithChunks.length > 0) {
+      // Retrieve chunks
+      // INCREASED minimum from 60 to 90: More material for synthesis
+      const retrievalResult = await this.retrieve({
+        query: topic,
+        paperIds: papersWithChunks,
+        limit: Math.max(chunkLimit * 2, 90),
+        // REDUCED from 0.15 to 0.1: Allow more papers through for niche topics
+        minScore: 0.1,
+        useCompression: false // Don't compress for getRelevantChunks
       })
+      retrievedChunks = retrievalResult.chunks
+    } else {
+      console.warn('⚠️ No chunked papers available during retrieval. Using abstract-only fallback.')
     }
-    
-    if (papersWithContent.length === 0) {
-      console.warn(`⚠️ No papers have content. Triggering ingestion...`)
-      const libraryPapers = await getPapersByIds(paperIds)
-      
-      if (!libraryPapers.length) {
-        throw new ContentRetrievalError('Failed to retrieve papers from library')
-      }
-      
-      const papers = libraryPapers.map(lp => ({
-        ...lp.paper,
-        authors: lp.paper.authors || [],
-        author_names: lp.paper.authors?.map(a => a.name) || []
-      } as PaperWithAuthors))
-      
-      await ensureBulkContentIngestion(papers)
-      
-      const retryStatus = await getContentStatus(paperIds)
-      papersWithContent = paperIds.filter(id => {
-        const status = retryStatus.get(id)
-        return status?.hasContent && (status.chunkCount > 0 || status.contentType === 'abstract')
-      })
-      
-      if (papersWithContent.length === 0) {
-        throw new ContentRetrievalError('Failed to ingest content for any papers', {
-          attempted: papers.length,
-          paperIds
-        })
-      }
-    }
-    
-    console.log(`📊 Content availability: ${papersWithContent.length}/${paperIds.length} papers`)
-    
-    // Retrieve chunks
-    // INCREASED minimum from 60 to 90: More material for synthesis
-    const result = await this.retrieve({
-      query: topic,
-      paperIds: papersWithContent,
-      limit: Math.max(chunkLimit * 2, 90),
-      // REDUCED from 0.15 to 0.1: Allow more papers through for niche topics
-      minScore: 0.1,
-      useCompression: false // Don't compress for getRelevantChunks
-    })
     
     // Convert to PaperChunk format with deterministic IDs
     // Add evidence_strength based on chunk source
-    let allChunks: PaperChunk[] = result.chunks.map((chunk, index) => ({
+    let allChunks: PaperChunk[] = retrievedChunks.map((chunk, index) => ({
       ...chunk,
       id: chunk.id || createDeterministicChunkId(chunk.paper_id, chunk.content, index),
       paper: allPapers.find(p => p.id === chunk.paper_id),
@@ -413,7 +360,7 @@ export class GenerationContextService {
       console.log(`⚠️ Strict filtering reduced ${originalCount} → ${allChunks.length} chunks. Trying relaxed filtering...`)
       
       // Relaxed filter: only require minimal content
-      allChunks = result.chunks
+      allChunks = retrievedChunks
         .map((chunk, index) => ({
           ...chunk,
           id: chunk.id || createDeterministicChunkId(chunk.paper_id, chunk.content, index),
@@ -516,12 +463,11 @@ export class GenerationContextService {
     topic: string,
     allPapers: PaperWithAuthors[] = []
   ): Promise<SectionContext[]> {
-    const sectionContexts: SectionContext[] = []
     const allPaperIds = allPapers.map(p => p.id)
     
     console.log(`📊 Building section contexts for ${outline.sections.length} sections...`)
-    
-    for (const section of outline.sections) {
+
+    const sectionContexts = await Promise.all(outline.sections.map(async (section) => {
       let contextChunks: PaperChunk[] = []
       try {
         const startTime = Date.now()
@@ -581,9 +527,8 @@ export class GenerationContextService {
         })),
         expectedWords: section.expectedWords
       }
-      
-      sectionContexts.push(context)
-    }
+      return context
+    }))
     
     console.log(`📊 Section contexts built: ${sectionContexts.length} sections processed`)
     return sectionContexts

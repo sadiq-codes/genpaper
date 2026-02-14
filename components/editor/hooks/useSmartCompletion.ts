@@ -54,6 +54,115 @@ const AUTO_TRIGGER_DEBOUNCE_MS = 400
 // Minimum time between keystrokes to consider "paused typing"
 // If user types faster than this, skip the request (they're still typing)
 const MIN_PAUSE_BETWEEN_KEYSTROKES_MS = 200
+// Only consider transactions that happen shortly after actual typing keys.
+const USER_TYPING_EVENT_WINDOW_MS = 900
+
+interface TransactionLike {
+  docChanged: boolean
+  steps: Array<{ toJSON?: () => unknown }>
+  getMeta?: (key: string) => unknown
+}
+
+interface InsertionSignals {
+  insertedTextChars: number
+  insertsParagraphBoundary: boolean
+}
+
+function aggregateInsertionSignals(a: InsertionSignals, b: InsertionSignals): InsertionSignals {
+  return {
+    insertedTextChars: a.insertedTextChars + b.insertedTextChars,
+    insertsParagraphBoundary: a.insertsParagraphBoundary || b.insertsParagraphBoundary,
+  }
+}
+
+function collectSignalsFromSliceNodes(content: unknown): InsertionSignals {
+  if (!Array.isArray(content)) {
+    return { insertedTextChars: 0, insertsParagraphBoundary: false }
+  }
+
+  let signals: InsertionSignals = { insertedTextChars: 0, insertsParagraphBoundary: false }
+
+  for (const node of content) {
+    if (!node || typeof node !== 'object') continue
+    const record = node as Record<string, unknown>
+    const nodeType = typeof record.type === 'string' ? record.type : ''
+
+    if (nodeType === 'text') {
+      const text = typeof record.text === 'string' ? record.text : ''
+      signals.insertedTextChars += text.length
+    }
+
+    if (nodeType === 'paragraph' || nodeType === 'hardBreak') {
+      signals.insertsParagraphBoundary = true
+    }
+
+    signals = aggregateInsertionSignals(signals, collectSignalsFromSliceNodes(record.content))
+  }
+
+  return signals
+}
+
+function getInsertionSignalsFromTransaction(transaction: TransactionLike): InsertionSignals {
+  let signals: InsertionSignals = { insertedTextChars: 0, insertsParagraphBoundary: false }
+
+  for (const step of transaction.steps) {
+    const json = step.toJSON?.()
+    if (!json || typeof json !== 'object') continue
+    const stepRecord = json as Record<string, unknown>
+    const stepType = typeof stepRecord.stepType === 'string' ? stepRecord.stepType : ''
+    if (stepType !== 'replace' && stepType !== 'replaceAround') continue
+
+    const slice = stepRecord.slice
+    if (!slice || typeof slice !== 'object') continue
+    const sliceContent = (slice as Record<string, unknown>).content
+    signals = aggregateInsertionSignals(signals, collectSignalsFromSliceNodes(sliceContent))
+  }
+
+  return signals
+}
+
+function isLikelyUndoRedo(meta: unknown): boolean {
+  if (!meta) return false
+  if (typeof meta === 'string') {
+    const normalized = meta.toLowerCase()
+    return normalized.includes('undo') || normalized.includes('redo')
+  }
+  if (typeof meta === 'object') {
+    const record = meta as Record<string, unknown>
+    return Boolean(record.undo || record.redo)
+  }
+  return false
+}
+
+function isLikelyUserTypingKey(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey) return false
+  if (event.isComposing) return false
+  // Character keys + Enter are the only inputs that should drive auto-trigger scheduling.
+  return event.key.length === 1 || event.key === 'Enter'
+}
+
+function shouldAutoTriggerFromTransaction(
+  transaction: TransactionLike | null | undefined,
+  nowMs: number,
+  lastTypingEventAtMs: number
+): boolean {
+  if (!transaction?.docChanged) return false
+
+  // Skip non-writing update classes.
+  const uiEvent = transaction.getMeta?.('uiEvent')
+  if (uiEvent === 'paste' || uiEvent === 'drop' || uiEvent === 'cut') return false
+  if (transaction.getMeta?.('paste')) return false
+  if (isLikelyUndoRedo(transaction.getMeta?.('history$')) || isLikelyUndoRedo(transaction.getMeta?.('history'))) return false
+
+  // Skip style/citation bookkeeping transactions.
+  if (transaction.getMeta?.('citationStyleChange') || transaction.getMeta?.('papersUpdated')) return false
+
+  // Skip if this update was not close to a real typing key event.
+  if (nowMs - lastTypingEventAtMs > USER_TYPING_EVENT_WINDOW_MS) return false
+
+  const insertionSignals = getInsertionSignalsFromTransaction(transaction)
+  return insertionSignals.insertedTextChars > 0 || insertionSignals.insertsParagraphBoundary
+}
 
 /**
  * Check if a suggestion substantially overlaps with existing document text.
@@ -390,6 +499,8 @@ export function useSmartCompletion({
   const inFlightRequestRef = useRef<Map<string, Promise<void>>>(new Map())
   // Track last keystroke time for rapid-typing detection
   const lastKeystrokeTimeRef = useRef<number>(0)
+  // Track real typing key events so we can ignore non-writing transactions.
+  const lastTypingEventAtRef = useRef<number>(0)
   
   // SENTENCE QUEUE: Store remaining sentences for instant display on accept
   const sentenceQueueRef = useRef<QueuedSentence[]>([])
@@ -1033,9 +1144,11 @@ export function useSmartCompletion({
       // Delay slightly to let the current sentence be processed
       setTimeout(() => {
         if (!editor || editor.isDestroyed || !mountedRef.current) return
+        if (hasGhostText(editor)) return
         
         const context = extractEditorContext(editor)
         if (!context) return
+        if (!shouldTriggerCompletion(context)) return
         
         // This will fetch new sentences in the background
         generateCompletion(context)
@@ -1089,7 +1202,8 @@ export function useSmartCompletion({
     }
   }, [editor, enabled, trackAutocompleteAccepted])
 
-  // Track edits with debounced auto-trigger
+  // Track edits with debounced auto-trigger.
+  // Only respond to user typing insertions (not generic document updates).
   useEffect(() => {
     if (!editor || !enabled) return
 
@@ -1098,7 +1212,8 @@ export function useSmartCompletion({
     editorSetupTimeRef.current = Date.now()
 
     // On content change, cancel pending requests and optionally auto-trigger
-    const handleUpdate = () => {
+    // ONLY when transaction looks like real user typing insertion.
+    const handleUpdate = ({ transaction }: { transaction: TransactionLike }) => {
       const now = Date.now()
       const timeSinceSetup = now - editorSetupTimeRef.current
       
@@ -1111,7 +1226,12 @@ export function useSmartCompletion({
         return
       }
       
-      // After initial period, any doc change should cancel pending requests (user is typing)
+      // Ignore non-writing updates (formatting, citation metadata updates, undo/redo, paste, etc.).
+      if (!shouldAutoTriggerFromTransaction(transaction, now, lastTypingEventAtRef.current)) {
+        return
+      }
+
+      // After initial period, writing insertions should cancel pending requests.
       cancelPendingRequestRef.current()
       
       // Auto-trigger if enabled in preferences
@@ -1159,13 +1279,17 @@ export function useSmartCompletion({
     }
   }, [editor, enabled, prefs?.autoSuggestions])
 
-  // Handle Ctrl+Space for manual trigger - only when editor is focused
+  // Handle typing-key tracking + Ctrl+Space manual trigger.
   useEffect(() => {
     if (!editor || !enabled) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       // Only handle if editor is focused
       if (!editor.isFocused) return
+
+      if (isLikelyUserTypingKey(event)) {
+        lastTypingEventAtRef.current = Date.now()
+      }
       
       // Ctrl+Space or Cmd+Space
       if (event.code === 'Space' && (event.ctrlKey || event.metaKey)) {

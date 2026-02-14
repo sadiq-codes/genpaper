@@ -84,13 +84,34 @@ export function validateProductionEnv(): { valid: boolean; errors: string[] } {
   return { valid: errors.length === 0, errors }
 }
 
+function normalizeHeaderValue(value: string | null): string | undefined {
+  if (!value) return undefined
+  const normalized = value.split(',')[0]?.trim()
+  return normalized || undefined
+}
+
+function isInternalHost(host: string): boolean {
+  const normalizedHost = host.toLowerCase()
+  const hostnameOnly = normalizedHost.replace(/:\d+$/, '')
+  return hostnameOnly === '0.0.0.0'
+    || hostnameOnly === '127.0.0.1'
+    || hostnameOnly === 'localhost'
+    || hostnameOnly === '::1'
+}
+
 // Build an absolute URL for server contexts, preferring request headers
 export function getAbsoluteUrlFromHeaders(h: Headers | null | undefined, path = '/') {
   const inputPath = path.startsWith('/') ? path : `/${path}`
-  const host = h?.get('x-forwarded-host') || h?.get('host')
-  const proto = h?.get('x-forwarded-proto') || 'http'
+  const forwardedHost = normalizeHeaderValue(h?.get('x-forwarded-host') ?? null)
+  const hostHeader = normalizeHeaderValue(h?.get('host') ?? null)
+  const host = forwardedHost || hostHeader
+  const proto = normalizeHeaderValue(h?.get('x-forwarded-proto') ?? null) || 'http'
 
-  if (host) {
+  const shouldUseHeaderHost = host && (
+    process.env.NODE_ENV !== 'production' || !isInternalHost(host)
+  )
+
+  if (shouldUseHeaderHost) {
     return `${proto}://${host}${inputPath}`
   }
 

@@ -142,13 +142,14 @@ export async function GET(
       async start(controller) {
         let isControllerClosed = false;
         let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-        let pollInterval: ReturnType<typeof setInterval> | null = null;
+        let pollTimer: ReturnType<typeof setTimeout> | null = null;
         let currentLastEventId = lastEventId;
+        let consecutivePollErrors = 0;
 
         // Helper to clean up and close
         const cleanup = () => {
           if (heartbeatInterval) clearInterval(heartbeatInterval);
-          if (pollInterval) clearInterval(pollInterval);
+          if (pollTimer) clearTimeout(pollTimer);
           if (!isControllerClosed) {
             isControllerClosed = true;
             try {
@@ -206,8 +207,8 @@ export async function GET(
           return;
         }
 
-        // Poll for new events
-        pollInterval = setInterval(async () => {
+        // Poll for new events (serialized loop to avoid overlapping queries)
+        const poll = async () => {
           if (isControllerClosed) {
             cleanup();
             return;
@@ -226,17 +227,29 @@ export async function GET(
             if (newEvents.length > 0) {
               await sendEvents(newEvents);
             }
+            consecutivePollErrors = 0;
 
             // If run is terminal, close after sending events
             if (isRunTerminal(latestRun)) {
               // Small delay to ensure all events are sent
               setTimeout(cleanup, 500);
+              return;
             }
           } catch (err) {
-            logError({ error: err }, "Error polling for events");
-            // Don't close on transient errors - keep trying
+            consecutivePollErrors += 1;
+            logError(
+              { error: err, runId, consecutivePollErrors },
+              "Error polling for events"
+            );
+            // Keep stream alive, but back off on repeated failures.
+          } finally {
+            if (!isControllerClosed) {
+              const backoffMs = Math.min(8000, 2000 * Math.max(1, consecutivePollErrors));
+              pollTimer = setTimeout(poll, backoffMs);
+            }
           }
-        }, 2000); // Poll every 2s to reduce DB load (events are still sent immediately when available)
+        };
+        pollTimer = setTimeout(poll, 2000);
 
         // Handle client disconnect
         request.signal.addEventListener("abort", () => {

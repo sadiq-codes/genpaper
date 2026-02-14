@@ -43,6 +43,60 @@ export interface BulkIngestionSummary {
   results: IngestionResult[]
 }
 
+async function updateQdrantSyncStatus(
+  serviceClient: ReturnType<typeof getServiceClient>,
+  paperId: string,
+  status: 'synced' | 'pending',
+  lastError?: string
+): Promise<void> {
+  try {
+    const { data, error } = await serviceClient
+      .from('papers')
+      .select('metadata')
+      .eq('id', paperId)
+      .maybeSingle()
+
+    if (error) {
+      console.warn(`Failed to load metadata for qdrant sync status (${paperId}):`, error.message)
+      return
+    }
+
+    const metadata = data?.metadata && typeof data.metadata === 'object'
+      ? (data.metadata as Record<string, unknown>)
+      : {}
+    const previous = metadata.qdrant_sync && typeof metadata.qdrant_sync === 'object'
+      ? (metadata.qdrant_sync as Record<string, unknown>)
+      : {}
+    const now = new Date().toISOString()
+
+    const qdrantSync: Record<string, unknown> = {
+      ...previous,
+      status,
+      updated_at: now
+    }
+
+    if (status === 'pending') {
+      qdrantSync.pending_since = typeof previous.pending_since === 'string' ? previous.pending_since : now
+      qdrantSync.last_error = lastError || 'unknown'
+    } else {
+      qdrantSync.synced_at = now
+      delete qdrantSync.pending_since
+      delete qdrantSync.last_error
+    }
+
+    const { error: updateError } = await serviceClient
+      .from('papers')
+      .update({ metadata: { ...metadata, qdrant_sync: qdrantSync } })
+      .eq('id', paperId)
+
+    if (updateError) {
+      console.warn(`Failed to persist qdrant sync status (${paperId}):`, updateError.message)
+    }
+  } catch (err) {
+    console.warn(`Unexpected qdrant sync metadata error (${paperId}):`, err)
+  }
+}
+
 /**
  * Get content availability status for multiple papers
  */
@@ -295,11 +349,15 @@ export async function createChunksForPaper(
             content: normalizedContent,
             embedding
           }])
+          await updateQdrantSyncStatus(serviceClient, paperId, 'synced')
         } catch (qdrantErr) {
           console.warn(`Failed to insert Qdrant chunk for paper ${paperId}:`, qdrantErr)
+          const message = qdrantErr instanceof Error ? qdrantErr.message : String(qdrantErr)
+          await updateQdrantSyncStatus(serviceClient, paperId, 'pending', message)
         }
       } else {
         console.warn(`⚠️ Qdrant not configured - embedding for paper ${paperId} not stored!`)
+        await updateQdrantSyncStatus(serviceClient, paperId, 'pending', 'qdrant_not_configured')
       }
 
       console.log(`✅ Created 1 short-content chunk for paper ${paperId}`)
@@ -345,10 +403,23 @@ export async function createChunksForPaper(
     const chunkDataWithoutEmbeddings = chunkDataWithEmbeddings.map(({ embedding, ...rest }) => rest)
     
     // Insert chunks in batches to reduce statement timeout risk on large payloads.
-    const DB_BATCH_SIZE = 100
+    const DB_BATCH_SIZE = 50
     let error: { message: string } | null = null
-    for (let i = 0; i < chunkDataWithoutEmbeddings.length; i += DB_BATCH_SIZE) {
-      const batch = chunkDataWithoutEmbeddings.slice(i, i + DB_BATCH_SIZE)
+    const dedupedById = new Map<string, (typeof chunkDataWithoutEmbeddings)[number]>()
+    for (const chunk of chunkDataWithoutEmbeddings) {
+      // Deterministic IDs make this dedupe safe and idempotent.
+      dedupedById.set(chunk.id, chunk)
+    }
+    const dedupedChunks = Array.from(dedupedById.values())
+
+    if (dedupedChunks.length !== chunkDataWithoutEmbeddings.length) {
+      console.warn(
+        `⚠️ Deduped ${chunkDataWithoutEmbeddings.length - dedupedChunks.length} duplicate chunks before DB upsert for paper ${paperId}`
+      )
+    }
+
+    for (let i = 0; i < dedupedChunks.length; i += DB_BATCH_SIZE) {
+      const batch = dedupedChunks.slice(i, i + DB_BATCH_SIZE)
       const { error: batchError } = await serviceClient
         .from('paper_chunks')
         .upsert(batch, {
@@ -359,6 +430,25 @@ export async function createChunksForPaper(
         })
 
       if (batchError) {
+        // Fallback for transient/duplicate-sensitive failures: retry rows one-by-one.
+        if (batchError.message.includes('ON CONFLICT DO UPDATE command cannot affect row a second time') ||
+            batchError.message.toLowerCase().includes('statement timeout')) {
+          console.warn(`⚠️ Batch upsert failed for paper ${paperId}, retrying row-by-row: ${batchError.message}`)
+          for (const row of batch) {
+            const { error: singleError } = await serviceClient
+              .from('paper_chunks')
+              .upsert(row, {
+                onConflict: 'id',
+                ignoreDuplicates: false
+              })
+            if (singleError) {
+              error = { message: singleError.message }
+              break
+            }
+          }
+          if (error) break
+          continue
+        }
         error = { message: batchError.message }
         break
       }
@@ -387,11 +477,15 @@ export async function createChunksForPaper(
       try {
         await upsertQdrantChunks(chunkDataWithEmbeddings)
         console.log(`✅ Inserted ${chunkDataWithEmbeddings.length} chunks into Qdrant for paper ${paperId}`)
+        await updateQdrantSyncStatus(serviceClient, paperId, 'synced')
       } catch (qdrantErr) {
         console.warn(`Failed to insert Qdrant chunks for paper ${paperId}:`, qdrantErr)
+        const message = qdrantErr instanceof Error ? qdrantErr.message : String(qdrantErr)
+        await updateQdrantSyncStatus(serviceClient, paperId, 'pending', message)
       }
     } else {
       console.warn(`⚠️ Qdrant not configured - embeddings for paper ${paperId} not stored!`)
+      await updateQdrantSyncStatus(serviceClient, paperId, 'pending', 'qdrant_not_configured')
     }
 
     // Verify actual chunk count in database

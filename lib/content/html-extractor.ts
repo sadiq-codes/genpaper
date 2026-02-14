@@ -28,6 +28,57 @@ function getRandomUserAgent(): string {
 }
 
 /**
+ * Normalize DOI strings for downstream lookup/fetch.
+ * Handles encoded DOI URLs and malformed `https://doi.org/...` wrappers.
+ * Returns null when value cannot be normalized to a DOI token.
+ */
+export function normalizeDoiForLookup(rawDoi: string | null | undefined): string | null {
+  if (!rawDoi) return null
+
+  let doi = rawDoi.trim()
+  if (!doi) return null
+
+  // Decode percent-encoded wrappers (at most twice to avoid weird loops).
+  for (let i = 0; i < 2; i++) {
+    if (!/%[0-9a-f]{2}/i.test(doi)) break
+    try {
+      const decoded = decodeURIComponent(doi)
+      if (decoded === doi) break
+      doi = decoded
+    } catch {
+      break
+    }
+  }
+
+  doi = doi.replace(/^doi:\s*/i, '').trim()
+
+  // Handle full DOI URLs.
+  if (/^https?:\/\//i.test(doi)) {
+    try {
+      const parsed = new URL(doi)
+      if (parsed.hostname.toLowerCase().includes('doi.org')) {
+        doi = parsed.pathname.replace(/^\/+/, '')
+      }
+    } catch {
+      // Keep original string and continue normalization below.
+    }
+  }
+
+  doi = doi
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+    .split(/[?#]/)[0]
+    .replace(/\s+/g, '')
+    .trim()
+
+  // Basic DOI shape validation.
+  if (!/^10\.\d{4,9}\/\S+$/i.test(doi)) {
+    return null
+  }
+
+  return doi
+}
+
+/**
  * Publisher-specific transformations to clean up HTML before extraction
  */
 function initializeTransformations(): void {
@@ -520,11 +571,15 @@ export async function tryHtmlFallbackFromDoi(
   doi: string,
   timeoutMs: number = 30000
 ): Promise<HtmlExtractionResult | null> {
-  if (!doi) return null
+  const normalizedDoi = normalizeDoiForLookup(doi)
+  if (!normalizedDoi) {
+    console.log(`📄 Skipping DOI HTML fallback (invalid DOI): ${doi}`)
+    return null
+  }
   
   try {
     // Resolve DOI to publisher landing page URL (follow redirect)
-    const doiUrl = `https://doi.org/${encodeURIComponent(doi)}`
+    const doiUrl = `https://doi.org/${normalizedDoi}`
     console.log(`📄 Resolving DOI for HTML fallback: ${doiUrl}`)
     
     const response = await fetch(doiUrl, {
@@ -536,7 +591,7 @@ export async function tryHtmlFallbackFromDoi(
     
     const resolvedUrl = response.url
     if (!resolvedUrl || resolvedUrl === doiUrl) {
-      console.log(`📄 DOI did not resolve to a publisher URL: ${doi}`)
+      console.log(`📄 DOI did not resolve to a publisher URL: ${normalizedDoi}`)
       return null
     }
     
@@ -550,7 +605,7 @@ export async function tryHtmlFallbackFromDoi(
     return extractArticleHtml(resolvedUrl, timeoutMs)
     
   } catch (error) {
-    console.warn(`📄 DOI HTML fallback failed for ${doi}:`, error instanceof Error ? error.message : String(error))
+    console.warn(`📄 DOI HTML fallback failed for ${normalizedDoi}:`, error instanceof Error ? error.message : String(error))
     return null
   }
 }
@@ -567,11 +622,11 @@ export async function tryEuropePmcFullText(
   doi: string,
   timeoutMs: number = 30000
 ): Promise<HtmlExtractionResult | null> {
-  if (!doi) return null
+  const cleanDoi = normalizeDoiForLookup(doi)
+  if (!cleanDoi) return null
 
   try {
     // First resolve DOI → PMCID via NCBI ID converter
-    const cleanDoi = doi.replace(/^https?:\/\/doi\.org\//i, '').trim()
     const idUrl = `https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids=${encodeURIComponent(cleanDoi)}&format=json`
     
     const idResponse = await fetch(idUrl, {
@@ -628,7 +683,7 @@ export async function tryEuropePmcFullText(
       contentSource: 'html',
     }
   } catch (error) {
-    console.warn(`📄 Europe PMC fulltext failed for ${doi}:`, error instanceof Error ? error.message : String(error))
+    console.warn(`📄 Europe PMC fulltext failed for ${cleanDoi}:`, error instanceof Error ? error.message : String(error))
     return null
   }
 }

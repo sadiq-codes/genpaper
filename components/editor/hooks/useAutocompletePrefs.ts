@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect } from 'react'
 const STORAGE_KEY = 'genpaper-autocomplete-prefs'
 
 export interface AutocompletePrefs {
-  /** Enable auto-suggestions (experimental) - default OFF */
+  /** Enable auto-suggestions (experimental) - default ON */
   autoSuggestions: boolean
   /** Include citations in suggestions - default OFF */
   includeCitations: boolean
@@ -16,7 +16,7 @@ export interface AutocompletePrefs {
 }
 
 const DEFAULT_PREFS: AutocompletePrefs = {
-  autoSuggestions: false,
+  autoSuggestions: true,
   includeCitations: false,
   acceptKey: 'tab',
   useExternalSources: false,

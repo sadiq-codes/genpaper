@@ -26,6 +26,8 @@ import type {
   SectionPlan
 } from './types'
 
+const PLAN_BUILDER_TIMEOUT_MS = 90_000
+
 // =============================================================================
 // Zod Schema - Flexible, No Hardcoded Enums
 // =============================================================================
@@ -123,6 +125,49 @@ const SynthesisPlanSchema = z.object({
     keyThemes: z.array(z.string()).describe('Themes running through the synthesis')
   })
 })
+
+function normalizePlannerShape(input: unknown): unknown {
+  if (!input || typeof input !== 'object') return input
+  const obj = input as Record<string, unknown>
+  const sections = Array.isArray(obj.sections) ? obj.sections : []
+
+  const normalizedSections = sections.map((section) => {
+    if (!section || typeof section !== 'object') return section
+    const s = { ...(section as Record<string, unknown>) }
+
+    // Some model responses return `papers` as array instead of object.
+    if (Array.isArray(s.papers)) {
+      s.papers = { primary: s.papers, supporting: [] }
+    } else if (!s.papers || typeof s.papers !== 'object') {
+      s.papers = { primary: [], supporting: [] }
+    } else {
+      const p = s.papers as Record<string, unknown>
+      s.papers = {
+        primary: Array.isArray(p.primary) ? p.primary : [],
+        supporting: Array.isArray(p.supporting) ? p.supporting : [],
+      }
+    }
+
+    // Ensure writingGuidance exists with safe defaults if shape drifts.
+    if (!s.writingGuidance || typeof s.writingGuidance !== 'object') {
+      s.writingGuidance = {
+        approach: 'Synthesize key evidence with clear transitions.',
+        tone: 'objective',
+        transitionFrom: null,
+        transitionTo: null,
+        paragraphStrategy: 'general_to_specific',
+        synthesisLevel: 'moderate',
+      }
+    }
+
+    return s
+  })
+
+  return {
+    ...obj,
+    sections: normalizedSections,
+  }
+}
 
 // =============================================================================
 // Prompt
@@ -424,13 +469,16 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
   }, 'Building synthesis plan')
   
   try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), PLAN_BUILDER_TIMEOUT_MS)
     const { text } = await generateText({
       model: getLanguageModel(),
       system: SYSTEM_PROMPT + '\n\nIMPORTANT: Respond with ONLY a valid JSON object. No markdown fences, no explanation, just the JSON.',
       prompt: buildPrompt(input),
       temperature: 0.3,
-      maxOutputTokens: 16000,
-    })
+      maxOutputTokens: 4000,
+      abortSignal: controller.signal,
+    }).finally(() => clearTimeout(timeoutId))
     
     // Parse JSON from LLM response (strip markdown fences if present)
     let jsonStr = text.trim()
@@ -453,8 +501,11 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
       }
     }
     
+    // Normalize common schema drifts before strict validation.
+    const normalized = normalizePlannerShape(rawParsed)
+
     // Validate with Zod (lenient: strip unknown fields)
-    const object = SynthesisPlanSchema.parse(rawParsed)
+    const object = SynthesisPlanSchema.parse(normalized)
     
     const timeMs = Date.now() - startTime
     

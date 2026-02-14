@@ -15,7 +15,7 @@ import pLimit from 'p-limit'
 import { checkPaperExists, createPaperMetadata } from '@/lib/db/papers'
 import { createChunksForPaper } from '@/lib/content/ingestion'
 import { getOrExtractFullText } from '@/lib/services/pdf-processor'
-import { tryHtmlFallbackFromDoi, tryEuropePmcFullText } from '@/lib/content/html-extractor'
+import { tryHtmlFallbackFromDoi, tryEuropePmcFullText, normalizeDoiForLookup } from '@/lib/content/html-extractor'
 import type { PaperDTO } from '@/lib/schemas/paper'
 import { PaperSources } from '@/types/simplified'
 import { getSB } from '@/lib/supabase/server'
@@ -50,6 +50,48 @@ export const DEFAULT_WEIGHTS = {
   authorityWeight: 0.5,
   recencyWeight: 0.1
 } as const
+
+type PdfFailureType =
+  | 'paywall-or-landing'
+  | 'timeout'
+  | 'http-4xx'
+  | 'http-5xx'
+  | 'invalid-pdf'
+  | 'too-large'
+  | 'network'
+  | 'unknown'
+
+function classifyPdfFailure(message: string): PdfFailureType {
+  const msg = message.toLowerCase()
+  if (msg.includes('html page') || msg.includes('landing page') || msg.includes('paywall') || msg.includes('forbidden')) {
+    return 'paywall-or-landing'
+  }
+  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('abort')) {
+    return 'timeout'
+  }
+  if (msg.includes('http 4') || msg.includes('status 4')) {
+    return 'http-4xx'
+  }
+  if (msg.includes('http 5') || msg.includes('status 5')) {
+    return 'http-5xx'
+  }
+  if (msg.includes('invalid pdf')) {
+    return 'invalid-pdf'
+  }
+  if (msg.includes('too large')) {
+    return 'too-large'
+  }
+  if (msg.includes('socket') || msg.includes('fetch failed') || msg.includes('econnreset') || msg.includes('network')) {
+    return 'network'
+  }
+  return 'unknown'
+}
+
+function shouldAttemptDoiRecovery(failureType: PdfFailureType): boolean {
+  // DOI recovery is most effective for access/URL-shape failures.
+  // For timeouts/network faults, retrying through DOI adds load without improving odds.
+  return failureType === 'paywall-or-landing' || failureType === 'http-4xx'
+}
 
 // Search configuration
 export interface AggregatedSearchOptions extends SearchOptions {
@@ -359,34 +401,63 @@ export async function parallelSearch(
     }
   }
 
-  // Build all source+query combinations for fully parallel execution
-  const searchTasks: Array<{ source: SupportedSource; query: string }> = []
-  for (const source of sourcesByPriority) {
-    // Skip sources with open circuit breaker
-    if (!isSourceAvailable(source)) {
-      console.log(`⚡ Skipping ${source} (circuit open)`)
+  // Phased discovery cap:
+  // - Run high-yield sources first.
+  // - Keep per-phase call volume bounded.
+  // - Stop early once we have enough unique candidates.
+  const phaseCutoff = Math.min(4, sourcesByPriority.length)
+  const sourcePhases: SupportedSource[][] = [
+    sourcesByPriority.slice(0, phaseCutoff),
+    sourcesByPriority.slice(phaseCutoff)
+  ].filter(phase => phase.length > 0)
+
+  const SEARCH_TASK_CONCURRENCY = fastMode ? 4 : 6
+  const MAX_TASKS_PER_PHASE = fastMode ? 8 : 12
+  const sourceStats: Record<string, number> = {}
+
+  for (let phaseIndex = 0; phaseIndex < sourcePhases.length; phaseIndex++) {
+    const phaseSources = sourcePhases[phaseIndex]
+    const phaseTasks: Array<{ source: SupportedSource; query: string }> = []
+
+    for (const source of phaseSources) {
+      if (!isSourceAvailable(source)) {
+        console.log(`⚡ Skipping ${source} (circuit open)`)
+        continue
+      }
+      for (const searchQuery of expandedQueries) {
+        phaseTasks.push({ source, query: searchQuery })
+      }
+    }
+
+    if (phaseTasks.length === 0) {
       continue
     }
-    for (const searchQuery of expandedQueries) {
-      searchTasks.push({ source, query: searchQuery })
+
+    const cappedTasks = phaseTasks.slice(0, MAX_TASKS_PER_PHASE)
+    console.log(
+      `🔍 Discovery phase ${phaseIndex + 1}/${sourcePhases.length}: ` +
+      `${cappedTasks.length}/${phaseTasks.length} source-query calls (cap ${MAX_TASKS_PER_PHASE})`
+    )
+
+    const runTask = pLimit(SEARCH_TASK_CONCURRENCY)
+    const settledResults = await Promise.allSettled(
+      cappedTasks.map(task => runTask(() => querySourceWithQuery(task.source, task.query)))
+    )
+
+    for (let i = 0; i < settledResults.length; i++) {
+      const res = settledResults[i]
+      const task = cappedTasks[i]
+      if (res.status === 'fulfilled' && res.value.length > 0) {
+        allPapers.push(...res.value)
+        sourceStats[task.source] = (sourceStats[task.source] || 0) + res.value.length
+      }
     }
-  }
-  
-  console.log(`🔍 Executing ${searchTasks.length} parallel searches (${sourcesByPriority.length} sources × ${expandedQueries.length} queries)...`)
 
-  // Execute all searches in parallel
-  const settledResults = await Promise.allSettled(
-    searchTasks.map(task => querySourceWithQuery(task.source, task.query))
-  )
-
-  // Collect results and track per-source stats
-  const sourceStats: Record<string, number> = {}
-  for (let i = 0; i < settledResults.length; i++) {
-    const res = settledResults[i]
-    const task = searchTasks[i]
-    if (res.status === 'fulfilled' && res.value.length > 0) {
-      allPapers.push(...res.value)
-      sourceStats[task.source] = (sourceStats[task.source] || 0) + res.value.length
+    const uniqueSoFar = deduplicatePapers(allPapers).length
+    console.log(`📊 Discovery phase ${phaseIndex + 1} complete: ${uniqueSoFar} unique candidates so far`)
+    if (uniqueSoFar >= TARGET_PAPERS) {
+      console.log(`✅ Discovery cap reached after phase ${phaseIndex + 1}; skipping later phases`)
+      break
     }
   }
 
@@ -395,7 +466,7 @@ export async function parallelSearch(
     console.log(`📚 ${source}: ${count} papers (across ${expandedQueries.length} queries)`)
   }
 
-  console.log(`✅ Multi-query parallel search completed: ${allPapers.length} raw papers collected`)
+  console.log(`✅ Multi-query search completed: ${allPapers.length} raw papers collected`)
   
   console.log(`📊 Raw results: ${allPapers.length} papers from ${sourcesByPriority.length} sources`)
   
@@ -494,13 +565,14 @@ function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
   const rawScore = paper.combinedScore || 0
   const _normalizedImpactScore = rawScore > 0 ? 
     Math.min(0.999, 1 - 1 / (rawScore + 1)) : 0 // Guard against floating point precision issues
+  const normalizedDoi = normalizeDoiForLookup(paper.doi || undefined)
 
   return {
     title: paper.title,
     abstract: paper.abstract || undefined,
     publication_date: paper.year ? `${paper.year}-01-01` : undefined,
     venue: paper.venue || undefined,
-    doi: paper.doi || undefined,
+    doi: normalizedDoi || undefined,
     pdf_url: paper.pdf_url || undefined,
     metadata: {
       search_query: searchQuery,
@@ -565,7 +637,7 @@ export async function searchAndIngestPapers(
   
   // Filter out any duplicate papers before processing
   const uniquePapers = enhancedPapers.filter(paper => {
-    const key = paper.doi || paper.title.toLowerCase().trim()
+    const key = normalizeDoiForLookup(paper.doi || undefined) || paper.title.toLowerCase().trim()
     if (processedPapers.has(key)) {
       console.log(`📚 Skipping duplicate paper: ${paper.title}`)
       return false
@@ -627,7 +699,7 @@ export async function searchAndIngestPapers(
 const paperProcessingLocks = new Map<string, Promise<{ paperId: string; paper: RankedPaper }>>()
 
 function getPaperLockKey(paper: RankedPaper): string {
-  return paper.doi || normalizeTitle(paper.title)
+  return normalizeDoiForLookup(paper.doi || undefined) || normalizeTitle(paper.title)
 }
 
 // Extract paper processing logic into separate function for parallel execution
@@ -658,6 +730,10 @@ async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = '')
 // Internal implementation of paper processing
 async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: string = ''): Promise<{ paperId: string; paper: RankedPaper }> {
     const paperDTO = convertToPaperDTO(paper, searchQuery)
+    const normalizedDoi = normalizeDoiForLookup(paperDTO.doi || undefined) || undefined
+    if (normalizedDoi && paperDTO.doi !== normalizedDoi) {
+      paperDTO.doi = normalizedDoi
+    }
     
     // Step 1: Ensure paper exists in DB first (get actual paperId)
     const { exists, paperId: existingId } = await checkPaperExists(paperDTO.doi, paperDTO.title)
@@ -760,34 +836,19 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
       } catch (pdfErr) {
         pdfProcessingMs = Date.now() - pdfStartTime
         const errorMessage = pdfErr instanceof Error ? pdfErr.message : String(pdfErr)
-        
-        // Categorize the failure for easier debugging
-        let failureType = 'unknown'
-        if (errorMessage.includes('HTML page') || errorMessage.includes('landing page')) {
-          failureType = 'paywall/landing-page'
-        } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
-          failureType = 'timeout'
-        } else if (errorMessage.includes('HTTP 4')) {
-          failureType = 'http-4xx'
-        } else if (errorMessage.includes('HTTP 5')) {
-          failureType = 'http-5xx'
-        } else if (errorMessage.includes('Invalid PDF')) {
-          failureType = 'invalid-pdf'
-        } else if (errorMessage.includes('too large')) {
-          failureType = 'too-large'
-        }
+        const failureType = classifyPdfFailure(errorMessage)
         
         console.warn(`❌ PDF failed [${failureType}]: ${paperDTO.pdf_url}`)
         console.warn(`   Reason: ${errorMessage.slice(0, 200)}`)
         console.warn(`   Duration: ${pdfProcessingMs}ms | Paper: "${paperDTO.title.slice(0, 50)}..."`)
         
-        // Last resort: try content extraction via DOI if available
-        if (paperDTO.doi) {
+        // DOI fallback is deterministic: only for URL/access failures and valid normalized DOIs.
+        if (normalizedDoi && shouldAttemptDoiRecovery(failureType)) {
           let recovered = false
           
           // Try 1: HTML from publisher landing page
           try {
-            const htmlResult = await tryHtmlFallbackFromDoi(paperDTO.doi, 30_000)
+            const htmlResult = await tryHtmlFallbackFromDoi(normalizedDoi, 30_000)
             if (htmlResult?.content && htmlResult.content.length > 200) {
               contentParts.push(htmlResult.content)
               console.log(`✅ HTML-from-DOI recovery: ${htmlResult.content.length} chars after PDF failure`)
@@ -803,13 +864,13 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
               }
             }
           } catch (htmlErr) {
-            console.warn(`❌ HTML-from-DOI recovery failed for ${paperDTO.doi}:`, htmlErr instanceof Error ? htmlErr.message : String(htmlErr))
+            console.warn(`❌ HTML-from-DOI recovery failed for ${normalizedDoi}:`, htmlErr instanceof Error ? htmlErr.message : String(htmlErr))
           }
           
           // Try 2: Europe PMC full-text XML (if paper is in PMC)
           if (!recovered) {
             try {
-              const epmcResult = await tryEuropePmcFullText(paperDTO.doi, 30_000)
+              const epmcResult = await tryEuropePmcFullText(normalizedDoi, 30_000)
               if (epmcResult?.content && epmcResult.content.length > 200) {
                 contentParts.push(epmcResult.content)
                 console.log(`✅ Europe PMC XML recovery: ${epmcResult.content.length} chars after PDF failure`)
@@ -824,19 +885,21 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
                 }
               }
             } catch (epmcErr) {
-              console.warn(`❌ Europe PMC XML recovery failed for ${paperDTO.doi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
+              console.warn(`❌ Europe PMC XML recovery failed for ${normalizedDoi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
             }
           }
+        } else if (normalizedDoi) {
+          console.log(`📄 Skipping DOI fallback for failure class "${failureType}"`)
         }
       }
-    } else if (paperDTO.doi) {
+    } else if (normalizedDoi) {
       // No PDF URL but DOI exists — try content extraction fallbacks
       console.log(`📄 No PDF URL, trying content fallbacks via DOI for: "${paperDTO.title.slice(0, 50)}..."`)
       let recovered = false
       
       // Try 1: HTML from publisher landing page
       try {
-        const htmlResult = await tryHtmlFallbackFromDoi(paperDTO.doi, 30_000)
+        const htmlResult = await tryHtmlFallbackFromDoi(normalizedDoi, 30_000)
         if (htmlResult?.content && htmlResult.content.length > 200) {
           contentParts.push(htmlResult.content)
           console.log(`✅ HTML-from-DOI success: ${htmlResult.content.length} chars for "${paperDTO.title.slice(0, 50)}..."`)
@@ -852,13 +915,13 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
           }
         }
       } catch (htmlErr) {
-        console.warn(`❌ HTML-from-DOI failed for ${paperDTO.doi}:`, htmlErr instanceof Error ? htmlErr.message : String(htmlErr))
+        console.warn(`❌ HTML-from-DOI failed for ${normalizedDoi}:`, htmlErr instanceof Error ? htmlErr.message : String(htmlErr))
       }
       
       // Try 2: Europe PMC full-text XML (if paper is in PMC)
       if (!recovered) {
         try {
-          const epmcResult = await tryEuropePmcFullText(paperDTO.doi, 30_000)
+          const epmcResult = await tryEuropePmcFullText(normalizedDoi, 30_000)
           if (epmcResult?.content && epmcResult.content.length > 200) {
             contentParts.push(epmcResult.content)
             console.log(`✅ Europe PMC XML success: ${epmcResult.content.length} chars for "${paperDTO.title.slice(0, 50)}..."`)
@@ -873,7 +936,7 @@ async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: stri
             }
           }
         } catch (epmcErr) {
-          console.warn(`❌ Europe PMC XML failed for ${paperDTO.doi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
+          console.warn(`❌ Europe PMC XML failed for ${normalizedDoi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
         }
       }
     } else {

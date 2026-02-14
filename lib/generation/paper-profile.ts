@@ -467,396 +467,7 @@ export function buildProfileGuidanceForPrompt(
     ? profile.coverage.commonPitfalls.map(p => `- ${p}`).join('\n')
     : 'None specified'
   
-  // Build a strong warning section for literature reviews and other specific types
-  let typeWarning = ''
-  if (profile.paperType === 'literatureReview') {
-    typeWarning = `
-═══════════════════════════════════════════════════════════════════════════════
-⚠️  CRITICAL: THIS IS A LITERATURE REVIEW - NOT AN EMPIRICAL RESEARCH PAPER  ⚠️
-═══════════════════════════════════════════════════════════════════════════════
-
-You MUST NOT:
-- Describe data collection procedures (surveys, interviews, experiments, etc.)
-- Present original findings or results from research you conducted
-- Include a "Methodology" section describing empirical research methods
-- Include a "Results" or "Findings" section presenting original data
-- Write phrases like "we collected", "participants were", "data was analyzed"
-
-You MUST:
-- ONLY synthesize and analyze EXISTING published research
-- Describe your LITERATURE SEARCH methodology (databases, search terms, etc.)
-- Present themes and patterns found ACROSS the literature
-- Provide critical analysis and synthesis of what OTHER researchers found
-- Identify gaps in the EXISTING literature
-
-This is not optional. Writing empirical content in a literature review is a GENRE VIOLATION.
-
-═══════════════════════════════════════════════════════════════════════════════
-📊 CRITICAL ANALYSIS REQUIREMENTS - WHAT MAKES A STRONG LITERATURE REVIEW
-═══════════════════════════════════════════════════════════════════════════════
-
-A literature review is NOT a summary of sources. It is a CRITICAL ANALYSIS.
-
-REQUIRED CRITICAL ELEMENTS:
-1. **Identify Contradictions**: When sources disagree, explicitly state this:
-   "While [Author A] argues X, [Author B] presents contradictory evidence for Y"
-
-2. **Evaluate Methodologies**: Assess the strength and limitations of different studies:
-   "The large sample size in [Study A] provides robust evidence, whereas [Study B]'s 
-   case study approach offers depth but limited generalizability"
-
-3. **Discuss Debates**: Highlight unresolved tensions in the field:
-   "A central debate in this literature concerns whether..."
-
-4. **Synthesize Patterns**: Show what MULTIPLE sources together suggest:
-   "Across these studies, a consistent pattern emerges..."
-
-5. **Identify Gaps**: Note what remains unstudied or contested:
-   "Despite extensive research on X, the relationship between X and Y remains unclear"
-
-WHEN TO CITE IN LITERATURE REVIEWS:
-Since you are synthesizing existing research, MOST claims require citations:
-- ALWAYS cite: statistics, findings, theories, methods, opinions from sources
-- ALWAYS cite: when comparing or contrasting what different authors found
-- NO citation needed: your own synthesis or analytical observations
-- NO citation needed: widely accepted common knowledge
-
-Most paragraphs should contain multiple citations because you are reporting 
-what the literature says. Integrate sources to show dialogue between scholars.
-
-═══════════════════════════════════════════════════════════════════════════════
-📚 ORGANIZATIONAL APPROACHES - Choose the Best Structure
-═══════════════════════════════════════════════════════════════════════════════
-
-Choose the most appropriate structure based on the topic:
-
-1. **THEMATIC** - Organize by recurring themes or concepts
-   Best for: Multi-faceted topics with distinct sub-areas
-   Example: "Healthcare access" → policy barriers, economic barriers, cultural barriers
-
-2. **CHRONOLOGICAL** - Trace the development of ideas over time
-   Best for: Topics with clear historical evolution
-   Example: "AI in education" → 1980s expert systems → 2000s adaptive learning → 2020s generative AI
-
-3. **METHODOLOGICAL** - Compare different research approaches
-   Best for: Topics studied using diverse methods with different findings
-   Example: "Leadership effectiveness" → survey studies vs case studies vs experimental research
-
-4. **THEORETICAL** - Organize by competing theories or frameworks
-   Best for: Topics with multiple theoretical perspectives
-   Example: "Learning" → behaviorist vs cognitive vs constructivist theories
-
-For complex topics, you may COMBINE approaches (e.g., thematic overall with chronological within each theme).
-
-═══════════════════════════════════════════════════════════════════════════════
-🏆 PIVOTAL PUBLICATIONS - Identify Landmark Studies
-═══════════════════════════════════════════════════════════════════════════════
-
-Identify and highlight influential works that shaped the field:
-- Look for frequently referenced foundational studies
-- Identify theories or frameworks that subsequent studies build upon
-- Note methodological innovations that changed how the topic is studied
-- Highlight studies that challenged prevailing assumptions
-
-When discussing landmark studies, explain WHY they were influential:
-"Bandura's (1977) social learning theory was pivotal because it shifted the field's focus 
-from purely behavioral explanations to include cognitive and social factors, spawning 
-decades of research on observational learning and self-efficacy."
-
-═══════════════════════════════════════════════════════════════════════════════
-📝 LITERATURE REVIEW STRUCTURE
-═══════════════════════════════════════════════════════════════════════════════
-
-**INTRODUCTION should:**
-- Establish the focus and purpose of the review
-- Define the scope (what's included/excluded)
-- State the research question or gap being addressed
-- Preview the organizational approach
-
-**BODY should:**
-- Be organized by your chosen approach (themes, time periods, methods, or theories)
-- Use clear subheadings for each major section
-- Synthesize sources within each section (don't just list them)
-- Show connections between sections
-
-**CONCLUSION should:**
-- Summarize the key findings from the literature
-- Emphasize the significance of what you found
-- Clearly state the gap your research addresses
-- Show how your work contributes to the field
-
-═══════════════════════════════════════════════════════════════════════════════
-📊 TABLE RECOMMENDATIONS - Organize Complex Information
-═══════════════════════════════════════════════════════════════════════════════
-
-Tables help readers quickly compare studies and grasp patterns. Consider including:
-
-**Option 1: Summary of Reviewed Studies**
-| Author (Year) | Sample/Context | Method | Key Findings |
-|---------------|----------------|--------|--------------|
-| [From evidence] [1] | [If available] | [From evidence] | [From evidence] |
-
-**Option 2: Comparison of Approaches/Methods**
-| Approach | Advantages | Limitations | Supporting Studies |
-|----------|------------|-------------|-------------------|
-| [Approach] | [Pros] | [Cons] | [1] [2] |
-
-**Option 3: Contradictory Findings**
-| Finding | Studies Supporting | Studies Contradicting | Possible Explanation |
-|---------|-------------------|----------------------|---------------------|
-| [Topic] | [1] [2] | [3] | [Your analysis] |
-
-⚠️ Populate ONLY with data from your evidence snippets. Write "not reported" if unavailable.
-Tables complement prose - use them to organize information, not replace synthesis narrative.
-═══════════════════════════════════════════════════════════════════════════════
-`
-  } else if (profile.paperType === 'researchArticle') {
-    typeWarning = `
-═══════════════════════════════════════════════════════════════════════════════
-⚠️  CRITICAL: THIS IS A RESEARCH ARTICLE - MUST PRESENT ORIGINAL RESEARCH  ⚠️
-═══════════════════════════════════════════════════════════════════════════════
-
-You MUST NOT:
-- Write a literature review disguised as research
-- Use "Thematic Analysis" or "Synthesis" as main sections
-- Report only what OTHER studies found without your own analysis
-- Describe literature search methodology (that's for systematic reviews)
-- Write "Studies have shown..." or "Research indicates..." as main content
-- Write vague findings without specific statistics (e.g., "higher likelihood" without numbers)
-
-You MUST:
-- Present ORIGINAL empirical findings (your data, your analysis)
-- Include a proper empirical METHODOLOGY section:
-  * Sample description (N=?, selection criteria, demographics)
-  * Variables (independent, dependent, controls) with operational definitions
-  * Data collection procedures (survey, experiment, secondary data source)
-  * Analytical approach (regression type, statistical tests, coding method)
-- Include a RESULTS section with YOUR ORIGINAL FINDINGS:
-  * Descriptive statistics table (means, SDs, frequencies)
-  * Inferential statistics (β coefficients, p-values, confidence intervals)
-  * Hypothesis testing outcomes (H1: supported/rejected)
-  * Your own tables and figures, not citations to others' tables
-- Include DISCUSSION that interprets YOUR results:
-  * "Our finding that X relates to Y (β=0.34, p<0.01) confirms..."
-  * "Contrary to Smith (2020), our data suggests..."
-  * NOT just re-summarizing what other scholars found
-
-═══════════════════════════════════════════════════════════════════════════════
-📊 GENERATING EMPIRICAL DATA - MANDATORY REQUIREMENTS
-═══════════════════════════════════════════════════════════════════════════════
-
-Since this is a research article, you MUST generate plausible, illustrative empirical 
-data. This demonstrates proper research article format. Generate realistic numbers 
-that are internally consistent with the topic.
-
-**METHODOLOGY must include specific details:**
-- "We surveyed N=247 [participants/firms/cases] selected via [method]"
-- "The dependent variable was [outcome], measured on a 5-point Likert scale"
-- "We employed hierarchical regression analysis to test our hypotheses"
-
-**RESULTS must include AT LEAST TWO DATA TABLES:**
-
-Table 1: Descriptive Statistics (REQUIRED)
-| Variable | N | Mean | SD | Min | Max |
-|----------|---|------|-----|-----|-----|
-| [DV Name] | 247 | 3.42 | 1.08 | 1.00 | 5.00 |
-| [IV Name] | 247 | 4.15 | 0.92 | 1.50 | 5.00 |
-| [Control] | 247 | 2.87 | 1.23 | 1.00 | 5.00 |
-
-Table 2: Regression Results (REQUIRED)  
-| Predictor | β | SE | t | p | 95% CI |
-|-----------|-----|------|------|-------|--------------|
-| [Main IV] | 0.38 | 0.07 | 5.43 | <.001 | [0.24, 0.52] |
-| [Control 1] | 0.12 | 0.08 | 1.50 | .134 | [-0.04, 0.28] |
-Note: R² = .24, F(3, 243) = 25.63, p < .001
-
-**HYPOTHESIS TESTING must include specific outcomes:**
-- "H1 was supported: X significantly predicted Y (β = 0.38, p < .001, 95% CI [0.24, 0.52])"
-- "H2 was not supported: no significant relationship was found (β = 0.05, p = .62)"
-
-**NEVER write vague findings:**
-- ❌ "higher likelihood of success" → ✓ "68% higher survival rate (χ² = 12.4, p < .01)"
-- ❌ "significant relationship" → ✓ "β = 0.38, p < .001, 95% CI [0.24, 0.52]"
-- ❌ "the analysis revealed patterns" → ✓ "R² = .24, indicating 24% variance explained"
-
-**DISCUSSION must reference YOUR specific statistics:**
-- "Our finding that X strongly predicted Y (β = 0.38) suggests..."
-- "The effect size (R² = .24) indicates meaningful practical significance..."
-- "Contrary to Smith (2020), our data showed a positive relationship (β = 0.38 vs. their β = -0.12)"
-
-LANGUAGE TO USE:
-- "Our analysis reveals..." / "We found that..."
-- "The results indicate..." / "Our data show..."
-- "Hypothesis 1 was supported/rejected..."
-
-LANGUAGE TO AVOID:
-- "The literature suggests..." / "Studies have shown..."
-- "According to researchers..." / "Scholars have found..."
-
-WHEN TO CITE BY SECTION:
-- **Introduction/Literature Review**: Cite extensively - theories, prior findings, frameworks
-- **Methodology**: Cite sparingly - only established methods or validated instruments
-- **Results**: MINIMAL citations - these are YOUR data, not others' findings
-- **Discussion**: Moderate citations - when comparing your results to prior work
-- **Limitations/Conclusion**: Minimal citations - your own assessment
-
-NOTE: In the Limitations section, acknowledge that this is an illustrative/template study 
-if specific real data was not provided. This maintains academic honesty.
-═══════════════════════════════════════════════════════════════════════════════
-`
-  } else if (profile.paperType === 'mastersThesis') {
-    typeWarning = `
-═══════════════════════════════════════════════════════════════════════════════
-⚠️  THIS IS A MASTER'S THESIS - REQUIRES BOTH LITERATURE SYNTHESIS AND ORIGINAL WORK  ⚠️
-═══════════════════════════════════════════════════════════════════════════════
-
-A Master's thesis demonstrates your ability to:
-1. Critically review and synthesize existing literature
-2. Conduct and present original research or analysis
-3. Contribute new knowledge or insights to your field
-
-The thesis should show mastery of scholarly conventions in your discipline while
-making a meaningful contribution through original work.
-
-═══════════════════════════════════════════════════════════════════════════════
-📊 TABLE RECOMMENDATIONS
-═══════════════════════════════════════════════════════════════════════════════
-
-**For Literature Review sections:**
-
-Summary of Key Studies:
-| Author (Year) | Sample | Design | Key Finding | Limitation |
-|---------------|--------|--------|-------------|------------|
-| [From evidence] [1] | [If available] | [Design] | [Finding] | [Limitation] |
-
-Theoretical Framework Comparison:
-| Theory | Key Propositions | Supporting Evidence | Critiques |
-|--------|-----------------|---------------------|-----------|
-| [Theory] | [Propositions] | [1] [2] | [Critiques] |
-
-Methodological Comparison:
-| Method | Strengths | Weaknesses | Studies Using |
-|--------|-----------|------------|---------------|
-| [Method] | [Strengths] | [Weaknesses] | [1] [2] |
-
-**For Results/Findings sections:**
-
-Descriptive Statistics:
-| Variable | N | Mean | SD | Min | Max |
-|----------|---|------|-----|-----|-----|
-| [Variable] | [N] | [Mean] | [SD] | [Min] | [Max] |
-
-Main Analysis Results:
-| Predictor | β | SE | p | 95% CI |
-|-----------|-----|------|-------|--------------|
-| [Predictor] | [β] | [SE] | [p] | [CI] |
-
-⚠️ Use only data from evidence or your own analysis. Never invent statistics.
-Tables help organize complex information - use them to complement your narrative.
-═══════════════════════════════════════════════════════════════════════════════
-`
-  } else if (profile.paperType === 'phdDissertation') {
-    typeWarning = `
-═══════════════════════════════════════════════════════════════════════════════
-⚠️  THIS IS A DOCTORAL DISSERTATION - REQUIRES COMPREHENSIVE SCHOLARLY CONTRIBUTION  ⚠️
-═══════════════════════════════════════════════════════════════════════════════
-
-A doctoral dissertation demonstrates:
-1. Mastery of the literature and theoretical foundations in your field
-2. Methodological rigor and significant original contribution
-3. Critical analysis that advances knowledge in the discipline
-
-The dissertation should represent a substantial, original contribution to scholarship
-that demonstrates your readiness for independent research.
-
-═══════════════════════════════════════════════════════════════════════════════
-📊 TABLE RECOMMENDATIONS - Comprehensive Documentation Expected
-═══════════════════════════════════════════════════════════════════════════════
-
-**For Literature Review chapters:**
-
-Comprehensive Study Summary:
-| Author (Year) | Research Question | Design | Sample | Key Findings | Limitations | Quality |
-|---------------|-------------------|--------|--------|--------------|-------------|---------|
-| [From evidence] [1] | [RQ] | [Design] | [Sample] | [Finding] | [Limitation] | [Rating] |
-
-Theoretical Framework Comparison:
-| Theory | Key Propositions | Predictions | Supporting Evidence | Contradicting Evidence |
-|--------|-----------------|-------------|---------------------|----------------------|
-| [Theory] | [Propositions] | [Predictions] | [1] [2] | [3] |
-
-Methodological Quality Assessment:
-| Study | Sample Adequacy | Measure Validity | Design Rigor | Overall Rating |
-|-------|----------------|------------------|--------------|----------------|
-| [1] | [Assessment] | [Assessment] | [Assessment] | [Rating] |
-
-**For Results/Analysis chapters:**
-
-Participant/Sample Characteristics:
-| Characteristic | N | % or M (SD) |
-|----------------|---|-------------|
-| [Demographic] | [N] | [Value] |
-
-Main Analysis Results (with full statistics):
-| Hypothesis | Predictor | β | SE | t | p | 95% CI | Supported? |
-|------------|-----------|-----|------|------|-------|--------------|------------|
-| H1 | [Predictor] | [β] | [SE] | [t] | [p] | [CI] | Yes/No |
-
-Robustness/Sensitivity Checks:
-| Analysis | Original Result | Alternative Specification | Conclusion |
-|----------|-----------------|--------------------------|------------|
-| [Test] | [Result] | [Alt Result] | [Robust/Not Robust] |
-
-⚠️ Doctoral work requires rigorous documentation. Use tables to demonstrate thoroughness.
-Never invent data - use only evidence from sources or your own analysis.
-═══════════════════════════════════════════════════════════════════════════════
-`
-  } else if (profile.paperType === 'capstoneProject') {
-    typeWarning = `
-═══════════════════════════════════════════════════════════════════════════════
-⚠️  THIS IS A CAPSTONE PROJECT - DEMONSTRATES APPLIED SCHOLARLY COMPETENCE  ⚠️
-═══════════════════════════════════════════════════════════════════════════════
-
-A capstone project shows your ability to:
-1. Apply scholarly methods to a practical problem or question
-2. Synthesize relevant literature to inform your approach
-3. Present findings in a clear, professional manner
-
-The capstone bridges academic learning and practical application, demonstrating
-your readiness to apply knowledge in professional contexts.
-
-═══════════════════════════════════════════════════════════════════════════════
-📊 TABLE RECOMMENDATIONS
-═══════════════════════════════════════════════════════════════════════════════
-
-**For Literature Review:**
-
-Summary of Key Studies:
-| Author (Year) | Sample | Design | Key Finding | Relevance to Project |
-|---------------|--------|--------|-------------|---------------------|
-| [From evidence] [1] | [Sample] | [Design] | [Finding] | [Your assessment] |
-
-Comparison of Approaches:
-| Approach | Advantages | Limitations | Studies Using |
-|----------|------------|-------------|---------------|
-| [Method] | [Pros] | [Cons] | [1] [2] |
-
-**For Results/Findings:**
-
-Descriptive Statistics:
-| Variable | N | Mean | SD |
-|----------|---|------|-----|
-| [Variable] | [N] | [Mean] | [SD] |
-
-Research Question/Hypothesis Summary:
-| RQ/Hypothesis | Finding | Support Level |
-|---------------|---------|---------------|
-| RQ1 | [Finding] | Supported/Partial/Not Supported |
-
-⚠️ Use only data from evidence or your analysis. Tables should complement narrative.
-═══════════════════════════════════════════════════════════════════════════════
-`
-  }
+  const typeWarning = getPaperTypeWarning(profile.paperType, profile.hasOriginalResearch)
   
   // For outline mode, use a more structured format emphasizing constraints
   if (mode === 'outline') {
@@ -869,34 +480,14 @@ Research Question/Hypothesis Summary:
     const litReviewOrgGuidance = needsLitReviewGuidance ? `
 
 LITERATURE REVIEW ORGANIZATIONAL APPROACH:
-When creating the outline for the literature review section(s), choose the most appropriate structure:
+Choose structure based on the topic:
+- Thematic (most common)
+- Chronological
+- Methodological
+- Theoretical
 
-1. **THEMATIC** - Organize by recurring themes or concepts
-   Best for: Multi-faceted topics with distinct sub-areas
-   Create subsections for each major theme (e.g., "Economic Factors", "Social Factors", "Policy Implications")
-
-2. **CHRONOLOGICAL** - Trace development of ideas over time
-   Best for: Topics with clear historical evolution
-   Create subsections for different time periods or phases of development
-
-3. **METHODOLOGICAL** - Compare different research approaches
-   Best for: Topics studied using diverse methods
-   Create subsections comparing qualitative vs. quantitative findings, or different methodological schools
-
-4. **THEORETICAL** - Organize by competing theories or frameworks
-   Best for: Topics with multiple theoretical perspectives
-   Create subsections for each major theoretical approach
-
-Choose based on what best illuminates the topic. For complex topics, you may combine approaches
-(e.g., thematic overall with chronological development within each theme).
-
-IMPORTANT: If a THEME ANALYSIS FROM COLLECTED LITERATURE section appears below, use those
-EMERGENT THEMES as the basis for your section structure. The themes identified from actual
-literature analysis are more accurate than generic assumptions. Create subsections that
-align with the themes, debates, and organizational approach recommended by the analysis.
-
-Generate meaningful subsection titles that reflect the actual content themes identified from the topic.
-Do NOT use generic titles like "Theme 1" or "Section A" - use descriptive titles.
+Use theme analysis from collected literature when available.
+Subsection titles must be descriptive and topic-specific (not generic placeholders).
 ` : ''
 
     // Build title contract guidance for outline mode
@@ -1034,6 +625,65 @@ Do NOT cite:
 
 ### Common Pitfalls to Avoid
 ${pitfalls}`
+}
+
+function getPaperTypeWarning(paperType: string, hasOriginalResearch?: boolean): string {
+  if (paperType === 'literatureReview') {
+    return `
+### Paper-Type Guardrails: Literature Review
+- Do not present original data collection or experimental/statistical results.
+- "Methodology" should describe literature search/selection, not primary empirical procedures.
+- Organize around synthesis, debate, and gaps across existing scholarship.
+- Most substantive claims should be evidence-cited.
+`
+  }
+
+  if (paperType === 'researchArticle') {
+    if (hasOriginalResearch) {
+      return `
+### Paper-Type Guardrails: Research Article (Primary Empirical)
+- Include a clear Methodology and Results based on your own data/analysis.
+- Report specific findings (metrics, themes, or interpretive evidence as appropriate to discipline).
+- Use citations heavily in introduction/background, lightly in primary-results reporting.
+`
+    }
+
+    return `
+### Paper-Type Guardrails: Research Article (Secondary Analysis)
+- Do not invent primary data or empirical statistics.
+- Methodology should define source selection and analytical procedure for secondary evidence.
+- Results/analysis should present your argument using cited sources.
+`
+  }
+
+  if (paperType === 'mastersThesis') {
+    return `
+### Paper-Type Guardrails: Master's Thesis
+- Demonstrate both literature command and a clear scholarly contribution.
+- Maintain structured chapters with explicit links from findings to prior scholarship.
+- Include a concrete contribution statement and acknowledge key methodological trade-offs.
+`
+  }
+
+  if (paperType === 'phdDissertation') {
+    return `
+### Paper-Type Guardrails: PhD Dissertation
+- Prioritize original contribution to knowledge with strong theoretical/methodological grounding.
+- Maintain high rigor in argument structure, evidence handling, and limitations.
+- State contributions explicitly and defend scope boundaries with reflexive clarity.
+`
+  }
+
+  if (paperType === 'capstoneProject') {
+    return `
+### Paper-Type Guardrails: Capstone Project
+- Connect scholarship to practical or applied outcomes.
+- Keep methods and findings appropriate to the chosen capstone subtype.
+- End with explicit contribution and realistic implementation/implication framing.
+`
+  }
+
+  return ''
 }
 
 /**
