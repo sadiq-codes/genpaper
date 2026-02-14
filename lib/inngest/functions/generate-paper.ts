@@ -39,12 +39,9 @@ import {
   runAnalysisPhase,
   runBuildContextsPhase,
   runSectionGenerationPhase,
-  runQualityCheckPhase,
-  runSectionRewritePhase,
   runFinalizePhase,
   getPapersByIds,
   type SectionResult,
-  type QualityIssue,
 } from "@/lib/generation/pipeline-steps";
 import { updateResearchProjectStatus, savePartialContent } from "@/lib/db/research";
 import { recordProjectGenerated } from "@/lib/billing/gates";
@@ -345,12 +342,12 @@ export const generatePaperFunction = inngest.createFunction(
     }
 
     // =========================================================================
-    // Step N+1: Analyze Findings
+    // Step N+1: Analyze Findings & Build Contexts (merged for efficiency)
     // =========================================================================
-    const analysisResult = await step.run("analyze", async (): Promise<{
+    const contextsResult = await step.run("analyze-and-build-contexts", async (): Promise<{
+      contextCount: number;
+      sectionKeys: string[];
       patterns: number;
-      contradictions: number;
-      gaps: number;
       totalFindings: number;
     }> => {
       const run = await getRun(runId);
@@ -362,7 +359,9 @@ export const generatePaperFunction = inngest.createFunction(
       }
 
       const papers = await getPapersByIds(state.paperIds);
-      const result = await runAnalysisPhase(
+      
+      // Run analysis phase
+      const analysisResult = await runAnalysisPhase(
         projectId,
         state.paperIds,
         papers,
@@ -372,47 +371,13 @@ export const generatePaperFunction = inngest.createFunction(
       );
 
       // Store analysis result
-      await updatePipelineState(runId, { themeAnalysis: result.analysisResult });
+      await updatePipelineState(runId, { themeAnalysis: analysisResult.analysisResult });
 
-      return {
-        patterns: result.analysisResult.patterns.length,
-        contradictions: result.analysisResult.contradictions.length,
-        gaps: result.analysisResult.gaps.length,
-        totalFindings: result.extractionStats.totalFindings,
+      // Build theme result for context building
+      const themeResult: HybridThemeExtractionResult = {
+        analysisResult: analysisResult.analysisResult,
+        extractionStats: analysisResult.extractionStats,
       };
-    });
-
-    // =========================================================================
-    // Step N+2: Build Contexts
-    // =========================================================================
-    const contextsResult = await step.run("build-contexts", async (): Promise<{
-      contextCount: number;
-      sectionKeys: string[];
-    }> => {
-      const run = await getRun(runId);
-      if (run?.status === "cancelled") throw new Error("Run was cancelled");
-
-      const state = await getPipelineState(runId);
-      if (!state.paperIds || !state.profile) {
-        throw new Error("State incomplete for context building");
-      }
-
-      const papers = await getPapersByIds(state.paperIds);
-      
-      // Reconstruct theme result if we have analysis
-      let themeResult: HybridThemeExtractionResult | null = null;
-      if (state.themeAnalysis) {
-        themeResult = {
-          analysisResult: state.themeAnalysis,
-          extractionStats: {
-            papersProcessed: papers.length,
-            papersExtracted: state.extractionProgress?.cachedPaperIds.length || 0,
-            papersFromCache: state.extractionProgress?.cachedPaperIds.length || 0,
-            totalFindings: analysisResult.totalFindings,
-            extractionTimeMs: 0,
-          },
-        };
-      }
 
       const pipelineConfig: PipelineConfig = {
         topic: config.topic,
@@ -426,6 +391,7 @@ export const generatePaperFunction = inngest.createFunction(
         originalResearch: config.originalResearch,
       };
 
+      // Build contexts
       const contexts = await runBuildContextsPhase(
         state.profile,
         papers,
@@ -451,6 +417,8 @@ export const generatePaperFunction = inngest.createFunction(
       return {
         contextCount: contexts.length,
         sectionKeys: contexts.map((c) => c.sectionKey),
+        patterns: analysisResult.analysisResult.patterns.length,
+        totalFindings: analysisResult.extractionStats.totalFindings,
       };
     });
 
@@ -480,7 +448,7 @@ export const generatePaperFunction = inngest.createFunction(
               papersProcessed: papers.length,
               papersExtracted: 0,
               papersFromCache: 0,
-              totalFindings: analysisResult.totalFindings,
+              totalFindings: contextsResult.totalFindings,
               extractionTimeMs: 0,
             },
           };
@@ -549,334 +517,11 @@ export const generatePaperFunction = inngest.createFunction(
     }
 
     // =========================================================================
-    // Step M+1: Quality Check
-    // =========================================================================
-    const qualityResult = await step.run("quality-check", async (): Promise<{
-      issueCount: number;
-      issues: Array<{ sectionIndex: number; issue: string }>;
-    }> => {
-      const run = await getRun(runId);
-      if (run?.status === "cancelled") throw new Error("Run was cancelled");
-
-      const state = await getPipelineState(runId);
-      if (!state.sectionResults || !state.paperIds || !state.profile) {
-        throw new Error("State incomplete for quality check");
-      }
-
-      const papers = await getPapersByIds(state.paperIds);
-      
-      // Rebuild contexts for quality check
-      let themeResult: HybridThemeExtractionResult | null = null;
-      if (state.themeAnalysis) {
-        themeResult = {
-          analysisResult: state.themeAnalysis,
-          extractionStats: {
-            papersProcessed: papers.length,
-            papersExtracted: 0,
-            papersFromCache: 0,
-            totalFindings: analysisResult.totalFindings,
-            extractionTimeMs: 0,
-          },
-        };
-      }
-
-      const pipelineConfig: PipelineConfig = {
-        topic: config.topic,
-        paperType: config.paperType as PaperTypeKey,
-        length: Number(config.length) || 5500,
-        customInstructions: config.customInstructions,
-        useLibraryOnly: config.useLibraryOnly,
-        libraryPaperIds: config.libraryPaperIds || [],
-        temperature: config.temperature,
-        maxTokens: config.maxTokens,
-        sources: config.sources,
-        originalResearch: config.originalResearch,
-      };
-
-      // Load cached contexts (fall back to rebuild if cache miss)
-      let contexts = await loadContextCache<SectionContext>(runId);
-      if (!contexts) {
-        console.log("[quality-check] Context cache miss, rebuilding...");
-        contexts = await runBuildContextsPhase(
-          state.profile,
-          papers,
-          themeResult,
-          pipelineConfig
-        );
-      }
-
-      const issues = await runQualityCheckPhase(
-        state.sectionResults,
-        contexts,
-        onProgress
-      );
-
-      // Store issues for potential rewrite steps
-      await updatePipelineState(runId, { 
-        qualityIssues: issues,
-        rewrittenSections: [] 
-      });
-
-      return {
-        issueCount: issues.length,
-        issues: issues.map((i) => ({ sectionIndex: i.sectionIndex, issue: i.issue })),
-      };
-    });
-
-    // =========================================================================
-    // Steps M+2 to M+2+K: Rewrite Sections (if needed)
-    // =========================================================================
-    const issuesToRewrite = qualityResult.issues || [];
-    
-    for (let i = 0; i < issuesToRewrite.length; i++) {
-      const issue = issuesToRewrite[i];
-      
-      await step.run(`rewrite-${issue.sectionIndex}`, async () => {
-        const run = await getRun(runId);
-        if (run?.status === "cancelled") throw new Error("Run was cancelled");
-
-        const state = await getPipelineState(runId);
-        if (!state.sectionResults || !state.paperIds || !state.profile) {
-          throw new Error("State incomplete for rewrite");
-        }
-
-        // Check if already rewritten
-        if (state.rewrittenSections?.includes(issue.sectionIndex)) {
-          return { skipped: true, reason: "Already rewritten" };
-        }
-
-        const papers = await getPapersByIds(state.paperIds);
-        
-        // Rebuild contexts
-        let themeResult: HybridThemeExtractionResult | null = null;
-        if (state.themeAnalysis) {
-          themeResult = {
-            analysisResult: state.themeAnalysis,
-            extractionStats: {
-              papersProcessed: papers.length,
-              papersExtracted: 0,
-              papersFromCache: 0,
-              totalFindings: analysisResult.totalFindings,
-              extractionTimeMs: 0,
-            },
-          };
-        }
-
-        const pipelineConfig: PipelineConfig = {
-          topic: config.topic,
-          paperType: config.paperType as PaperTypeKey,
-          length: Number(config.length) || 5500,
-          customInstructions: config.customInstructions,
-          useLibraryOnly: config.useLibraryOnly,
-          libraryPaperIds: config.libraryPaperIds || [],
-          temperature: config.temperature,
-          maxTokens: config.maxTokens,
-          sources: config.sources,
-          originalResearch: config.originalResearch,
-        };
-
-        // Load cached contexts (fall back to rebuild if cache miss)
-        let contexts = await loadContextCache<SectionContext>(runId);
-        if (!contexts) {
-          console.log(`[rewrite-${issue.sectionIndex}] Context cache miss, rebuilding...`);
-          contexts = await runBuildContextsPhase(
-            state.profile,
-            papers,
-            themeResult,
-            pipelineConfig
-          );
-        }
-
-        const context = contexts[issue.sectionIndex];
-        if (!context) {
-          return { skipped: true, reason: "Context not found" };
-        }
-
-        // Build previous content for overlap check
-        const previousContent = state.sectionResults
-          .slice(0, issue.sectionIndex)
-          .map((s) => s.content)
-          .join("\n\n");
-
-        const qualityIssue: QualityIssue = {
-          sectionIndex: issue.sectionIndex,
-          issue: issue.issue as "overlap" | "length" | "citation",
-        };
-
-        const result = await runSectionRewritePhase(
-          issue.sectionIndex,
-          qualityIssue,
-          context as SectionContext,
-          previousContent,
-          state.profile,
-          pipelineConfig,
-          sectionCount,
-          onProgress
-        );
-
-        // Update the section result
-        await appendSectionResult(runId, issue.sectionIndex, result);
-        
-        // Mark as rewritten
-        const currentState = await getPipelineState(runId);
-        await updatePipelineState(runId, {
-          rewrittenSections: [...(currentState.rewrittenSections || []), issue.sectionIndex],
-        });
-
-        return {
-          sectionIndex: issue.sectionIndex,
-          newWordCount: result.wordCount,
-        };
-      });
-    }
-
-    // =========================================================================
-    // Step M+2+K+1: Enforce Minimum Total Word Count (strict)
-    // =========================================================================
-    await step.run("enforce-min-total-words", async () => {
-      const run = await getRun(runId);
-      if (run?.status === "cancelled") throw new Error("Run was cancelled");
-
-      const state = await getPipelineState(runId);
-      if (!state.sectionResults || !state.paperIds || !state.profile) {
-        throw new Error("State incomplete for minimum word enforcement");
-      }
-
-      const targetTotalWords = state.profile.outline?.totalEstimatedWords || 0;
-      const minimumTotalWords = Math.round(targetTotalWords * 0.8);
-      if (minimumTotalWords <= 0) {
-        return { skipped: true, reason: "No minimum target available" };
-      }
-
-      let sectionResults = [...state.sectionResults];
-      let currentTotalWords = sectionResults.reduce((sum, s) => sum + (s.wordCount || 0), 0);
-
-      if (currentTotalWords >= minimumTotalWords) {
-        return {
-          skipped: true,
-          reason: "Already above minimum",
-          totalWords: currentTotalWords,
-          minimumTotalWords,
-        };
-      }
-
-      await onProgress(
-        "finishing",
-        93,
-        `Paper is short (${currentTotalWords} words). Expanding shortest sections toward ${minimumTotalWords}+ words...`
-      );
-
-      const papers = await getPapersByIds(state.paperIds);
-
-      const pipelineConfig: PipelineConfig = {
-        topic: config.topic,
-        paperType: config.paperType as PaperTypeKey,
-        length: Number(config.length) || 5500,
-        customInstructions: config.customInstructions,
-        useLibraryOnly: config.useLibraryOnly,
-        libraryPaperIds: config.libraryPaperIds || [],
-        temperature: config.temperature,
-        maxTokens: config.maxTokens,
-        sources: config.sources,
-        originalResearch: config.originalResearch,
-      };
-
-      // Load cached contexts (fall back to rebuild if cache miss)
-      let contexts = await loadContextCache<SectionContext>(runId);
-      if (!contexts) {
-        console.log("[enforce-min-total-words] Context cache miss, rebuilding...");
-        let themeResult: HybridThemeExtractionResult | null = null;
-        if (state.themeAnalysis) {
-          themeResult = {
-            analysisResult: state.themeAnalysis,
-            extractionStats: {
-              papersProcessed: papers.length,
-              papersExtracted: 0,
-              papersFromCache: 0,
-              totalFindings: analysisResult.totalFindings,
-              extractionTimeMs: 0,
-            },
-          };
-        }
-        contexts = await runBuildContextsPhase(
-          state.profile,
-          papers,
-          themeResult,
-          pipelineConfig
-        );
-      }
-
-      const MAX_LENGTH_REWRITES = 4;
-      let rewritesApplied = 0;
-
-      while (currentTotalWords < minimumTotalWords && rewritesApplied < MAX_LENGTH_REWRITES) {
-        // Pick the most under-target section first; tie-breaker: shortest section
-        const ranked = sectionResults
-          .map((section, idx) => {
-            const expected = contexts[idx]?.expectedWords || 300;
-            const gap = Math.max(0, expected - (section.wordCount || 0));
-            return { idx, gap, current: section.wordCount || 0 };
-          })
-          .sort((a, b) => {
-            if (b.gap !== a.gap) return b.gap - a.gap;
-            return a.current - b.current;
-          });
-
-        const candidate = ranked[0];
-        if (!candidate) break;
-
-        const context = contexts[candidate.idx];
-        if (!context) break;
-
-        const previousContent = sectionResults
-          .slice(0, candidate.idx)
-          .map((s) => s.content)
-          .join("\n\n");
-
-        const rewritten = await runSectionRewritePhase(
-          candidate.idx,
-          {
-            sectionIndex: candidate.idx,
-            issue: "length",
-            details: `Total paper length below minimum (${currentTotalWords}/${minimumTotalWords})`,
-          },
-          context as SectionContext,
-          previousContent,
-          state.profile,
-          pipelineConfig,
-          sectionCount,
-          onProgress
-        );
-
-        sectionResults[candidate.idx] = rewritten;
-        rewritesApplied++;
-        currentTotalWords = sectionResults.reduce((sum, s) => sum + (s.wordCount || 0), 0);
-      }
-
-      await updatePipelineState(runId, {
-        sectionResults,
-        rewrittenSections: [
-          ...(state.rewrittenSections || []),
-          ...sectionResults.map((_, i) => i).filter((i) => sectionResults[i] !== state.sectionResults?.[i]),
-        ],
-      });
-
-      if (currentTotalWords < minimumTotalWords) {
-        // Warn but don't fail — a short paper is better than no paper
-        console.warn(
-          `[generate-paper] Paper remained below minimum after ${rewritesApplied} rewrites (${currentTotalWords}/${minimumTotalWords} words). Proceeding anyway.`
-        );
-      }
-
-      return {
-        totalWords: currentTotalWords,
-        minimumTotalWords,
-        rewritesApplied,
-      };
-    });
-
-    // =========================================================================
     // Final Step: Finalize
+    // 
+    // NOTE: Quality check, rewrite, and enforce-min-total-words steps have been
+    // removed to simplify the pipeline and avoid timeout issues. Users can edit
+    // the generated content in the editor if adjustments are needed.
     // =========================================================================
     const finalResult = await step.run("finalize", async () => {
       const run = await getRun(runId);
