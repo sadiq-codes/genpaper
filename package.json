@@ -104,7 +104,7 @@
     "gray-matter": "^4.0.3",
     "highlight.js": "^11.11.1",
     "html-to-docx": "^1.8.0",
-    "inngest": "^3.50.0",
+    "inngest": "^3.52.0",
     "jszip": "^3.10.1",
     "katex": "^0.16.22",
     "langdetect": "^0.2.1",
