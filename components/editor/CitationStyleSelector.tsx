@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { CSL_STYLES, getStyleById, type CSLStyleInfo, type CSLStyleCategory } from '@/lib/citations/csl-styles'
+import { CSL_STYLES, getStyleById, type CSLStyleInfo } from '@/lib/citations/csl-styles'
 
 interface CitationStyleSelectorProps {
   value: string
@@ -31,6 +31,7 @@ export function CitationStyleSelector({
   const [search, setSearch] = useState('')
   const [remoteResults, setRemoteResults] = useState<string[]>([])
   const [isSearchingRemote, setIsSearchingRemote] = useState(false)
+  const [remoteError, setRemoteError] = useState<string | null>(null)
 
   const selectedStyle = getStyleById(value)
 
@@ -56,6 +57,7 @@ export function CitationStyleSelector({
     const q = search.trim()
     if (!q || q.length < 2) {
       setRemoteResults([])
+      setRemoteError(null)
       return
     }
 
@@ -63,6 +65,7 @@ export function CitationStyleSelector({
     // Skip remote if we already have enough local results
     if (localTotal >= 5) {
       setRemoteResults([])
+      setRemoteError(null)
       return
     }
 
@@ -70,18 +73,23 @@ export function CitationStyleSelector({
     const timeout = setTimeout(async () => {
       try {
         setIsSearchingRemote(true)
+        setRemoteError(null)
         const url = new URL('/api/citations/styles', window.location.origin)
         url.searchParams.set('q', q)
         url.searchParams.set('limit', '30')
         const res = await fetch(url.toString(), { signal: controller.signal })
         if (!res.ok) throw new Error('fetch failed')
-        const data = await res.json() as { styles: string[] }
+        const data = await res.json() as { styles: string[]; source?: 'github' | 'stale-cache' | 'fallback' }
         // Exclude styles already in our curated list
         const localIds = new Set(CSL_STYLES.map(s => s.id))
         setRemoteResults((data.styles || []).filter(id => !localIds.has(id)))
+        if (data.source && data.source !== 'github') {
+          setRemoteError('Remote style index unavailable. Showing cached/built-in results.')
+        }
       } catch (err) {
         if (!(err instanceof DOMException && err.name === 'AbortError')) {
           setRemoteResults([])
+          setRemoteError('Could not load remote styles. Showing built-in styles only.')
         }
       } finally {
         setIsSearchingRemote(false)
@@ -105,7 +113,17 @@ export function CitationStyleSelector({
   const hasResults = localTotal > 0 || remoteResults.length > 0
 
   return (
-    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setSearch(''); setRemoteResults([]) } }}>
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o)
+        if (!o) {
+          setSearch('')
+          setRemoteResults([])
+          setRemoteError(null)
+        }
+      }}
+    >
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -144,6 +162,11 @@ export function CitationStyleSelector({
         </div>
 
         <ScrollArea className="h-[300px]">
+          {remoteError && (
+            <div className="px-3 pt-2 text-[11px] text-muted-foreground">
+              {remoteError}
+            </div>
+          )}
           {!hasResults && !isSearchingRemote ? (
             <div className="py-6 text-center text-sm text-muted-foreground">
               No styles found.

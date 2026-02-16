@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { NodeViewWrapper } from '@tiptap/react'
 import type { NodeViewProps } from '@tiptap/react'
 import type { CitationAttributes } from './Citation'
@@ -49,33 +49,72 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
   
   // Track storage version to force re-renders when style/papers change
   const [storageVersion, setStorageVersion] = useState(0)
+  const lastSeenStyleRef = useRef<string | null>(null)
   
   // Listen for transactions that indicate style or papers changed
   useEffect(() => {
     if (!editor) return
     
     const handleTransaction = ({ transaction }: { transaction: { getMeta: (key: string) => unknown } }) => {
-      // Re-render when citation style changes or papers are updated
       const styleChange = transaction.getMeta('citationStyleChange')
       const papersUpdate = transaction.getMeta('papersUpdated')
       if (styleChange || papersUpdate) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(
+            `[CitationNodeView] Transaction detected — styleChange=${String(styleChange)}, papersUpdate=${String(papersUpdate)}, id=${attrs.id?.slice(0, 8)}`
+          )
+        }
+        setStorageVersion(v => v + 1)
+      }
+    }
+
+    // Fallback: re-render when extension storage style changes, even if we miss our meta.
+    const handleUpdate = () => {
+      const storage = (
+        editor.storage as { citation?: { citationStyle?: string } } | undefined
+      )?.citation
+      const nextStyle = String(storage?.citationStyle || 'apa')
+      if (lastSeenStyleRef.current !== nextStyle) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log(
+            `[CitationNodeView] Storage style changed — "${lastSeenStyleRef.current}" → "${nextStyle}", id=${attrs.id?.slice(0, 8)}`
+          )
+        }
+        lastSeenStyleRef.current = nextStyle
         setStorageVersion(v => v + 1)
       }
     }
     
     editor.on('transaction', handleTransaction)
+    editor.on('update', handleUpdate)
+    handleUpdate()
     return () => {
       editor.off('transaction', handleTransaction)
+      editor.off('update', handleUpdate)
     }
-  }, [editor])
+  }, [editor, extension, attrs.id])
   
   // Get citation style and papers from extension storage
   // Read directly (not in useMemo) since storageVersion triggers re-render
-  const storage = extension.storage as { 
-    citationStyle: CitationStyleType
-    citationNumbers: Map<string, number>
-    papers: ProjectPaper[]
+  const storageFromEditor = (
+    editor?.storage as {
+      citation?: {
+        citationStyle?: CitationStyleType
+        citationNumbers?: Map<string, number>
+        papers?: ProjectPaper[]
+      }
+    } | undefined
+  )?.citation
+
+  const storageFromNode = extension.storage as {
+    citationStyle?: CitationStyleType
+    citationNumbers?: Map<string, number>
+    papers?: ProjectPaper[]
   }
+
+  // Always prefer editor.storage.citation (authoritative mutable runtime state).
+  // NodeView extension.storage can lag behind on some transactions.
+  const storage = storageFromEditor || storageFromNode
   
   // These will be re-read on every render (storageVersion change triggers re-render)
   const style = storage?.citationStyle || 'apa'
@@ -127,8 +166,15 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
   }, [style, citationNumber, editor, attrs.id, storageVersion])
 
   const text = useMemo(() => {
-    return formatCitationByStyle(displayAttrs, style, resolvedCitationNumber)
-  }, [displayAttrs, style, resolvedCitationNumber])
+    const result = formatCitationByStyle(displayAttrs, style, resolvedCitationNumber)
+    if (process.env.NODE_ENV === 'development') {
+      console.log(
+        `[CitationNodeView] Recomputed text: style="${style}", ver=${storageVersion}, id=${attrs.id?.slice(0, 8)} → "${result}"`
+      )
+    }
+    return result
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayAttrs, style, resolvedCitationNumber, storageVersion])
 
   return (
     <NodeViewWrapper

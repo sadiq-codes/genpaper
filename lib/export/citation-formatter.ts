@@ -6,7 +6,10 @@
  */
 
 import type { ExportPaper } from './types'
-import { isNumericStyleId } from '@/lib/citations/csl-styles'
+import {
+  isNumericLikeCitationStyle,
+  resolveCitationStyleFamily,
+} from '@/lib/citations/style-family'
 
 // =============================================================================
 // INLINE CITATION FORMATTING
@@ -50,21 +53,7 @@ export function formatInlineCitation(
  * Check if a citation style uses numeric format
  */
 export function isNumericCitationStyle(style: string): boolean {
-  const normalized = style.toLowerCase()
-  
-  // Check known numeric styles
-  if (isNumericStyleId(normalized)) {
-    return true
-  }
-  
-  // Pattern matching for numeric styles
-  return (
-    normalized.includes('ieee') ||
-    normalized.includes('vancouver') ||
-    normalized.includes('numbered') ||
-    normalized.includes('numeric') ||
-    normalized.includes('superscript')
-  )
+  return isNumericLikeCitationStyle(style)
 }
 
 // =============================================================================
@@ -125,26 +114,30 @@ export function formatBibliographyEntry(
   const prefix = isNumeric ? `[${citationNumber}] ` : ''
   
   // Format based on style family
-  const normalizedStyle = style.toLowerCase()
-  
-  if (normalizedStyle.includes('ieee')) {
+  const styleFamily = resolveCitationStyleFamily(style)
+
+  if (styleFamily === 'ieee') {
     // IEEE format: [1] A. Author, "Title," Journal, year.
     return `${prefix}${formatAuthorsIEEE(paper.authors || ['Unknown'])}, "${title}," ${journal ? journal + ', ' : ''}${year}.${doi ? ' ' + doi : ''}`
   }
   
-  if (normalizedStyle.includes('apa')) {
+  if (styleFamily === 'apa') {
     // APA format: Author, A. A. (Year). Title. Journal. DOI
     return `${prefix}${authors} (${year}). ${title}.${journal ? ' ' + journal + '.' : ''}${doi ? ' ' + doi : ''}`
   }
   
-  if (normalizedStyle.includes('mla') || normalizedStyle.includes('modern-language')) {
+  if (styleFamily === 'mla') {
     // MLA format: Author. "Title." Journal, Year.
     return `${prefix}${authors}. "${title}."${journal ? ' ' + journal + ',' : ''} ${year}.`
   }
   
-  if (normalizedStyle.includes('chicago')) {
+  if (styleFamily === 'chicago') {
     // Chicago format: Author. Year. "Title." Journal.
     return `${prefix}${authors}. ${year}. "${title}."${journal ? ' ' + journal + '.' : ''}${doi ? ' ' + doi : ''}`
+  }
+
+  if (styleFamily === 'harvard') {
+    return `${prefix}${authors} (${year}) ${title}.${journal ? ' ' + journal + '.' : ''}${doi ? ' ' + doi : ''}`
   }
   
   // Default/fallback format (similar to APA)

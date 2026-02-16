@@ -184,9 +184,28 @@ export const Citation = Node.create<CitationOptions>({
           this.storage.citationNumbers = new Map<string, number>()
         }
         
-        // Force re-render by dispatching a transaction
-        // Using setMeta to mark this as a style change
-        const tr = editor.state.tr.setMeta('citationStyleChange', style)
+        // Force re-render for existing citation node views.
+        //
+        // A meta-only transaction is not always sufficient to make already-mounted
+        // React NodeViews re-render across all cases, so we also rebuild citation
+        // nodes in-place (without changing attrs) in a single, non-history transaction.
+        const positions: number[] = []
+        editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'citation') positions.push(pos)
+        })
+
+        const tr = editor.state.tr
+          .setMeta('citationStyleChange', style)
+          .setMeta('addToHistory', false)
+
+        // Apply in reverse to avoid positional issues (even though sizes match).
+        for (let i = positions.length - 1; i >= 0; i--) {
+          const pos = positions[i]!
+          const node = tr.doc.nodeAt(pos)
+          if (!node || node.type.name !== 'citation') continue
+          tr.setNodeMarkup(pos, undefined, node.attrs, node.marks)
+        }
+
         editor.view.dispatch(tr)
         
         return true

@@ -10,6 +10,7 @@ import { getSB } from '@/lib/supabase/server'
 import { buildCSLFromPaper, type CSLItem, type PaperWithAuthors } from '@/lib/utils/csl'
 import { findBestTitleMatch, type PaperCandidate } from '@/lib/utils/fuzzy-matching'
 import { citationLogger } from '@/lib/utils/citation-logger'
+import { resolveCitationStyleFamily } from './style-family'
 
 // Simple CSL-JSON type for bibliography formatting
 interface CSLAuthor {
@@ -173,7 +174,7 @@ function formatAuthorsIEEE(authors: CSLAuthor[]): string {
  */
 export async function generateBibliography(
   projectId: string,
-  style: keyof typeof BIBLIOGRAPHY_STYLES = 'apa'
+  style: string = 'apa'
 ): Promise<BibliographyResult> {
   const supabase = await getSB()
   
@@ -207,8 +208,10 @@ export async function generateBibliography(
     quote?: string
   }>
   
-  // Format each citation according to style
-  const styleFormatter = BIBLIOGRAPHY_STYLES[style] || BIBLIOGRAPHY_STYLES.apa
+  // Format each citation according to style family
+  const styleFamily = resolveCitationStyleFamily(style)
+  const styleKey = styleFamily === 'harvard' ? 'apa' : styleFamily
+  const styleFormatter = BIBLIOGRAPHY_STYLES[styleKey] || BIBLIOGRAPHY_STYLES.apa
   const formattedEntries = typedCitations.map((citation) => {
     const entry: CitationBibliographyEntry = {
       number: citation.number,
@@ -248,7 +251,7 @@ export async function generateBibliography(
  */
 export async function streamBibliographyBlock(
   projectId: string,
-  style: keyof typeof BIBLIOGRAPHY_STYLES = 'apa',
+  style: string = 'apa',
   onBlock?: (content: string) => void
 ): Promise<string> {
   const result = await generateBibliography(projectId, style)
@@ -790,7 +793,7 @@ export class CitationService {
     return results
   }
 
-  static async renderBibliography(projectId: string, style: keyof typeof BIBLIOGRAPHY_STYLES = 'apa'): Promise<BibliographyResult> {
+  static async renderBibliography(projectId: string, style: string = 'apa'): Promise<BibliographyResult> {
     return generateBibliography(projectId, style)
   }
 
@@ -1057,7 +1060,7 @@ export function formatInlineCitation(cslJson: CSLItem | null | undefined, style:
   const authors = cslJson.author || []
   const year = cslJson.issued?.['date-parts']?.[0]?.[0] || 'n.d.'
 
-  switch ((style || 'apa').toLowerCase()) {
+  switch (resolveCitationStyleFamily(style)) {
     case 'apa':
       if (authors.length === 0) return `(Anonymous, ${year})`
       if (authors.length === 1) {
@@ -1080,6 +1083,18 @@ export function formatInlineCitation(cslJson: CSLItem | null | undefined, style:
       return authors.length === 1
         ? `(${authors[0]?.family || authors[0]?.literal || 'Unknown'} ${year})`
         : `(${authors[0]?.family || authors[0]?.literal || 'Unknown'} et al. ${year})`
+    case 'harvard':
+      if (authors.length === 0) return `(Anonymous ${year})`
+      if (authors.length === 1) {
+        const lastName = authors[0].family || authors[0].literal || 'Unknown'
+        return `(${lastName} ${year})`
+      }
+      if (authors.length === 2) {
+        const first = authors[0].family || authors[0].literal || 'Unknown'
+        const second = authors[1].family || authors[1].literal || 'Unknown'
+        return `(${first} & ${second} ${year})`
+      }
+      return `(${authors[0]?.family || 'Unknown'} et al. ${year})`
     case 'ieee':
       return `[${number}]`
     default:

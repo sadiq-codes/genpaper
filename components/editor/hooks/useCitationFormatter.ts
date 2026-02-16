@@ -62,12 +62,19 @@ export function useCitationFormatter(styleId: string = 'apa'): UseCitationFormat
     let mounted = true
     setIsLoading(true)
     
-    loadStyle(resolvedStyle).then(success => {
-      if (mounted) {
-        setIsStyleLoaded(success)
-        setIsLoading(false)
-      }
-    })
+    loadStyle(resolvedStyle)
+      .then(success => {
+        if (mounted) {
+          setIsStyleLoaded(success)
+          setIsLoading(false)
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setIsStyleLoaded(false)
+          setIsLoading(false)
+        }
+      })
     
     return () => { mounted = false }
   }, [resolvedStyle])

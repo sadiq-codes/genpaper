@@ -1,8 +1,8 @@
 /**
  * Local Citation Formatter
  * 
- * 100% client-side citation formatting using citation-js.
- * No API calls needed - everything happens in the browser.
+ * Primarily client-side citation formatting using citation-js.
+ * Style XML is loaded via same-origin API for reliability.
  * 
  * Features:
  * - Instant inline citation formatting
@@ -54,8 +54,11 @@ interface CSLJson {
 // Style Management
 // =============================================================================
 
-// CSL style repository CDN
+// CSL style repository CDNs (server/non-browser fallback only)
 const CSL_CDN = 'https://raw.githubusercontent.com/citation-style-language/styles/master'
+const CSL_CDN_JSDELIVR = 'https://cdn.jsdelivr.net/gh/citation-style-language/styles@master'
+const LOCAL_STYLE_ENDPOINT = '/api/citations/style'
+const STYLE_FETCH_TIMEOUT_MS = 5000
 
 // Styles bundled with @citation-js/plugin-csl
 const BUNDLED_STYLES = new Set(['apa', 'vancouver', 'harvard1'])
@@ -124,9 +127,9 @@ export function isStyleAvailable(styleId: string): boolean {
 }
 
 /**
- * Load a CSL style from the CDN
- * Returns true if successful, false otherwise
- * Uses caching to prevent duplicate requests
+ * Load a CSL style from the local style endpoint.
+ * Returns true if successful, false otherwise.
+ * Uses caching to prevent duplicate requests.
  */
 export async function loadStyle(styleId: string): Promise<boolean> {
   const resolved = resolveStyleId(styleId)
@@ -144,21 +147,8 @@ export async function loadStyle(styleId: string): Promise<boolean> {
   // Start loading
   const loadPromise = (async (): Promise<boolean> => {
     try {
-      const url = `${CSL_CDN}/${resolved}.csl`
-      const response = await fetch(url)
-      
-      if (!response.ok) {
-        console.warn(`[LocalFormatter] Failed to load style '${resolved}': ${response.status}`)
-        return false
-      }
-      
-      const cslXml = await response.text()
-      
-      // Validate it's CSL XML
-      if (!cslXml.includes('<style') || !cslXml.includes('citation-style-language')) {
-        console.warn(`[LocalFormatter] Invalid CSL XML for style '${resolved}'`)
-        return false
-      }
+      const cslXml = await fetchStyleXml(resolved)
+      if (!cslXml) return false
       
       // Register with citation-js
       const templates = getTemplatesRegister()
@@ -170,7 +160,8 @@ export async function loadStyle(styleId: string): Promise<boolean> {
       console.log(`[LocalFormatter] Loaded style '${resolved}'`)
       return true
     } catch (error) {
-      console.error(`[LocalFormatter] Error loading style '${resolved}':`, error)
+      // Network failures are expected in some environments (extensions/ad blockers).
+      console.warn(`[LocalFormatter] Could not load style '${resolved}', using fallback formatting.`, error)
       return false
     } finally {
       styleLoadPromises.delete(resolved)
@@ -193,6 +184,98 @@ export async function ensureStyle(styleId: string): Promise<string> {
   
   const success = await loadStyle(resolved)
   return success ? resolved : 'apa'
+}
+
+function isLikelyCslXml(xml: string): boolean {
+  if (!xml) return false
+  const trimmed = xml.trim()
+  if (!trimmed) return false
+
+  // CSL files use <style> as root (optionally after XML declaration).
+  const withoutDeclaration = trimmed.replace(/^<\?xml[\s\S]*?\?>\s*/i, '')
+  if (!withoutDeclaration.startsWith('<style')) return false
+
+  const lowered = withoutDeclaration.toLowerCase()
+  return (
+    lowered.includes('purl.org/net/xbiblio/csl') ||
+    lowered.includes('<citation') ||
+    lowered.includes('<bibliography')
+  )
+}
+
+function getLocalStyleUrl(resolved: string): string | null {
+  if (typeof window !== 'undefined') {
+    const apiUrl = new URL(LOCAL_STYLE_ENDPOINT, window.location.origin)
+    apiUrl.searchParams.set('id', resolved)
+    return apiUrl.toString()
+  }
+  return null
+}
+
+function getServerFallbackUrls(resolved: string): string[] {
+  return [
+    `${CSL_CDN}/${resolved}.csl`,
+    `${CSL_CDN_JSDELIVR}/${resolved}.csl`,
+  ]
+}
+
+function fetchTextViaXhr(url: string, timeoutMs: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (typeof XMLHttpRequest === 'undefined') {
+      resolve(null)
+      return
+    }
+
+    try {
+      const xhr = new XMLHttpRequest()
+      xhr.open('GET', url, true)
+      xhr.timeout = timeoutMs
+
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState !== XMLHttpRequest.DONE) return
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(xhr.responseText || null)
+        } else {
+          resolve(null)
+        }
+      }
+      xhr.onerror = () => resolve(null)
+      xhr.onabort = () => resolve(null)
+      xhr.ontimeout = () => resolve(null)
+      xhr.send()
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
+async function fetchStyleXml(resolved: string): Promise<string | null> {
+  const localUrl = getLocalStyleUrl(resolved)
+  // In browser, only use same-origin endpoint to avoid extension/CORS interference.
+  if (localUrl) {
+    const cslXml = await fetchTextViaXhr(localUrl, STYLE_FETCH_TIMEOUT_MS)
+    return cslXml && isLikelyCslXml(cslXml) ? cslXml : null
+  }
+
+  // Non-browser fallback (tests/tooling environments).
+  for (const url of getServerFallbackUrls(resolved)) {
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      const controller = new AbortController()
+      timeout = setTimeout(() => controller.abort(), STYLE_FETCH_TIMEOUT_MS)
+      const response = await fetch(url, { signal: controller.signal })
+      if (!response.ok) continue
+      const cslXml = await response.text()
+      if (!isLikelyCslXml(cslXml)) continue
+      return cslXml
+    } catch {
+      // Try next source.
+    } finally {
+      if (timeout) clearTimeout(timeout)
+    }
+  }
+
+  return null
 }
 
 // =============================================================================

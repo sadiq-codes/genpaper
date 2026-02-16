@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { CSL_STYLES } from '@/lib/citations/csl-styles'
 
 const CSL_STYLES_TREE_API = 'https://api.github.com/repos/citation-style-language/styles/git/trees/master?recursive=1'
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const REMOTE_FETCH_TIMEOUT_MS = 4000
 
 let cachedStyleIds: string[] | null = null
 let cachedAt = 0
+
+function getFallbackStyleIds(): string[] {
+  return Array.from(new Set(CSL_STYLES.map(s => s.id))).sort()
+}
 
 async function fetchAllStyleIds(): Promise<string[]> {
   if (cachedStyleIds && Date.now() - cachedAt < CACHE_TTL_MS) {
@@ -16,7 +22,8 @@ async function fetchAllStyleIds(): Promise<string[]> {
       Accept: 'application/vnd.github+json',
       'User-Agent': 'genpaper'
     },
-    next: { revalidate: 3600 }
+    next: { revalidate: 3600 },
+    signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS),
   })
 
   if (!response.ok) {
@@ -39,26 +46,37 @@ async function fetchAllStyleIds(): Promise<string[]> {
 }
 
 export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url)
+  const query = (searchParams.get('q') || '').trim().toLowerCase()
+  const limit = Math.min(parseInt(searchParams.get('limit') || '200', 10) || 200, 1000)
+
+  let allStyles: string[] = []
+  let source: 'github' | 'stale-cache' | 'fallback' = 'github'
+
   try {
-    const { searchParams } = new URL(request.url)
-    const query = (searchParams.get('q') || '').trim().toLowerCase()
-    const limit = Math.min(parseInt(searchParams.get('limit') || '200', 10) || 200, 1000)
-
-    const allStyles = await fetchAllStyleIds()
-    const filtered = query
-      ? allStyles.filter(id => id.toLowerCase().includes(query))
-      : allStyles
-
-    return NextResponse.json({
-      styles: filtered.slice(0, limit),
-      total: allStyles.length,
-      filteredTotal: filtered.length
-    })
+    allStyles = await fetchAllStyleIds()
   } catch (error) {
-    console.error('[CSL Styles] Failed to list styles:', error)
-    return NextResponse.json(
-      { error: 'Failed to load CSL styles list' },
-      { status: 500 }
-    )
+    console.error('[CSL Styles] Failed to fetch remote list:', error)
+
+    if (cachedStyleIds && cachedStyleIds.length > 0) {
+      // Serve stale cache rather than failing the dropdown.
+      allStyles = cachedStyleIds
+      source = 'stale-cache'
+    } else {
+      // Final fallback: built-in curated styles.
+      allStyles = getFallbackStyleIds()
+      source = 'fallback'
+    }
   }
+
+  const filtered = query
+    ? allStyles.filter(id => id.toLowerCase().includes(query))
+    : allStyles
+
+  return NextResponse.json({
+    styles: filtered.slice(0, limit),
+    total: allStyles.length,
+    filteredTotal: filtered.length,
+    source,
+  })
 }

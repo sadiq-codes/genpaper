@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
-import { CitationService, BIBLIOGRAPHY_STYLES } from '@/lib/citations/immediate-bibliography'
+import { CitationService } from '@/lib/citations/immediate-bibliography'
 
 /**
  * GET /api/citations/render-bibliography - Bibliography endpoint for references panel
@@ -66,8 +66,8 @@ export async function GET(request: NextRequest) {
     try {
       // Render bibliography using CitationService
       const bibliography = await CitationService.renderBibliography(
-        validProjectId, 
-        validStyle as keyof typeof BIBLIOGRAPHY_STYLES
+        validProjectId,
+        validStyle
       )
 
       // Success response
@@ -143,8 +143,8 @@ export async function POST(request: NextRequest) {
     try {
       // Render bibliography using CitationService
       const bibliography = await CitationService.renderBibliography(
-        projectId, 
-        style as keyof typeof BIBLIOGRAPHY_STYLES
+        projectId,
+        style
       )
 
       // Success response

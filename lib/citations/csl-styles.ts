@@ -511,6 +511,29 @@ export function getStyleById(id: string): CSLStyleInfo | undefined {
 }
 
 /**
+ * Get a best-effort inline example for any style ID.
+ * Uses curated examples when available, and sensible fallbacks otherwise.
+ */
+export function getInlineExampleForStyle(id: string): string {
+  const known = getStyleById(id)
+  if (known) return known.inlineExample
+
+  const normalized = id.toLowerCase().trim()
+  if (
+    isNumericStyleId(normalized) ||
+    normalized.includes('ieee') ||
+    normalized.includes('vancouver') ||
+    normalized.includes('number') ||
+    normalized.includes('numeric') ||
+    normalized.includes('superscript')
+  ) {
+    return '[1]'
+  }
+
+  return '(Smith et al., 2023)'
+}
+
+/**
  * Get category display name
  */
 export function getCategoryDisplayName(category: CSLStyleCategory): string {
