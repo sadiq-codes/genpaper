@@ -423,7 +423,7 @@ export const GhostText = Extension.create({
 
       acceptGhostText:
         () =>
-        ({ editor }) => {
+        ({ editor, commands }) => {
           const pluginState = ghostTextPluginKey.getState(editor.state)
           if (!pluginState?.rawText || pluginState.position === null) {
             return false
@@ -453,24 +453,42 @@ export const GhostText = Extension.create({
 
             if (isFullDoc && processedContent.content) {
               // Full document - insert the content array
-              editor.chain().focus().insertContentAt(insertPosition, processedContent.content).run()
+              const inserted = commands.insertContentAt(insertPosition, processedContent.content)
+              if (!inserted) {
+                console.error('[GhostText] Failed to insert full document ghost text')
+                commands.clearGhostText()
+                return false
+              }
             } else if (Array.isArray(processedContent) && processedContent.length > 0) {
               // Content fragment - insert directly
-              editor.chain().focus().insertContentAt(insertPosition, processedContent).run()
+              const inserted = commands.insertContentAt(insertPosition, processedContent)
+              if (!inserted) {
+                console.error('[GhostText] Failed to insert fragment ghost text')
+                commands.clearGhostText()
+                return false
+              }
             } else {
               // Fallback: simple text insert (no citations to process)
-              editor.chain().focus().insertContentAt(insertPosition, rawText).run()
+              const inserted = commands.insertContentAt(insertPosition, rawText)
+              if (!inserted) {
+                console.error('[GhostText] Failed to insert fallback ghost text')
+                commands.clearGhostText()
+                return false
+              }
             }
           } catch (error) {
             // If content processing or insertion fails, try at current selection as fallback
             console.error('Ghost text content processing error:', error)
             try {
               const fallbackPosition = editor.state.selection.from
-              editor.chain().focus().insertContentAt(fallbackPosition, rawText).run()
+              const inserted = commands.insertContentAt(fallbackPosition, rawText)
+              if (!inserted) {
+                throw new Error('Fallback insert command returned false')
+              }
             } catch (fallbackError) {
               console.error('Ghost text fallback insert also failed:', fallbackError)
               // Clear ghost text state to avoid stale state
-              editor.commands.clearGhostText()
+              commands.clearGhostText()
               return false
             }
           }
