@@ -176,6 +176,7 @@ export async function enrichOutlineSections(
   )
   
   // Step 6: Enrich each section
+  const establishedClaims: string[] = []
   const enrichedContexts: EnrichedSectionContext[] = baseContexts.map((baseContext, index) => {
     const outlineSection = outline.sections[index]
     const annotatedSection = annotatedSections[index]
@@ -194,11 +195,31 @@ export async function enrichOutlineSections(
       hasSynthesisEnrichment: !!planSection || (isLitFocused && analysisResult.patterns.length > 0),
       isLiteratureFocused: isLitFocused
     }
+
+    const fallbackSynthesisContent = isLitFocused && !planSection
+      ? distributeAnalysisToSection(
+          outlineSection.sectionKey,
+          outlineSection.title,
+          analysisResult
+        )
+      : undefined
     
     // Add writing guidance and paper priority for ALL sections (from plan)
     if (planSection) {
       // Convert structured key points to strings for template
-      const keyPointStrings = planSection.keyPointsToMake.map(kp => kp.point)
+      let keyPointStrings = planSection.keyPointsToMake.map(kp => kp.point)
+      if (keyPointStrings.length === 0) {
+        keyPointStrings = deriveFallbackKeyPoints(
+          outlineSection.keyPoints,
+          isLitFocused ? {
+            patterns: planSection.content.patterns,
+            contradictions: planSection.content.contradictions,
+            gaps: planSection.content.gaps,
+          } : undefined
+        )
+      }
+
+      const fallbackMustNotRepeat = index > 0 ? uniqueStrings(establishedClaims, 12) : []
       
       enriched.writingGuidance = {
         approach: planSection.writingGuidance.approach,
@@ -208,13 +229,41 @@ export async function enrichOutlineSections(
         transitionTo: planSection.writingGuidance.transitionTo || undefined,
         paragraphStrategy: planSection.writingGuidance.paragraphStrategy || undefined,
         synthesisLevel: planSection.writingGuidance.synthesisLevel || undefined,
-        mustNotRepeat: planSection.mustNotRepeat.length > 0 ? planSection.mustNotRepeat : undefined
+        mustNotRepeat: planSection.mustNotRepeat.length > 0
+          ? planSection.mustNotRepeat
+          : (fallbackMustNotRepeat.length > 0 ? fallbackMustNotRepeat : undefined)
       }
       
       enriched.paperPriority = {
         primary: planSection.papers.primary,
         supporting: planSection.papers.supporting
       }
+    } else {
+      // Deterministic fallback guidance keeps repetition controls active even
+      // when planner output is unavailable.
+      const keyPointsToMake = deriveFallbackKeyPoints(
+        outlineSection.keyPoints,
+        fallbackSynthesisContent
+      )
+      const mustNotRepeat = index > 0 ? uniqueStrings(establishedClaims, 12) : []
+      const sectionType = classifySectionType(outlineSection.sectionKey, outlineSection.title)
+
+      enriched.writingGuidance = {
+        approach: getFallbackApproach(sectionType, isLitFocused),
+        tone: isLitFocused ? 'analytical' : 'objective',
+        keyPointsToMake,
+        transitionFrom: index > 0 ? `Build directly on the prior section's claims without restating them.` : undefined,
+        transitionTo: index < baseContexts.length - 1 ? 'Close with a bridge to the next section.' : undefined,
+        paragraphStrategy: isLitFocused ? 'pattern_first' : 'general_to_specific',
+        synthesisLevel: isLitFocused ? 'high' : 'moderate',
+        mustNotRepeat: mustNotRepeat.length > 0 ? mustNotRepeat : undefined
+      }
+
+      enriched.paperPriority = buildFallbackPaperPriority(
+        baseContext.candidatePaperIds,
+        fallbackSynthesisContent,
+        isLitFocused
+      )
     }
     
     // Only add synthesis content (patterns, contradictions, gaps) for literature-focused sections
@@ -226,13 +275,12 @@ export async function enrichOutlineSections(
           gaps: planSection.content.gaps
         }
       } else {
-        // Fallback: distribute raw analysis data to relevant sections
-        enriched.synthesisContent = distributeAnalysisToSection(
-          outlineSection.sectionKey,
-          outlineSection.title,
-          analysisResult
-        )
+        enriched.synthesisContent = fallbackSynthesisContent
       }
+    }
+
+    if (enriched.writingGuidance?.keyPointsToMake?.length) {
+      establishedClaims.push(...enriched.writingGuidance.keyPointsToMake)
     }
     
     // Diagnostic logging for each section
@@ -287,6 +335,101 @@ export async function enrichOutlineSections(
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+function uniqueStrings(values: string[], limit = Number.POSITIVE_INFINITY): string[] {
+  const deduped: string[] = []
+  const seen = new Set<string>()
+
+  for (const value of values) {
+    const normalized = value.replace(/\s+/g, ' ').trim()
+    if (!normalized) continue
+    const key = normalized.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(normalized)
+    if (deduped.length >= limit) break
+  }
+
+  return deduped
+}
+
+function deriveFallbackKeyPoints(
+  outlineKeyPoints: string[] | undefined,
+  synthesisContent: SynthesisContent | undefined
+): string[] {
+  const points: string[] = []
+
+  if (Array.isArray(outlineKeyPoints) && outlineKeyPoints.length > 0) {
+    points.push(...outlineKeyPoints)
+  }
+
+  if (synthesisContent) {
+    points.push(
+      ...synthesisContent.patterns.slice(0, 3).map(p => `Synthesize evidence for: ${p.claim}`),
+      ...synthesisContent.contradictions.slice(0, 1).map(c => `Explain the disagreement around: ${c.description}`),
+      ...synthesisContent.gaps.slice(0, 1).map(g => `Highlight this unresolved gap: ${g.description}`)
+    )
+  }
+
+  const deduped = uniqueStrings(points, 4)
+  if (deduped.length >= 2) return deduped
+
+  const fallback = [
+    ...deduped,
+    'State the section claim and support it with cited evidence.',
+    'Connect the section argument to the overall review objective.',
+  ]
+  return uniqueStrings(fallback, 3)
+}
+
+function classifySectionType(sectionKey: string, sectionTitle: string): 'introduction' | 'discussion' | 'conclusion' | 'other' {
+  const normalized = `${sectionKey} ${sectionTitle}`.toLowerCase()
+  if (normalized.includes('intro')) return 'introduction'
+  if (normalized.includes('discussion') || normalized.includes('debate')) return 'discussion'
+  if (normalized.includes('conclusion') || normalized.includes('future')) return 'conclusion'
+  return 'other'
+}
+
+function getFallbackApproach(
+  sectionType: 'introduction' | 'discussion' | 'conclusion' | 'other',
+  isLiteratureFocused: boolean
+): string {
+  if (sectionType === 'introduction') {
+    return 'Frame scope and objectives, define boundaries, and set up the evidence narrative.'
+  }
+  if (sectionType === 'discussion') {
+    return 'Compare converging and conflicting evidence, then interpret implications and limitations.'
+  }
+  if (sectionType === 'conclusion') {
+    return 'Synthesize the strongest findings and end with concrete future directions.'
+  }
+  return isLiteratureFocused
+    ? 'Integrate cross-paper evidence, quantify agreement where possible, and note caveats.'
+    : 'Present a focused argument with concise transitions and explicit links to the paper objective.'
+}
+
+function buildFallbackPaperPriority(
+  candidatePaperIds: string[],
+  synthesisContent: SynthesisContent | undefined,
+  isLiteratureFocused: boolean
+): PaperPriority {
+  const synthesisPaperIds = synthesisContent ? uniqueStrings([
+    ...synthesisContent.patterns.flatMap(p => p.supportingPaperIds),
+    ...synthesisContent.contradictions.flatMap(c => c.sides.flatMap(s => s.paperIds)),
+  ]) : []
+
+  const preferredPrimaryCount = isLiteratureFocused ? 8 : 4
+  const primary = uniqueStrings([...synthesisPaperIds, ...candidatePaperIds], preferredPrimaryCount)
+  const supporting = uniqueStrings(
+    candidatePaperIds.filter(id => !primary.includes(id)),
+    isLiteratureFocused ? 10 : 6
+  )
+
+  return {
+    primary,
+    supporting,
+  }
+}
 
 /**
  * Distribute raw analysis data to a section based on section type
