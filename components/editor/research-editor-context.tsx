@@ -6,6 +6,7 @@ import type { ProjectPaper, Citation } from './types'
 import type { PendingToolCall } from './hooks/useEditorChat'
 import type { ProcessingStatus } from './hooks/usePaperProcessingStatus'
 import type { ChatSendOptions } from './sidebar/ChatTab'
+import type { AutocompletePrefs } from './hooks/useAutocompletePrefs'
 
 export interface ProcessingSummary {
   total: number
@@ -22,6 +23,9 @@ export interface ResearchEditorContextValue {
   projectTitle: string
   papers: ProjectPaper[]
   citationStyle: string
+
+  // Autocomplete preferences (DB-backed)
+  autocompletePrefs: AutocompletePrefs
 
   // Chat
   chatMessages: UIMessage[]

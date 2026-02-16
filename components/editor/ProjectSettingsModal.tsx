@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -14,16 +14,20 @@ import { Switch } from '@/components/ui/switch'
 import { Loader2, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { CitationStyleSelector } from './CitationStyleSelector'
-import { getStyleById } from '@/lib/citations/csl-styles'
-import { useAutocompletePrefs } from './hooks/useAutocompletePrefs'
+import { getInlineExampleForStyle, getStyleById } from '@/lib/citations/csl-styles'
+import type { AutocompletePrefs } from './hooks/useAutocompletePrefs'
 
 interface ProjectSettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
-  /** Current citation style - passed from parent to avoid API fetch on open */
+  /** Current citation style - passed from parent */
   currentCitationStyle?: string
   onCitationStyleChange?: (style: string) => void
+  /** Autocomplete prefs from the DB-backed hook */
+  autocompletePrefs: AutocompletePrefs
+  /** Callback to persist autocomplete pref changes */
+  onAutocompletePrefsChange: (updates: Partial<AutocompletePrefs>) => void
 }
 
 export function ProjectSettingsModal({
@@ -32,43 +36,82 @@ export function ProjectSettingsModal({
   projectId,
   currentCitationStyle = 'apa',
   onCitationStyleChange,
+  autocompletePrefs,
+  onAutocompletePrefsChange,
 }: ProjectSettingsModalProps) {
-  // Local state for editing (initialized from prop)
+  // ----- Local buffered state (written to sources only on Save) -----
   const [citationStyle, setCitationStyle] = useState<string>(currentCitationStyle)
+  const [localPrefs, setLocalPrefs] = useState<AutocompletePrefs>(autocompletePrefs)
   const [isSaving, setIsSaving] = useState(false)
 
-  const { prefs, setAutoSuggestions, setIncludeCitations, setAcceptKey, setUseExternalSources } = useAutocompletePrefs()
+  // Snapshot of prefs when modal opens, used for change detection
+  const openSnapshotRef = useRef<AutocompletePrefs>(autocompletePrefs)
 
-  // Reset to current style when modal opens (in case user canceled previous edit)
+  // Reset local state every time the modal opens
   useEffect(() => {
     if (open) {
       setCitationStyle(currentCitationStyle)
+      setLocalPrefs(autocompletePrefs)
+      openSnapshotRef.current = autocompletePrefs
     }
-  }, [open, currentCitationStyle])
+  }, [open, currentCitationStyle, autocompletePrefs])
 
+  // ----- Local pref setters (buffered, not persisted yet) -----
+  const setAutoSuggestions = useCallback((v: boolean) => {
+    setLocalPrefs(p => ({ ...p, autoSuggestions: v }))
+  }, [])
+  const setIncludeCitations = useCallback((v: boolean) => {
+    setLocalPrefs(p => ({ ...p, includeCitations: v }))
+  }, [])
+  const setAcceptKey = useCallback((v: 'tab' | 'ctrlEnter') => {
+    setLocalPrefs(p => ({ ...p, acceptKey: v }))
+  }, [])
+  const setUseExternalSources = useCallback((v: boolean) => {
+    setLocalPrefs(p => ({ ...p, useExternalSources: v }))
+  }, [])
+
+  // ----- Change tracking -----
+  const citationStyleChanged = citationStyle !== currentCitationStyle
+  const prefsChanged =
+    localPrefs.autoSuggestions !== openSnapshotRef.current.autoSuggestions ||
+    localPrefs.includeCitations !== openSnapshotRef.current.includeCitations ||
+    localPrefs.acceptKey !== openSnapshotRef.current.acceptKey ||
+    localPrefs.useExternalSources !== openSnapshotRef.current.useExternalSources
+  const hasChanges = citationStyleChanged || prefsChanged
+
+  // ----- Save handler -----
   const handleSave = async () => {
-    if (!citationStyle) return
+    if (!hasChanges) return
 
     setIsSaving(true)
     try {
-      const response = await fetch(`/api/projects/${projectId}/settings`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ citationStyle }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to save settings')
+      // 1. Persist autocomplete prefs (optimistic + API)
+      if (prefsChanged) {
+        onAutocompletePrefsChange(localPrefs)
       }
 
-      const styleInfo = getStyleById(citationStyle)
+      // 2. Persist citation style (API call)
+      if (citationStyleChanged) {
+        const response = await fetch(`/api/projects/${projectId}/settings`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ citationStyle }),
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to save citation style')
+        }
+
+        onCitationStyleChange?.(citationStyle)
+      }
+
+      const styleInfo = citationStyleChanged ? getStyleById(citationStyle) : null
       toast.success('Settings saved', {
-        description: `Citation style set to ${styleInfo?.shortName || styleInfo?.name || citationStyle}`,
+        description: citationStyleChanged
+          ? `Citation style set to ${styleInfo?.shortName || styleInfo?.name || citationStyle}`
+          : undefined,
       })
-      
-      // Notify parent component of the change
-      onCitationStyleChange?.(citationStyle)
-      
+
       onOpenChange(false)
     } catch (error) {
       console.error('Failed to save settings:', error)
@@ -78,12 +121,16 @@ export function ProjectSettingsModal({
     }
   }
 
+  const handleCancel = useCallback(() => {
+    onOpenChange(false)
+  }, [onOpenChange])
+
   const selectedStyle = getStyleById(citationStyle)
-  const hasChanges = citationStyle !== currentCitationStyle
+  const inlinePreview = getInlineExampleForStyle(citationStyle || 'apa')
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent 
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) handleCancel(); else onOpenChange(true) }}>
+      <DialogContent
         className="sm:max-w-md"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
@@ -106,17 +153,15 @@ export function ProjectSettingsModal({
                   onValueChange={setCitationStyle}
                 />
               </div>
-              
+
               {/* Preview */}
-              {selectedStyle && (
-                <div className="rounded-lg bg-muted/50 p-3 text-sm border border-border/30">
-                  <p className="text-[11px] text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Preview</p>
-                  <p className="text-sm">
-                    Research shows significant findings{' '}
-                    <span className="font-medium text-foreground">{selectedStyle.inlineExample}</span>.
-                  </p>
-                </div>
-              )}
+              <div className="rounded-lg bg-muted/50 p-3 text-sm border border-border/30">
+                <p className="text-[11px] text-muted-foreground mb-1.5 uppercase tracking-wide font-medium">Preview</p>
+                <p className="text-sm">
+                  Research shows significant findings{' '}
+                  <span className="font-medium text-foreground">{inlinePreview}</span>.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -135,7 +180,7 @@ export function ProjectSettingsModal({
                 </div>
                 <Switch
                   id="project-auto-suggestions"
-                  checked={prefs.autoSuggestions}
+                  checked={localPrefs.autoSuggestions}
                   onCheckedChange={setAutoSuggestions}
                 />
               </div>
@@ -149,7 +194,7 @@ export function ProjectSettingsModal({
                 </div>
                 <Switch
                   id="project-include-citations"
-                  checked={prefs.includeCitations}
+                  checked={localPrefs.includeCitations}
                   onCheckedChange={setIncludeCitations}
                 />
               </div>
@@ -163,7 +208,7 @@ export function ProjectSettingsModal({
                 </div>
                 <Switch
                   id="project-external-sources"
-                  checked={prefs.useExternalSources}
+                  checked={localPrefs.useExternalSources}
                   onCheckedChange={setUseExternalSources}
                 />
               </div>
@@ -177,7 +222,7 @@ export function ProjectSettingsModal({
                   <button
                     onClick={() => setAcceptKey('tab')}
                     className={`h-7 px-2.5 rounded-full text-[11px] transition-colors ${
-                      prefs.acceptKey === 'tab'
+                      localPrefs.acceptKey === 'tab'
                         ? 'bg-foreground/80 text-background font-medium'
                         : 'text-muted-foreground hover:text-foreground border border-border/40'
                     }`}
@@ -187,7 +232,7 @@ export function ProjectSettingsModal({
                   <button
                     onClick={() => setAcceptKey('ctrlEnter')}
                     className={`h-7 px-2.5 rounded-full text-[11px] transition-colors ${
-                      prefs.acceptKey === 'ctrlEnter'
+                      localPrefs.acceptKey === 'ctrlEnter'
                         ? 'bg-foreground/80 text-background font-medium'
                         : 'text-muted-foreground hover:text-foreground border border-border/40'
                     }`}
@@ -202,7 +247,7 @@ export function ProjectSettingsModal({
 
         <DialogFooter className="gap-2">
           <button
-            onClick={() => onOpenChange(false)}
+            onClick={handleCancel}
             disabled={isSaving}
             className="h-9 px-4 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors disabled:opacity-50"
           >
