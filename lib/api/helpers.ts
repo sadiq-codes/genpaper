@@ -2,7 +2,8 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import type { User } from '@supabase/supabase-js'
-import { isAppError } from '@/lib/errors'
+import { isAppError, ServiceUnavailableError } from '@/lib/errors'
+import { isTransientAuthNetworkError } from '@/lib/supabase/transient-auth-fetch'
 
 // ============================================================================
 // Auth Helpers
@@ -14,9 +15,22 @@ import { isAppError } from '@/lib/errors'
  */
 export async function getAuthenticatedUser(): Promise<User | null> {
   const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  if (error || !user) return null
-  return user
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser()
+    if (error) {
+      if (isTransientAuthNetworkError(error)) {
+        throw new ServiceUnavailableError('Authentication service temporarily unavailable', 'supabase-auth')
+      }
+      return null
+    }
+    if (!user) return null
+    return user
+  } catch (error) {
+    if (isTransientAuthNetworkError(error)) {
+      throw new ServiceUnavailableError('Authentication service temporarily unavailable', 'supabase-auth')
+    }
+    throw error
+  }
 }
 
 // ============================================================================

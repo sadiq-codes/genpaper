@@ -25,6 +25,14 @@ export interface GateCheckResult {
   papersRemaining?: number
 }
 
+function isHasGeneratedSchemaError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const candidate = error as { code?: string; message?: string }
+  const message = (candidate.message || '').toLowerCase()
+  return candidate.code === 'PGRST204'
+    || (message.includes('has_generated') && message.includes('schema cache'))
+}
+
 function addUtcMonths(base: Date, months: number): Date {
   return new Date(Date.UTC(
     base.getUTCFullYear(),
@@ -115,6 +123,19 @@ async function getAuthoritativePapersUsedThisPeriod(
   }
 
   return effectiveUsed
+}
+
+async function syncUsageCounterFromAuthoritative(userId: string): Promise<{
+  before: number
+  after: number
+} | null> {
+  const subscription = await getUserSubscription(userId)
+  if (!subscription) return null
+
+  const before = subscription.papersUsedThisPeriod
+  const after = await getAuthoritativePapersUsedThisPeriod(userId, subscription)
+
+  return { before, after }
 }
 
 // =============================================================================
@@ -334,6 +355,30 @@ export async function recordProjectGenerated(projectId: string, userId: string):
     .limit(1)
 
   if (markError) {
+    if (isHasGeneratedSchemaError(markError)) {
+      logWarn(
+        { projectId, userId, error: markError },
+        'has_generated unavailable in schema cache; syncing billing counter from authoritative project count'
+      )
+
+      const synced = await syncUsageCounterFromAuthoritative(userId)
+      if (synced) {
+        const incremented = synced.after > synced.before
+        if (incremented) {
+          info(
+            { projectId, userId, before: synced.before, after: synced.after },
+            'Billing counter advanced via authoritative usage sync'
+          )
+        } else {
+          info(
+            { projectId, userId, before: synced.before, after: synced.after },
+            'No new billable project detected during authoritative usage sync'
+          )
+        }
+        return incremented
+      }
+    }
+
     logError({ projectId, userId, error: markError }, 'Failed to atomically mark project as generated')
     return false
   }
@@ -346,9 +391,19 @@ export async function recordProjectGenerated(projectId: string, userId: string):
 
   const incremented = await incrementPaperUsage(userId)
   if (!incremented) {
-    // Increment can fail if DB-side usage function is unavailable; generation gate
-    // remains protected by authoritative project-count checks.
-    logWarn({ projectId, userId }, 'Project marked generated but usage counter increment failed')
+    // Increment can fail if DB-side usage function is unavailable. Self-heal by
+    // syncing profile counter to authoritative completed-project count.
+    logWarn({ projectId, userId }, 'Project marked generated but usage increment RPC failed; syncing authoritative usage counter')
+
+    const synced = await syncUsageCounterFromAuthoritative(userId)
+    if (synced && synced.after > synced.before) {
+      info(
+        { projectId, userId, before: synced.before, after: synced.after },
+        'Billing counter advanced via authoritative usage sync after increment failure'
+      )
+      return true
+    }
+
     return false
   }
 
