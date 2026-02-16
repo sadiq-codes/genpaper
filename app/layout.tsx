@@ -5,6 +5,7 @@ import Script from "next/script"
 import "./globals.css"
 import { AuthProvider } from "@/components/providers/AuthProvider"
 import { getUser } from "@/lib/auth/cached"
+import { isAppError } from "@/lib/errors"
 
 const GA_MEASUREMENT_ID = "G-ZYDPFH365F"
 
@@ -96,7 +97,17 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  const user = await getUser()
+  let user: Awaited<ReturnType<typeof getUser>> = null
+  try {
+    user = await getUser()
+  } catch (error) {
+    // Do not crash the whole app shell on transient auth dependency outages.
+    if (isAppError(error) && error.code === 'SERVICE_UNAVAILABLE') {
+      console.warn('RootLayout: transient auth outage, rendering with unauthenticated initial state')
+    } else {
+      throw error
+    }
+  }
   return (
     <html lang="en">
       <head>
