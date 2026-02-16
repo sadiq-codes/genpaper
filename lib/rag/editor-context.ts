@@ -183,6 +183,16 @@ export async function retrieveEditorContext(
   const cacheKey = getRagCacheKey(query, paperIds, options)
   const cached = ragCache.get(cacheKey)
   if (cached) {
+    // Apply de-boosting as post-cache reranking.
+    // The cache key intentionally excludes deboostPaperIds so that cache hits
+    // remain stable across keystrokes; we reorder chunks here instead.
+    if (deboostPaperIds && deboostPaperIds.length > 0) {
+      const deboostSet = new Set(deboostPaperIds.map(id => id.toLowerCase()))
+      const promoted = cached.chunks.filter(c => !deboostSet.has(c.paper_id.toLowerCase()))
+      const demoted = cached.chunks.filter(c => deboostSet.has(c.paper_id.toLowerCase()))
+      console.log(`[RAG Cache] Hit for editor context (de-boosted ${demoted.length} chunks from ${deboostSet.size} papers)`)
+      return { ...cached, chunks: [...promoted, ...demoted] }
+    }
     console.log('[RAG Cache] Hit for editor context')
     return cached
   }

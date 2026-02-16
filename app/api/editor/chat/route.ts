@@ -13,7 +13,7 @@ import {
   DEFAULT_CHAT_TOOLS,
 } from '@/lib/prompts/automat-context'
 import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
-import { shouldSkipRAG } from '@/lib/ai/intent-classifier'
+import { shouldSkipRAG, type IntentClassification } from '@/lib/ai/intent-classifier'
 import { checkAndIncrementChatUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
 
 // =============================================================================
@@ -115,6 +115,44 @@ interface RAGResult {
   }
 }
 
+interface ChatRAGProfile {
+  maxEvidenceTokens: number
+  retrieveLimit: number
+  useReranking: boolean
+}
+
+const DEFAULT_CHAT_RAG_PROFILE: ChatRAGProfile = {
+  maxEvidenceTokens: 8000,
+  retrieveLimit: 100,
+  useReranking: false,
+}
+
+function getAdaptiveChatRAGProfile(
+  intent: IntentClassification['intent'],
+  hasMentionedPapers: boolean
+): ChatRAGProfile {
+  // Mention-constrained retrieval can use tighter budgets without hurting quality.
+  if (hasMentionedPapers) {
+    return {
+      maxEvidenceTokens: 5000,
+      retrieveLimit: 70,
+      useReranking: false,
+    }
+  }
+
+  // Full research turns keep richer context.
+  if (intent === 'research') {
+    return DEFAULT_CHAT_RAG_PROFILE
+  }
+
+  // Non-research turns (rarely retrieved due classifier safety) use lighter budgets.
+  return {
+    maxEvidenceTokens: 3500,
+    retrieveLimit: 45,
+    useReranking: false,
+  }
+}
+
 /**
  * Evidence chunk for transparency in chat UI.
  * Sent to client so users can see what sources were used.
@@ -144,7 +182,8 @@ export interface ChatMessageMetadata {
 async function getRAGContext(
   query: string,
   projectId: string,
-  paperIds: string[]
+  paperIds: string[],
+  profile: ChatRAGProfile = DEFAULT_CHAT_RAG_PROFILE
 ): Promise<RAGResult> {
   if (paperIds.length === 0) {
     console.log('[Chat API] RAG skipped - no paper IDs provided')
@@ -157,16 +196,14 @@ async function getRAGContext(
 
   try {
     const retriever = new ChunkRetriever({
-      // For chat, use a smaller token budget (faster responses)
-      maxEvidenceTokens: 8000,
-      // Skip Cohere reranking for chat — Qdrant vector similarity is sufficient
-      // and reranking adds ~2-3s of latency for marginal quality gain
-      useReranking: false,
-      retrieveLimit: 100,
+      maxEvidenceTokens: profile.maxEvidenceTokens,
+      useReranking: profile.useReranking,
+      retrieveLimit: profile.retrieveLimit,
     })
 
     console.log('[Chat API] RAG query:', query?.slice(0, 100))
     console.log('[Chat API] RAG paper IDs:', paperIds)
+    console.log('[Chat API] RAG profile:', profile)
 
     const result = await retriever.retrieve({
       query,
@@ -360,45 +397,89 @@ export async function POST(request: NextRequest) {
       ? getTextFromUIMessage(lastUserMessage)
       : ''
 
-    // Run intent classification + project fetch + papers fetch IN PARALLEL
-    // Intent doesn't depend on DB; project fetch doesn't depend on intent.
-    // Papers fetch is always started optimistically — we discard it if trivial.
+    // Fast path for tool-result follow-up turns:
+    // skip expensive intent/RAG/paper work and just return a natural confirmation.
+    const isToolResultFastPath =
+      isToolResultMessage &&
+      mentionedPaperIds.length === 0 &&
+      attachedImages.length === 0
+
+    // Run intent classification + project fetch in parallel.
+    // We fetch papers only if needed after we know intent.
     const intentStart = performance.now()
     console.log('[Chat API] Looking up project:', projectId, 'for user:', user.id)
+    const projectPromise = supabase
+      .from('research_projects')
+      .select('id, topic, paper_type, generation_config')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .single()
 
-    const [intentResult, projectResult, papersResult] = await Promise.all([
-      // 1) Intent classification (may hit LLM or fast-path regex)
-      shouldSkipRAG(ragQuery, mentionedPaperIds.length > 0),
-      // 2) Project fetch (always needed)
-      supabase
-        .from('research_projects')
-        .select('id, topic, paper_type, generation_config')
-        .eq('id', projectId)
-        .eq('user_id', user.id)
-        .single(),
-      // 3) Papers fetch (optimistic — cheap to discard if trivial)
-      supabase
-        .from('project_citations')
-        .select(`
-          paper_id,
-          papers (
-            id,
-            title,
-            authors,
-            publication_date,
-            abstract,
-            processing_status
-          )
-        `)
-        .eq('project_id', projectId),
-    ])
+    let skipRAG = true
+    let isTrivialMessage = true
+    let intentClassification: IntentClassification = {
+      intent: 'chat',
+      confidence: 1,
+      needsRetrieval: false,
+      reasoning: 'Tool result fast path',
+    }
 
-    const { skip: skipRAG, classification: intentClassification } = intentResult
-    const { data: project, error: projectError } = projectResult
-    const { data: projectPapers, error: papersError } = papersResult
+    let project: {
+      id: string
+      topic: string | null
+      paper_type: string | null
+      generation_config: unknown
+    } | null = null
+    let projectError: { message?: string } | null = null
+    let projectPapers: Array<{ papers: unknown }> | null = null
+    let papersError: { message?: string } | null = null
+
+    if (isToolResultFastPath) {
+      console.log('[Chat API] Tool-result fast path enabled')
+      const projectResult = await projectPromise
+      project = projectResult.data
+      projectError = projectResult.error
+    } else {
+      const [intentResult, projectResult] = await Promise.all([
+        shouldSkipRAG(ragQuery, mentionedPaperIds.length > 0),
+        projectPromise,
+      ])
+
+      skipRAG = intentResult.skip
+      intentClassification = intentResult.classification
+      project = projectResult.data
+      projectError = projectResult.error
+
+      // For chat/meta intents with no @mentions, skip paper fetch and paper processing.
+      isTrivialMessage =
+        (intentClassification.intent === 'chat' || intentClassification.intent === 'meta') &&
+        mentionedPaperIds.length === 0 &&
+        attachedImages.length === 0
+
+      if (!isTrivialMessage) {
+        const papersResult = await supabase
+          .from('project_citations')
+          .select(`
+            paper_id,
+            papers (
+              id,
+              title,
+              authors,
+              publication_date,
+              abstract,
+              processing_status
+            )
+          `)
+          .eq('project_id', projectId)
+        projectPapers = papersResult.data as Array<{ papers: unknown }> | null
+        papersError = papersResult.error
+      } else {
+        console.log('[Chat API] Skipping paper fetch - trivial chat/meta turn')
+      }
+    }
 
     const intentEnd = performance.now()
-    console.log(`[Chat API] [TIMING] Intent + DB (parallel): ${(intentEnd - intentStart).toFixed(0)}ms`)
+    console.log(`[Chat API] [TIMING] Intent + project fetch: ${(intentEnd - intentStart).toFixed(0)}ms`)
     console.log(`[Chat API] Intent: ${intentClassification.intent} (confidence: ${(intentClassification.confidence * 100).toFixed(0)}%) - ${intentClassification.reasoning}`)
 
     if (projectError || !project) {
@@ -408,11 +489,6 @@ export async function POST(request: NextRequest) {
         headers: { 'Content-Type': 'application/json' }
       })
     }
-
-    // For chat/meta intents with no @mentions, skip paper processing
-    const isTrivialMessage = (intentClassification.intent === 'chat' || intentClassification.intent === 'meta') 
-      && mentionedPaperIds.length === 0
-      && attachedImages.length === 0
 
     const extractYear = (publicationDate?: string | null): number | undefined => {
       if (!publicationDate) return undefined
@@ -436,7 +512,7 @@ export async function POST(request: NextRequest) {
     let processedPapers: PaperData[] = []
     let paperIds: string[] = []
     
-    // Process papers result (already fetched in parallel, just skip processing for trivial)
+    // Process papers (fetched only when needed for non-trivial turns).
     if (isTrivialMessage) {
       console.log('[Chat API] Skipping paper processing - trivial message detected')
     } else {
@@ -477,6 +553,10 @@ export async function POST(request: NextRequest) {
     const ragStart = performance.now()
     let ragResult: RAGResult
     let fallbackUsed = false  // Track if we fell back from mentioned-only to all papers
+    const ragProfile = getAdaptiveChatRAGProfile(
+      intentClassification.intent,
+      mentionedPaperIds.length > 0
+    )
     
     if (skipRAG) {
       console.log(`[Chat API] RAG skipped - intent is "${intentClassification.intent}":`, ragQuery.slice(0, 50))
@@ -490,18 +570,18 @@ export async function POST(request: NextRequest) {
       // This focuses retrieval on what the user cares about and speeds up the request
       if (mentionedPaperIds.length > 0) {
         // Try mentioned papers first
-        ragResult = await getRAGContext(ragQuery, projectId, mentionedPaperIds)
+        ragResult = await getRAGContext(ragQuery, projectId, mentionedPaperIds, ragProfile)
         
         // Fallback: if mentioned-only returns 0 chunks (papers might not be ingested),
-        // retry with all processed papers to still provide useful context
+        // retry with all processed papers to still provide useful context.
         if (ragResult.chunks.length === 0 && paperIds.length > 0) {
           console.log('[Chat API] RAG fallback - mentioned papers returned 0 chunks, trying all processed papers')
           fallbackUsed = true
-          ragResult = await getRAGContext(ragQuery, projectId, paperIds)
+          ragResult = await getRAGContext(ragQuery, projectId, paperIds, ragProfile)
         }
       } else {
         // No mentions - search all processed papers
-        ragResult = await getRAGContext(ragQuery, projectId, paperIds)
+        ragResult = await getRAGContext(ragQuery, projectId, paperIds, ragProfile)
       }
     }
     const ragEnd = performance.now()
@@ -567,34 +647,39 @@ export async function POST(request: NextRequest) {
       console.log('[Chat API] Using project voice profile:', voiceProfileId)
     }
 
-    // Get citation style for this project
-    const citationStyle = await getProjectCitationStyle(projectId, user.id)
-    console.log('[Chat API] Using citation style:', citationStyle)
+    let citationStyle: string | undefined
+    if (!isToolResultFastPath) {
+      citationStyle = await getProjectCitationStyle(projectId, user.id)
+      console.log('[Chat API] Using citation style:', citationStyle)
+    } else {
+      console.log('[Chat API] Skipping citation style lookup - tool-result fast path')
+    }
 
-    // Build system prompt using AUTOMAT framework
-    // Pass ragChunks so mentioned papers can include relevant excerpts
-    // Pass voiceProfileId for consistent authorial voice in content-generating actions
-    // Pass citationStyle for correct conversational citation format
-    const systemPrompt = await buildSystemPrompt(
-      ragQuery || '',  // User message for action inference
-      project.topic || 'Research',
-      paperType,
-      documentContent,
-      documentStructure,
-      selectedText,
-      ragContext,
-      papers,
-      mentionedPapers,
-      ragResult.chunks,  // Pass raw chunks for mentioned papers context
-      voiceProfileId,    // Pass voice profile for content-generating actions
-      citationStyle,     // Pass citation style for correct format
-      originalResearch   // Pass original research for findings-anchored responses
-    )
+    // Build system prompt using AUTOMAT framework for normal turns.
+    // For tool-result follow-ups, use a compact no-tools instruction.
+    const systemPrompt = isToolResultFastPath
+      ? `You are GenPaper's academic writing assistant. A tool action has already completed for this project (${project.topic || 'Research'}). Reply with a brief natural confirmation in 1-2 sentences, and include at most one useful next step. Do not call tools.`
+      : await buildSystemPrompt(
+          ragQuery || '',  // User message for action inference
+          project.topic || 'Research',
+          paperType,
+          documentContent,
+          documentStructure,
+          selectedText,
+          ragContext,
+          papers,
+          mentionedPapers,
+          ragResult.chunks,  // Pass raw chunks for mentioned papers context
+          voiceProfileId,    // Pass voice profile for content-generating actions
+          citationStyle,     // Pass citation style for correct format
+          originalResearch   // Pass original research for findings-anchored responses
+        )
 
     // Filter out tool-related parts from message history before converting
     // Our tools execute on the client side, so we don't want to send tool calls/results
     // back to OpenAI (which would expect tool results we don't have)
-    const filteredMessages = messages.map(msg => {
+    const messagesForModel = isToolResultFastPath ? messages.slice(-4) : messages
+    const filteredMessages = messagesForModel.map(msg => {
       if (msg.role === 'assistant' && msg.parts) {
         // Filter out tool invocation parts, keep only text parts
         const textParts = msg.parts.filter(p => p.type === 'text')
@@ -614,13 +699,15 @@ export async function POST(request: NextRequest) {
 
     // Log total time to first token (before streaming starts)
     const prepEnd = performance.now()
-    console.log(`[Chat API] [TIMING] Total prep time: ${(prepEnd - requestStart).toFixed(0)}ms (intent+DB: ${(intentEnd - intentStart).toFixed(0)}ms, RAG: ${(ragEnd - ragStart).toFixed(0)}ms, prompt: ${(prepEnd - ragEnd).toFixed(0)}ms)`)
+    console.log(`[Chat API] [TIMING] Total prep time: ${(prepEnd - requestStart).toFixed(0)}ms (intent+project: ${(intentEnd - intentStart).toFixed(0)}ms, RAG: ${(ragEnd - ragStart).toFixed(0)}ms, prompt: ${(prepEnd - ragEnd).toFixed(0)}ms)`)
 
     // Stream the response with tools
     // When this is a tool result follow-up, disable tools so AI just responds with text
     const result = streamText({
       model: getChatLanguageModel(),
-      system: isToolResultMessage 
+      system: isToolResultFastPath
+        ? systemPrompt
+        : isToolResultMessage
         ? `${systemPrompt}\n\n[IMPORTANT: This is a follow-up to tool results. Respond briefly acknowledging what was done. Do NOT use any tools - just provide a short, natural confirmation message.]`
         : systemPrompt,
       messages: modelMessages,
@@ -629,7 +716,7 @@ export async function POST(request: NextRequest) {
       // IMPORTANT: tools execute on the client (browser). Stop after emitting tool calls
       // so the provider never expects tool outputs from the server.
       // stopWhen defaults to stepCountIs(1), which is what we want - no auto-continuation.
-      maxOutputTokens: isToolResultMessage ? 500 : 4096, // Shorter for confirmations
+      maxOutputTokens: isToolResultFastPath ? 220 : isToolResultMessage ? 500 : 4096, // Shorter for confirmations
       abortSignal: request.signal,
       onFinish: async ({ text, toolCalls }) => {
         // Save messages to Supabase after completion

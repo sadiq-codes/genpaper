@@ -1,7 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { getAutocompleteLanguageModel, getFastAutocompleteLanguageModel } from '@/lib/ai/vercel-client'
-import { streamText } from 'ai'
+import { generateObject } from 'ai'
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { 
   retrieveEditorContext, 
   formatEditorContextForPrompt, 
@@ -183,16 +184,103 @@ function buildUserPrompt(context: CompletionRequest['context']): string {
   
   // Section opening with prior content - signal new section while providing context
   if (context.isSectionOpening) {
-    const snippet = preceding.slice(-200) // Less context for section opening
-    const ellipsis = preceding.length > 200 ? '...' : ''
+    const snippet = preceding.slice(-500)
+    const ellipsis = preceding.length > 500 ? '...' : ''
     return `${ellipsis}"${snippet}"\n\n[NEW SECTION: ${context.currentSection.toUpperCase()} - Write opening sentence]`
   }
   
   // Normal continuation
-  const snippet = preceding.slice(-300)
-  const ellipsis = preceding.length > 300 ? '...' : ''
+  const snippet = preceding.slice(-900)
+  const ellipsis = preceding.length > 900 ? '...' : ''
   
   return `${ellipsis}"${snippet}" [CURSOR]`
+}
+
+const NOVELTY_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'if', 'then', 'than', 'that', 'this', 'these', 'those',
+  'to', 'of', 'in', 'on', 'for', 'with', 'by', 'as', 'at', 'from', 'into', 'within', 'through',
+  'is', 'are', 'was', 'were', 'be', 'been', 'being', 'it', 'its', 'their', 'there', 'here',
+  'which', 'who', 'whom', 'whose', 'when', 'where', 'while', 'however', 'therefore', 'thus',
+])
+
+function normalizeNoveltyText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\[@[a-z0-9-]+#[a-z0-9-]+\]/g, ' ')
+    .replace(/\[(\d+)\]/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function tokenizeNovelty(text: string): string[] {
+  const normalized = normalizeNoveltyText(text)
+  if (!normalized) return []
+  return normalized
+    .split(' ')
+    .filter(token => token.length >= 3 && !NOVELTY_STOPWORDS.has(token))
+}
+
+function buildNgramSet(tokens: string[], n: number): Set<string> {
+  const result = new Set<string>()
+  if (tokens.length < n) return result
+  for (let i = 0; i <= tokens.length - n; i++) {
+    result.add(tokens.slice(i, i + n).join(' '))
+  }
+  return result
+}
+
+function computeSetOverlapRatio(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0
+  let overlap = 0
+  for (const value of a) {
+    if (b.has(value)) overlap++
+  }
+  return overlap / Math.min(a.size, b.size)
+}
+
+function isLikelyRedundantContinuation(candidate: string, precedingContext: string): boolean {
+  const candidateTokens = tokenizeNovelty(candidate)
+  const contextTokens = tokenizeNovelty(precedingContext.slice(-2400))
+  if (candidateTokens.length < 5 || contextTokens.length < 10) {
+    return false
+  }
+
+  const candidateTri = buildNgramSet(candidateTokens, 3)
+  const contextTri = buildNgramSet(contextTokens, 3)
+  const trigramOverlap = computeSetOverlapRatio(candidateTri, contextTri)
+
+  const candidateTokenSet = new Set(candidateTokens)
+  const contextTokenSet = new Set(contextTokens)
+  const tokenOverlap = computeSetOverlapRatio(candidateTokenSet, contextTokenSet)
+
+  return trigramOverlap >= 0.38 || tokenOverlap >= 0.82
+}
+
+/**
+ * Build a stable retrieval query for autocomplete RAG.
+ *
+ * Root cause addressed:
+ * per-keystroke query drift prevented cache reuse, causing repeated 3-5s RAG misses.
+ * We anchor retrieval to topic + section + opening paragraph prefix so cache keys stay
+ * stable while writing within the same section.
+ */
+function buildRagQueryText(topic: string, context: CompletionRequest['context']): string {
+  const normalizedTopic = topic.trim() || 'Research'
+  const normalizedSection = (context.currentSection || 'General').trim()
+
+  // Use only a stable prefix of the current paragraph (first words), not full preceding text.
+  const paragraphPrefix = (context.currentParagraph || '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 14)
+    .join(' ')
+
+  if (paragraphPrefix) {
+    return `${normalizedTopic} | ${normalizedSection} | ${paragraphPrefix}`
+  }
+
+  return `${normalizedTopic} | ${normalizedSection}`
 }
 
 // Convert RAG context papers to PaperMetadata format
@@ -216,9 +304,14 @@ function ragContextToPaperMetadata(ragContext: EditorContext): PaperMetadata[] {
 /**
  * Single sentence with its own citations
  */
+interface AICitation {
+  paperId: string
+  citedContent: string
+}
+
 interface AISentence {
   text: string
-  citations: NumberedCitation[]
+  citations: AICitation[]
 }
 
 /**
@@ -229,196 +322,97 @@ interface AIStructuredResponse {
   sentences: AISentence[]
   contextHint: string
   confidence: number  // 0.0-1.0, how confident the model is in this completion
-  // Legacy single-text format (for backwards compatibility)
-  text?: string
-  citations?: NumberedCitation[]
 }
 
-/**
- * Try to repair truncated JSON by closing open brackets/braces
- */
-function tryRepairJSON(text: string): string | null {
-  // Count open brackets
-  let braces = 0
-  let brackets = 0
-  let inString = false
-  let escaped = false
-  
-  for (const char of text) {
-    if (escaped) {
-      escaped = false
-      continue
-    }
-    if (char === '\\') {
-      escaped = true
-      continue
-    }
-    if (char === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    
-    if (char === '{') braces++
-    else if (char === '}') braces--
-    else if (char === '[') brackets++
-    else if (char === ']') brackets--
-  }
-  
-  // If we're inside a string, close it
-  let repaired = text
-  if (inString) {
-    repaired += '"'
-  }
-  
-  // Close open brackets and braces
-  while (brackets > 0) {
-    repaired += ']'
-    brackets--
-  }
-  while (braces > 0) {
-    repaired += '}'
-    braces--
-  }
-  
-  return repaired
-}
+function buildAICompletionSchema(allowedPaperIds: string[]) {
+  const allowedPaperIdsLower = new Set(allowedPaperIds.map(id => id.toLowerCase()))
 
-function parseAIResponse(rawText: string): AIStructuredResponse | null {
-  try {
-    // Strip markdown code blocks if present
-    let cleanedText = rawText.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-    
-    // Find the JSON object
-    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
-      console.log('[Autocomplete] No JSON found in response')
-      return null
-    }
-    
-    let parsed: any
-    try {
-      parsed = JSON.parse(jsonMatch[0])
-    } catch (parseError) {
-      // JSON is truncated - try to repair it
-      console.log('[Autocomplete] JSON parse failed, attempting repair...')
-      const repaired = tryRepairJSON(jsonMatch[0])
-      if (repaired) {
-        try {
-          parsed = JSON.parse(repaired)
-          console.log('[Autocomplete] JSON repair successful')
-        } catch {
-          console.log('[Autocomplete] JSON repair failed:', parseError)
-          return null
-        }
-      } else {
-        console.log('[Autocomplete] Failed to parse AI response:', parseError)
-        return null
-      }
-    }
-    
-    // NEW FORMAT: sentences array
-    if (Array.isArray(parsed.sentences) && parsed.sentences.length > 0) {
-      const sentences: AISentence[] = []
-      
-      for (const s of parsed.sentences) {
-        if (typeof s.text !== 'string' || !s.text.trim()) {
-          continue // Skip invalid sentences
-        }
-        
-        let text = s.text.trim()
-        
-        // Strip trailing citation markers to expose the actual last character
-        // e.g. "some claim [1]" → check "some claim" for sentence-ending punctuation
-        const textWithoutTrailingCitations = text.replace(/(\s*\[\d+\])+\s*$/, '').trim()
-        
-        // COMPLETENESS CHECK: Reject sentences truncated mid-flow by token limit.
-        // A complete sentence must end with sentence-terminating punctuation.
-        // Allow closing parens/quotes after the period: "end." or 'end."' or "end.)"
-        const endsWithPunctuation = /[.!?]['")]*$/.test(textWithoutTrailingCitations)
-        
-        if (!endsWithPunctuation) {
-          console.log(`[Autocomplete] Dropping truncated sentence: "${text.slice(-40)}"`)
-          continue
-        }
-        
-        const citations: NumberedCitation[] = []
-        if (Array.isArray(s.citations)) {
-          for (const c of s.citations) {
-            if (typeof c.index === 'number' && typeof c.paperId === 'string') {
-              citations.push({
-                index: c.index,
-                paperId: c.paperId,
-                citedContent: c.citedContent || ''
-              })
-            }
-          }
-        }
-        
-        sentences.push({
-          text,
-          citations
-        })
-      }
-      
-      // Limit to 2 sentences max (default is 1, but allow 2 if naturally connected)
-      const finalSentences = sentences.slice(0, 2)
-      
-      if (finalSentences.length === 0) {
-        console.log('[Autocomplete] No valid sentences in response')
-        return null
-      }
-      
-      console.log(`[Autocomplete] Parsed ${finalSentences.length} sentences, confidence: ${parsed.confidence}`)
-      
-      // Extract confidence score (default to 0.7 if not provided)
-      const confidence = typeof parsed.confidence === 'number' 
-        ? Math.max(0, Math.min(1, parsed.confidence)) 
-        : 0.7
-      
-      return {
-        sentences: finalSentences,
-        contextHint: parsed.contextHint || 'Continuing...',
-        confidence
-      }
-    }
-    
-    // LEGACY FORMAT: single text + citations (backwards compatibility)
-    if (typeof parsed.text === 'string' && parsed.text.trim()) {
-      console.log('[Autocomplete] Using legacy single-text format')
-      
-      const citations: NumberedCitation[] = []
-      if (Array.isArray(parsed.citations)) {
-        for (const c of parsed.citations) {
-          if (typeof c.index === 'number' && typeof c.paperId === 'string') {
-            citations.push({
-              index: c.index,
-              paperId: c.paperId,
-              citedContent: c.citedContent || ''
+  const citationsSchema =
+    allowedPaperIds.length === 0
+      ? z
+          .array(
+            z.object({
+              paperId: z.string(),
+              citedContent: z.string(),
             })
-          }
-        }
-      }
-      
-      // Convert to sentences format for consistency
-      return {
-        sentences: [{
-          text: parsed.text.trim(),
-          citations
-        }],
-        contextHint: parsed.contextHint || 'Continuing...',
-        confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.7,
-        // Keep legacy fields for debugging
-        text: parsed.text.trim(),
-        citations
-      }
+          )
+          .max(0)
+      : z
+          .array(
+            z.object({
+              paperId: z
+                .string()
+                .uuid()
+                .refine(
+                  paperId => allowedPaperIdsLower.has(paperId.toLowerCase()),
+                  'paperId must reference a retrieved paper'
+                ),
+              citedContent: z.string(),
+            })
+          )
+
+  return z.object({
+    sentences: z.array(
+      z.object({
+        text: z.string().min(1),
+        citations: citationsSchema,
+      })
+    ).min(1).max(2),
+    contextHint: z.string(),
+    confidence: z.number().min(0).max(1),
+  })
+}
+
+function normalizeSentenceForServerOwnedCitations(
+  sentence: AISentence
+): { prose: string; numberedText: string; citations: NumberedCitation[] } | null {
+  // Remove any model-produced [N] markers; server owns marker placement.
+  const prose = sentence.text.replace(/\s*\[\d+\]/g, '').replace(/\s+/g, ' ').trim()
+  if (!prose) return null
+
+  // Reject truncated generations.
+  if (!/[.!?]['")]*$/.test(prose)) {
+    console.log(`[Autocomplete] Dropping truncated sentence: "${prose.slice(-40)}"`)
+    return null
+  }
+
+  // Deterministic citation numbering (server-owned). Keep first occurrence per paper.
+  const seenPaperIds = new Set<string>()
+  const normalizedCitations: NumberedCitation[] = []
+  for (const citation of sentence.citations) {
+    const paperId = citation.paperId.trim()
+    if (!paperId || seenPaperIds.has(paperId)) continue
+    seenPaperIds.add(paperId)
+    normalizedCitations.push({
+      index: normalizedCitations.length + 1,
+      paperId,
+      citedContent: citation.citedContent || '',
+    })
+  }
+
+  const markerSuffix =
+    normalizedCitations.length > 0
+      ? ` ${normalizedCitations.map(c => `[${c.index}]`).join(' ')}`
+      : ''
+
+  let numberedText = prose
+  if (markerSuffix) {
+    // Place citations before terminal punctuation to keep academic inline style natural.
+    const trailingMatch = prose.match(/([.!?]['")\]]*)$/)
+    if (trailingMatch && trailingMatch.index !== undefined) {
+      const punctuationStart = trailingMatch.index
+      const body = prose.slice(0, punctuationStart).trimEnd()
+      const trailing = trailingMatch[1]
+      numberedText = `${body}${markerSuffix}${trailing}`
+    } else {
+      numberedText = `${prose}${markerSuffix}`
     }
-    
-    console.log('[Autocomplete] Missing both sentences array and text field')
-    return null
-  } catch (err) {
-    console.error('[Autocomplete] Failed to parse AI response:', err)
-    return null
+  }
+
+  return {
+    prose,
+    numberedText,
+    citations: normalizedCitations,
   }
 }
 
@@ -477,8 +471,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing projectId' }, { status: 400 })
     }
 
-    // Build query text early for parallel operations
-    const queryText = `${context.currentSection}: ${context.currentParagraph} ${context.precedingText}`
+    // Build a stable section-scoped query to maximize RAG cache reuse.
+    const queryText = buildRagQueryText(topic || '', context)
     
     // OPTIMIZATION: Fetch project and determine paper IDs in parallel when possible
     const projectFetchStart = Date.now()
@@ -726,7 +720,22 @@ export async function POST(request: NextRequest) {
       originalResearch   // Pass original research for findings-anchored completions
     )
     
-    const userPrompt = buildUserPrompt(context)
+    let userPrompt = buildUserPrompt(context)
+
+    // Inject citation history so the model diversifies across papers
+    if (!noPapersAvailable) {
+      const recentlyCitedPaperIds = extractCitedPaperIds(context.precedingText.slice(-1500))
+      if (recentlyCitedPaperIds.length > 0) {
+        const recentTitles = recentlyCitedPaperIds
+          .map(id => ragContext.papers.get(id)?.title)
+          .filter(Boolean)
+          .slice(0, 4)
+
+        if (recentTitles.length > 0) {
+          userPrompt += `\n\nCITATION DIVERSITY (MANDATORY): The preceding text already cites these papers — do NOT cite them again unless absolutely no other source is relevant:\n${recentTitles.map(t => `- "${t}"`).join('\n')}\nChoose DIFFERENT papers from the Available Papers list.`
+        }
+      }
+    }
 
     const abortController = new AbortController()
     const timeout = setTimeout(() => {
@@ -750,19 +759,23 @@ export async function POST(request: NextRequest) {
         : getAutocompleteLanguageModel()
       
       console.log(`[Autocomplete] model: ${usesFastModel ? 'fast' : 'standard'}, chunks: ${ragContext.chunks.length}`)
-      
-      const result = streamText({
-        model,
-        system,
-        prompt: userPrompt,
-        // Increased from 250 to 500 to allow complete JSON with citations
-        // The citedContent field can be long (quotes from papers)
-        maxOutputTokens: usesFastModel ? 150 : 500,
-        temperature: 0.5,
-        abortSignal: abortController.signal,
-      })
+
+      // Retry with larger budgets to prevent truncated JSON on strict structured output.
+      const tokenBudgets = usesFastModel ? [500, 700] : [1000, 1400]
+      const MAX_SCHEMA_ATTEMPTS = tokenBudgets.length
+      const schemaOutputInstruction =
+        '\n\nOUTPUT CONTRACT (MANDATORY): Return ONLY one JSON object with this exact schema: ' +
+        '{"sentences":[{"text":"...","citations":[{"paperId":"uuid","citedContent":"..."}]}],' +
+        '"contextHint":"...","confidence":0.0}. ' +
+        'Do NOT include [N] citation markers in sentence text. Sentence text must be plain prose only. ' +
+        'Put source links ONLY in each sentence.citations array using paperId and citedContent.'
+      const strictRetrySystemInstruction =
+        '\n\nSTRICT RETRY MODE (MANDATORY): Follow the output contract exactly. ' +
+        'Do NOT include [N] markers in prose. Keep citations in citations[] only. ' +
+        'Each sentence must add NEW information, must not restate previous nearby text, and must not include meta-preview phrasing like what the next section will cover.'
 
       const papers = ragContextToPaperMetadata(ragContext)
+      const completionSchema = buildAICompletionSchema(papers.map(p => p.id))
       const encoder = new TextEncoder()
       
       // Flag to prevent enqueue after close
@@ -771,111 +784,14 @@ export async function POST(request: NextRequest) {
       const stream = new ReadableStream({
         async start(controller) {
           try {
-            let fullText = ''
-            let firstTokenTime: number | null = null
-            let sentInterim = false
-            
-            for await (const chunk of result.textStream) {
-              if (abortController.signal.aborted) {
-                streamClosed = true
-                try { controller.close() } catch {}
-                return
-              }
-              // Track time to first token
-              if (firstTokenTime === null) {
-                firstTokenTime = Date.now()
-                timings.llmFirstToken = firstTokenTime - llmStartTime
-              }
-              
-              fullText += chunk
-              
-              // STREAMING PREVIEW: Try to extract and send interim text early
-              // Look for first complete sentence in the "text" field of the JSON
-              if (!sentInterim && !streamClosed) {
-                // Try to extract text from partial JSON - look for "text": "..." pattern
-                const textMatch = fullText.match(/"text"\s*:\s*"([^"]*(?:\\.[^"]*)*)/)
-                if (textMatch && textMatch[1]) {
-                  // Unescape JSON string
-                  let previewText = textMatch[1]
-                    .replace(/\\n/g, '\n')
-                    .replace(/\\"/g, '"')
-                    .replace(/\\\\/g, '\\')
-                  
-                  // Check if we have at least one complete sentence (ends with . ! or ?)
-                  const sentenceEnd = previewText.match(/[.!?](?:\s|$)/)
-                  if (sentenceEnd) {
-                    // Extract just the first sentence for preview
-                    const firstSentenceEnd = previewText.search(/[.!?](?:\s|$)/) + 1
-                    previewText = previewText.slice(0, firstSentenceEnd).trim()
-                    
-                    // Remove citation markers [1], [2] etc for clean preview
-                    previewText = previewText.replace(/\s*\[\d+\]/g, '')
-                    
-                    if (previewText.length > 10) {
-                      try {
-                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
-                          type: 'interim', 
-                          preview: previewText 
-                        })}\n\n`))
-                        sentInterim = true
-                        console.log('[Autocomplete] Sent interim preview:', previewText.slice(0, 50))
-                      } catch {
-                        streamClosed = true
-                        return
-                      }
-                    }
-                  }
-                }
-              }
-              
-              // Guard against closed controller
-              if (!streamClosed) {
-                try {
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: chunk })}\n\n`))
-                } catch {
-                  // Controller may be closed if client disconnected
-                  streamClosed = true
-                  return
-                }
-              }
+            // Process each sentence independently with its own citations
+            interface ProcessedSentence {
+              text: string           // Raw text with [@id#instanceId] markers
+              displayText: string    // Formatted with (Author, Year)
+              citations: CitationInSuggestion[]
             }
-            
-            timings.llmTotal = Date.now() - llmStartTime
-            
-            console.log('[Autocomplete] Raw AI response:', fullText.slice(0, 500))
-            
-            const parsed = parseAIResponse(fullText)
-            
-            if (!parsed || parsed.sentences.length === 0) {
-              console.log('[Autocomplete] Failed to parse response or no sentences')
-              if (!streamClosed) {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
-                  type: 'error', 
-                  error: 'Could not generate completion - invalid response format' 
-                })}\n\n`))
-                streamClosed = true
-                controller.close()
-              }
-              return
-            }
-            
-            // CONFIDENCE THRESHOLD: Suppress low-confidence suggestions
+
             const CONFIDENCE_THRESHOLD = 0.5
-            if (parsed.confidence < CONFIDENCE_THRESHOLD) {
-              console.log(`[Autocomplete] Low confidence (${parsed.confidence}) - suppressing suggestion`)
-              if (!streamClosed) {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
-                  type: 'error', 
-                  error: 'No confident suggestion available for this context' 
-                })}\n\n`))
-                streamClosed = true
-                controller.close()
-              }
-              return
-            }
-            
-            // BANNED PHRASE ENFORCEMENT: Reject suggestions containing filler phrases
-            // These are explicitly banned in the prompt but models sometimes ignore
             const BANNED_PHRASES = [
               'encompasses a diverse array',
               'plays a crucial role',
@@ -890,91 +806,246 @@ export async function POST(request: NextRequest) {
               'a plethora of',
               'myriad of',
             ]
-            
-            const allText = parsed.sentences.map(s => s.text.toLowerCase()).join(' ')
-            const foundBannedPhrase = BANNED_PHRASES.find(phrase => allText.includes(phrase.toLowerCase()))
-            
-            if (foundBannedPhrase) {
-              console.log(`[Autocomplete] Banned phrase detected: "${foundBannedPhrase}" - suppressing suggestion`)
+
+            let finalProcessedSentences: ProcessedSentence[] | null = null
+            let finalContextHint = 'Continuing...'
+            let finalInstancesToCreate: Array<{ instanceId: string; paperId: string; quote: string }> = []
+            let successAttempt = 0
+
+            for (let attempt = 1; attempt <= MAX_SCHEMA_ATTEMPTS; attempt++) {
+              if (abortController.signal.aborted) {
+                streamClosed = true
+                try { controller.close() } catch {}
+                return
+              }
+
+              const isRetry = attempt > 1
+              const maxOutputTokens = tokenBudgets[attempt - 1]
+              const attemptSystem = `${system}${schemaOutputInstruction}${isRetry ? strictRetrySystemInstruction : ''}`
+              if (isRetry) {
+                console.warn(
+                  `[Autocomplete] Strict retry ${attempt}/${MAX_SCHEMA_ATTEMPTS} after schema/citation mismatch ` +
+                  `(maxOutputTokens=${maxOutputTokens})`
+                )
+              }
+
+              let parsed: AIStructuredResponse | null = null
+              try {
+                const { object } = await generateObject({
+                  model,
+                  system: attemptSystem,
+                  prompt: userPrompt,
+                  schema: completionSchema,
+                  maxOutputTokens,
+                  temperature: 0.5,
+                  abortSignal: abortController.signal,
+                })
+
+                parsed = object
+                timings.llmTotal = Date.now() - llmStartTime
+                if (timings.llmFirstToken === undefined) {
+                  // Non-streamed object mode: first useful output arrives with final object.
+                  timings.llmFirstToken = timings.llmTotal
+                }
+                console.log(
+                  `[Autocomplete] Structured AI response (attempt ${attempt}/${MAX_SCHEMA_ATTEMPTS}):`,
+                  JSON.stringify(parsed).slice(0, 500)
+                )
+              } catch (error) {
+                if (attempt < MAX_SCHEMA_ATTEMPTS) {
+                  console.warn(
+                    `[Autocomplete] Structured generation failed at ${maxOutputTokens} tokens, retrying with ${tokenBudgets[attempt]}`,
+                    error
+                  )
+                  continue
+                }
+                if (!streamClosed) {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    type: 'error',
+                    error: 'Could not generate completion - strict schema validation failed'
+                  })}\n\n`))
+                  streamClosed = true
+                  controller.close()
+                }
+                return
+              }
+
+              if (!parsed || parsed.sentences.length === 0) {
+                if (attempt < MAX_SCHEMA_ATTEMPTS) {
+                  console.warn(
+                    `[Autocomplete] Empty structured response at ${maxOutputTokens} tokens, retrying with ${tokenBudgets[attempt]}`
+                  )
+                  continue
+                }
+                if (!streamClosed) {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    type: 'error',
+                    error: 'Could not generate completion - strict schema validation failed'
+                  })}\n\n`))
+                  streamClosed = true
+                  controller.close()
+                }
+                return
+              }
+
+              if (parsed.confidence < CONFIDENCE_THRESHOLD) {
+                console.log(`[Autocomplete] Low confidence (${parsed.confidence}) - suppressing suggestion`)
+                if (!streamClosed) {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    type: 'error',
+                    error: 'No confident suggestion available for this context'
+                  })}\n\n`))
+                  streamClosed = true
+                  controller.close()
+                }
+                return
+              }
+
+              const allText = parsed.sentences.map(s => s.text.toLowerCase()).join(' ')
+              const foundBannedPhrase = BANNED_PHRASES.find(phrase => allText.includes(phrase.toLowerCase()))
+              if (foundBannedPhrase) {
+                console.log(`[Autocomplete] Banned phrase detected: "${foundBannedPhrase}" - suppressing suggestion`)
+                if (!streamClosed) {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    type: 'error',
+                    error: 'Suggestion contained generic filler - please try again'
+                  })}\n\n`))
+                  streamClosed = true
+                  controller.close()
+                }
+                return
+              }
+
+              const processedSentences: ProcessedSentence[] = []
+              const allInstancesToCreate: Array<{ instanceId: string; paperId: string; quote: string }> = []
+              let strictCitationMismatch = false
+              let noveltyContextWindow = context.precedingText.slice(-2400)
+
+              for (let i = 0; i < parsed.sentences.length; i++) {
+                const sentence = parsed.sentences[i]
+                console.log(`[Autocomplete] Processing sentence ${i + 1}:`, sentence.text.slice(0, 80))
+
+                const normalizedSentence = normalizeSentenceForServerOwnedCitations(sentence)
+                if (!normalizedSentence) {
+                  strictCitationMismatch = true
+                  console.warn(
+                    `[Autocomplete] Strict sentence normalization failed in sentence ${i + 1}`
+                  )
+                  break
+                }
+
+                if (isLikelyRedundantContinuation(normalizedSentence.prose, noveltyContextWindow)) {
+                  strictCitationMismatch = true
+                  console.warn(
+                    `[Autocomplete] Strict novelty check failed in sentence ${i + 1}: likely repetitive continuation`
+                  )
+                  break
+                }
+
+                // Process numbered citations [1], [2], etc. for this sentence
+                // When skipRAG is true, citationStyle is null but papers is empty anyway
+                // so citation processing will be a no-op. Use 'apa' as fallback.
+                const processResult = processNumberedCitations(
+                  normalizedSentence.numberedText,
+                  normalizedSentence.citations,
+                  papers,
+                  citationStyle || 'apa'
+                )
+
+                if (processResult.failedCitations.length > 0) {
+                  strictCitationMismatch = true
+                  console.warn(
+                    `[Autocomplete] Strict citation mismatch in sentence ${i + 1}:`,
+                    processResult.failedCitations
+                  )
+                  break
+                }
+
+                // Collect instances to create
+                allInstancesToCreate.push(...processResult.instancesToCreate)
+
+                // Build citations array for this sentence with position offsets
+                const sentenceCitations: CitationInSuggestion[] = []
+                for (const c of processResult.processedCitations) {
+                  // Strict mode: all processed citations must have valid offsets.
+                  if (c.formattedStartOffset < 0 || c.formattedEndOffset < 0) {
+                    strictCitationMismatch = true
+                    console.warn(
+                      `[Autocomplete] Strict citation position mismatch: index=${c.index}, formatted="${c.formatted}"`
+                    )
+                    break
+                  }
+
+                  sentenceCitations.push({
+                    paperId: c.paperId,
+                    instanceId: c.instanceId,
+                    marker: c.marker,
+                    formatted: c.formatted,
+                    citedContent: c.citedContent,
+                    index: c.index,
+                    displayStartOffset: c.formattedStartOffset,
+                    displayEndOffset: c.formattedEndOffset,
+                    paper: c.paper
+                  })
+                }
+
+                if (strictCitationMismatch) {
+                  break
+                }
+
+                processedSentences.push({
+                  text: processResult.contentWithMarkers,
+                  displayText: processResult.contentFormatted,
+                  citations: sentenceCitations
+                })
+
+                noveltyContextWindow = `${noveltyContextWindow} ${processResult.contentFormatted}`.slice(-2400)
+              }
+
+              if (strictCitationMismatch || processedSentences.length === 0) {
+                if (attempt < MAX_SCHEMA_ATTEMPTS) {
+                  console.warn(
+                    `[Autocomplete] Strict citation processing failed at ${maxOutputTokens} tokens, retrying with ${tokenBudgets[attempt]}`
+                  )
+                  continue
+                }
+                if (!streamClosed) {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    type: 'error',
+                    error: 'Could not generate completion - strict citation validation failed'
+                  })}\n\n`))
+                  streamClosed = true
+                  controller.close()
+                }
+                return
+              }
+
+              finalProcessedSentences = processedSentences
+              finalInstancesToCreate = allInstancesToCreate
+              finalContextHint = parsed.contextHint
+              successAttempt = attempt
+              break
+            }
+
+            if (!finalProcessedSentences) {
               if (!streamClosed) {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
-                  type: 'error', 
-                  error: 'Suggestion contained generic filler - please try again' 
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'error',
+                  error: 'Could not generate completion - strict validation failed'
                 })}\n\n`))
                 streamClosed = true
                 controller.close()
               }
               return
             }
-            
-            console.log(`[Autocomplete] Parsed ${parsed.sentences.length} sentences, confidence: ${parsed.confidence}`)
-            
-            // Process each sentence independently with its own citations
-            interface ProcessedSentence {
-              text: string           // Raw text with [@id#instanceId] markers
-              displayText: string    // Formatted with (Author, Year)
-              citations: CitationInSuggestion[]
+
+            if (successAttempt > 1) {
+              console.log(`[Autocomplete] Strict retry succeeded on attempt ${successAttempt}`)
             }
-            
-            const processedSentences: ProcessedSentence[] = []
-            const allInstancesToCreate: Array<{ instanceId: string; paperId: string; quote: string }> = []
-            
-            for (let i = 0; i < parsed.sentences.length; i++) {
-              const sentence = parsed.sentences[i]
-              console.log(`[Autocomplete] Processing sentence ${i + 1}:`, sentence.text.slice(0, 80))
-              
-              // Process numbered citations [1], [2], etc. for this sentence
-              // When skipRAG is true, citationStyle is null but papers is empty anyway
-              // so citation processing will be a no-op. Use 'apa' as fallback.
-              const processResult = processNumberedCitations(
-                sentence.text,
-                sentence.citations,
-                papers,
-                citationStyle || 'apa'
-              )
-              
-              if (processResult.failedCitations.length > 0) {
-                console.log(`[Autocomplete] Sentence ${i + 1} failed citations:`, processResult.failedCitations)
-              }
-              
-              // Collect instances to create
-              allInstancesToCreate.push(...processResult.instancesToCreate)
-              
-              // Build citations array for this sentence with position offsets
-              const sentenceCitations: CitationInSuggestion[] = []
-              
-              for (const c of processResult.processedCitations) {
-                // Use pre-calculated positions from processNumberedCitations
-                // These are accurate even for numeric citations like [1], [2]
-                // Skip citations with invalid positions (-1) rather than misplacing them
-                if (c.formattedStartOffset < 0 || c.formattedEndOffset < 0) {
-                  console.warn(`[Autocomplete] Skipping citation with invalid position: index=${c.index}, formatted="${c.formatted}"`)
-                  continue
-                }
-                
-                sentenceCitations.push({
-                  paperId: c.paperId,
-                  instanceId: c.instanceId,
-                  marker: c.marker,
-                  formatted: c.formatted,
-                  citedContent: c.citedContent,
-                  index: c.index,
-                  displayStartOffset: c.formattedStartOffset,
-                  displayEndOffset: c.formattedEndOffset,
-                  paper: c.paper
-                })
-              }
-              
-              processedSentences.push({
-                text: processResult.contentWithMarkers,
-                displayText: processResult.contentFormatted,
-                citations: sentenceCitations
-              })
-            }
-            
+
             // Save all citation instances to database
-            if (allInstancesToCreate.length > 0) {
-              await saveCitationInstances(supabase, projectId, allInstancesToCreate)
+            if (finalInstancesToCreate.length > 0) {
+              await saveCitationInstances(supabase, projectId, finalInstancesToCreate)
             }
 
             // Log final timing
@@ -985,8 +1056,8 @@ export async function POST(request: NextRequest) {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                 type: 'done',
                 // Array of sentences for progressive display
-                sentences: processedSentences,
-                contextHint: parsed.contextHint,
+                sentences: finalProcessedSentences,
+                contextHint: finalContextHint,
                 ragInfo: {
                   chunksUsed: ragContext.chunks.length,
                   claimsUsed: ragContext.claims.length,
@@ -994,7 +1065,7 @@ export async function POST(request: NextRequest) {
                 },
                 timing: timings  // Include timing in response for debugging
               })}\n\n`))
-              
+
               streamClosed = true
               controller.close()
             }

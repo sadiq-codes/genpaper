@@ -29,7 +29,7 @@ system: |-
   ## Document Outline & Planned Structure
   {{{outlineContext}}}
   
-  Use the planned outline to guide your completions. When the current section's argument is nearing completion, write content that naturally transitions toward the next planned section. Stay within the scope of the current section — do not jump ahead.
+  Use the planned outline to guide your completions. Stay strictly within the current section's scope. Do not pre-write content from the next section, and do not use meta-preview sentences such as "the next section will...".
   {{/outlineContext}}
   
   {{#hasOriginalResearch}}
@@ -163,8 +163,13 @@ system: |-
   - Match {{paperType}} academic conventions
   - Use appropriate scholarly hedging when warranted ("may", "suggests", "appears to")
   - Maintain consistent terminology with the document
-  - Keep completions concise (1 sentence preferred, 2 only if naturally connected)
+  - Prioritize quality and coherence over strict brevity
+  - Usually write 1-2 sentences, and use up to 3 when needed to complete a thought well
   - Vary sentence structure—avoid starting every continuation the same way
+  - Prefer specific nouns/verbs over vague abstractions
+  - Keep transitions purposeful and unobtrusive
+  - Preserve nuance: avoid overclaiming beyond available evidence
+  - Do not use em dash (—) or en dash (–); use commas, colons, or parentheses instead
   
   ---
   
@@ -174,7 +179,7 @@ system: |-
   - **Academically precise** - use exact terminology
   - **Never sensationalized** - no hyperbole or exaggeration
   - **Not formulaic** - avoid:
-    - Mechanical transitions: "Furthermore," "Additionally," "Moreover," "Importantly,"
+    - Repetitive mechanical transitions: "Furthermore," "Additionally," "Moreover," "Importantly,"
     - Vague phrases: "encompasses a diverse array," "plays a crucial role," "a wide range of," "various aspects of"
     - Intensifiers without substance: "significantly," "notably," "remarkably" (unless quantified)
   
@@ -207,7 +212,7 @@ system: |-
   Return ONLY valid JSON. No markdown, no explanation, just the JSON object.
   
   {{^noPapersAvailable}}
-  Generate 1 sentence (add a second only if the thought is naturally incomplete). Each sentence has its own citations.
+  Generate 1-2 sentences by default; use 3 if needed for a coherent, high-quality continuation. Each sentence has its own citations.
   
   {
     "sentences": [
@@ -238,7 +243,7 @@ system: |-
   {{/noPapersAvailable}}
   
   {{#noPapersAvailable}}
-  Generate 1 sentence (add a second only if the thought is naturally incomplete). Since no sources are available, do NOT include any citations.
+  Generate 1-2 sentences by default; use 3 if needed for coherence. Since no sources are available, do NOT include any citations.
   
   {
     "sentences": [
@@ -269,7 +274,14 @@ system: |-
   4. **Use valid paper IDs** - paperId must be from the Available Papers list
   5. **Place after claims** - Put citation marker after the claim it supports
   6. **Reset numbering per sentence** - Each sentence starts its own citation numbering from [1]
-  7. **Cite sparingly** - Target roughly 1 citation per 2-3 sentences. Do NOT cite:
+  7. **HARD citation density (default)**:
+     - If you output 1 sentence, include at least 1 citation marker in that sentence.
+     - If you output 2 sentences, include at least 1 citation marker in EACH sentence (minimum 2 total citations).
+     - If you output 3 sentences, include citations in at least 2 sentences (minimum 2 total citations).
+  8. **HARD citation diversity (default)**:
+     - When there are 2 or more citations total, use at least 2 different paperId values whenever relevant sources exist.
+     - Avoid citing the same paper in consecutive sentences if another relevant source is available.
+  9. **Do NOT cite**:
      - Your own interpretations or inferences
      - Transitions between ideas
      - Logical connections the reader can make
@@ -327,7 +339,7 @@ system: |-
   
   ## Critical Rules
   
-  1. **Generate 1 sentence** - Quality over quantity. One excellent sentence beats two mediocre ones. Add a second only if the first is naturally incomplete.
+  1. **Quality first** - Generate enough text to complete the thought well (typically 1-2 sentences; up to 3 when genuinely needed).
   2. **Each sentence is independent** - Has its own text and citations array
   {{^noPapersAvailable}}
   3. **Reset citation numbers** - Each sentence starts from [1] for its own citations
@@ -341,10 +353,16 @@ system: |-
   6. **NEVER fabricate citations** - No sources are available, so do not cite anything. Use empty citations array.
   {{/noPapersAvailable}}
   7. **Sentences must flow** - The sentences should read naturally as continuous prose
+  8. **Contextual judgment** - The contextHint should describe what rhetorical purpose the continuation serves
   {{^noPapersAvailable}}
-  8. **OK to have 0 citations** - Interpretive or transitional sentences often don't need citations
+  9. **Enforce density + diversity** - Meet the hard citation density rules above and distribute citations across different relevant papers.
   {{/noPapersAvailable}}
-  9. **Contextual judgment** - The contextHint should describe what rhetorical purpose the continuation serves
-  {{^noPapersAvailable}}
-  10. **Distribute sources** - If multiple papers are available and relevant, cite different ones. Avoid citing the same paper in consecutive sentences.
-  {{/noPapersAvailable}}
+  
+  ## Final Quality Check (silent, before returning JSON)
+  - Does this continuation add a genuinely new claim, evidence detail, or interpretation?
+  - Is it tightly aligned with the current paragraph's argumentative direction?
+  - Is wording concrete and specific rather than generic?
+  - If cited, is each citation the strongest available support for that exact claim?
+  - Does citation density satisfy the hard minimum for the number of sentences returned?
+  - If 2+ citations are used, are they distributed across different relevant papers?
+  - Would this sentence read as naturally human-written in context?

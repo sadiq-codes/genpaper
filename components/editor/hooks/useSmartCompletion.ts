@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
-import { hasGhostText, type GhostTextCitation } from '../extensions/GhostText'
+import { hasGhostText, getGhostTextState, type GhostTextCitation } from '../extensions/GhostText'
 import { toast } from 'sonner'
 import type { AutocompletePrefs } from './useAutocompletePrefs'
 
@@ -473,6 +473,10 @@ function prependSpaceIfNeeded(
   }
 }
 
+function normalizeSuggestionForDedup(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
 export function useSmartCompletion({
   editor,
   enabled,
@@ -643,14 +647,17 @@ export function useSmartCompletion({
   // Generate completion from API
   // Note: suggestionType removed - the LLM now analyzes writing intent semantically
   const generateCompletion = useCallback(async (
-    context: EditorContext
+    context: EditorContext,
+    options?: { prefetch?: boolean }
   ) => {
     if (!editor || !projectId) {
       return
     }
 
+    const isPrefetch = options?.prefetch === true
+
     // Don't generate if already showing ghost text
-    if (hasGhostText(editor)) {
+    if (hasGhostText(editor) && !isPrefetch) {
       return
     }
 
@@ -838,43 +845,30 @@ export function useSmartCompletion({
           
           for (const line of lines) {
             if (line.startsWith('data: ')) {
+              let data: any
               try {
-                const data = JSON.parse(line.slice(6))
-                
-                if (data.type === 'text') {
-                  // Accumulate text silently - don't update UI during streaming
-                  // This avoids showing raw JSON or unformatted citations
-                } else if (data.type === 'interim') {
-                  // STREAMING PREVIEW: Show interim ghost text immediately
-                  // This gives instant feedback while we wait for full response
-                  if (data.preview && !hasGhostText(editor) && editor && !editor.isDestroyed) {
-                    const previewText = data.preview as string
-                    // Show preview with no citations (interim state)
-                    // The smart spacing will be applied, empty citations array
-                    const previewSentence: QueuedSentence = {
-                      text: previewText,
-                      displayText: previewText,
-                      citations: []
-                    }
-                    const spacedPreview = prependSpaceIfNeeded(editor, previewSentence)
-                    editor.commands.setGhostText(
-                      spacedPreview.text,
-                      spacedPreview.displayText + '...',  // Add ellipsis to indicate loading
-                      [],  // No citations for preview
-                      currentPapers,
-                      0  // No queue yet
-                    )
-                    setLoadingMessage(null)  // Hide "AI is thinking" once we have preview
-                  }
-                } else if (data.type === 'done') {
-                  // Final data with sentences array - replace preview with final version
-                  finalData = data
-                } else if (data.type === 'error') {
-                  showErrorToast(data.error || 'Failed to generate suggestions')
-                  throw new Error(data.error)
+                data = JSON.parse(line.slice(6))
+              } catch {
+                // Ignore parse errors for incomplete JSON chunks
+                continue
+              }
+
+              if (data.type === 'text') {
+                // Accumulate text silently - don't update UI during streaming
+                // This avoids showing raw JSON or unformatted citations
+              } else if (data.type === 'interim') {
+                // Interim previews are intentionally ignored to avoid partial/truncated ghost text.
+              } else if (data.type === 'done') {
+                // Final data with sentences array
+                finalData = data
+              } else if (data.type === 'error') {
+                const message = data.error || 'Failed to generate suggestions'
+                // Ensure any stale ghost text is removed when stream fails.
+                if (editor && !editor.isDestroyed && hasGhostText(editor)) {
+                  editor.commands.clearGhostText()
                 }
-              } catch (parseErr) {
-                // Ignore parse errors for incomplete JSON
+                showErrorToast(message)
+                throw new Error(message)
               }
             }
           }
@@ -938,7 +932,45 @@ export function useSmartCompletion({
           return
         }
 
-        // Show FIRST non-overlapping sentence as ghost text (with smart spacing)
+        if (isPrefetch && hasGhostText(editor)) {
+          // Prefetch mode: keep current ghost text visible and only refill queue.
+          const ghostState = getGhostTextState(editor)
+          const existing = sentenceQueueRef.current
+          const seen = new Set(existing.map(s => normalizeSuggestionForDedup(s.displayText)))
+          const currentGhostText = ghostState?.displayText
+          if (currentGhostText) {
+            seen.add(normalizeSuggestionForDedup(currentGhostText.replace(/\.\.\.$/, '')))
+          }
+
+          const queueAdditions = filteredSentences.filter(sentence => {
+            const key = normalizeSuggestionForDedup(sentence.displayText)
+            if (!key || seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+
+          if (queueAdditions.length > 0) {
+            sentenceQueueRef.current = [...existing, ...queueAdditions]
+            queueContextRef.current = contextKey
+
+            // Refresh ghost queue badge so user sees buffered continuations.
+            if (ghostState?.rawText && ghostState.displayText) {
+              editor.commands.setGhostText(
+                ghostState.rawText,
+                ghostState.displayText,
+                ghostState.citations,
+                currentPapers,
+                sentenceQueueRef.current.length
+              )
+            }
+          }
+
+          // Reset context key after successful prefetch queue refill
+          lastContextKeyRef.current = ''
+          return
+        }
+
+        // Display mode: show first sentence immediately, queue the rest.
         const firstSentence = prependSpaceIfNeeded(editor, filteredSentences[0])
         editor.commands.setGhostText(
           firstSentence.text,        // rawText with [@paperId#instanceId] markers
@@ -960,6 +992,9 @@ export function useSmartCompletion({
         lastContextKeyRef.current = ''
       } else {
         // No suggestions returned
+        if (editor && !editor.isDestroyed && hasGhostText(editor)) {
+          editor.commands.clearGhostText()
+        }
         showErrorToast('No suggestions for this context')
       }
     } catch (error: unknown) {
@@ -1002,7 +1037,7 @@ export function useSmartCompletion({
     inFlightRequestRef.current.set(contextKey, requestPromise)
     
     return requestPromise
-  }, [editor, projectId, projectTopic, prefs?.includeCitations, showErrorToast])
+  }, [editor, projectId, projectTopic, prefs?.includeCitations, showErrorToast, checkCompletionCache, storeInCache])
 
   // Use a ref to track generating state to avoid stale closure in setTimeout
   const isGeneratingRef = useRef(isGenerating)
@@ -1144,14 +1179,13 @@ export function useSmartCompletion({
       // Delay slightly to let the current sentence be processed
       setTimeout(() => {
         if (!editor || editor.isDestroyed || !mountedRef.current) return
-        if (hasGhostText(editor)) return
         
         const context = extractEditorContext(editor)
         if (!context) return
         if (!shouldTriggerCompletion(context)) return
         
-        // This will fetch new sentences in the background
-        generateCompletion(context)
+        // Refill queue in background while current ghost text stays visible.
+        generateCompletion(context, { prefetch: true })
       }, 500)
     }
     
@@ -1190,7 +1224,13 @@ export function useSmartCompletion({
       // Small delay to let the accepted text be inserted first
       setTimeout(() => {
         if (!editor || editor.isDestroyed || !mountedRef.current) return
-        showNextQueuedSentenceRef.current()
+        const showedQueuedSentence = showNextQueuedSentenceRef.current()
+
+        // If queue is exhausted, immediately request the next completion.
+        // This keeps Tab-accept workflows continuous instead of stalling.
+        if (!showedQueuedSentence) {
+          scheduleAutoTriggerRef.current()
+        }
       }, 50)
     }
 

@@ -398,7 +398,7 @@ export function buildChatAUTOMATContext(params: {
     tone: {
       formality: 'academic',
       confidence: actionType === 'explain' ? 'assertive' : 'hedged',
-      verbosity: actionType === 'explain' ? 'explanatory' : 'concise',
+      verbosity: actionType === 'explain' ? 'detailed' : 'explanatory',
     },
     
     // VOICE (optional - only for content-generating actions)
