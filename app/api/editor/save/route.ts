@@ -20,6 +20,13 @@ const SaveBodySchema = z.object({
 })
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+// Minimum character difference to create a new version (avoid duplicate snapshots)
+const MIN_CONTENT_DIFF = 50
+
+// ============================================================================
 // POST - Save document content
 // ============================================================================
 
@@ -54,6 +61,60 @@ export async function POST(request: NextRequest) {
     const { projectId, content } = bodyResult.data
 
     const supabase = await createClient()
+    
+    // ========================================================================
+    // Version History: Create snapshot if content changed significantly
+    // ========================================================================
+    let versionCreated = false
+    
+    try {
+      // Get the last version to check for significant changes
+      const { data: lastVersion } = await supabase
+        .from('document_versions')
+        .select('content')
+        .eq('project_id', projectId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      
+      // Determine if we should create a new version:
+      // - No previous version exists, OR
+      // - Content length changed by more than MIN_CONTENT_DIFF, OR
+      // - Content is completely different (for same-length edits)
+      const shouldCreateVersion = !lastVersion || 
+        Math.abs(content.length - (lastVersion.content?.length || 0)) > MIN_CONTENT_DIFF ||
+        content !== lastVersion.content
+      
+      if (shouldCreateVersion && content.trim().length > 0) {
+        // Calculate word count for the version
+        const wordCount = content.split(/\s+/).filter(Boolean).length
+        
+        // Create version snapshot (cleanup trigger handles retention limit)
+        const { error: versionError } = await supabase
+          .from('document_versions')
+          .insert({
+            project_id: projectId,
+            user_id: user.id,
+            content,
+            word_count: wordCount,
+            trigger_type: 'auto'
+          })
+        
+        if (versionError) {
+          // Log but don't fail the save - version history is non-critical
+          console.warn('Failed to create version snapshot:', versionError.message)
+        } else {
+          versionCreated = true
+        }
+      }
+    } catch (versionErr) {
+      // Version creation is non-critical - log and continue
+      console.warn('Version history error:', versionErr)
+    }
+    
+    // ========================================================================
+    // Save current content to research_projects
+    // ========================================================================
     const { error: updateError } = await supabase
       .from('research_projects')
       .update({ 
@@ -68,7 +129,7 @@ export async function POST(request: NextRequest) {
       throw updateError
     }
 
-    return success({ success: true })
+    return success({ success: true, versionCreated })
   } catch (error) {
     return handleError(error, 'Save error')
   }

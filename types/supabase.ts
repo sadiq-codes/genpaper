@@ -153,6 +153,47 @@ export type Database = {
         }
         Relationships: []
       }
+      document_versions: {
+        Row: {
+          id: string
+          project_id: string
+          user_id: string
+          content: string
+          word_count: number | null
+          created_at: string
+          trigger_type: string
+          label: string | null
+        }
+        Insert: {
+          id?: string
+          project_id: string
+          user_id: string
+          content: string
+          word_count?: number | null
+          created_at?: string
+          trigger_type?: string
+          label?: string | null
+        }
+        Update: {
+          id?: string
+          project_id?: string
+          user_id?: string
+          content?: string
+          word_count?: number | null
+          created_at?: string
+          trigger_type?: string
+          label?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_versions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "research_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       library_papers: {
         Row: {
           added_at: string

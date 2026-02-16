@@ -31,6 +31,12 @@ import { processContent } from "./utils/content-processor"
 import { editorToMarkdown } from "./utils/tiptap-to-markdown"
 import { GenerationProgress } from "./GenerationProgress"
 import { setToolExecutorPapers, setToolExecutorProjectId, processFailedCitationQueue } from "./services/tool-executor"
+import dynamic from "next/dynamic"
+
+const VersionHistoryPanel = dynamic(
+  () => import("./history/VersionHistoryPanel").then(m => m.VersionHistoryPanel),
+  { ssr: false }
+)
 
 // Hooks
 import {
@@ -40,6 +46,17 @@ import {
 } from "./hooks"
 import { useResizablePanel } from "./hooks/useResizablePanel"
 import { usePaperProcessingStatus } from "./hooks/usePaperProcessingStatus"
+import { useAutocompletePrefs, DEFAULT_PREFS, type AutocompletePrefs } from "./hooks/useAutocompletePrefs"
+
+function extractCitationPaperIdsFromContent(content: string): string[] {
+  if (!content) return []
+  const ids = new Set<string>()
+  const pattern = /\[@([a-f0-9-]{36})(?:#[^\]]+)?\]/gi
+  for (const match of content.matchAll(pattern)) {
+    if (match[1]) ids.add(match[1])
+  }
+  return Array.from(ids)
+}
 
 // CitationStyleType now accepts any CSL style ID string
 export type CitationStyleType = string
@@ -58,6 +75,8 @@ interface ResearchEditorProps {
   isFailed?: boolean
   /** Write mode - user wants to write themselves, papers found in background */
   isWriteMode?: boolean
+  /** Server-fetched autocomplete preferences (DB-backed) */
+  initialAutocompletePrefs?: AutocompletePrefs
 }
 
 export function ResearchEditor({
@@ -72,13 +91,18 @@ export function ResearchEditor({
   isGenerating: initialIsGenerating = false,
   isFailed = false,
   isWriteMode = false,
+  initialAutocompletePrefs = DEFAULT_PREFS,
 }: ResearchEditorProps) {
   // ============================================================================
   // Core State
   // ============================================================================
   
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const stored = localStorage.getItem('editor-sidebar-open')
+    return stored === null ? true : stored === '1'
+  })
   const [activeTab, setActiveTab] = useState<"chat" | "research">("research")
   const [isMobile, setIsMobile] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -88,9 +112,18 @@ export function ResearchEditor({
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
   const [currentTitle, setCurrentTitle] = useState(projectTitle)
   const [generatedContentOverride, setGeneratedContentOverride] = useState<string | null>(null)
+  const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const { subscription, refresh: refreshSubscription } = useSubscription()
   // Default to locked while subscription is loading — unlocks once tier is confirmed
   const exportLocked = !subscription || subscription.tier === 'free'
+
+  // Persist sidebar state to localStorage
+  useEffect(() => {
+    localStorage.setItem('editor-sidebar-open', sidebarOpen ? '1' : '0')
+  }, [sidebarOpen])
+
+  // Autocomplete preferences (DB-backed, initialized from server props)
+  const autocompletePrefsHook = useAutocompletePrefs(initialAutocompletePrefs)
 
   // Rename project title (optimistic update + persist to API)
   const handleTitleChange = useCallback(async (newTitle: string) => {
@@ -448,23 +481,53 @@ export function ResearchEditor({
       // Backfill paper metadata in the background so references/citation details become
       // complete without requiring a manual page refresh.
       if (projectId) {
+        const expectedCitationPaperIds = new Set(extractCitationPaperIdsFromContent(generatedContent))
         void (async () => {
-          const delays = [0, 1200, 2500, 4500, 7000]
+          // Keep retrying until citations are fully resolved from canonical paper rows.
+          // Early responses can include fallback CSL-only metadata ("Unknown" authors).
+          const delays = [0, 300, 700, 1200, 2000, 3500, 5000, 8000, 12000]
+          let lastNonEmptyPapers: ProjectPaper[] | null = null
+
           for (const delay of delays) {
             if (delay > 0) await new Promise(r => setTimeout(r, delay))
             try {
-              const res = await fetch(`/api/editor/papers?projectId=${projectId}`)
+              const res = await fetch(`/api/editor/papers?projectId=${projectId}&_ts=${Date.now()}`, {
+                cache: 'no-store',
+              })
               if (!res.ok) continue
-              const data = await res.json()
-              if (!Array.isArray(data.papers) || data.papers.length === 0) continue
-
-              setPapers(data.papers)
-              if (editor && !editor.isDestroyed) {
-                editor.commands.setPapers(data.papers)
+              const data = await res.json() as {
+                papers?: ProjectPaper[]
+                allResolved?: boolean
+                unresolvedPaperIds?: string[]
               }
-              return
+
+              const fetchedPapers = Array.isArray(data.papers) ? data.papers : []
+              if (fetchedPapers.length === 0) continue
+
+              lastNonEmptyPapers = fetchedPapers
+              setPapers(fetchedPapers)
+              if (editor && !editor.isDestroyed) {
+                editor.commands.setPapers(fetchedPapers)
+              }
+
+              const returnedIds = new Set(fetchedPapers.map(p => p.id))
+              const expectedCovered =
+                expectedCitationPaperIds.size === 0 ||
+                Array.from(expectedCitationPaperIds).every(id => returnedIds.has(id))
+              const allResolved = data.allResolved ?? true
+
+              // Stop only when we have all expected citation papers and they are resolved.
+              if (expectedCovered && allResolved) return
             } catch (err) {
               console.warn('[Generation] Deferred paper sync failed:', err)
+            }
+          }
+
+          // Keep the best result we got, even if full resolution took too long.
+          if (lastNonEmptyPapers) {
+            setPapers(lastNonEmptyPapers)
+            if (editor && !editor.isDestroyed) {
+              editor.commands.setPapers(lastNonEmptyPapers)
             }
           }
         })()
@@ -495,6 +558,43 @@ export function ResearchEditor({
     setIsGenerating(true)
   }, [])
 
+  // Handle version restore from history panel
+  const handleRestoreVersion = useCallback(
+    (restoredContent: string) => {
+      // Update internal state (for auto-save tracking)
+      setContentSilent(restoredContent)
+      markAsEdited()
+
+      // Update TipTap editor with restored content
+      if (editor && !editor.isDestroyed) {
+        const { json, isFullDoc } = processContent(restoredContent, papers)
+
+        if (isFullDoc && json) {
+          editor.commands.setContent(json)
+        } else if (Array.isArray(json) && json.length > 0) {
+          editor.commands.setContent({
+            type: "doc",
+            content: [{ type: "paragraph", content: json }],
+          })
+        } else {
+          editor.commands.setContent({
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: restoredContent }],
+              },
+            ],
+          })
+        }
+      }
+
+      // Close the history panel after restore
+      setHistoryPanelOpen(false)
+    },
+    [editor, papers, setContentSilent, markAsEdited]
+  )
+
   // Handle adding paper from library drawer
   const handleAddPaperToProject = useCallback(
     (paperId: string, title: string) => {
@@ -519,6 +619,9 @@ export function ResearchEditor({
     projectTitle: currentTitle,
     papers,
     citationStyle: currentCitationStyle,
+
+    // Autocomplete preferences
+    autocompletePrefs: autocompletePrefsHook.prefs,
 
     // Chat
     chatMessages,
@@ -573,7 +676,7 @@ export function ResearchEditor({
           onTitleChange={handleTitleChange}
           onExport={handleExport}
           onPublish={() => toast.info("Publish feature coming soon")}
-          onHistory={() => toast.info("History feature coming soon")}
+          onHistory={() => setHistoryPanelOpen(true)}
           onSettings={() => setSettingsModalOpen(true)}
           saveStatus={hasUnsavedChanges ? "unsaved" : "saved"}
           isOffline={isOffline}
@@ -684,6 +787,20 @@ export function ResearchEditor({
             projectId={projectId}
             currentCitationStyle={currentCitationStyle}
             onCitationStyleChange={(style) => setCurrentCitationStyle(style as CitationStyleType)}
+            autocompletePrefs={autocompletePrefsHook.prefs}
+            onAutocompletePrefsChange={autocompletePrefsHook.updatePrefs}
+          />
+        )}
+
+        {/* Version History Panel */}
+        {projectId && (
+          <VersionHistoryPanel
+            projectId={projectId}
+            papers={papers}
+            citationStyle={currentCitationStyle}
+            open={historyPanelOpen}
+            onOpenChange={setHistoryPanelOpen}
+            onRestore={handleRestoreVersion}
           />
         )}
 

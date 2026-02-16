@@ -35,7 +35,6 @@ import { SlashCommands } from '../extensions/SlashCommands'
 import { BlockId } from '../extensions/BlockId'
 import { ReferencesBlock } from '../extensions/ReferencesBlock'
 import { useSmartCompletion } from '../hooks/useSmartCompletion'
-import { useAutocompletePrefs } from '../hooks/useAutocompletePrefs'
 import { useReferencesManager } from '../hooks/useReferencesManager'
 import { processContent, hasMarkdownFormatting } from '../utils/content-processor'
 import { editorToMarkdown } from '../utils/tiptap-to-markdown'
@@ -136,6 +135,7 @@ export function DocumentEditor({
     projectTitle: projectTopic = '',
     papers = [],
     citationStyle = 'apa',
+    autocompletePrefs,
     pendingEditCount,
     activeEditIndex,
     navigateEdit: onNavigateEdit,
@@ -421,32 +421,78 @@ export function DocumentEditor({
     setProcessedKey(key)
   }, [editor, initialContent, papers, processedKey, processInitialContent, citationStyle])
 
-  // Track previous citation style to detect changes
-  const prevCitationStyleRef = useRef(citationStyle)
+  // Track previous and latest citation style to avoid stale async style-load races.
+  const prevCitationStyleRef = useRef<string | null>(null)
+  const latestCitationStyleRef = useRef(citationStyle)
+  useEffect(() => {
+    latestCitationStyleRef.current = citationStyle
+  }, [citationStyle])
   
-  // Update citation style when it changes (not on initial load - that's handled above)
+  // Apply citation style on mount and on style changes.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    if (prevCitationStyleRef.current === citationStyle) return
+    if (prevCitationStyleRef.current === citationStyle) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[DocEditor] citationStyle effect skipped (same as prev): "${citationStyle}"`)
+      }
+      return
+    }
     
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[DocEditor] citationStyle changed: "${prevCitationStyleRef.current}" → "${citationStyle}"`)
+    }
     prevCitationStyleRef.current = citationStyle
     
     // Clear cached inline citation text so it regenerates with the new style
     clearCitationCaches()
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[DocEditor] Cleared citation caches`)
+    }
     
     // Apply the style immediately (uses fallback for non-loaded styles)
     editor.commands.setCitationStyle(citationStyle)
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[DocEditor] setCitationStyle command dispatched`)
+    }
     
-    // Load the CSL style from CDN if not already available,
-    // then re-apply so citations render with the proper style formatting
+    // Load the CSL style (same-origin endpoint first) if not already available,
+    // then re-apply so citations render with the proper style formatting.
     const resolved = resolveStyleId(citationStyle)
     if (!isStyleAvailable(resolved)) {
-      loadStyle(resolved).then(success => {
-        if (success && editor && !editor.isDestroyed) {
-          clearCitationCaches()
-          editor.commands.setCitationStyle(citationStyle)
-        }
-      })
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[DocEditor] Style "${resolved}" not loaded yet, fetching async…`)
+      }
+      loadStyle(resolved)
+        .then(success => {
+          if (process.env.NODE_ENV === 'development') {
+            console.log(
+              `[DocEditor] loadStyle("${resolved}") resolved: success=${success}, editorAlive=${!editor.isDestroyed}`
+            )
+          }
+          if (success && editor && !editor.isDestroyed) {
+            // Ignore stale completions from older style requests.
+            if (resolveStyleId(latestCitationStyleRef.current) !== resolved) {
+              if (process.env.NODE_ENV === 'development') {
+                console.log(
+                  `[DocEditor] Stale style load ignored: loaded="${resolved}", current="${resolveStyleId(latestCitationStyleRef.current)}"`
+                )
+              }
+              return
+            }
+            clearCitationCaches()
+            editor.commands.setCitationStyle(latestCitationStyleRef.current)
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[DocEditor] Re-applied style after async load: "${latestCitationStyleRef.current}"`)
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn(`[DocEditor] loadStyle("${resolved}") failed:`, err)
+        })
+    } else {
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[DocEditor] Style "${resolved}" already loaded`)
+      }
     }
   }, [editor, citationStyle])
 
@@ -579,10 +625,6 @@ export function DocumentEditor({
       }
     })
   }, [editor, projectId, initialContent, processedKey])
-
-  // Smart completion hook - ghost text appears seamlessly
-  // Autocomplete preferences
-  const { prefs: autocompletePrefs } = useAutocompletePrefs()
 
   // Smart completion hook - ghost text appears seamlessly
   useSmartCompletion({
@@ -779,6 +821,8 @@ export function DocumentEditor({
         <Button variant="ghost" size="icon" aria-label="Redo" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()}>
           <Redo className="h-3.5 w-3.5" />
         </Button>
+        
+        
         </div>
       </div>
       
