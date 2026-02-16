@@ -3,10 +3,10 @@
 import { useState } from 'react'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Loader2, Check, Sparkles, BookOpen, Keyboard } from 'lucide-react'
+import { Loader2, Check, Sparkles, BookOpen, Keyboard, Globe } from 'lucide-react'
 import { toast } from 'sonner'
 import { CitationStyleSelector } from '@/components/editor/CitationStyleSelector'
-import { getStyleById } from '@/lib/citations/csl-styles'
+import { getInlineExampleForStyle } from '@/lib/citations/csl-styles'
 import {
   Select,
   SelectContent,
@@ -29,6 +29,7 @@ interface WritingSectionProps {
   initialAutoSuggestions: boolean
   initialIncludeCitations: boolean
   initialAcceptKey: 'tab' | 'ctrlEnter'
+  initialUseExternalSources: boolean
 }
 
 export function WritingSection({ 
@@ -37,12 +38,14 @@ export function WritingSection({
   initialAutoSuggestions,
   initialIncludeCitations,
   initialAcceptKey,
+  initialUseExternalSources,
 }: WritingSectionProps) {
   const [citationStyle, setCitationStyle] = useState(initialCitationStyle || 'apa')
   const [defaultPaperType, setDefaultPaperType] = useState(initialPaperType || 'literatureReview')
   const [autoSuggestions, setAutoSuggestions] = useState(initialAutoSuggestions)
   const [includeCitations, setIncludeCitations] = useState(initialIncludeCitations)
   const [acceptKey, setAcceptKey] = useState<'tab' | 'ctrlEnter'>(initialAcceptKey)
+  const [useExternalSources, setUseExternalSources] = useState(initialUseExternalSources)
   const [isSaving, setIsSaving] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
 
@@ -52,39 +55,46 @@ export function WritingSection({
     auto: boolean,
     citations: boolean,
     key: 'tab' | 'ctrlEnter',
+    external: boolean,
   ) => {
     setHasChanges(
       style !== initialCitationStyle || 
       paperType !== initialPaperType ||
       auto !== initialAutoSuggestions ||
       citations !== initialIncludeCitations ||
-      key !== initialAcceptKey
+      key !== initialAcceptKey ||
+      external !== initialUseExternalSources
     )
   }
 
   const handleStyleChange = (value: string) => {
     setCitationStyle(value)
-    checkForChanges(value, defaultPaperType, autoSuggestions, includeCitations, acceptKey)
+    checkForChanges(value, defaultPaperType, autoSuggestions, includeCitations, acceptKey, useExternalSources)
   }
 
   const handlePaperTypeChange = (value: string) => {
     setDefaultPaperType(value)
-    checkForChanges(citationStyle, value, autoSuggestions, includeCitations, acceptKey)
+    checkForChanges(citationStyle, value, autoSuggestions, includeCitations, acceptKey, useExternalSources)
   }
 
   const handleAutoSuggestionsChange = (value: boolean) => {
     setAutoSuggestions(value)
-    checkForChanges(citationStyle, defaultPaperType, value, includeCitations, acceptKey)
+    checkForChanges(citationStyle, defaultPaperType, value, includeCitations, acceptKey, useExternalSources)
   }
 
   const handleIncludeCitationsChange = (value: boolean) => {
     setIncludeCitations(value)
-    checkForChanges(citationStyle, defaultPaperType, autoSuggestions, value, acceptKey)
+    checkForChanges(citationStyle, defaultPaperType, autoSuggestions, value, acceptKey, useExternalSources)
   }
 
   const handleAcceptKeyChange = (value: 'tab' | 'ctrlEnter') => {
     setAcceptKey(value)
-    checkForChanges(citationStyle, defaultPaperType, autoSuggestions, includeCitations, value)
+    checkForChanges(citationStyle, defaultPaperType, autoSuggestions, includeCitations, value, useExternalSources)
+  }
+
+  const handleUseExternalSourcesChange = (value: boolean) => {
+    setUseExternalSources(value)
+    checkForChanges(citationStyle, defaultPaperType, autoSuggestions, includeCitations, acceptKey, value)
   }
 
   const handleSave = async () => {
@@ -99,6 +109,7 @@ export function WritingSection({
           autoSuggestions,
           includeCitations,
           acceptKey,
+          useExternalSources,
         }),
       })
 
@@ -116,7 +127,7 @@ export function WritingSection({
     }
   }
 
-  const selectedStyle = getStyleById(citationStyle)
+  const inlinePreview = getInlineExampleForStyle(citationStyle || 'apa')
 
   return (
     <div className="space-y-6">
@@ -148,15 +159,13 @@ export function WritingSection({
           </div>
 
           {/* Preview */}
-          {selectedStyle && (
-            <div className="rounded-lg bg-muted/50 p-3 sm:p-4 text-sm w-full sm:max-w-md border border-border/30">
-              <p className="text-muted-foreground text-[11px] mb-2 font-medium uppercase tracking-wide">Example</p>
-              <p className="text-foreground text-sm">
-                Research shows significant findings{' '}
-                <span className="font-semibold text-foreground">{selectedStyle.inlineExample}</span>.
-              </p>
-            </div>
-          )}
+          <div className="rounded-lg bg-muted/50 p-3 sm:p-4 text-sm w-full sm:max-w-md border border-border/30">
+            <p className="text-muted-foreground text-[11px] mb-2 font-medium uppercase tracking-wide">Example</p>
+            <p className="text-foreground text-sm">
+              Research shows significant findings{' '}
+              <span className="font-semibold text-foreground">{inlinePreview}</span>.
+            </p>
+          </div>
 
           <p className="text-[11px] text-muted-foreground">
             You can override this per project in project settings.
@@ -233,6 +242,24 @@ export function WritingSection({
               id="include-citations"
               checked={includeCitations}
               onCheckedChange={handleIncludeCitationsChange}
+            />
+          </div>
+
+          {/* Use External Sources Toggle */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-0.5 min-w-0">
+              <Label htmlFor="use-external-sources" className="flex items-center gap-2 text-xs">
+                <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
+                <span>Use External Sources</span>
+              </Label>
+              <p className="text-[11px] text-muted-foreground ml-[22px]">
+                Cite papers beyond your project from our database
+              </p>
+            </div>
+            <Switch
+              id="use-external-sources"
+              checked={useExternalSources}
+              onCheckedChange={handleUseExternalSourcesChange}
             />
           </div>
 

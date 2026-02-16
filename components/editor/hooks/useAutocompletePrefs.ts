@@ -2,20 +2,20 @@
 
 import { useState, useCallback, useEffect } from 'react'
 
-const STORAGE_KEY = 'genpaper-autocomplete-prefs'
+const SYNC_EVENT = 'genpaper-autocomplete-prefs-sync'
 
 export interface AutocompletePrefs {
-  /** Enable auto-suggestions (experimental) - default ON */
+  /** Enable auto-suggestions - default ON */
   autoSuggestions: boolean
   /** Include citations in suggestions - default OFF */
   includeCitations: boolean
-  /** Accept key: 'tab' or 'ctrlEnter' - default 'tab' */
+  /** Accept key: 'tab' | 'ctrlEnter' - default 'tab' */
   acceptKey: 'tab' | 'ctrlEnter'
   /** Use external sources (global database) for AI writing - default OFF */
   useExternalSources: boolean
 }
 
-const DEFAULT_PREFS: AutocompletePrefs = {
+export const DEFAULT_PREFS: AutocompletePrefs = {
   autoSuggestions: true,
   includeCitations: false,
   acceptKey: 'tab',
@@ -23,70 +23,88 @@ const DEFAULT_PREFS: AutocompletePrefs = {
 }
 
 /**
- * Hook for managing autocomplete preferences in localStorage
- * 
- * Preferences:
- * - autoSuggestions: Enable automatic AI suggestions as you type
- * - includeCitations: Include citations in AI suggestions
- * - acceptKey: Keybinding to accept suggestions (Tab or Ctrl+Enter)
+ * Persist prefs to the database via the user preferences API.
+ * Fire-and-forget — callers handle optimistic state themselves.
  */
-export function useAutocompletePrefs() {
-  const [prefs, setPrefs] = useState<AutocompletePrefs>(DEFAULT_PREFS)
-  const [isLoaded, setIsLoaded] = useState(false)
+async function persistPrefsToAPI(prefs: Partial<AutocompletePrefs>): Promise<boolean> {
+  try {
+    const res = await fetch('/api/user/preferences', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(prefs),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
 
-  // Load from localStorage on mount
+/**
+ * Hook for managing autocomplete preferences.
+ *
+ * Source of truth: `user_preferences` table in the database.
+ * Initial values come from server-provided props (see editor page).
+ * All hook instances on the same page stay in sync via a CustomEvent.
+ *
+ * @param initialPrefs — values fetched server-side and passed as props
+ */
+export function useAutocompletePrefs(initialPrefs: AutocompletePrefs = DEFAULT_PREFS) {
+  const [prefs, setPrefs] = useState<AutocompletePrefs>(initialPrefs)
+
+  // Keep in sync if parent re-provides initialPrefs (e.g. after revalidation)
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        setPrefs({
-          ...DEFAULT_PREFS,
-          ...parsed,
-        })
-      }
-    } catch (error) {
-      console.error('Failed to load autocomplete prefs:', error)
+    setPrefs(initialPrefs)
+  }, [
+    initialPrefs.autoSuggestions,
+    initialPrefs.includeCitations,
+    initialPrefs.acceptKey,
+    initialPrefs.useExternalSources,
+  ])
+
+  // Listen for sync events from other hook instances on the same page
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<AutocompletePrefs>).detail
+      if (detail) setPrefs(detail)
     }
-    setIsLoaded(true)
+    window.addEventListener(SYNC_EVENT, handler)
+    return () => window.removeEventListener(SYNC_EVENT, handler)
   }, [])
 
-  // Save to localStorage when prefs change
-  useEffect(() => {
-    if (!isLoaded || typeof window === 'undefined') return
-    
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs))
-    } catch (error) {
-      console.error('Failed to save autocomplete prefs:', error)
-    }
-  }, [prefs, isLoaded])
+  /** Broadcast new prefs to other hook instances */
+  const broadcast = useCallback((next: AutocompletePrefs) => {
+    window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: next }))
+  }, [])
+
+  // --- Individual setters (optimistic + persist) ---
 
   const updatePrefs = useCallback((updates: Partial<AutocompletePrefs>) => {
-    setPrefs(prev => ({ ...prev, ...updates }))
-  }, [])
+    setPrefs(prev => {
+      const next = { ...prev, ...updates }
+      broadcast(next)
+      persistPrefsToAPI(updates)
+      return next
+    })
+  }, [broadcast])
 
   const setAutoSuggestions = useCallback((value: boolean) => {
-    setPrefs(prev => ({ ...prev, autoSuggestions: value }))
-  }, [])
+    updatePrefs({ autoSuggestions: value })
+  }, [updatePrefs])
 
   const setIncludeCitations = useCallback((value: boolean) => {
-    setPrefs(prev => ({ ...prev, includeCitations: value }))
-  }, [])
+    updatePrefs({ includeCitations: value })
+  }, [updatePrefs])
 
   const setAcceptKey = useCallback((value: 'tab' | 'ctrlEnter') => {
-    setPrefs(prev => ({ ...prev, acceptKey: value }))
-  }, [])
+    updatePrefs({ acceptKey: value })
+  }, [updatePrefs])
 
   const setUseExternalSources = useCallback((value: boolean) => {
-    setPrefs(prev => ({ ...prev, useExternalSources: value }))
-  }, [])
+    updatePrefs({ useExternalSources: value })
+  }, [updatePrefs])
 
   return {
     prefs,
-    isLoaded,
     updatePrefs,
     setAutoSuggestions,
     setIncludeCitations,

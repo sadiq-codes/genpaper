@@ -52,9 +52,10 @@ export default async function SettingsPage() {
   const preferences = {
     citationStyle: prefs?.citation_style || 'apa',
     defaultPaperType: prefs?.default_paper_type || 'literatureReview',
-    autoSuggestions: prefs?.auto_suggestions || false,
+    autoSuggestions: prefs?.auto_suggestions ?? true,
     includeCitations: prefs?.include_citations || false,
     acceptKey: (prefs?.accept_key || 'tab') as 'tab' | 'ctrlEnter',
+    useExternalSources: prefs?.use_external_sources ?? false,
     fontSize: prefs?.font_size || 'medium',
   }
 

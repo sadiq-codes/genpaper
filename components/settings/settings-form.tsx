@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Loader2, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { CitationStyleSelector } from '@/components/editor/CitationStyleSelector'
-import { getStyleById } from '@/lib/citations/csl-styles'
+import { getInlineExampleForStyle, getStyleById } from '@/lib/citations/csl-styles'
 
 interface SettingsFormProps {
   initialCitationStyle: string
@@ -49,7 +49,7 @@ export function SettingsForm({ initialCitationStyle }: SettingsFormProps) {
     }
   }
 
-  const selectedStyle = getStyleById(citationStyle)
+  const inlinePreview = getInlineExampleForStyle(citationStyle || 'apa')
 
   return (
     <div className="space-y-6">
@@ -74,15 +74,13 @@ export function SettingsForm({ initialCitationStyle }: SettingsFormProps) {
           </div>
 
           {/* Preview */}
-          {selectedStyle && (
-            <div className="rounded-lg bg-muted p-4 text-sm max-w-md">
-              <p className="text-muted-foreground text-xs mb-2 font-medium">Example in-text citation:</p>
-              <p className="text-foreground">
-                Research shows significant findings in this area{' '}
-                <span className="font-semibold text-primary">{selectedStyle.inlineExample}</span>.
-              </p>
-            </div>
-          )}
+          <div className="rounded-lg bg-muted p-4 text-sm max-w-md">
+            <p className="text-muted-foreground text-xs mb-2 font-medium">Example in-text citation:</p>
+            <p className="text-foreground">
+              Research shows significant findings in this area{' '}
+              <span className="font-semibold text-primary">{inlinePreview}</span>.
+            </p>
+          </div>
 
           <p className="text-xs text-muted-foreground">
             You can also set a different citation style per project in the project settings.

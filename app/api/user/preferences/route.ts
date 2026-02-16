@@ -22,6 +22,7 @@ interface UserPreferencesUpdate {
   autoSuggestions?: boolean
   includeCitations?: boolean
   acceptKey?: 'tab' | 'ctrlEnter'
+  useExternalSources?: boolean
   // Appearance preferences
   fontSize?: string
   // Profile
@@ -69,9 +70,10 @@ export async function GET() {
         citationStyle: prefs?.citation_style || 'apa',
         defaultPaperType: prefs?.default_paper_type || 'literatureReview',
         // Editor
-        autoSuggestions: prefs?.auto_suggestions || false,
+        autoSuggestions: prefs?.auto_suggestions ?? true,
         includeCitations: prefs?.include_citations || false,
         acceptKey: prefs?.accept_key || 'tab',
+        useExternalSources: prefs?.use_external_sources || false,
         // Appearance
         fontSize: prefs?.font_size || 'medium',
       },
@@ -153,6 +155,10 @@ export async function POST(request: NextRequest) {
         )
       }
       prefsUpdate.accept_key = body.acceptKey
+    }
+    
+    if (body.useExternalSources !== undefined) {
+      prefsUpdate.use_external_sources = body.useExternalSources
     }
     
     // Add appearance settings

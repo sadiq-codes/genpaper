@@ -37,6 +37,7 @@ export interface UserPreferences {
   autoSuggestions: boolean
   includeCitations: boolean
   acceptKey: 'tab' | 'ctrlEnter'
+  useExternalSources: boolean
   fontSize: string
 }
 
@@ -90,6 +91,7 @@ export function SettingsPage({ user, preferences, subscription }: SettingsPagePr
             initialAutoSuggestions={preferences.autoSuggestions}
             initialIncludeCitations={preferences.includeCitations}
             initialAcceptKey={preferences.acceptKey}
+            initialUseExternalSources={preferences.useExternalSources}
           />
         )
       case 'appearance':
