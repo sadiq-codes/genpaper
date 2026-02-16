@@ -5,7 +5,11 @@ import { processPaper } from '@/lib/content/background-processor'
 
 /**
  * GET /api/editor/papers?projectId=xxx
- * Fetch all papers linked to a project via project_citations
+ * Fetch papers for editor citation rendering.
+ *
+ * Priority:
+ * 1) `citation_instances` (authoritative immediately after finalize)
+ * 2) `project_citations` fallback (legacy/project-linked list)
  */
 export async function GET(request: NextRequest) {
   try {
@@ -33,16 +37,47 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Fetch citation records
-    const { data: citations } = await supabase
-      .from('project_citations')
-      .select('paper_id, csl_json')
+    // Prefer citation_instances so references update immediately on generation complete.
+    const { data: instanceRows } = await supabase
+      .from('citation_instances')
+      .select('paper_id')
       .eq('project_id', projectId)
 
-    const paperIds = citations?.map(c => c.paper_id).filter(Boolean) || []
+    const instancePaperIds = Array.from(
+      new Set(
+        (instanceRows || [])
+          .map(row => row.paper_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    )
+
+    // Keep CSL fallback support from project_citations.
+    let citations: Array<{ paper_id: string; csl_json: unknown }> = []
+    if (instancePaperIds.length > 0) {
+      const { data } = await supabase
+        .from('project_citations')
+        .select('paper_id, csl_json')
+        .eq('project_id', projectId)
+        .in('paper_id', instancePaperIds)
+      citations = (data || []) as Array<{ paper_id: string; csl_json: unknown }>
+    } else {
+      const { data } = await supabase
+        .from('project_citations')
+        .select('paper_id, csl_json')
+        .eq('project_id', projectId)
+      citations = (data || []) as Array<{ paper_id: string; csl_json: unknown }>
+    }
+
+    const citationPaperIds = citations.map(c => c.paper_id).filter(Boolean)
+    const paperIds = instancePaperIds.length > 0
+      ? instancePaperIds
+      : citationPaperIds
 
     if (paperIds.length === 0) {
-      return NextResponse.json({ papers: [] })
+      return NextResponse.json(
+        { papers: [], allResolved: true, unresolvedPaperIds: [], citationCount: 0 },
+        { headers: { 'Cache-Control': 'no-store, max-age=0' } }
+      )
     }
 
     // Fetch papers
@@ -51,9 +86,12 @@ export async function GET(request: NextRequest) {
       .select('id, title, authors, publication_date, venue, doi, source, pdf_url')
       .in('id', paperIds)
 
+    const resolvedPaperIds = new Set((papersData || []).map(p => p.id))
+    const unresolvedPaperIds = paperIds.filter(id => !resolvedPaperIds.has(id))
+
     // Build CSL fallback map
     const cslJsonById = new Map(
-      (citations || [])
+      citations
         .filter(c => c.csl_json)
         .map(c => [c.paper_id, c.csl_json])
     )
@@ -102,7 +140,15 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ papers: Array.from(paperMap.values()) })
+    return NextResponse.json(
+      {
+        papers: Array.from(paperMap.values()),
+        allResolved: unresolvedPaperIds.length === 0,
+        unresolvedPaperIds,
+        citationCount: paperIds.length,
+      },
+      { headers: { 'Cache-Control': 'no-store, max-age=0' } }
+    )
   } catch (error) {
     console.error('Fetch papers error:', error)
     return NextResponse.json({ error: 'Failed to fetch papers' }, { status: 500 })
