@@ -21,8 +21,8 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     redirect('/login')
   }
 
-  // Fetch project and citations+papers in ONE parallel batch (2 queries, not 3)
-  const [projectResult, citationsResult] = await Promise.all([
+  // Fetch project, citations, and user preferences in ONE parallel batch
+  const [projectResult, citationsResult, prefsResult] = await Promise.all([
     supabase
       .from('research_projects')
       .select('id, user_id, topic, content, status, citation_style, paper_type, generation_config')
@@ -34,11 +34,19 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     supabase
       .from('project_citations')
       .select('paper_id, csl_json, papers(id, title, authors, publication_date, venue, doi, source, pdf_url, metadata)')
-      .eq('project_id', projectId)
+      .eq('project_id', projectId),
+
+    // User preferences for autocomplete settings
+    supabase
+      .from('user_preferences')
+      .select('citation_style, auto_suggestions, include_citations, accept_key, use_external_sources')
+      .eq('user_id', user.id)
+      .single()
   ])
 
   const { data: project, error: projectError } = projectResult
   const { data: citations } = citationsResult
+  const userPrefs = prefsResult.data
 
   if (projectError || !project) {
     notFound()
@@ -128,7 +136,15 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
   // which provides caching and avoids duplicate fetches.
 
   // Get citation style - project setting > user default > 'apa'
-  const citationStyle = project.citation_style || 'apa'
+  const citationStyle = project.citation_style || userPrefs?.citation_style || 'apa'
+
+  // Build autocomplete preferences from DB (with safe defaults)
+  const autocompletePrefs = {
+    autoSuggestions: userPrefs?.auto_suggestions ?? true,
+    includeCitations: userPrefs?.include_citations ?? false,
+    acceptKey: (userPrefs?.accept_key || 'tab') as 'tab' | 'ctrlEnter',
+    useExternalSources: userPrefs?.use_external_sources ?? false,
+  }
 
   // Determine if we need to show generation progress
   const shouldShowGeneration = !isWriteMode && 
@@ -165,6 +181,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         isGenerating={shouldShowGeneration}
         isFailed={isFailed}
         isWriteMode={isWriteMode}
+        initialAutocompletePrefs={autocompletePrefs}
       />
     </div>
   )
