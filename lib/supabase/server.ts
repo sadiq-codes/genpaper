@@ -31,6 +31,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/supabase'
+import { createSupabaseAuthRetryFetch } from './transient-auth-fetch'
 
 // Export the typed client type
 export type TypedSupabaseClient = SupabaseClient<Database>
@@ -56,6 +57,9 @@ export async function createClient(): Promise<SupabaseClient> {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: {
+        fetch: createSupabaseAuthRetryFetch(),
+      },
       cookies: {
         getAll() {
           return cookieStore ? cookieStore.getAll() : []

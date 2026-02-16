@@ -14,6 +14,7 @@
 
 import { createBrowserClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { createSupabaseAuthRetryFetch } from './transient-auth-fetch'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -29,13 +30,21 @@ function getCachedBrowserClient(): SupabaseClient {
   if (typeof window !== 'undefined') {
     if (!(window as unknown as Record<string, SupabaseClient>)[SUPABASE_CLIENT_KEY]) {
       (window as unknown as Record<string, SupabaseClient>)[SUPABASE_CLIENT_KEY] = 
-        createBrowserClient(supabaseUrl, supabaseAnonKey)
+        createBrowserClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            fetch: createSupabaseAuthRetryFetch(),
+          },
+        })
     }
     return (window as unknown as Record<string, SupabaseClient>)[SUPABASE_CLIENT_KEY]
   }
   
   // SSR fallback (should rarely be used - server components should use server.ts)
-  return createBrowserClient(supabaseUrl, supabaseAnonKey)
+  return createBrowserClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      fetch: createSupabaseAuthRetryFetch(),
+    },
+  })
 }
 
 // Primary export - optimized cached client

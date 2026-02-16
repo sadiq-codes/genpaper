@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { createSupabaseAuthRetryFetch, isTransientAuthNetworkError } from '@/lib/supabase/transient-auth-fetch'
 
 /**
  * Middleware to refresh Supabase auth session on every request.
@@ -18,6 +19,9 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: {
+        fetch: createSupabaseAuthRetryFetch(),
+      },
       cookies: {
         getAll() {
           return request.cookies.getAll()
@@ -43,7 +47,11 @@ export async function middleware(request: NextRequest) {
   } catch (error) {
     // If Supabase is unreachable, don't clear the session
     // Just pass through the request with existing cookies
-    console.error('Middleware: Supabase auth check failed:', error)
+    if (isTransientAuthNetworkError(error)) {
+      console.warn('Middleware: transient Supabase auth network error, passing through request')
+    } else {
+      console.error('Middleware: Supabase auth check failed:', error)
+    }
   }
 
   return supabaseResponse
