@@ -18,10 +18,11 @@ import requests
 os.environ['PYTHONUNBUFFERED'] = '1'
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://fhamqqcsaoakvlwpqlmk.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZoYW1xcWNzYW9ha3Zsd3BxbG1rIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzU0MTkyMSwiZXhwIjoyMDgzMTE3OTIxfQ.8tPGQ-4AK4-XpbAMHHgqlUfdfzSkHJfAvBmR68pNJBY")
-QDRANT_URL = os.getenv("QDRANT_URL", "http://20.121.3.85:6333")
+# Configuration - ALL values must come from environment variables
+# NEVER commit real credentials to this file
+SUPABASE_URL = os.environ["SUPABASE_URL"]  # Required: https://your-project.supabase.co
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]  # Required: service_role key from Supabase dashboard
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 TEI_URL = os.getenv("TEI_URL", "http://localhost:8080")  # Local on TEI server
 
 BATCH_SIZE = 8  # Chunks per embedding batch
