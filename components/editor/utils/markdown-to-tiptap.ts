@@ -27,17 +27,24 @@ interface PaperLookup {
   [paperId: string]: ProjectPaper
 }
 
+export interface CitationInstanceDetail {
+  quote?: string
+  citationGroupId?: string | null
+  citationGroupOrder?: number | null
+  groupRequired?: boolean
+}
+
 /**
- * Map of instanceId → quote text for populating citedContent on citation nodes
+ * Map of instanceId → metadata for populating citation node attrs.
  */
-export type InstanceQuotesMap = Map<string, string>
+export type InstanceDetailsMap = Map<string, CitationInstanceDetail>
 
 /**
  * Context passed through the conversion for instance-level data
  */
 interface ConversionContext {
   paperLookup: PaperLookup
-  instanceQuotes: InstanceQuotesMap
+  instanceDetails: InstanceDetailsMap
 }
 
 interface TipTapNode {
@@ -88,28 +95,9 @@ function paperToCitationAttrs(paper: ProjectPaper): CitationAttributes {
     doi: paper.doi,
   }
 }
-
-
-
 /**
- * Extract paper ID from a citation match
- * Handles both Pandoc [@uuid] and legacy [CITE: uuid] formats
- */
-function extractPaperIdFromMatch(match: RegExpMatchArray): string | null {
-  const fullMatch = match[0]
-  
-  // Pandoc format: [@uuid] - capture group 1
-  if (fullMatch.startsWith('[@')) {
-    return match[1] || null
-  }
-  
-  // Legacy format: [CITE: uuid] or [CONTEXT FROM: uuid] - capture group 2
-  return match[2] || null
-}
-
-/**
- * Split text containing citation markers into text nodes and citation nodes
- * Citation nodes store paper ID, instanceId, and citedContent
+ * Split text containing citation markers into text nodes and citation nodes.
+ * Citation nodes store paper ID, instanceId, hover quote, and grouping metadata.
  * Supports [@paperId#instanceId] and [@paperId] formats
  */
 function splitTextWithCitations(
@@ -165,12 +153,21 @@ function splitTextWithCitations(
       ? paperToCitationAttrs(paper) 
       : { id: paperId }
     
-    // Add instanceId and citedContent if available
+    // Add instanceId and metadata (quote/grouping) if available
     if (instanceId) {
       attrs.instanceId = instanceId
-      const quote = ctx.instanceQuotes.get(instanceId)
-      if (quote) {
-        attrs.citedContent = quote
+      const details = ctx.instanceDetails.get(instanceId)
+      if (details?.quote) {
+        attrs.citedContent = details.quote
+      }
+      if (details?.citationGroupId) {
+        attrs.citationGroupId = details.citationGroupId
+      }
+      if (typeof details?.citationGroupOrder === 'number') {
+        attrs.citationGroupOrder = details.citationGroupOrder
+      }
+      if (details?.groupRequired === true) {
+        attrs.groupRequired = true
       }
     }
     
@@ -524,13 +521,13 @@ function rootToTipTap(root: Root, ctx: ConversionContext): TipTapNode {
  * 
  * @param markdown - Raw markdown text (may contain [@paperId#instanceId] markers)
  * @param papers - Array of papers for citation metadata
- * @param instanceQuotes - Optional map of instanceId → quote text for populating citedContent
+ * @param instanceDetails - Optional map of instanceId → metadata (quote/grouping)
  * @returns TipTap JSON document
  */
 export function markdownToTipTap(
   markdown: string,
   papers: ProjectPaper[] = [],
-  instanceQuotes: InstanceQuotesMap = new Map()
+  instanceDetails: InstanceDetailsMap = new Map()
 ): TipTapNode {
   if (!markdown || markdown.trim() === '') {
     return {
@@ -543,10 +540,10 @@ export function markdownToTipTap(
     // Step 1: Parse markdown to AST
     const ast = parseMarkdown(markdown)
 
-    // Step 2: Create conversion context with paper lookup and instance quotes
+    // Step 2: Create conversion context with paper lookup and instance metadata
     const ctx: ConversionContext = {
       paperLookup: createPaperLookup(papers),
-      instanceQuotes,
+      instanceDetails,
     }
 
     // Step 3: Convert AST to TipTap JSON (citations handled during conversion)
@@ -558,7 +555,7 @@ export function markdownToTipTap(
         astNodes: ast.children.length,
         outputNodes: doc.content?.length || 0,
         papersAvailable: papers.length,
-        instanceQuotesProvided: instanceQuotes.size,
+        instanceDetailsProvided: instanceDetails.size,
       })
     }
 

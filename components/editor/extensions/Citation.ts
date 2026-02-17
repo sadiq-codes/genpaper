@@ -8,6 +8,9 @@ export interface CitationAttributes {
   id: string
   instanceId?: string   // Citation instance ID for quote lookup
   citedContent?: string // The quote from source (populated on load)
+  citationGroupId?: string | null
+  citationGroupOrder?: number | null
+  groupRequired?: boolean
   authors?: string[]
   title?: string
   year?: number
@@ -35,14 +38,6 @@ declare module '@tiptap/core' {
       setReferencesVisible: (count: number | 'all') => ReturnType
     }
   }
-}
-
-/**
- * Generate citation text based on current style
- * Used for renderHTML (SSR) and renderText (clipboard)
- */
-function formatCitation(attrs: CitationAttributes, style: CitationStyleType = 'apa'): string {
-  return formatCitationByStyle(attrs, style)
 }
 
 export const Citation = Node.create<CitationOptions>({
@@ -77,6 +72,9 @@ export const Citation = Node.create<CitationOptions>({
       id: { default: null },
       instanceId: { default: null },
       citedContent: { default: null },
+      citationGroupId: { default: null },
+      citationGroupOrder: { default: null },
+      groupRequired: { default: false },
       authors: { default: [] },
       title: { default: '' },
       year: { default: null },
@@ -96,6 +94,11 @@ export const Citation = Node.create<CitationOptions>({
             id: element.getAttribute('data-citation'),
             instanceId: element.getAttribute('data-instance-id') || null,
             citedContent: element.getAttribute('data-cited-content') || null,
+            citationGroupId: element.getAttribute('data-citation-group-id') || null,
+            citationGroupOrder: element.getAttribute('data-citation-group-order')
+              ? parseInt(element.getAttribute('data-citation-group-order') || '0', 10)
+              : null,
+            groupRequired: element.getAttribute('data-group-required') === 'true',
             authors: element.getAttribute('data-authors')
               ? JSON.parse(element.getAttribute('data-authors') || '[]')
               : [],
@@ -123,6 +126,10 @@ export const Citation = Node.create<CitationOptions>({
         'data-citation': attrs.id,
         'data-instance-id': attrs.instanceId || '',
         'data-cited-content': attrs.citedContent || '',
+        'data-citation-group-id': attrs.citationGroupId || '',
+        'data-citation-group-order':
+          typeof attrs.citationGroupOrder === 'number' ? String(attrs.citationGroupOrder) : '',
+        'data-group-required': attrs.groupRequired ? 'true' : 'false',
         'data-type': 'citation',
         'data-authors': JSON.stringify(attrs.authors || []),
         'data-title': attrs.title || '',

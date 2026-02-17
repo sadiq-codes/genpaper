@@ -5,10 +5,11 @@ import { NodeViewWrapper } from '@tiptap/react'
 import type { NodeViewProps } from '@tiptap/react'
 import type { CitationAttributes } from './Citation'
 import type { ProjectPaper } from '../types'
-import { formatInline, isNumericStyle } from '@/lib/citations/local-formatter'
+import { formatInline, formatInlineMultiple, isNumericStyle } from '@/lib/citations/local-formatter'
 
 // Citation style type
 export type CitationStyleType = string
+const EMPTY_PAPERS: ProjectPaper[] = []
 
 /**
  * Format citation based on style - uses local-formatter directly
@@ -118,8 +119,9 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
   
   // These will be re-read on every render (storageVersion change triggers re-render)
   const style = storage?.citationStyle || 'apa'
+  const citationNumbers = storage?.citationNumbers
   const citationNumber = storage?.citationNumbers?.get(attrs.id)
-  const papers = storage?.papers || []
+  const papers = storage?.papers ?? EMPTY_PAPERS
   
   // Look up paper from storage.papers (same as popover does)
   // This ensures we use the most up-to-date paper metadata
@@ -163,9 +165,99 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
       }
     })
     return numbers.get(String(attrs.id))
-  }, [style, citationNumber, editor, attrs.id, storageVersion])
+  }, [style, citationNumber, editor, attrs.id])
+
+  const groupedCitation = useMemo(() => {
+    if (!attrs.groupRequired || !attrs.citationGroupId || !editor || editor.isDestroyed) {
+      return null
+    }
+
+    const groupNodes: Array<{ attrs: CitationAttributes; pos: number }> = []
+    editor.state.doc.descendants((docNode, pos) => {
+      if (docNode.type.name !== 'citation') return
+      const nodeAttrs = docNode.attrs as CitationAttributes
+      if (nodeAttrs.groupRequired && nodeAttrs.citationGroupId === attrs.citationGroupId) {
+        groupNodes.push({ attrs: nodeAttrs, pos })
+      }
+    })
+
+    if (groupNodes.length <= 1) return null
+
+    groupNodes.sort((a, b) => {
+      const orderA =
+        typeof a.attrs.citationGroupOrder === 'number'
+          ? a.attrs.citationGroupOrder
+          : Number.MAX_SAFE_INTEGER
+      const orderB =
+        typeof b.attrs.citationGroupOrder === 'number'
+          ? b.attrs.citationGroupOrder
+          : Number.MAX_SAFE_INTEGER
+      if (orderA !== orderB) return orderA - orderB
+      return a.pos - b.pos
+    })
+
+    const anchor = groupNodes[0]!
+    const currentKey = attrs.instanceId || attrs.id
+    const anchorKey = anchor.attrs.instanceId || anchor.attrs.id
+    const isAnchor = currentKey === anchorKey
+
+    const papersById = new Map<string, {
+      id: string
+      title?: string
+      authors?: string[]
+      year?: number
+      journal?: string
+      doi?: string
+    }>()
+
+    for (const groupNode of groupNodes) {
+      const paperId = groupNode.attrs.id
+      if (!paperId || papersById.has(paperId)) continue
+
+      const paperFromStorage = papers.find((p) => p.id === paperId)
+      if (paperFromStorage) {
+        papersById.set(paperId, {
+          id: paperFromStorage.id,
+          title: paperFromStorage.title,
+          authors: paperFromStorage.authors,
+          year: paperFromStorage.year,
+          journal: paperFromStorage.journal,
+          doi: paperFromStorage.doi,
+        })
+      } else {
+        papersById.set(paperId, {
+          id: paperId,
+          title: groupNode.attrs.title,
+          authors: groupNode.attrs.authors,
+          year: groupNode.attrs.year,
+          journal: groupNode.attrs.journal,
+          doi: groupNode.attrs.doi,
+        })
+      }
+    }
+
+    const groupedPapers = Array.from(papersById.values())
+    if (groupedPapers.length <= 1) return null
+
+    return {
+      isAnchor,
+      text: formatInlineMultiple(groupedPapers, style, citationNumbers),
+    }
+  }, [
+    attrs.groupRequired,
+    attrs.citationGroupId,
+    attrs.instanceId,
+    attrs.id,
+    editor,
+    papers,
+    style,
+    citationNumbers,
+  ])
 
   const text = useMemo(() => {
+    if (groupedCitation) {
+      return groupedCitation.isAnchor ? groupedCitation.text : ''
+    }
     const result = formatCitationByStyle(displayAttrs, style, resolvedCitationNumber)
     if (process.env.NODE_ENV === 'development') {
       console.log(
@@ -173,8 +265,9 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
       )
     }
     return result
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayAttrs, style, resolvedCitationNumber, storageVersion])
+  }, [groupedCitation, displayAttrs, style, resolvedCitationNumber, storageVersion, attrs.id])
+
+  const shouldHideGroupedSibling = Boolean(groupedCitation && !groupedCitation.isAnchor)
 
   return (
     <NodeViewWrapper
@@ -184,8 +277,14 @@ export function CitationNodeView({ node, selected, extension, editor }: NodeView
       data-type="citation"
       data-instance-id={attrs.instanceId || undefined}
       data-cited-content={attrs.citedContent || ''}
+      data-citation-group-id={attrs.citationGroupId || undefined}
+      data-citation-group-order={
+        typeof attrs.citationGroupOrder === 'number' ? String(attrs.citationGroupOrder) : undefined
+      }
+      data-group-required={attrs.groupRequired ? 'true' : undefined}
+      style={shouldHideGroupedSibling ? { display: 'none' } : undefined}
     >
-      {text}
+      {shouldHideGroupedSibling ? null : text}
     </NodeViewWrapper>
   )
 }

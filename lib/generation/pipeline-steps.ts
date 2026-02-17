@@ -986,7 +986,7 @@ function convertInlineCitationsToStorage(
     }
     
     // Preserve explicit multi-cite intent in text layout.
-    return isGroupedMultiCite ? replacements.join('; ') : replacements[0]!
+    return isGroupedMultiCite ? replacements.join('') : replacements[0]!
   })
   
   // Clean up double spaces

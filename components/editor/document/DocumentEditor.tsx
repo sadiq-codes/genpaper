@@ -38,7 +38,7 @@ import { useSmartCompletion } from '../hooks/useSmartCompletion'
 import { useReferencesManager } from '../hooks/useReferencesManager'
 import { processContent, hasMarkdownFormatting } from '../utils/content-processor'
 import { editorToMarkdown } from '../utils/tiptap-to-markdown'
-import type { InstanceQuotesMap } from '../utils/markdown-to-tiptap'
+import type { InstanceDetailsMap } from '../utils/markdown-to-tiptap'
 import type { Editor } from '@tiptap/react'
 import type { ProjectPaper } from '../types'
 import { isNumericStyle, clearCaches as clearCitationCaches, resolveStyleId, isStyleAvailable, loadStyle } from '@/lib/citations/local-formatter'
@@ -66,14 +66,14 @@ function extractInstanceIds(content: string): string[] {
 }
 
 /**
- * Fetch citation instance quotes from the server
+ * Fetch citation instance metadata from the server
  */
-async function fetchInstanceQuotes(projectId: string, instanceIds: string[]): Promise<InstanceQuotesMap> {
-  const quotesMap: InstanceQuotesMap = new Map()
+async function fetchInstanceDetails(projectId: string, instanceIds: string[]): Promise<InstanceDetailsMap> {
+  const detailsMap: InstanceDetailsMap = new Map()
   const uniqueInstanceIds = Array.from(new Set(instanceIds.filter(Boolean)))
   
   if (!projectId || uniqueInstanceIds.length === 0) {
-    return quotesMap
+    return detailsMap
   }
   
   try {
@@ -89,21 +89,30 @@ async function fetchInstanceQuotes(projectId: string, instanceIds: string[]): Pr
 
     if (!response.ok) {
       console.warn(`[DocumentEditor] Failed to fetch citation instances: HTTP ${response.status}`)
-      return quotesMap
+      return detailsMap
     }
 
     const data = await response.json()
     const instances = Array.isArray(data.instances) ? data.instances : []
     for (const instance of instances) {
-      if (instance.id && instance.quote) {
-        quotesMap.set(instance.id, instance.quote)
+      if (!instance?.id) continue
+      detailsMap.set(instance.id, {
+        quote: typeof instance.quote === 'string' ? instance.quote : undefined,
+        citationGroupId:
+          typeof instance.citationGroupId === 'string' ? instance.citationGroupId : null,
+        citationGroupOrder:
+          typeof instance.citationGroupOrder === 'number' ? instance.citationGroupOrder : null,
+        groupRequired: instance.groupRequired === true,
+      })
+      if (typeof instance.quote !== 'string' && process.env.NODE_ENV === 'development') {
+        console.warn('[DocumentEditor] Citation instance missing quote:', instance.id)
       }
     }
   } catch (error) {
-    console.error('[DocumentEditor] Failed to fetch instance quotes:', error)
+    console.error('[DocumentEditor] Failed to fetch instance metadata:', error)
   }
   
-  return quotesMap
+  return detailsMap
 }
 import {
   Dialog,
@@ -635,29 +644,51 @@ export function DocumentEditor({
     if (instanceIds.length === 0) return
     
     // Fetch quotes and update citation nodes
-    fetchInstanceQuotes(projectId, instanceIds).then(quotesMap => {
-      if (quotesMap.size === 0 || !editor || editor.isDestroyed) return
+    fetchInstanceDetails(projectId, instanceIds).then(instanceDetails => {
+      if (instanceDetails.size === 0 || !editor || editor.isDestroyed) return
       
-      // Walk the document and update citation nodes with citedContent
+      // Walk the document and update citation nodes with metadata from citation_instances
       const { tr } = editor.state
       let modified = false
       
       editor.state.doc.descendants((node, pos) => {
         if (node.type.name === 'citation' && node.attrs.instanceId) {
-          const quote = quotesMap.get(node.attrs.instanceId)
-          if (quote && !node.attrs.citedContent) {
-            tr.setNodeMarkup(pos, undefined, {
-              ...node.attrs,
-              citedContent: quote,
-            })
-            modified = true
+          const details = instanceDetails.get(node.attrs.instanceId)
+          if (!details) return
+
+          const nextAttrs: Record<string, unknown> = { ...node.attrs }
+          let changed = false
+
+          if (details.quote && node.attrs.citedContent !== details.quote) {
+            nextAttrs.citedContent = details.quote
+            changed = true
           }
+          if (details.citationGroupId && node.attrs.citationGroupId !== details.citationGroupId) {
+            nextAttrs.citationGroupId = details.citationGroupId
+            changed = true
+          }
+          if (
+            typeof details.citationGroupOrder === 'number' &&
+            node.attrs.citationGroupOrder !== details.citationGroupOrder
+          ) {
+            nextAttrs.citationGroupOrder = details.citationGroupOrder
+            changed = true
+          }
+          if (details.groupRequired === true && node.attrs.groupRequired !== true) {
+            nextAttrs.groupRequired = true
+            changed = true
+          }
+
+          if (changed) {
+            tr.setNodeMarkup(pos, undefined, nextAttrs)
+            modified = true
+          }          
         }
       })
       
       if (modified) {
         editor.view.dispatch(tr)
-        console.log(`[DocumentEditor] Populated citedContent for ${quotesMap.size} citation instances`)
+        console.log(`[DocumentEditor] Populated citation metadata for ${instanceDetails.size} instances`)
       }
     })
   }, [editor, projectId, initialContent, processedKey])
