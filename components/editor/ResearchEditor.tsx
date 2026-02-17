@@ -38,6 +38,8 @@ const VersionHistoryPanel = dynamic(
   { ssr: false }
 )
 
+const GENERATION_COMPLETION_TOAST_KEY = "genpaper:generation-complete-project"
+
 // Hooks
 import {
   useEditorState,
@@ -47,16 +49,6 @@ import {
 import { useResizablePanel } from "./hooks/useResizablePanel"
 import { usePaperProcessingStatus } from "./hooks/usePaperProcessingStatus"
 import { useAutocompletePrefs, DEFAULT_PREFS, type AutocompletePrefs } from "./hooks/useAutocompletePrefs"
-
-function extractCitationPaperIdsFromContent(content: string): string[] {
-  if (!content) return []
-  const ids = new Set<string>()
-  const pattern = /\[@([a-f0-9-]{36})(?:#[^\]]+)?\]/gi
-  for (const match of content.matchAll(pattern)) {
-    if (match[1]) ids.add(match[1])
-  }
-  return Array.from(ids)
-}
 
 // CitationStyleType now accepts any CSL style ID string
 export type CitationStyleType = string
@@ -111,12 +103,12 @@ export function ResearchEditor({
   const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
   const [currentTitle, setCurrentTitle] = useState(projectTitle)
-  const [generatedContentOverride, setGeneratedContentOverride] = useState<string | null>(null)
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const lastGenerationCompleteRef = useRef<{ key: string; at: number } | null>(null)
-  const { subscription, refresh: refreshSubscription } = useSubscription()
-  // Default to locked while subscription is loading — unlocks once tier is confirmed
-  const exportLocked = !subscription || subscription.tier === 'free'
+  const { subscription } = useSubscription()
+  // Default to unlocked while loading so paid users are never blocked by a slow fetch.
+  // Server-side export API still enforces tier check.
+  const exportLocked = subscription ? subscription.tier === 'free' : false
 
   // Persist sidebar state to localStorage
   useEffect(() => {
@@ -249,6 +241,17 @@ export function ResearchEditor({
       setIsGenerating(true)
     }
   }, [initialIsGenerating])
+
+  // Show completion toast after server-truth reload.
+  useEffect(() => {
+    if (!projectId || typeof window === "undefined") return
+
+    const completedProjectId = window.sessionStorage.getItem(GENERATION_COMPLETION_TOAST_KEY)
+    if (completedProjectId !== projectId) return
+
+    window.sessionStorage.removeItem(GENERATION_COMPLETION_TOAST_KEY)
+    toast.success("Paper generated successfully!")
+  }, [projectId])
 
   // Check for mobile on mount and resize
   useEffect(() => {
@@ -443,156 +446,27 @@ export function ResearchEditor({
       lastGenerationCompleteRef.current = { key: completionKey, at: now }
 
       try {
-        // Ensure DocumentEditor always has a concrete content source, even if the TipTap
-        // instance is not ready yet at completion time.
-        setGeneratedContentOverride(safeGeneratedContent)
-
-        // Render generated content immediately with whatever papers we have right now.
-        // Do NOT block on delayed paper association fetches.
-        const immediatePapers = papers
-        if (editor && !editor.isDestroyed) {
-          // Sync papers to Citation extension storage BEFORE setting content,
-          // so ReferencesNodeView can resolve paper metadata immediately.
-          try {
-            editor.commands.setPapers(immediatePapers)
-          } catch (papersError) {
-            console.warn("[Generation] Failed to sync papers before apply:", papersError)
-          }
-
-          let applied = false
-          try {
-            const { json, isFullDoc } = processContent(safeGeneratedContent, immediatePapers)
-            if (isFullDoc && json) {
-              editor.commands.setContent(json)
-            } else if (Array.isArray(json) && json.length > 0) {
-              editor.commands.setContent({
-                type: "doc",
-                content: [{ type: "paragraph", content: json }],
-              })
-            } else {
-              editor.commands.setContent({
-                type: "doc",
-                content: [
-                  {
-                    type: "paragraph",
-                    content: [{ type: "text", text: safeGeneratedContent }],
-                  },
-                ],
-              })
-            }
-            applied = true
-          } catch (applyError) {
-            console.warn("[Generation] Structured apply failed, using plain-text fallback:", applyError)
-            try {
-              editor.commands.setContent({
-                type: "doc",
-                content: [
-                  {
-                    type: "paragraph",
-                    content: [{ type: "text", text: safeGeneratedContent }],
-                  },
-                ],
-              })
-              applied = true
-            } catch (fallbackError) {
-              console.error("[Generation] Plain-text fallback apply failed:", fallbackError)
-            }
-          }
-
-          if (!applied) {
-            throw new Error("Failed to apply generated content to editor")
-          }
-
-          setContentSilent(safeGeneratedContent)
-          markAsEdited()
-        } else {
-          setContentSilent(safeGeneratedContent)
-          markAsEdited()
+        if (!projectId) {
+          throw new Error("Missing project ID for generation completion")
         }
 
-        // Stop the generation overlay only after the content has been applied.
-        toast.success("Paper generated successfully!")
-
-        // Collapse sidebar so the user sees the full generated document
-        setSidebarOpen(false)
-
-        // Remove ?created=1 from URL without reload
+        // New completion UX: always reload editor from server truth.
+        // This removes fragile in-memory apply paths and guarantees consistency.
+        const url = new URL(window.location.href)
+        url.searchParams.delete("created")
         try {
-          const url = new URL(window.location.href)
-          url.searchParams.delete("created")
-          window.history.replaceState({}, "", url.toString())
-        } catch (historyError) {
-          console.warn("[Generation] Failed to clean URL params:", historyError)
+          window.sessionStorage.setItem(GENERATION_COMPLETION_TOAST_KEY, projectId)
+        } catch (storageError) {
+          console.warn("[Generation] Unable to persist completion toast marker:", storageError)
         }
-
-        // Refresh subscription data so paper count reflects the new generation
-        void refreshSubscription().catch((subscriptionError) => {
-          console.warn("[Generation] Failed to refresh subscription after completion:", subscriptionError)
-        })
-
-        // Backfill paper metadata in the background so references/citation details become
-        // complete without requiring a manual page refresh.
-        if (projectId) {
-          const expectedCitationPaperIds = new Set(extractCitationPaperIdsFromContent(safeGeneratedContent))
-          void (async () => {
-            // Keep retrying until citations are fully resolved from canonical paper rows.
-            // Early responses can include fallback CSL-only metadata ("Unknown" authors).
-            const delays = [0, 300, 700, 1200, 2000, 3500, 5000, 8000, 12000]
-            let lastNonEmptyPapers: ProjectPaper[] | null = null
-
-            for (const delay of delays) {
-              if (delay > 0) await new Promise(r => setTimeout(r, delay))
-              try {
-                const res = await fetch(`/api/editor/papers?projectId=${projectId}&_ts=${Date.now()}`, {
-                  cache: "no-store",
-                })
-                if (!res.ok) continue
-                const data = (await res.json()) as {
-                  papers?: ProjectPaper[]
-                  allResolved?: boolean
-                  unresolvedPaperIds?: string[]
-                }
-
-                const fetchedPapers = Array.isArray(data.papers) ? data.papers : []
-                if (fetchedPapers.length === 0) continue
-
-                lastNonEmptyPapers = fetchedPapers
-                setPapers(fetchedPapers)
-                if (editor && !editor.isDestroyed) {
-                  editor.commands.setPapers(fetchedPapers)
-                }
-
-                const returnedIds = new Set(fetchedPapers.map(p => p.id))
-                const expectedCovered =
-                  expectedCitationPaperIds.size === 0 ||
-                  Array.from(expectedCitationPaperIds).every(id => returnedIds.has(id))
-                const allResolved = data.allResolved ?? true
-
-                // Stop only when we have all expected citation papers and they are resolved.
-                if (expectedCovered && allResolved) return
-              } catch (err) {
-                console.warn("[Generation] Deferred paper sync failed:", err)
-              }
-            }
-
-            // Keep the best result we got, even if full resolution took too long.
-            if (lastNonEmptyPapers) {
-              setPapers(lastNonEmptyPapers)
-              if (editor && !editor.isDestroyed) {
-                editor.commands.setPapers(lastNonEmptyPapers)
-              }
-            }
-          })()
-        }
+        window.location.replace(url.toString())
       } catch (err) {
-        console.error('[Generation] Failed to apply generated content:', err)
-        toast.error('Paper was generated, but applying it to the editor failed.')
-      } finally {
-        // Always close the generation overlay, even if editor sync throws.
+        console.error("[Generation] Failed to finalize generated content:", err)
+        toast.error("Paper was generated, but opening the final draft failed.")
         setIsGenerating(false)
       }
     },
-    [editor, papers, projectId, setPapers, setContentSilent, markAsEdited, refreshSubscription]
+    [projectId]
   )
 
   // Handle generation error
@@ -818,7 +692,7 @@ export function ResearchEditor({
             {/* Editor */}
             <div className="flex-1 overflow-hidden">
               <DocumentEditor
-                initialContent={generatedContentOverride ?? initialContent}
+                initialContent={initialContent}
                 onUpdate={(newContent) => {
                   setContent(newContent)
                 }}

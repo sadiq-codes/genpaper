@@ -49,7 +49,6 @@ import { getVisibleReferencesCount } from '@/types/subscription'
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
-const MAX_INSTANCE_IDS_PER_REQUEST = 20
 
 /**
  * Extract all instanceIds from content that uses [@paperId#instanceId] format
@@ -78,32 +77,26 @@ async function fetchInstanceQuotes(projectId: string, instanceIds: string[]): Pr
   }
   
   try {
-    const idBatches: string[][] = []
-    for (let i = 0; i < uniqueInstanceIds.length; i += MAX_INSTANCE_IDS_PER_REQUEST) {
-      idBatches.push(uniqueInstanceIds.slice(i, i + MAX_INSTANCE_IDS_PER_REQUEST))
+    // Use POST body to avoid URL length limits when there are many citations.
+    const response = await fetch('/api/citation-instances', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        ids: uniqueInstanceIds,
+      }),
+    })
+
+    if (!response.ok) {
+      console.warn(`[DocumentEditor] Failed to fetch citation instances: HTTP ${response.status}`)
+      return quotesMap
     }
 
-    const responses = await Promise.all(
-      idBatches.map(async (batchIds, index) => {
-        const response = await fetch(
-          `/api/citation-instances?projectId=${projectId}&instanceIds=${batchIds.join(',')}`
-        )
-        if (!response.ok) {
-          console.warn(
-            `[DocumentEditor] Failed to fetch citation instances batch ${index + 1}/${idBatches.length}: HTTP ${response.status}`
-          )
-          return []
-        }
-        const data = await response.json()
-        return Array.isArray(data.instances) ? data.instances : []
-      })
-    )
-
-    for (const instances of responses) {
-      for (const instance of instances) {
-        if (instance.id && instance.quote) {
-          quotesMap.set(instance.id, instance.quote)
-        }
+    const data = await response.json()
+    const instances = Array.isArray(data.instances) ? data.instances : []
+    for (const instance of instances) {
+      if (instance.id && instance.quote) {
+        quotesMap.set(instance.id, instance.quote)
       }
     }
   } catch (error) {
@@ -167,8 +160,9 @@ export function DocumentEditor({
     toggleSidebar: onToggleMobileMenu,
   } = useResearchEditor()
   const { subscription } = useSubscription()
-  // Default to free-tier limit (1) while loading; opens up once subscription confirms paid tier
-  const referencesVisible = subscription ? getVisibleReferencesCount(subscription.tier) : 1
+  // Default to 'all' while loading so paid users never see a flash of locked references.
+  // Server-side gates still enforce tier limits on actual API calls.
+  const referencesVisible = subscription ? getVisibleReferencesCount(subscription.tier) : 'all'
   // Ref for debouncing markdown conversion - prevents typing lag in large documents
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   
@@ -384,7 +378,6 @@ export function DocumentEditor({
   // Store citation picker callback in editor storage so SlashCommands can call it
   useEffect(() => {
     if (editor) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const storage = (editor.storage as any).slashCommands
       if (storage) storage.onOpenCitationPicker = handleOpenCitationPicker
     }
