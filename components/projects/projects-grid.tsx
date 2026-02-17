@@ -19,20 +19,10 @@ async function fetchProjects(): Promise<ProjectWithCount[]> {
     const projects = data.data?.projects || data.projects || []
     if (projects.length === 0) return []
 
-    // Fetch paper counts
-    const projectIds = projects.map((p: { id: string }) => p.id)
-    const countsRes = await fetch(
-      `/api/projects/paper-counts?${projectIds.map((id: string) => `ids=${id}`).join("&")}`
-    )
-    let paperCountMap: Record<string, number> = {}
-    if (countsRes.ok) {
-      const countsData = await countsRes.json()
-      paperCountMap = countsData.counts || {}
-    }
-
     return projects.map((project: Record<string, unknown> & { id: string }) => ({
       project,
-      paperCount: paperCountMap[project.id] || 0,
+      paperCount:
+        typeof project.citation_count === "number" ? project.citation_count : 0,
     }))
   } catch {
     return []
@@ -63,7 +53,7 @@ export function ProjectsGrid() {
   const { data: projectsWithCounts, isLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: fetchProjects,
-    staleTime: 2 * 60 * 1000, // 2 min — cached across navigations
+    staleTime: 5 * 60 * 1000, // Keep cached list for quick revisits
   })
 
   if (isLoading) return <ProjectsGridSkeleton />

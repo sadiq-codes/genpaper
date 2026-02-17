@@ -424,7 +424,11 @@ export function ResearchEditor({
   // Handle generation completion
   const handleGenerationComplete = useCallback(
     async (generatedContent: string) => {
-      const completionKey = `${generatedContent.length}:${generatedContent.slice(0, 120)}:${generatedContent.slice(-120)}`
+      const safeGeneratedContent =
+        typeof generatedContent === "string"
+          ? generatedContent
+          : String(generatedContent ?? "")
+      const completionKey = `${safeGeneratedContent.length}:${safeGeneratedContent.slice(0, 120)}:${safeGeneratedContent.slice(-120)}`
       const now = Date.now()
       const lastCompletion = lastGenerationCompleteRef.current
 
@@ -439,114 +443,147 @@ export function ResearchEditor({
       lastGenerationCompleteRef.current = { key: completionKey, at: now }
 
       try {
-      // Ensure DocumentEditor always has a concrete content source, even if the TipTap
-      // instance is not ready yet at completion time.
-      setGeneratedContentOverride(generatedContent)
+        // Ensure DocumentEditor always has a concrete content source, even if the TipTap
+        // instance is not ready yet at completion time.
+        setGeneratedContentOverride(safeGeneratedContent)
 
-      // Render generated content immediately with whatever papers we have right now.
-      // Do NOT block on delayed paper association fetches.
-      const immediatePapers = papers
-      if (editor && !editor.isDestroyed) {
-        // Sync papers to Citation extension storage BEFORE setting content,
-        // so ReferencesNodeView can resolve paper metadata immediately.
-        editor.commands.setPapers(immediatePapers)
+        // Render generated content immediately with whatever papers we have right now.
+        // Do NOT block on delayed paper association fetches.
+        const immediatePapers = papers
+        if (editor && !editor.isDestroyed) {
+          // Sync papers to Citation extension storage BEFORE setting content,
+          // so ReferencesNodeView can resolve paper metadata immediately.
+          try {
+            editor.commands.setPapers(immediatePapers)
+          } catch (papersError) {
+            console.warn("[Generation] Failed to sync papers before apply:", papersError)
+          }
 
-        const { json, isFullDoc } = processContent(generatedContent, immediatePapers)
+          let applied = false
+          try {
+            const { json, isFullDoc } = processContent(safeGeneratedContent, immediatePapers)
+            if (isFullDoc && json) {
+              editor.commands.setContent(json)
+            } else if (Array.isArray(json) && json.length > 0) {
+              editor.commands.setContent({
+                type: "doc",
+                content: [{ type: "paragraph", content: json }],
+              })
+            } else {
+              editor.commands.setContent({
+                type: "doc",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [{ type: "text", text: safeGeneratedContent }],
+                  },
+                ],
+              })
+            }
+            applied = true
+          } catch (applyError) {
+            console.warn("[Generation] Structured apply failed, using plain-text fallback:", applyError)
+            try {
+              editor.commands.setContent({
+                type: "doc",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [{ type: "text", text: safeGeneratedContent }],
+                  },
+                ],
+              })
+              applied = true
+            } catch (fallbackError) {
+              console.error("[Generation] Plain-text fallback apply failed:", fallbackError)
+            }
+          }
 
-        if (isFullDoc && json) {
-          editor.commands.setContent(json)
-        } else if (Array.isArray(json) && json.length > 0) {
-          editor.commands.setContent({
-            type: "doc",
-            content: [{ type: "paragraph", content: json }],
-          })
+          if (!applied) {
+            throw new Error("Failed to apply generated content to editor")
+          }
+
+          setContentSilent(safeGeneratedContent)
+          markAsEdited()
         } else {
-          editor.commands.setContent({
-            type: "doc",
-            content: [
-              {
-                type: "paragraph",
-                content: [{ type: "text", text: generatedContent }],
-              },
-            ],
-          })
+          setContentSilent(safeGeneratedContent)
+          markAsEdited()
         }
 
-        setContentSilent(generatedContent)
-        markAsEdited()
-      } else {
-        setContentSilent(generatedContent)
-        markAsEdited()
-      }
+        // Stop the generation overlay only after the content has been applied.
+        toast.success("Paper generated successfully!")
 
-      // Stop the generation overlay only after the content has been applied.
-      toast.success("Paper generated successfully!")
+        // Collapse sidebar so the user sees the full generated document
+        setSidebarOpen(false)
 
-      // Collapse sidebar so the user sees the full generated document
-      setSidebarOpen(false)
+        // Remove ?created=1 from URL without reload
+        try {
+          const url = new URL(window.location.href)
+          url.searchParams.delete("created")
+          window.history.replaceState({}, "", url.toString())
+        } catch (historyError) {
+          console.warn("[Generation] Failed to clean URL params:", historyError)
+        }
 
-      // Remove ?created=1 from URL without reload
-      const url = new URL(window.location.href)
-      url.searchParams.delete("created")
-      window.history.replaceState({}, "", url.toString())
+        // Refresh subscription data so paper count reflects the new generation
+        void refreshSubscription().catch((subscriptionError) => {
+          console.warn("[Generation] Failed to refresh subscription after completion:", subscriptionError)
+        })
 
-      // Refresh subscription data so paper count reflects the new generation
-      refreshSubscription()
+        // Backfill paper metadata in the background so references/citation details become
+        // complete without requiring a manual page refresh.
+        if (projectId) {
+          const expectedCitationPaperIds = new Set(extractCitationPaperIdsFromContent(safeGeneratedContent))
+          void (async () => {
+            // Keep retrying until citations are fully resolved from canonical paper rows.
+            // Early responses can include fallback CSL-only metadata ("Unknown" authors).
+            const delays = [0, 300, 700, 1200, 2000, 3500, 5000, 8000, 12000]
+            let lastNonEmptyPapers: ProjectPaper[] | null = null
 
-      // Backfill paper metadata in the background so references/citation details become
-      // complete without requiring a manual page refresh.
-      if (projectId) {
-        const expectedCitationPaperIds = new Set(extractCitationPaperIdsFromContent(generatedContent))
-        void (async () => {
-          // Keep retrying until citations are fully resolved from canonical paper rows.
-          // Early responses can include fallback CSL-only metadata ("Unknown" authors).
-          const delays = [0, 300, 700, 1200, 2000, 3500, 5000, 8000, 12000]
-          let lastNonEmptyPapers: ProjectPaper[] | null = null
+            for (const delay of delays) {
+              if (delay > 0) await new Promise(r => setTimeout(r, delay))
+              try {
+                const res = await fetch(`/api/editor/papers?projectId=${projectId}&_ts=${Date.now()}`, {
+                  cache: "no-store",
+                })
+                if (!res.ok) continue
+                const data = (await res.json()) as {
+                  papers?: ProjectPaper[]
+                  allResolved?: boolean
+                  unresolvedPaperIds?: string[]
+                }
 
-          for (const delay of delays) {
-            if (delay > 0) await new Promise(r => setTimeout(r, delay))
-            try {
-              const res = await fetch(`/api/editor/papers?projectId=${projectId}&_ts=${Date.now()}`, {
-                cache: 'no-store',
-              })
-              if (!res.ok) continue
-              const data = await res.json() as {
-                papers?: ProjectPaper[]
-                allResolved?: boolean
-                unresolvedPaperIds?: string[]
+                const fetchedPapers = Array.isArray(data.papers) ? data.papers : []
+                if (fetchedPapers.length === 0) continue
+
+                lastNonEmptyPapers = fetchedPapers
+                setPapers(fetchedPapers)
+                if (editor && !editor.isDestroyed) {
+                  editor.commands.setPapers(fetchedPapers)
+                }
+
+                const returnedIds = new Set(fetchedPapers.map(p => p.id))
+                const expectedCovered =
+                  expectedCitationPaperIds.size === 0 ||
+                  Array.from(expectedCitationPaperIds).every(id => returnedIds.has(id))
+                const allResolved = data.allResolved ?? true
+
+                // Stop only when we have all expected citation papers and they are resolved.
+                if (expectedCovered && allResolved) return
+              } catch (err) {
+                console.warn("[Generation] Deferred paper sync failed:", err)
               }
+            }
 
-              const fetchedPapers = Array.isArray(data.papers) ? data.papers : []
-              if (fetchedPapers.length === 0) continue
-
-              lastNonEmptyPapers = fetchedPapers
-              setPapers(fetchedPapers)
+            // Keep the best result we got, even if full resolution took too long.
+            if (lastNonEmptyPapers) {
+              setPapers(lastNonEmptyPapers)
               if (editor && !editor.isDestroyed) {
-                editor.commands.setPapers(fetchedPapers)
+                editor.commands.setPapers(lastNonEmptyPapers)
               }
-
-              const returnedIds = new Set(fetchedPapers.map(p => p.id))
-              const expectedCovered =
-                expectedCitationPaperIds.size === 0 ||
-                Array.from(expectedCitationPaperIds).every(id => returnedIds.has(id))
-              const allResolved = data.allResolved ?? true
-
-              // Stop only when we have all expected citation papers and they are resolved.
-              if (expectedCovered && allResolved) return
-            } catch (err) {
-              console.warn('[Generation] Deferred paper sync failed:', err)
             }
-          }
-
-          // Keep the best result we got, even if full resolution took too long.
-          if (lastNonEmptyPapers) {
-            setPapers(lastNonEmptyPapers)
-            if (editor && !editor.isDestroyed) {
-              editor.commands.setPapers(lastNonEmptyPapers)
-            }
-          }
-        })()
-      }
+          })()
+        }
       } catch (err) {
         console.error('[Generation] Failed to apply generated content:', err)
         toast.error('Paper was generated, but applying it to the editor failed.')

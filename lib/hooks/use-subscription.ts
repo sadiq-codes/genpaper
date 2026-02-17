@@ -56,6 +56,58 @@ export interface UseSubscriptionResult {
   canAutocomplete: boolean
 }
 
+interface BillingStatusPayload {
+  subscription: SubscriptionData | null
+  dailyUsage: DailyUsageStats | null
+}
+
+const BILLING_STATUS_TTL_MS = 2 * 60 * 1000
+let billingStatusCache: { value: BillingStatusPayload; timestamp: number } | null = null
+let billingStatusInFlight: Promise<BillingStatusPayload> | null = null
+
+async function fetchBillingStatus(force = false): Promise<BillingStatusPayload> {
+  const now = Date.now()
+  if (
+    !force &&
+    billingStatusCache &&
+    now - billingStatusCache.timestamp < BILLING_STATUS_TTL_MS
+  ) {
+    return billingStatusCache.value
+  }
+
+  if (!force && billingStatusInFlight) {
+    return billingStatusInFlight
+  }
+
+  const request = (async (): Promise<BillingStatusPayload> => {
+    const response = await fetch('/api/billing/status')
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        return { subscription: null, dailyUsage: null }
+      }
+      throw new Error('Failed to fetch subscription')
+    }
+
+    const data = await response.json()
+    return {
+      subscription: data.subscription ?? null,
+      dailyUsage: data.dailyUsage ?? null,
+    }
+  })()
+
+  billingStatusInFlight = request
+  try {
+    const value = await request
+    billingStatusCache = { value, timestamp: Date.now() }
+    return value
+  } finally {
+    if (billingStatusInFlight === request) {
+      billingStatusInFlight = null
+    }
+  }
+}
+
 // =============================================================================
 // Hook
 // =============================================================================
@@ -89,31 +141,19 @@ export function useSubscription(): UseSubscriptionResult {
     }
   }, [])
   
-  const fetchSubscription = useCallback(async () => {
+  const fetchSubscription = useCallback(async (force = false) => {
     try {
       setIsLoading(true)
       setError(null)
-      
-      // Single request for both subscription + usage (avoids double auth check)
-      const response = await fetch('/api/billing/status')
-      
-      if (!response.ok) {
-        if (response.status === 401) {
-          // Not logged in - that's fine, just no subscription
-          setSubscription(null)
-          setDailyUsage(null)
-          return
-        }
-        throw new Error('Failed to fetch subscription')
-      }
-      
-      const data = await response.json()
+
+      // Shared cache + in-flight request dedupe across all hook consumers.
+      const data = await fetchBillingStatus(force)
       setSubscription(data.subscription)
       setDailyUsage(data.dailyUsage)
-      
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
       setSubscription(null)
+      setDailyUsage(null)
     } finally {
       setIsLoading(false)
     }
@@ -140,7 +180,7 @@ export function useSubscription(): UseSubscriptionResult {
     dailyUsage,
     isLoading,
     error,
-    refresh: fetchSubscription,
+    refresh: () => fetchSubscription(true),
     refreshUsage: fetchUsage,
     canGenerate,
     isPaid,

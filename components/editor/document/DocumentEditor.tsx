@@ -49,6 +49,7 @@ import { getVisibleReferencesCount } from '@/types/subscription'
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
+const MAX_INSTANCE_IDS_PER_REQUEST = 20
 
 /**
  * Extract all instanceIds from content that uses [@paperId#instanceId] format
@@ -56,11 +57,13 @@ const lowlight = createLowlight(common)
 function extractInstanceIds(content: string): string[] {
   // instanceId may be non-UUID (alphanumeric with timestamp), so use [^\]]+ to match any chars
   const pattern = /\[@[a-f0-9-]{36}#([^\]]+)\]/gi
-  const instanceIds: string[] = []
+  const instanceIds = new Set<string>()
   for (const match of content.matchAll(pattern)) {
-    instanceIds.push(match[1])
+    if (match[1]) {
+      instanceIds.add(match[1])
+    }
   }
-  return instanceIds
+  return Array.from(instanceIds)
 }
 
 /**
@@ -68,16 +71,35 @@ function extractInstanceIds(content: string): string[] {
  */
 async function fetchInstanceQuotes(projectId: string, instanceIds: string[]): Promise<InstanceQuotesMap> {
   const quotesMap: InstanceQuotesMap = new Map()
+  const uniqueInstanceIds = Array.from(new Set(instanceIds.filter(Boolean)))
   
-  if (!projectId || instanceIds.length === 0) {
+  if (!projectId || uniqueInstanceIds.length === 0) {
     return quotesMap
   }
   
   try {
-    const response = await fetch(`/api/citation-instances?projectId=${projectId}&instanceIds=${instanceIds.join(',')}`)
-    if (response.ok) {
-      const data = await response.json()
-      const instances = Array.isArray(data.instances) ? data.instances : []
+    const idBatches: string[][] = []
+    for (let i = 0; i < uniqueInstanceIds.length; i += MAX_INSTANCE_IDS_PER_REQUEST) {
+      idBatches.push(uniqueInstanceIds.slice(i, i + MAX_INSTANCE_IDS_PER_REQUEST))
+    }
+
+    const responses = await Promise.all(
+      idBatches.map(async (batchIds, index) => {
+        const response = await fetch(
+          `/api/citation-instances?projectId=${projectId}&instanceIds=${batchIds.join(',')}`
+        )
+        if (!response.ok) {
+          console.warn(
+            `[DocumentEditor] Failed to fetch citation instances batch ${index + 1}/${idBatches.length}: HTTP ${response.status}`
+          )
+          return []
+        }
+        const data = await response.json()
+        return Array.isArray(data.instances) ? data.instances : []
+      })
+    )
+
+    for (const instances of responses) {
       for (const instance of instances) {
         if (instance.id && instance.quote) {
           quotesMap.set(instance.id, instance.quote)

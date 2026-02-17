@@ -411,30 +411,33 @@ export async function getUserResearchProjects(
   if (error) throw error
   if (!data || data.length === 0) return []
 
-  // Fetch citation counts for all projects in ONE query (fixes N+1 problem)
-  // Group by project_id and count
+  // Fetch cited paper IDs for all projects in ONE query (fixes N+1 problem)
+  // and count DISTINCT papers per project.
   const projectIds = data.map(p => p.id)
-  const { data: citationCounts, error: countError } = await supabase
+  const { data: citationRows, error: countError } = await supabase
     .from('project_citations')
-    .select('project_id')
+    .select('project_id, paper_id')
     .in('project_id', projectIds)
 
   if (countError) {
     console.error('Error fetching citation counts:', countError)
   }
 
-  // Build a map of project_id -> count
-  const countMap = new Map<string, number>()
-  for (const row of citationCounts || []) {
-    const current = countMap.get(row.project_id) || 0
-    countMap.set(row.project_id, current + 1)
+  // Build a map of project_id -> distinct paper_id count
+  const paperSetByProject = new Map<string, Set<string>>()
+  for (const row of citationRows || []) {
+    if (!row.project_id || !row.paper_id) continue
+    if (!paperSetByProject.has(row.project_id)) {
+      paperSetByProject.set(row.project_id, new Set())
+    }
+    paperSetByProject.get(row.project_id)!.add(row.paper_id)
   }
 
   // Map projects with their citation counts
   const projectsWithCitations = data.map((project) => ({
     ...project,
     latest_version: null,
-    citation_count: countMap.get(project.id) || 0
+    citation_count: paperSetByProject.get(project.id)?.size || 0
   }))
 
   return projectsWithCitations

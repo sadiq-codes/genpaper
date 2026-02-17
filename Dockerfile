@@ -1,27 +1,27 @@
 # =============================================================================
 # GenPaper Production Dockerfile
-# Multi-stage build optimized for Azure Container Apps
+# Multi-stage build optimized for Azure Container Apps (using Bun)
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # Stage 1: Dependencies
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS deps
+FROM oven/bun:1-alpine AS deps
 WORKDIR /app
 
 # Install dependencies needed for native modules
 RUN apk add --no-cache libc6-compat python3 make g++
 
-# Copy package files (not using package-lock to avoid platform-specific issues)
-COPY package.json ./
+# Copy package files
+COPY package.json bun.lock* ./
 
-# Install dependencies - generates fresh lockfile for Linux
-RUN npm install --legacy-peer-deps
+# Install dependencies
+RUN bun install --frozen-lockfile || bun install
 
 # -----------------------------------------------------------------------------
 # Stage 2: Builder
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS builder
+FROM oven/bun:1-alpine AS builder
 WORKDIR /app
 
 # Build-time arguments for environment variables needed during build
@@ -58,12 +58,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
 # Build the application
-RUN npm run build
+RUN bun run build
 
 # -----------------------------------------------------------------------------
 # Stage 3: Runner (Production)
 # -----------------------------------------------------------------------------
-FROM node:20-alpine AS runner
+FROM oven/bun:1-alpine AS runner
 WORKDIR /app
 
 # Set production environment
@@ -85,8 +85,8 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Install sharp for image optimization
-RUN npm install sharp 2>/dev/null || true
+# Install sharp for image optimization (using bun)
+RUN bun add sharp 2>/dev/null || true
 
 # Switch to non-root user
 USER nextjs
@@ -102,5 +102,5 @@ ENV PORT=3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health/live || exit 1
 
-# Start the application
-CMD ["node", "server.js"]
+# Start the application with Bun
+CMD ["bun", "run", "server.js"]
