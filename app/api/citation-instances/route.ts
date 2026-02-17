@@ -16,9 +16,11 @@ type CreateInstanceInput = {
   quote: string
 }
 
-type CitationInstancesRequest =
-  | { projectId: string; instances: CreateInstanceInput[] }
-  | { projectId: string; ids: string[] }
+type CitationInstancesRequest = {
+  projectId?: string
+  instances?: CreateInstanceInput[]
+  ids?: string[]
+}
 
 /**
  * Truncate quote to max words
@@ -45,7 +47,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json() as Partial<CitationInstancesRequest>
+    const body = await request.json() as CitationInstancesRequest
     const projectId = typeof body.projectId === 'string' ? body.projectId : ''
 
     if (!projectId) {
