@@ -33,6 +33,11 @@ export interface CitationInstance {
   instanceId: string
   paperId: string
   quote: string
+  /** Optional grouping metadata for multi-cite clusters (e.g. [@a; @b]). */
+  citationGroupId?: string | null
+  citationGroupOrder?: number | null
+  /** Hint for renderers: true when citation came from an explicit multi-cite cluster. */
+  groupRequired?: boolean
 }
 
 /**

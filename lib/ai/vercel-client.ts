@@ -9,22 +9,47 @@ import {
   EMBEDDING_CONFIG, 
   getAzureEmbeddingDeployment,
   isAzureOpenAIConfigured,
-  isSelfHostedEmbeddingConfigured
+  isSelfHostedEmbeddingConfigured,
+  useAzureOpenAIForLLM,
+  getAzureDeploymentForModel
 } from './config'
 
-// Vercel AI SDK client for paper generation
+// Vercel AI SDK client for paper generation (OpenAI)
 export const ai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
-  // You can add custom headers or baseURL here if needed
-  // baseURL: process.env.OPENAI_BASE_URL
 })
+
+// Azure OpenAI client (lazy initialized)
+let azureClient: ReturnType<typeof createAzure> | null = null
+
+function getAzureClientForLLM() {
+  if (!azureClient) {
+    azureClient = createAzure({
+      resourceName: process.env.AZURE_OPENAI_RESOURCE_NAME!,
+      apiKey: process.env.AZURE_OPENAI_API_KEY!,
+    })
+  }
+  return azureClient
+}
+
+/**
+ * Get a language model instance for the given model name
+ * Uses Azure OpenAI if USE_AZURE_OPENAI=true, otherwise OpenAI
+ */
+function getLanguageModelForName(modelName: string) {
+  if (useAzureOpenAIForLLM()) {
+    const deployment = getAzureDeploymentForModel(modelName)
+    return getAzureClientForLLM().languageModel(deployment)
+  }
+  return ai.languageModel(modelName)
+}
 
 /**
  * Get the configured language model instance
  * Model is determined by AI_MODEL env var (defaults to gpt-4o)
  */
 export function getLanguageModel() {
-  return ai.languageModel(getModel())
+  return getLanguageModelForName(getModel())
 }
 
 /**
@@ -33,7 +58,7 @@ export function getLanguageModel() {
  * Override with AI_CHAT_MODEL env var
  */
 export function getChatLanguageModel() {
-  return ai.languageModel(getChatModelName())
+  return getLanguageModelForName(getChatModelName())
 }
 
 /**
@@ -42,7 +67,7 @@ export function getChatLanguageModel() {
  * Override with AI_AUTOCOMPLETE_MODEL env var
  */
 export function getAutocompleteLanguageModel() {
-  return ai.languageModel(getAutocompleteModelName())
+  return getLanguageModelForName(getAutocompleteModelName())
 }
 
 /**
@@ -51,7 +76,7 @@ export function getAutocompleteLanguageModel() {
  * Override with AI_FAST_AUTOCOMPLETE_MODEL env var
  */
 export function getFastAutocompleteLanguageModel() {
-  return ai.languageModel(getFastAutocompleteModelName())
+  return getLanguageModelForName(getFastAutocompleteModelName())
 }
 
 /**
@@ -60,13 +85,13 @@ export function getFastAutocompleteLanguageModel() {
  * Override with AI_EXTRACTION_MODEL env var
  */
 export function getExtractionLanguageModel() {
-  return ai.languageModel(getExtractionModelName())
+  return getLanguageModelForName(getExtractionModelName())
 }
 
 /**
- * Get Azure OpenAI client (if configured)
+ * Get Azure OpenAI client for embeddings
  */
-function getAzureClient() {
+function getAzureClientForEmbeddings() {
   return createAzure({
     resourceName: process.env.AZURE_OPENAI_RESOURCE_NAME!,
     apiKey: process.env.AZURE_OPENAI_API_KEY!,
@@ -93,7 +118,7 @@ export function getEmbeddingModel() {
   
   // 2. Azure OpenAI
   if (isAzureOpenAIConfigured()) {
-    const azure = getAzureClient()
+    const azure = getAzureClientForEmbeddings()
     return azure.embedding(getAzureEmbeddingDeployment())
   }
   

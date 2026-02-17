@@ -137,11 +137,6 @@ function evictIfNeeded(): void {
 let retrieverInstance: ChunkRetriever | null = null
 let contextBuilderInstance: ContextBuilder | null = null
 
-// Generation-specific diversity controls.
-// Keep stricter than chat/editor so long-form papers cite a broader source base.
-const GENERATION_MAX_CHUNKS_PER_PAPER = 5
-const GENERATION_MIN_DISTINCT_PAPERS = 8
-
 function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
   // Create or update retriever with current params
   // Uses token-based limits - semantic relevance is the primary filter
@@ -158,9 +153,6 @@ function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
     rerankTopK: params.rerankTopK || 60,
     // Token budget for evidence - replaces arbitrary chunk limits
     maxEvidenceTokens: params.maxEvidenceTokens || 25000,
-    // Root fix for citation collapse: constrain per-paper dominance in generation RAG.
-    maxChunksPerPaper: GENERATION_MAX_CHUNKS_PER_PAPER,
-    minDistinctPapers: GENERATION_MIN_DISTINCT_PAPERS,
   }
   
   if (!retrieverInstance) {

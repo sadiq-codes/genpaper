@@ -97,10 +97,40 @@ export function getAzureEmbeddingDeployment(): string {
 }
 
 /**
- * Check if Azure OpenAI is configured for embeddings
+ * Check if Azure OpenAI is configured
  */
 export function isAzureOpenAIConfigured(): boolean {
   return !!(process.env.AZURE_OPENAI_RESOURCE_NAME && process.env.AZURE_OPENAI_API_KEY)
+}
+
+/**
+ * Check if Azure OpenAI should be used for language models (not just embeddings)
+ * Set USE_AZURE_OPENAI=true to use Azure OpenAI for all LLM calls
+ */
+export function useAzureOpenAIForLLM(): boolean {
+  return isAzureOpenAIConfigured() && process.env.USE_AZURE_OPENAI === 'true'
+}
+
+/**
+ * Get Azure OpenAI deployment name for a given model
+ * Maps model names to Azure deployment names via env vars
+ * 
+ * Env vars:
+ *   AZURE_OPENAI_DEPLOYMENT_GPT4 - for gpt-4.1 / gpt-4o
+ *   AZURE_OPENAI_DEPLOYMENT_GPT4_MINI - for gpt-4.1-mini / gpt-4o-mini
+ *   AZURE_OPENAI_DEPLOYMENT_GPT4_NANO - for gpt-4.1-nano
+ *   AZURE_OPENAI_DEPLOYMENT - fallback for any model
+ */
+export function getAzureDeploymentForModel(model: string): string {
+  // Check for specific deployment mappings
+  if (model.includes('nano')) {
+    return process.env.AZURE_OPENAI_DEPLOYMENT_GPT4_NANO || process.env.AZURE_OPENAI_DEPLOYMENT || model
+  }
+  if (model.includes('mini')) {
+    return process.env.AZURE_OPENAI_DEPLOYMENT_GPT4_MINI || process.env.AZURE_OPENAI_DEPLOYMENT || model
+  }
+  // Default to main GPT-4 deployment
+  return process.env.AZURE_OPENAI_DEPLOYMENT_GPT4 || process.env.AZURE_OPENAI_DEPLOYMENT || model
 }
 
 /**
