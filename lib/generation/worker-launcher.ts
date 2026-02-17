@@ -1,5 +1,7 @@
-import { spawn } from "child_process";
+import { spawn, type StdioOptions } from "child_process";
 import { createHmac } from "crypto";
+import { closeSync, mkdirSync, openSync } from "fs";
+import path from "path";
 
 function quoteArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -22,6 +24,64 @@ function resolveLaunchCommand(runId: string): string {
     "Missing GENERATION_ONE_SHOT_LAUNCH_CMD in production. " +
       "Set a command template containing {RUN_ID}."
   );
+}
+
+type WorkerLogMode = "ignore" | "inherit" | "file";
+
+interface WorkerLogConfig {
+  stdio: StdioOptions;
+  logPath?: string;
+  cleanup?: () => void;
+}
+
+function resolveWorkerLogMode(): WorkerLogMode {
+  const defaultMode: WorkerLogMode =
+    process.env.NODE_ENV !== "production" ? "inherit" : "ignore";
+  const raw = (process.env.GENERATION_ONE_SHOT_LOG_MODE || defaultMode)
+    .trim()
+    .toLowerCase();
+
+  if (raw === "ignore" || raw === "inherit" || raw === "file") {
+    return raw;
+  }
+
+  console.warn(
+    `[worker-launcher] Invalid GENERATION_ONE_SHOT_LOG_MODE="${raw}", falling back to "${defaultMode}"`
+  );
+  return defaultMode;
+}
+
+function resolveWorkerLogConfig(runId: string): WorkerLogConfig {
+  const mode = resolveWorkerLogMode();
+
+  if (mode === "inherit") {
+    return { stdio: "inherit" };
+  }
+
+  if (mode === "file") {
+    const configuredDir =
+      process.env.GENERATION_ONE_SHOT_LOG_DIR || ".logs/generation-workers";
+    const logDir = path.isAbsolute(configuredDir)
+      ? configuredDir
+      : path.join(process.cwd(), configuredDir);
+    mkdirSync(logDir, { recursive: true });
+
+    const logPath = path.join(logDir, `${runId}.log`);
+    const fd = openSync(logPath, "a");
+    return {
+      stdio: ["ignore", fd, fd],
+      logPath,
+      cleanup: () => {
+        try {
+          closeSync(fd);
+        } catch {
+          // no-op
+        }
+      },
+    };
+  }
+
+  return { stdio: "ignore" };
 }
 
 async function launchViaWebhook(runId: string): Promise<void> {
@@ -62,45 +122,54 @@ async function launchViaWebhook(runId: string): Promise<void> {
 
 async function launchViaCommand(runId: string): Promise<void> {
   const command = resolveLaunchCommand(runId);
+  const logConfig = resolveWorkerLogConfig(runId);
+  if (logConfig.logPath) {
+    console.log(`[worker-launcher] one-shot worker log: ${logConfig.logPath}`);
+  }
+
   const child = spawn(command, {
     shell: true,
     detached: true,
-    stdio: "ignore",
+    stdio: logConfig.stdio,
     env: process.env,
   });
 
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      settled = true;
-      resolve();
-    }, 500);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        settled = true;
+        resolve();
+      }, 500);
 
-    child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
+      child.once("error", (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+
+      child.once("exit", (code, signal) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+
+        if (code && code !== 0) {
+          reject(
+            new Error(
+              `Launch command exited early with code ${code}${
+                signal ? ` (signal ${signal})` : ""
+              }`
+            )
+          );
+          return;
+        }
+        resolve();
+      });
     });
-
-    child.once("exit", (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-
-      if (code && code !== 0) {
-        reject(
-          new Error(
-            `Launch command exited early with code ${code}${
-              signal ? ` (signal ${signal})` : ""
-            }`
-          )
-        );
-        return;
-      }
-      resolve();
-    });
-  });
+  } finally {
+    logConfig.cleanup?.();
+  }
 
   child.unref();
 }
