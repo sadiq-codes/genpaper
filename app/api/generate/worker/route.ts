@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
-import { launchOneShotWorkerProcess } from "@/lib/generation/worker-launcher";
+import * as os from "os";
+import { claimGenerationJobForRun } from "@/lib/generation/job-queue";
+import { processGenerationJob } from "@/lib/generation/worker-executor";
 
 export const runtime = "nodejs";
+export const maxDuration = 900; // 15 minutes max for generation
 
 function unauthorized(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 401 });
@@ -97,9 +100,34 @@ export async function POST(request: NextRequest) {
       return badRequest("Missing runId");
     }
 
-    await launchOneShotWorkerProcess(runId);
+    // Run worker inline - await full completion
+    // Azure Container Apps supports requests up to 30 minutes
+    // maxDuration is set to 900s (15 min) above
+    const workerId = `webhook-${os.hostname()}-${process.pid}-${Date.now()}`;
+    const leaseSeconds = 300; // 5 min lease, heartbeat extends it
+    const heartbeatIntervalMs = 30000; // 30s heartbeat
 
-    return NextResponse.json({ started: true, runId }, { status: 202 });
+    // Claim the job
+    const job = await claimGenerationJobForRun(runId, workerId, leaseSeconds);
+    if (!job) {
+      return NextResponse.json(
+        { error: "No claimable job found for run", runId },
+        { status: 404 }
+      );
+    }
+
+    console.log(`[worker-route] Processing job ${job.id} for run ${runId}`);
+
+    // Await full processing - do NOT return early
+    await processGenerationJob(job, {
+      workerId,
+      leaseSeconds,
+      heartbeatIntervalMs,
+    });
+
+    console.log(`[worker-route] Completed job ${job.id} for run ${runId}`);
+
+    return NextResponse.json({ completed: true, runId, jobId: job.id }, { status: 200 });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to launch worker";

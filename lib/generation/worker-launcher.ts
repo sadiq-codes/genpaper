@@ -101,22 +101,47 @@ async function launchViaWebhook(runId: string): Promise<void> {
     .update(`${timestamp}.${payload}`)
     .digest("hex");
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      "X-Genpaper-Timestamp": timestamp,
-      "X-Genpaper-Signature": signature,
-    },
-    body: payload,
-  });
+  // Use AbortController with short timeout - we just want to confirm the webhook
+  // received the request. The actual processing happens in background.
+  const controller = new AbortController();
+  const timeoutMs = 10000; // 10 second timeout to confirm receipt
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!response.ok) {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "X-Genpaper-Timestamp": timestamp,
+        "X-Genpaper-Signature": signature,
+      },
+      body: payload,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    // 2xx = success, webhook accepted the job
+    if (response.ok) {
+      return;
+    }
+
+    // 4xx/5xx = real error
     const text = await response.text().catch(() => "");
     throw new Error(
       `Worker launch webhook failed: HTTP ${response.status}${text ? ` - ${text}` : ""}`
     );
+  } catch (error) {
+    clearTimeout(timeout);
+    
+    // AbortError means timeout - that's OK, webhook is processing
+    if (error instanceof Error && error.name === "AbortError") {
+      console.log(`[worker-launcher] Webhook timeout after ${timeoutMs}ms - job is processing`);
+      return;
+    }
+    
+    throw error;
   }
 }
 
