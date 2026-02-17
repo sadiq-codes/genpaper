@@ -107,7 +107,7 @@ export function isAzureOpenAIConfigured(): boolean {
  * Check if Azure OpenAI should be used for language models (not just embeddings)
  * Set USE_AZURE_OPENAI=true to use Azure OpenAI for all LLM calls
  */
-export function useAzureOpenAIForLLM(): boolean {
+export function shouldUseAzureOpenAIForLLM(): boolean {
   return isAzureOpenAIConfigured() && process.env.USE_AZURE_OPENAI === 'true'
 }
 

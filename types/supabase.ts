@@ -517,6 +517,9 @@ export type Database = {
           project_id: string
           paper_id: string
           quote: string
+          citation_group_id: string | null
+          citation_group_order: number | null
+          group_required: boolean
           created_at: string | null
         }
         Insert: {
@@ -524,6 +527,9 @@ export type Database = {
           project_id: string
           paper_id: string
           quote: string
+          citation_group_id?: string | null
+          citation_group_order?: number | null
+          group_required?: boolean
           created_at?: string | null
         }
         Update: {
@@ -531,6 +537,9 @@ export type Database = {
           project_id?: string
           paper_id?: string
           quote?: string
+          citation_group_id?: string | null
+          citation_group_order?: number | null
+          group_required?: boolean
           created_at?: string | null
         }
         Relationships: []

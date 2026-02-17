@@ -10,7 +10,7 @@ import {
   getAzureEmbeddingDeployment,
   isAzureOpenAIConfigured,
   isSelfHostedEmbeddingConfigured,
-  useAzureOpenAIForLLM,
+  shouldUseAzureOpenAIForLLM,
   getAzureDeploymentForModel
 } from './config'
 
@@ -37,7 +37,7 @@ function getAzureClientForLLM() {
  * Uses Azure OpenAI if USE_AZURE_OPENAI=true, otherwise OpenAI
  */
 function getLanguageModelForName(modelName: string) {
-  if (useAzureOpenAIForLLM()) {
+  if (shouldUseAzureOpenAIForLLM()) {
     const deployment = getAzureDeploymentForModel(modelName)
     return getAzureClientForLLM().languageModel(deployment)
   }

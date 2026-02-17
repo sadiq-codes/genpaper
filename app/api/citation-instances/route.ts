@@ -14,12 +14,27 @@ type CreateInstanceInput = {
   id: string
   paperId: string
   quote: string
+  citationGroupId?: string | null
+  citationGroupOrder?: number | null
+  groupRequired?: boolean
 }
 
 type CitationInstancesRequest = {
   projectId?: string
   instances?: CreateInstanceInput[]
   ids?: string[]
+}
+
+function isCitationGroupingSchemaError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const candidate = error as { code?: string; message?: string; details?: string; hint?: string }
+  const message = `${candidate.message || ''} ${candidate.details || ''} ${candidate.hint || ''}`.toLowerCase()
+  return candidate.code === 'PGRST204' &&
+    (
+      message.includes('citation_group_id') ||
+      message.includes('citation_group_order') ||
+      message.includes('group_required')
+    )
 }
 
 /**
@@ -34,7 +49,14 @@ function truncateQuote(quote: string, maxWords: number = MAX_QUOTE_WORDS): strin
 /**
  * POST - Create citation instances or fetch existing instances
  * Body for create:
- *   { projectId: string, instances: Array<{ id: string, paperId: string, quote: string }> }
+ *   { projectId: string, instances: Array<{
+ *       id: string,
+ *       paperId: string,
+ *       quote: string,
+ *       citationGroupId?: string | null,
+ *       citationGroupOrder?: number | null,
+ *       groupRequired?: boolean
+ *     }> }
  * Body for fetch:
  *   { projectId: string, ids: string[] }
  */
@@ -84,17 +106,37 @@ export async function POST(request: NextRequest) {
       }
 
       // Prepare inserts with truncated quotes
-      const inserts = validInstances.map(instance => ({
+      const baseInserts = validInstances.map(instance => ({
         id: instance.id,
         project_id: projectId,
         paper_id: instance.paperId,
         quote: truncateQuote(instance.quote)
       }))
+      const groupedInserts = validInstances.map(instance => ({
+        id: instance.id,
+        project_id: projectId,
+        paper_id: instance.paperId,
+        quote: truncateQuote(instance.quote),
+        citation_group_id: instance.citationGroupId ?? null,
+        citation_group_order:
+          typeof instance.citationGroupOrder === 'number' ? instance.citationGroupOrder : null,
+        group_required: instance.groupRequired === true,
+      }))
 
       // Insert instances (ignore duplicates)
-      const { error: insertError } = await supabase
+      let insertError: unknown = null
+      const groupedResult = await supabase
         .from('citation_instances')
-        .upsert(inserts, { onConflict: 'id', ignoreDuplicates: true })
+        .upsert(groupedInserts, { onConflict: 'id', ignoreDuplicates: true })
+      insertError = groupedResult.error
+
+      if (insertError && isCitationGroupingSchemaError(insertError)) {
+        console.warn('[citation-instances] grouping columns unavailable; retrying create without grouping metadata')
+        const fallbackResult = await supabase
+          .from('citation_instances')
+          .upsert(baseInserts, { onConflict: 'id', ignoreDuplicates: true })
+        insertError = fallbackResult.error
+      }
 
       if (insertError) {
         // If the migration for citation_instances hasn't been applied yet,
@@ -122,11 +164,33 @@ export async function POST(request: NextRequest) {
       }
 
       // Fetch instances
-      const { data: instances, error: fetchError } = await supabase
+      let instances: Array<{
+        id: string
+        quote: string
+        citation_group_id?: string | null
+        citation_group_order?: number | null
+        group_required?: boolean | null
+      }> | null = null
+      let fetchError: unknown = null
+
+      const groupedFetch = await supabase
         .from('citation_instances')
-        .select('id, paper_id, quote')
+        .select('id, paper_id, quote, citation_group_id, citation_group_order, group_required')
         .eq('project_id', projectId)
         .in('id', ids)
+      instances = groupedFetch.data
+      fetchError = groupedFetch.error
+
+      if (fetchError && isCitationGroupingSchemaError(fetchError)) {
+        console.warn('[citation-instances] grouping columns unavailable; retrying fetch without grouping metadata')
+        const fallbackFetch = await supabase
+          .from('citation_instances')
+          .select('id, paper_id, quote')
+          .eq('project_id', projectId)
+          .in('id', ids)
+        instances = fallbackFetch.data as typeof instances
+        fetchError = fallbackFetch.error
+      }
 
       if (fetchError) {
         if ((fetchError as { code?: string }).code === 'PGRST205') {
@@ -143,7 +207,10 @@ export async function POST(request: NextRequest) {
       // Return as array of {id, quote} objects (frontend expects this format)
       const instanceArray = (instances || []).map(instance => ({
         id: instance.id,
-        quote: instance.quote
+        quote: instance.quote,
+        citationGroupId: instance.citation_group_id ?? null,
+        citationGroupOrder: instance.citation_group_order ?? null,
+        groupRequired: instance.group_required ?? false,
       }))
 
       return NextResponse.json({ instances: instanceArray })

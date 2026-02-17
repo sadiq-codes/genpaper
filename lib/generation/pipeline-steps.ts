@@ -932,9 +932,22 @@ export async function runSectionRewritePhase(
 
 /**
  * Convert inline [@paperId] citations to storage format [@paperId#instanceId].
- * Also handles [@id1; @id2] multi-cite syntax by splitting into individual markers.
+ * Also handles [@id1; @id2] multi-cite syntax by splitting into individual markers
+ * while preserving grouping metadata for renderers.
  * Strips any markers referencing invalid/hallucinated paper IDs.
  */
+function isCitationGroupingSchemaError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const candidate = error as { code?: string; message?: string; details?: string; hint?: string }
+  const message = `${candidate.message || ''} ${candidate.details || ''} ${candidate.hint || ''}`.toLowerCase()
+  return candidate.code === 'PGRST204' &&
+    (
+      message.includes('citation_group_id') ||
+      message.includes('citation_group_order') ||
+      message.includes('group_required')
+    )
+}
+
 function convertInlineCitationsToStorage(
   content: string,
   validPaperIds: Set<string>
@@ -950,22 +963,30 @@ function convertInlineCitationsToStorage(
   let result = content.replace(markerRegex, (_match, inner: string) => {
     // Split on semicolons for multi-cite markers: [@id1; @id2] → two separate markers
     const ids = inner.split(/;\s*@?/).map((s: string) => s.replace(/^@/, '').trim()).filter(Boolean)
+    const validIds = ids.filter((paperId) => validPaperIds.has(paperId))
     
+    // If all IDs were invalid, remove the marker entirely
+    if (validIds.length === 0) return ''
+
+    const isGroupedMultiCite = validIds.length > 1
+    const citationGroupId = isGroupedMultiCite ? uuidv4() : null
     const replacements: string[] = []
-    for (const paperId of ids) {
-      if (!validPaperIds.has(paperId)) continue // Strip hallucinated IDs
-      
+    for (let index = 0; index < validIds.length; index++) {
+      const paperId = validIds[index]!
       const instanceId = uuidv4()
       instances.push({
         instanceId,
         paperId,
         quote: '',
+        citationGroupId,
+        citationGroupOrder: citationGroupId ? index : null,
+        groupRequired: isGroupedMultiCite,
       })
       replacements.push(`[@${paperId}#${instanceId}]`)
     }
     
-    // If all IDs were invalid, remove the marker entirely
-    return replacements.length > 0 ? replacements.join('') : ''
+    // Preserve explicit multi-cite intent in text layout.
+    return isGroupedMultiCite ? replacements.join('; ') : replacements[0]!
   })
   
   // Clean up double spaces
@@ -1030,22 +1051,48 @@ export async function runFinalizePhase(
       
       // Insert new instances.
       // Use the instanceId as the primary key `id` so markers in content match rows.
-      const instanceRecords = citationInstances.map(inst => ({
+      const baseInstanceRecords = citationInstances.map(inst => ({
         project_id: projectId,
         id: inst.instanceId,
         paper_id: inst.paperId,
         quote: inst.quote
       }))
+      const groupedInstanceRecords = citationInstances.map(inst => ({
+        project_id: projectId,
+        id: inst.instanceId,
+        paper_id: inst.paperId,
+        quote: inst.quote,
+        citation_group_id: inst.citationGroupId ?? null,
+        citation_group_order:
+          typeof inst.citationGroupOrder === 'number' ? inst.citationGroupOrder : null,
+        group_required: inst.groupRequired === true,
+      }))
       
       // Batch inserts to avoid request size/timeouts for large papers.
       const BATCH_SIZE = 500
-      for (let i = 0; i < instanceRecords.length; i += BATCH_SIZE) {
-        const batch = instanceRecords.slice(i, i + BATCH_SIZE)
-        const { error } = await supabase
-          .from('citation_instances')
-          .insert(batch)
-        if (error) {
-          throw error
+      const insertInBatches = async (records: typeof groupedInstanceRecords | typeof baseInstanceRecords) => {
+        for (let i = 0; i < records.length; i += BATCH_SIZE) {
+          const batch = records.slice(i, i + BATCH_SIZE)
+          const { error } = await supabase
+            .from('citation_instances')
+            .insert(batch)
+          if (error) {
+            throw error
+          }
+        }
+      }
+
+      try {
+        await insertInBatches(groupedInstanceRecords)
+      } catch (insertError) {
+        if (isCitationGroupingSchemaError(insertError)) {
+          warn(
+            { error: insertError },
+            'citation grouping columns unavailable; retrying citation instance save without grouping metadata'
+          )
+          await insertInBatches(baseInstanceRecords)
+        } else {
+          throw insertError
         }
       }
     } catch (err) {
