@@ -375,6 +375,7 @@ export function DocumentEditor({
 
   // Track what we last processed to avoid redundant re-renders
   const [processedKey, setProcessedKey] = useState<string>('')
+  const pendingProcessedKeyRef = useRef<string | null>(null)
   
   // Set initial content after editor is created - handles markdown processing
   useEffect(() => {
@@ -385,7 +386,8 @@ export function DocumentEditor({
     // Do not key this by papers, otherwise late paper-sync updates can
     // overwrite in-progress user edits by reapplying initial content.
     const key = `${initialContent.length}:${initialContent.slice(0, 80)}:${initialContent.slice(-80)}`
-    if (processedKey === key) return
+    if (processedKey === key || pendingProcessedKeyRef.current === key) return
+    pendingProcessedKeyRef.current = key
     
     // Process and set the initial content
     const processed = processInitialContent(initialContent, papers)
@@ -415,10 +417,29 @@ export function DocumentEditor({
       })
     }
     
-    // Set the processed content, then apply citation style to build numbers
-    editor.commands.setContent(processed)
-    editor.commands.setCitationStyle(citationStyle)
-    setProcessedKey(key)
+    // Defer content application to a microtask to avoid React lifecycle flush warnings.
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      if (!editor || editor.isDestroyed) {
+        if (pendingProcessedKeyRef.current === key) {
+          pendingProcessedKeyRef.current = null
+        }
+        return
+      }
+      // Skip stale scheduled work if a newer content key superseded this one.
+      if (pendingProcessedKeyRef.current !== key) return
+
+      // Set the processed content, then apply citation style to build numbers.
+      editor.commands.setContent(processed)
+      editor.commands.setCitationStyle(citationStyle)
+      setProcessedKey(key)
+      pendingProcessedKeyRef.current = null
+    })
+
+    return () => {
+      cancelled = true
+    }
   }, [editor, initialContent, papers, processedKey, processInitialContent, citationStyle])
 
   // Track previous and latest citation style to avoid stale async style-load races.

@@ -21,8 +21,8 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
-    "worker:generation": "bun scripts/generation-worker.ts",
-    "worker:generation:once": "bun scripts/generation-worker-once.ts",
+    "worker:generation": "bun --conditions react-server scripts/generation-worker.ts",
+    "worker:generation:once": "bun --conditions react-server scripts/generation-worker-once.ts",
     "types:generate": "supabase gen types typescript --linked > types/supabase.ts",
     "backfill-embeddings": "curl -X POST http://localhost:3000/api/backfill-embeddings",
     "postinstall": "cp node_modules/@dqbd/tiktoken/tiktoken_bg.wasm public/ 2>/dev/null || true"

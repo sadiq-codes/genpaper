@@ -139,8 +139,8 @@ let contextBuilderInstance: ContextBuilder | null = null
 
 // Generation-specific diversity controls.
 // Keep stricter than chat/editor so long-form papers cite a broader source base.
-const GENERATION_MAX_CHUNKS_PER_PAPER = 3
-const GENERATION_MIN_DISTINCT_PAPERS = 10
+const GENERATION_MAX_CHUNKS_PER_PAPER = 5
+const GENERATION_MIN_DISTINCT_PAPERS = 8
 
 function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
   // Create or update retriever with current params

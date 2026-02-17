@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
-import { launchOneShotWorkerProcess } from "@/lib/generation/worker-launcher";
+import os from "os";
 
 export const runtime = "nodejs";
+export const maxDuration = 900; // 15 minutes max for generation
 
 function unauthorized(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 401 });
@@ -97,12 +98,37 @@ export async function POST(request: NextRequest) {
       return badRequest("Missing runId");
     }
 
-    await launchOneShotWorkerProcess(runId);
+    // Run the worker inline (not spawning a process)
+    // This works because Azure Container App supports long-running requests
+    const workerId = `worker-${os.hostname()}-${process.pid}-${Date.now()}`;
+    
+    // Import dynamically to avoid loading heavy deps at module level
+    const { claimGenerationJobForRun } = await import("@/lib/generation/job-queue");
+    const { processGenerationJob } = await import("@/lib/generation/worker-executor");
 
-    return NextResponse.json({ started: true, runId }, { status: 202 });
+    const leaseSeconds = Number(process.env.GENERATION_WORKER_LEASE_SECONDS || 180);
+    const heartbeatIntervalMs = Number(process.env.GENERATION_WORKER_HEARTBEAT_MS || 20000);
+
+    const job = await claimGenerationJobForRun(runId, workerId, leaseSeconds);
+    if (!job) {
+      return NextResponse.json(
+        { error: "No claimable job found for run", runId },
+        { status: 404 }
+      );
+    }
+
+    // Process the job inline (this can take 10-15 minutes)
+    await processGenerationJob(job, {
+      workerId,
+      leaseSeconds,
+      heartbeatIntervalMs,
+    });
+
+    return NextResponse.json({ completed: true, runId }, { status: 200 });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to launch worker";
+      error instanceof Error ? error.message : "Failed to process generation";
+    console.error(`[worker-route] Error processing run: ${message}`);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

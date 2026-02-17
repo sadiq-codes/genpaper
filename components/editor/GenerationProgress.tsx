@@ -249,6 +249,7 @@ export function GenerationProgress({
 
   const eventSourceRef = useRef<EventSource | null>(null)
   const hasCompletedRef = useRef(false)
+  const completionNotifiedRef = useRef(false)
   const isStartingRef = useRef(false)
   
   // Use refs for values needed in callbacks to avoid recreating callbacks
@@ -305,6 +306,7 @@ export function GenerationProgress({
       // Handle already complete case
       if (data.status === 'already_complete' && data.content) {
         hasCompletedRef.current = true
+        completionNotifiedRef.current = true
         dispatch({ type: 'COMPLETE' })
         onComplete(data.content)
         return
@@ -344,6 +346,8 @@ export function GenerationProgress({
     // For now, the server will send all events and we filter client-side if needed
 
     eventSource.onmessage = (event) => {
+      if (hasCompletedRef.current || completionNotifiedRef.current) return
+
       try {
         // Parse event ID for idempotency and resume support
         let eventId: number | undefined
@@ -428,21 +432,31 @@ export function GenerationProgress({
             break
 
           case 'complete':
+            if (completionNotifiedRef.current) break
             hasCompletedRef.current = true
+            completionNotifiedRef.current = true
+            eventSource.close()
+            eventSourceRef.current = null
             dispatch({ type: 'COMPLETE', payload: { eventId } })
             setTimeout(() => {
               onComplete(data.content)
-            }, 500)
+            }, 0)
             break
 
           case 'error':
             hasCompletedRef.current = true
+            completionNotifiedRef.current = true
+            eventSource.close()
+            eventSourceRef.current = null
             dispatch({ type: 'ERROR', payload: { error: data.message, eventId } })
             onError(data.message)
             break
 
           case 'cancelled':
             hasCompletedRef.current = true
+            completionNotifiedRef.current = true
+            eventSource.close()
+            eventSourceRef.current = null
             dispatch({ type: 'ERROR', payload: { error: 'Generation was cancelled', eventId } })
             onError('Generation was cancelled')
             break
@@ -552,6 +566,7 @@ export function GenerationProgress({
       // Case 2: Generation already completed
       if (status.status === 'completed' && status.content) {
         hasCompletedRef.current = true
+        completionNotifiedRef.current = true
         dispatch({ type: 'COMPLETE' })
         onComplete(status.content)
         // Clean up localStorage
@@ -649,16 +664,19 @@ export function GenerationProgress({
               if (status.status === 'completed' && status.content) {
                 // Generation completed while we were away
                 hasCompletedRef.current = true
+                completionNotifiedRef.current = true
                 dispatch({ type: 'COMPLETE' })
                 onComplete(status.content)
                 return
               } else if (status.status === 'failed') {
                 hasCompletedRef.current = true
+                completionNotifiedRef.current = true
                 dispatch({ type: 'ERROR', payload: { error: status.errorMessage || 'Generation failed' } })
                 onError(status.errorMessage || 'Generation failed')
                 return
               } else if (status.status === 'cancelled') {
                 hasCompletedRef.current = true
+                completionNotifiedRef.current = true
                 dispatch({ type: 'ERROR', payload: { error: 'Generation was cancelled' } })
                 onError('Generation was cancelled')
                 return

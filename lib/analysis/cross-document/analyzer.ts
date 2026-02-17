@@ -160,6 +160,7 @@ type AnalysisObject = z.infer<typeof _AnalysisSchema>
 const ANALYSIS_PART_MAX_OUTPUT_TOKENS = 2200
 const ANALYSIS_PART_RETRY_MAX_OUTPUT_TOKENS = 3200
 const ANALYSIS_PART_FINAL_RETRY_MAX_OUTPUT_TOKENS = 4200
+const ANALYSIS_PART_TIMEOUT_MS = Number(process.env.ANALYSIS_PART_TIMEOUT_MS || 120000)
 const MAX_CLAIM_CHARS = 220
 const MAX_EVIDENCE_CHARS = 160
 const MAX_CONTEXT_CHARS = 110
@@ -225,6 +226,16 @@ function isLikelyLengthOrParseTruncation(error: unknown): boolean {
     text.includes('no object generated')
 }
 
+function isLikelyTimeoutOrAbort(error: unknown): boolean {
+  const text = getErrorText(error).toLowerCase()
+  return (
+    text.includes('aborterror') ||
+    text.includes('aborted') ||
+    text.includes('timeout') ||
+    text.includes('timed out')
+  )
+}
+
 async function generateAnalysisPartWithRetry<T>(
   schema: z.ZodType<T>,
   findings: FindingWithPaper[],
@@ -248,6 +259,8 @@ Only return JSON matching the provided schema.`
 
   for (let attempt = 0; attempt < tokenBudgets.length; attempt++) {
     const maxOutputTokens = tokenBudgets[attempt]
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), ANALYSIS_PART_TIMEOUT_MS)
     try {
       const { object } = await generateObject({
         model: getLanguageModel(),
@@ -256,16 +269,30 @@ Only return JSON matching the provided schema.`
         prompt,
         temperature: 0.2,
         maxOutputTokens,
+        abortSignal: controller.signal,
       })
       return object
     } catch (error) {
       lastError = error
-      const canRetry = attempt < tokenBudgets.length - 1 && isLikelyLengthOrParseTruncation(error)
+      const canRetryReason =
+        isLikelyLengthOrParseTruncation(error) ||
+        isLikelyTimeoutOrAbort(error)
+      const canRetry = attempt < tokenBudgets.length - 1 && canRetryReason
       if (canRetry) {
-        console.warn(`⚠️ ${scope} (${partName}) produced truncated/invalid JSON at ${maxOutputTokens} tokens; retrying with ${tokenBudgets[attempt + 1]} tokens`)
+        if (isLikelyTimeoutOrAbort(error)) {
+          console.warn(
+            `⚠️ ${scope} (${partName}) timed out at ${ANALYSIS_PART_TIMEOUT_MS}ms; retrying with ${tokenBudgets[attempt + 1]} tokens`
+          )
+        } else {
+          console.warn(
+            `⚠️ ${scope} (${partName}) produced truncated/invalid JSON at ${maxOutputTokens} tokens; retrying with ${tokenBudgets[attempt + 1]} tokens`
+          )
+        }
         continue
       }
       throw error
+    } finally {
+      clearTimeout(timeout)
     }
   }
 

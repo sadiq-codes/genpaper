@@ -113,6 +113,7 @@ export function ResearchEditor({
   const [currentTitle, setCurrentTitle] = useState(projectTitle)
   const [generatedContentOverride, setGeneratedContentOverride] = useState<string | null>(null)
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
+  const lastGenerationCompleteRef = useRef<{ key: string; at: number } | null>(null)
   const { subscription, refresh: refreshSubscription } = useSubscription()
   // Default to locked while subscription is loading — unlocks once tier is confirmed
   const exportLocked = !subscription || subscription.tier === 'free'
@@ -423,6 +424,21 @@ export function ResearchEditor({
   // Handle generation completion
   const handleGenerationComplete = useCallback(
     async (generatedContent: string) => {
+      const completionKey = `${generatedContent.length}:${generatedContent.slice(0, 120)}:${generatedContent.slice(-120)}`
+      const now = Date.now()
+      const lastCompletion = lastGenerationCompleteRef.current
+
+      // Ignore duplicate completion callbacks for the same payload in a short window.
+      if (
+        lastCompletion &&
+        lastCompletion.key === completionKey &&
+        now - lastCompletion.at < 15000
+      ) {
+        return
+      }
+      lastGenerationCompleteRef.current = { key: completionKey, at: now }
+
+      try {
       // Ensure DocumentEditor always has a concrete content source, even if the TipTap
       // instance is not ready yet at completion time.
       setGeneratedContentOverride(generatedContent)
@@ -464,7 +480,6 @@ export function ResearchEditor({
       }
 
       // Stop the generation overlay only after the content has been applied.
-      setIsGenerating(false)
       toast.success("Paper generated successfully!")
 
       // Collapse sidebar so the user sees the full generated document
@@ -531,6 +546,13 @@ export function ResearchEditor({
             }
           }
         })()
+      }
+      } catch (err) {
+        console.error('[Generation] Failed to apply generated content:', err)
+        toast.error('Paper was generated, but applying it to the editor failed.')
+      } finally {
+        // Always close the generation overlay, even if editor sync throws.
+        setIsGenerating(false)
       }
     },
     [editor, papers, projectId, setPapers, setContentSilent, markAsEdited, refreshSubscription]
