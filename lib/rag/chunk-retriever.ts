@@ -48,6 +48,10 @@ export interface RetrievalConfig {
   rerankTopK: number
   /** Maximum tokens for evidence - the primary limit (replaces chunk count limits) */
   maxEvidenceTokens: number
+  /** Hard cap on chunks from the same paper to prevent source domination */
+  maxChunksPerPaper: number
+  /** Target number of distinct papers to prioritize before extra chunks */
+  minDistinctPapers: number
 }
 
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
@@ -66,7 +70,11 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   // Token budget for evidence - this is the primary limit
   // 25000 tokens ≈ 50-100 chunks depending on size
   // Leaves room for system prompt, output, and section context
-  maxEvidenceTokens: 25000
+  maxEvidenceTokens: 25000,
+  // Keep defaults conservative for shared retriever consumers (chat/editor).
+  // Generation enables stricter diversity explicitly in GenerationContextService.
+  maxChunksPerPaper: 0,
+  minDistinctPapers: 1
 }
 
 export interface RetrievalRequest {
@@ -165,7 +173,12 @@ export class ChunkRetriever {
       rerankTime = Date.now() - rerankStart
     }
     
-    // Step 4: Select chunks by token budget (semantic relevance is primary filter)
+    // Step 4: Apply diversity controls before token-budget selection.
+    // This addresses root citation-collapse failures where a few papers dominate context.
+    chunks = this.applyPerPaperCap(chunks, config.maxChunksPerPaper)
+    chunks = this.prioritizeDistinctPapers(chunks, config.minDistinctPapers)
+
+    // Step 5: Select chunks by token budget (semantic relevance is primary filter)
     const { selected, totalTokens } = this.selectByTokenBudget(chunks, config)
     chunks = selected
     
@@ -225,6 +238,8 @@ export class ChunkRetriever {
     
     // Deduplicate and select by token budget
     chunks = deduplicateChunks(chunks)
+    chunks = this.applyPerPaperCap(chunks, mergedConfig.maxChunksPerPaper)
+    chunks = this.prioritizeDistinctPapers(chunks, mergedConfig.minDistinctPapers)
     const { selected, totalTokens } = this.selectByTokenBudget(chunks, mergedConfig)
     
     const uniquePapers = new Set(selected.map(c => c.paper_id)).size
@@ -278,6 +293,59 @@ export class ChunkRetriever {
     
     return { selected, totalTokens }
   }
+
+  /**
+   * Enforce a hard cap of chunks per paper while preserving relevance order.
+   */
+  private applyPerPaperCap(
+    chunks: RetrievedChunk[],
+    maxChunksPerPaper: number
+  ): RetrievedChunk[] {
+    if (maxChunksPerPaper <= 0) return chunks
+
+    const perPaperCounts = new Map<string, number>()
+    const capped: RetrievedChunk[] = []
+
+    for (const chunk of chunks) {
+      const current = perPaperCounts.get(chunk.paper_id) || 0
+      if (current >= maxChunksPerPaper) continue
+      capped.push(chunk)
+      perPaperCounts.set(chunk.paper_id, current + 1)
+    }
+
+    return capped
+  }
+
+  /**
+   * Reorder chunks so one high-signal chunk from many papers appears first.
+   * Extras remain, but only after this diversity-first frontier.
+   */
+  private prioritizeDistinctPapers(
+    chunks: RetrievedChunk[],
+    minDistinctPapers: number
+  ): RetrievedChunk[] {
+    if (chunks.length === 0 || minDistinctPapers <= 1) return chunks
+
+    const firstByPaper = new Map<string, RetrievedChunk>()
+    const remaining: RetrievedChunk[] = []
+
+    for (const chunk of chunks) {
+      if (!firstByPaper.has(chunk.paper_id)) {
+        firstByPaper.set(chunk.paper_id, chunk)
+      } else {
+        remaining.push(chunk)
+      }
+    }
+
+    const uniqueFirstChunks = Array.from(firstByPaper.values())
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+
+    const diverseFrontier = uniqueFirstChunks.slice(0, minDistinctPapers)
+    const selectedSet = new Set<RetrievedChunk>(diverseFrontier)
+
+    const tail = chunks.filter(chunk => !selectedSet.has(chunk))
+    return [...diverseFrontier, ...tail]
+  }
   
   // ===========================================================================
   // PRIVATE METHODS
@@ -291,7 +359,7 @@ export class ChunkRetriever {
     paperIds: string[], 
     config: RetrievalConfig
   ): Promise<RetrievedChunk[]> {
-    // Use service client to bypass RLS - this runs in Inngest background jobs
+    // Use service client to bypass RLS - this runs in background generation jobs
     const supabase = createServiceClient()
     
     switch (config.mode) {

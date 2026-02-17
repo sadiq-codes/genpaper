@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateUser } from "@/lib/services/project-service";
 import { getRun, emitCancelled } from "@/lib/generation/run-manager";
-import { inngest } from "@/lib/inngest/client";
+import { cancelGenerationJobForRun } from "@/lib/generation/job-queue";
 import { warn, error as logError } from "@/lib/utils/logger";
 
 export const runtime = "nodejs";
@@ -96,14 +96,7 @@ export async function POST(
     // Cancel the run
     await emitCancelled(runId);
 
-    // Send cancel event to Inngest
-    await inngest.send({
-      name: "paper/generation.cancel",
-      data: {
-        runId,
-        projectId: run.project_id,
-      },
-    });
+    await cancelGenerationJobForRun(runId);
 
     if (isDev) {
       console.log("Cancelled generation run:", runId);

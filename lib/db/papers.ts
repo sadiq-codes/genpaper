@@ -687,7 +687,7 @@ export async function checkPaperExists(
     userOnly?: boolean
   }
 ): Promise<{ exists: boolean, paperId?: string, isGlobal?: boolean }> {
-  // Use service client to bypass RLS - this is called from Inngest background jobs
+  // Use service client to bypass RLS - this is called from background generation jobs
   const supabase = getServiceClient()
   
   const { ownerId, globalOnly, userOnly } = options || {}

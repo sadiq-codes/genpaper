@@ -26,7 +26,7 @@ export interface CitationLogEntry {
  * Log a single chunk citation.
  */
 export async function logChunkCitation(entry: CitationLogEntry): Promise<void> {
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   const supabase = createServiceClient()
   
   const { error } = await supabase.rpc('log_chunk_citation', {
@@ -70,7 +70,7 @@ export async function logChunkCitations(entries: CitationLogEntry[]): Promise<vo
     console.log(`📊 Filtered ${entries.length - validEntries.length} abstract fallback chunks from citation logging`)
   }
   
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   const supabase = createServiceClient()
   
   // Use batch insert for efficiency
@@ -135,7 +135,7 @@ export async function getChunkCitationStats(
 ): Promise<Map<string, { totalCitations: number; uniqueProjects: number }>> {
   if (chunkIds.length === 0) return new Map()
   
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   const supabase = createServiceClient()
   
   const { data, error } = await supabase
@@ -164,7 +164,7 @@ export async function getChunkCitationStats(
  * Should be called periodically (e.g., after bulk generation).
  */
 export async function refreshCitationStats(): Promise<void> {
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   const supabase = createServiceClient()
   
   const { error } = await supabase.rpc('refresh_chunk_citation_stats')

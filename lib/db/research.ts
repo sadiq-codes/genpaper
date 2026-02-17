@@ -117,7 +117,7 @@ export async function savePartialContent(
   content: string,
   completedSections: number
 ): Promise<void> {
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   const supabase = createServiceClient()
   
   // Use a lightweight update - just content
@@ -153,7 +153,7 @@ export async function updateProjectContent(
   content: string,
   citations?: Record<string, { paperId: string; citationText: string }>
 ): Promise<void> {
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   // where there's no user session context
   const serviceClient = createServiceClient()
   
@@ -226,7 +226,7 @@ export async function updateProjectContent(
   
   if (citationInserts.length > 0) {
     // Use service client to bypass RLS for citation inserts
-    // This is needed when running in background jobs (Inngest) where no user session exists
+    // This is needed when running in background jobs where no user session exists
     const serviceClient = createServiceClient()
     
     const { error: citationError } = await serviceClient
@@ -313,7 +313,7 @@ export async function updateResearchProjectStatus(
   status: PaperStatus,
   completedAt?: string
 ): Promise<void> {
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   // where there's no user session context
   const serviceClient = createServiceClient()
   const updateData: { status: PaperStatus; completed_at?: string } = { status }
@@ -338,7 +338,7 @@ export async function updateProjectVoiceProfile(
   projectId: string,
   voiceProfileId: string
 ): Promise<void> {
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   const supabase = createServiceClient()
   
   // First get existing generation_config to merge

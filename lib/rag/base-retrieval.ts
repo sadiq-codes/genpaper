@@ -180,7 +180,7 @@ export async function fetchPaperMetadata(
   
   if (paperIds.length === 0) return papers
   
-  // Use service client to bypass RLS - this runs in Inngest background jobs
+  // Use service client to bypass RLS - this runs in background generation jobs
   const sb = supabase || createServiceClient()
   
   const { data, error } = await sb

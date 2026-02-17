@@ -181,7 +181,7 @@ async function getFullTextExcerpts(
   }
   
   try {
-    // Use service client to bypass RLS - this runs in Inngest background jobs
+    // Use service client to bypass RLS - this runs in background generation jobs
     const supabase = createServiceClient()
     
     // Get chunks for these papers, filtering for substantial content

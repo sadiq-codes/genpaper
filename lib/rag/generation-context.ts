@@ -137,6 +137,11 @@ function evictIfNeeded(): void {
 let retrieverInstance: ChunkRetriever | null = null
 let contextBuilderInstance: ContextBuilder | null = null
 
+// Generation-specific diversity controls.
+// Keep stricter than chat/editor so long-form papers cite a broader source base.
+const GENERATION_MAX_CHUNKS_PER_PAPER = 3
+const GENERATION_MIN_DISTINCT_PAPERS = 10
+
 function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
   // Create or update retriever with current params
   // Uses token-based limits - semantic relevance is the primary filter
@@ -145,14 +150,17 @@ function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
     vectorWeight: params.vectorWeight || 0.7,
     // Relevance threshold - primary quality filter
     minScore: params.minScore || 0.15,
-    // Large candidate pool for reranking
-    retrieveLimit: 200,
+    // Candidate pool for reranking
+    retrieveLimit: 140,
     useCitationBoost: params.useCitationBoost ?? true,
     useReranking: params.useReranking ?? true,
-    // Rerank more candidates for better selection
-    rerankTopK: params.rerankTopK || 100,
+    // Rerank top candidates for better selection
+    rerankTopK: params.rerankTopK || 60,
     // Token budget for evidence - replaces arbitrary chunk limits
-    maxEvidenceTokens: params.maxEvidenceTokens || 25000
+    maxEvidenceTokens: params.maxEvidenceTokens || 25000,
+    // Root fix for citation collapse: constrain per-paper dominance in generation RAG.
+    maxChunksPerPaper: GENERATION_MAX_CHUNKS_PER_PAPER,
+    minDistinctPapers: GENERATION_MIN_DISTINCT_PAPERS,
   }
   
   if (!retrieverInstance) {
@@ -477,7 +485,7 @@ export class GenerationContextService {
         contextChunks = await this.getRelevantChunks(
           `${section.title}: ${(section.keyPoints || []).join('. ')}`,
           allPaperIds,
-          200, // Large pool - token budget determines final selection
+          120, // Larger-than-final pool - token budget determines final selection
           allPapers
         )
         

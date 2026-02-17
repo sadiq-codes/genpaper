@@ -80,7 +80,7 @@ CREATE POLICY "Users can insert events for own runs"
     )
   );
 
--- Service role needs full access for background jobs (Inngest)
+-- Service role needs full access for background jobs
 -- This is handled by using service role key in server-side code
 
 -- Function to get events after a given ID (for Last-Event-ID support)

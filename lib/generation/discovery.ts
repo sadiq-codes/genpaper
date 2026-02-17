@@ -282,7 +282,7 @@ export async function collectPapers(
 /** Count full-text chunks for a paper (excluding abstracts) */
 async function getChunkCount(paperId: string): Promise<number> {
   try {
-    // Use service client to bypass RLS - this runs in Inngest background jobs
+    // Use service client to bypass RLS - this runs in background generation jobs
     const sb = createServiceClient()
     
     // First check if the paper exists in the database at all

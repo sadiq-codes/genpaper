@@ -1,8 +1,8 @@
 /**
- * Pipeline Steps for Inngest Multi-Step Execution
+ * Pipeline Steps for Background Generation Execution
  * 
  * This module exports individual phase functions that can be called
- * from separate Inngest steps, allowing long-running paper generation
+ * from separate persisted steps, allowing long-running paper generation
  * to work within Vercel's 60-second function timeout.
  * 
  * Each function is designed to:
@@ -375,8 +375,8 @@ export async function runPreflightContentPhase(
  * Analyze all findings after extraction is complete
  * Estimated time: 20-40s (single LLM call for analysis)
  */
-const MAX_ANALYSIS_FINDINGS_TOTAL = 360
-const MAX_ANALYSIS_FINDINGS_PER_PAPER = 8
+const MAX_ANALYSIS_FINDINGS_TOTAL = 240
+const MAX_ANALYSIS_FINDINGS_PER_PAPER = 6
 const MIN_ANALYSIS_FINDINGS_PER_PAPER = 2
 
 function scoreFindingForAnalysis(finding: FindingWithPaper): number {
@@ -716,12 +716,36 @@ export async function runSectionGenerationPhase(
 
 const OVERLAP_THRESHOLD = 0.22
 
+function isLikelyCompleteMarkdownLine(line: string): boolean {
+  if (!line) return false
+
+  // List entries often end without sentence punctuation.
+  if (/^[-*+]\s+\S+/.test(line) || /^\d+\.\s+\S+/.test(line)) return true
+
+  // Table rows and fenced block delimiters are valid endings.
+  if (/^\|.*\|$/.test(line) || /^```/.test(line)) return true
+
+  // A heading at end can be intentional for generated subsection scaffolds.
+  if (/^#{1,6}\s+\S+/.test(line)) return true
+
+  return false
+}
+
 function hasLikelyTruncatedEnding(content: string): boolean {
   const trimmed = content.trim()
   if (!trimmed) return false
   const withoutCitations = trimmed.replace(/(?:\s*\[@[^\]]+\]\s*)+$/g, '').trim()
   if (!withoutCitations) return false
-  const lastChar = withoutCitations.slice(-1)
+
+  const lines = withoutCitations
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+  const lastLine = lines[lines.length - 1] || ''
+
+  if (isLikelyCompleteMarkdownLine(lastLine)) return false
+
+  const lastChar = lastLine.slice(-1)
   // Accept sentence punctuation, table delimiters, and common closing delimiters.
   return !/[.!?;:|)\]"'`]/.test(lastChar)
 }

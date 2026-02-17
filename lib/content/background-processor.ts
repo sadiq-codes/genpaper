@@ -26,6 +26,112 @@ export interface ProcessingResult {
   error?: string
 }
 
+const RETRY_BASE_DELAY_MS = 1500
+const RETRY_MAX_DELAY_MS = 12000
+const DOWNLOAD_MAX_ATTEMPTS = 3
+const EXTRACTION_MAX_ATTEMPTS = 3
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function getStatusCodeFromError(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+
+  const err = error as {
+    status?: unknown
+    statusCode?: unknown
+    cause?: unknown
+  }
+
+  if (typeof err.status === 'number') return err.status
+  if (typeof err.statusCode === 'number') return err.statusCode
+
+  if (err.cause && typeof err.cause === 'object') {
+    const cause = err.cause as { status?: unknown; statusCode?: unknown }
+    if (typeof cause.status === 'number') return cause.status
+    if (typeof cause.statusCode === 'number') return cause.statusCode
+  }
+
+  const message = error instanceof Error ? error.message : String(error)
+  const statusMatch = message.match(/\b([45]\d{2})\b/)
+  if (statusMatch) {
+    const parsed = Number(statusMatch[1])
+    if (Number.isFinite(parsed)) return parsed
+  }
+
+  return undefined
+}
+
+function isTransientProcessingError(error: unknown): boolean {
+  const statusCode = getStatusCodeFromError(error)
+  if (typeof statusCode === 'number') {
+    if (statusCode === 408 || statusCode === 425 || statusCode === 429 || statusCode >= 500) {
+      return true
+    }
+    if (statusCode >= 400 && statusCode < 500) {
+      return false
+    }
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  if (
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('network') ||
+    message.includes('fetch failed') ||
+    message.includes('socket') ||
+    message.includes('econnreset') ||
+    message.includes('etimedout') ||
+    message.includes('temporar') ||
+    message.includes('rate limit') ||
+    message.includes('retry later')
+  ) {
+    return true
+  }
+
+  if (
+    message.includes('not found') ||
+    message.includes('404') ||
+    message.includes('forbidden') ||
+    message.includes('unauthorized') ||
+    message.includes('invalid')
+  ) {
+    return false
+  }
+
+  return false
+}
+
+async function withTransientRetries<T>(
+  operationName: string,
+  paperId: string,
+  operation: () => Promise<T>,
+  maxAttempts: number
+): Promise<T> {
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation()
+    } catch (error) {
+      lastError = error
+      const transient = isTransientProcessingError(error)
+      if (!transient || attempt === maxAttempts) {
+        throw error
+      }
+
+      const retryDelayMs = Math.min(RETRY_BASE_DELAY_MS * (2 ** (attempt - 1)), RETRY_MAX_DELAY_MS)
+      console.warn(
+        `[BackgroundProcessor] ${operationName} attempt ${attempt}/${maxAttempts} failed for ${paperId}, retrying in ${retryDelayMs}ms`
+      )
+      await sleep(retryDelayMs)
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`${operationName} failed`)
+}
+
 /**
  * Process a single paper - extract PDF content, create chunks, generate embeddings
  */
@@ -76,14 +182,23 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
     // 6. Download PDF from storage
     let pdfBuffer: Buffer
     try {
-      pdfBuffer = await downloadPdf(paper.pdf_url)
+      pdfBuffer = await withTransientRetries(
+        'PDF download',
+        paperId,
+        () => downloadPdf(paper.pdf_url as string),
+        DOWNLOAD_MAX_ATTEMPTS
+      )
     } catch (downloadError) {
       console.error(`[BackgroundProcessor] Failed to download PDF for ${paperId}:`, downloadError)
+      const statusCode = getStatusCodeFromError(downloadError)
       await supabase
         .from('papers')
         .update({ processing_status: 'failed' })
         .eq('id', paperId)
-      return { paperId, status: 'failed', error: 'Failed to download PDF' }
+      const errorDetail = statusCode
+        ? `Failed to download PDF (HTTP ${statusCode})`
+        : 'Failed to download PDF'
+      return { paperId, status: 'failed', error: errorDetail }
     }
     
     // 7. Extract text and metadata from PDF
@@ -98,7 +213,12 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
     } = {}
     
     try {
-      const extractionResult = await extractPdfMetadataTiered(pdfBuffer, { enableOcr: true })
+      const extractionResult = await withTransientRetries(
+        'PDF text extraction',
+        paperId,
+        () => extractPdfMetadataTiered(pdfBuffer, { enableOcr: true }),
+        EXTRACTION_MAX_ATTEMPTS
+      )
       extractedText = extractionResult.fullText || ''
       
       // Capture extracted metadata for updating paper record
@@ -122,11 +242,15 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
       }
     } catch (extractionError) {
       console.error(`[BackgroundProcessor] Text extraction failed for ${paperId}:`, extractionError)
+      const statusCode = getStatusCodeFromError(extractionError)
       await supabase
         .from('papers')
         .update({ processing_status: 'failed' })
         .eq('id', paperId)
-      return { paperId, status: 'failed', error: 'Text extraction failed' }
+      const errorDetail = statusCode
+        ? `Text extraction failed (HTTP ${statusCode})`
+        : 'Text extraction failed'
+      return { paperId, status: 'failed', error: errorDetail }
     }
     
     // 8. Save extracted content AND metadata to paper record
@@ -314,7 +438,13 @@ async function downloadPdfFromSupabase(pdfUrl: string): Promise<Buffer> {
     .download(storagePath)
   
   if (error || !data) {
-    throw new Error(`Storage download failed: ${error?.message || 'No data returned'}`)
+    const wrappedError = new Error(`Storage download failed: ${error?.message || 'No data returned'}`) as Error & { status?: number }
+    const statusCode = (error as { statusCode?: unknown; status?: unknown } | null | undefined)?.statusCode
+      ?? (error as { statusCode?: unknown; status?: unknown } | null | undefined)?.status
+    if (typeof statusCode === 'number' && Number.isFinite(statusCode)) {
+      wrappedError.status = statusCode
+    }
+    throw wrappedError
   }
   
   const arrayBuffer = await data.arrayBuffer()
@@ -330,7 +460,9 @@ async function downloadPdfFromUrl(pdfUrl: string): Promise<Buffer> {
   })
   
   if (!response.ok) {
-    throw new Error(`External PDF download failed: ${response.status} ${response.statusText}`)
+    const wrappedError = new Error(`External PDF download failed: ${response.status} ${response.statusText}`) as Error & { status?: number }
+    wrappedError.status = response.status
+    throw wrappedError
   }
   
   const arrayBuffer = await response.arrayBuffer()

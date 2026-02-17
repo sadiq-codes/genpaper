@@ -106,7 +106,7 @@ export async function getContentStatus(paperIds: string[]): Promise<Map<string, 
   }
 
   try {
-    // Use service client to bypass RLS - this is called from Inngest background jobs
+    // Use service client to bypass RLS - this is called from background generation jobs
     const supabase = getServiceClient()
     
     // Get papers with their content info
@@ -190,7 +190,7 @@ export async function ensurePapersExist(papers: PaperWithAuthors[]): Promise<str
   }
 
   try {
-    // Use service client to bypass RLS - this is called from Inngest background jobs
+    // Use service client to bypass RLS - this is called from background generation jobs
     const supabase = getServiceClient()
     const existingIds: string[] = []
 
@@ -254,7 +254,7 @@ export async function createChunksForPaper(
   }
 
   try {
-    // Use service client to bypass RLS - this is called from Inngest background jobs
+    // Use service client to bypass RLS - this is called from background generation jobs
     // paper_chunks requires authenticated users for SELECT and service_role for writes
     const serviceClient = getServiceClient()
 

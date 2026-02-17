@@ -24,8 +24,69 @@ import {
 /** Maximum retry attempts for profile generation */
 const MAX_PROFILE_RETRIES = 3
 
-/** Delay between retries in ms */
-const RETRY_DELAY_MS = 1000
+/** Exponential backoff base delay between retries (ms) */
+const BASE_RETRY_DELAY_MS = 1000
+
+/** Cap retry delays to keep total latency bounded */
+const MAX_RETRY_DELAY_MS = 8000
+
+function getErrorStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined
+
+  const err = error as {
+    status?: unknown
+    statusCode?: unknown
+    response?: { status?: unknown }
+    cause?: unknown
+  }
+
+  const candidates = [err.status, err.statusCode, err.response?.status]
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate
+    }
+  }
+
+  if (err.cause && typeof err.cause === 'object') {
+    const cause = err.cause as {
+      status?: unknown
+      statusCode?: unknown
+      response?: { status?: unknown }
+    }
+    const causeCandidates = [cause.status, cause.statusCode, cause.response?.status]
+    for (const candidate of causeCandidates) {
+      if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+        return candidate
+      }
+    }
+  }
+
+  return undefined
+}
+
+function isPermanentProviderError(error: unknown): boolean {
+  const statusCode = getErrorStatusCode(error)
+  if (typeof statusCode === 'number') {
+    // Retry transient classes; fail fast for non-rate-limited 4xx.
+    if (statusCode === 429 || statusCode >= 500) return false
+    if (statusCode >= 400 && statusCode < 500) return true
+  }
+
+  // Fallback for providers that only expose message text.
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  return (
+    message.includes('invalid schema') ||
+    message.includes('http 400') ||
+    message.includes('status code 400') ||
+    message.includes('invalid_request') ||
+    message.includes('response_format')
+  )
+}
+
+function getRetryDelayMs(attempt: number): number {
+  if (attempt <= 0) return 0
+  return Math.min(BASE_RETRY_DELAY_MS * (2 ** (attempt - 1)), MAX_RETRY_DELAY_MS)
+}
 
 /**
  * Generate a comprehensive paper profile for the given topic and paper type.
@@ -61,8 +122,9 @@ export async function generatePaperProfile(
   for (let attempt = 0; attempt <= MAX_PROFILE_RETRIES; attempt++) {
     try {
       if (attempt > 0) {
-        warn({ attempt, maxRetries: MAX_PROFILE_RETRIES }, 'Retrying paper profile generation')
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+        const retryDelayMs = getRetryDelayMs(attempt)
+        warn({ attempt, maxRetries: MAX_PROFILE_RETRIES, retryDelayMs }, 'Retrying paper profile generation')
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs))
       }
 
       // If we're retrying, tell the model what failed so it can correct it.
@@ -124,23 +186,21 @@ export async function generatePaperProfile(
       
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error))
+      const statusCode = getErrorStatusCode(error)
       
       logError({ 
         error: lastError.message, 
         attempt: attempt + 1, 
         maxRetries: MAX_PROFILE_RETRIES + 1,
+        statusCode,
         topic: topic.slice(0, 100), 
         paperType 
       }, 'Paper profile generation attempt failed')
       
-      // Don't retry on API-level errors (bad request, invalid schema).
-      // IMPORTANT: Only match API/HTTP errors — NOT our own validation throws
-      // (e.g., "Profile outline invalid: ...") which should trigger retry with feedback.
-      const isApiError =
-        lastError.message.includes('Invalid schema') ||
-        lastError.message.includes('HTTP 400') ||
-        lastError.message.includes('status code 400')
-      if (isApiError) {
+      // Fail fast for permanent provider/request errors (e.g. schema/request 4xx).
+      // Keep retrying validation/content errors because retry feedback can fix them.
+      if (isPermanentProviderError(error)) {
+        warn({ statusCode, attempt: attempt + 1 }, 'Stopping retries due to permanent provider error')
         break
       }
     }

@@ -565,6 +565,7 @@ const MAX_FINDINGS_PER_BATCH = 90
 const BATCH_THRESHOLD = 120
 const MIN_FINDINGS_TO_SPLIT = 30
 const MAX_BATCH_SPLIT_DEPTH = 3
+const BATCH_ANALYSIS_CONCURRENCY = 2
 
 type TransformedBatchResult = {
   patterns: Pattern[]
@@ -795,27 +796,39 @@ async function analyzeFindingsBatched(
   
   console.log(`\n🔍 Analyzing ${findings.length} findings in ${batches.length} batches...`)
   
-  // Analyze each batch
+  // Analyze each batch (bounded parallelism to reduce wall time on large analyses)
   const batchResults: TransformedBatchResult[] = []
-  
-  for (let i = 0; i < batches.length; i++) {
-    const batch = batches[i]
-    const batchPapers = new Set(batch.map(f => f.paperId)).size
-    console.log(`   📦 Batch ${i + 1}/${batches.length}: ${batch.length} findings from ${batchPapers} papers`)
-    
-    try {
-      const scopedResults = await analyzeBatchAdaptive(batch, topic, `Batch ${i + 1}/${batches.length}`)
-      batchResults.push(...scopedResults)
+  const resultsByIndex: TransformedBatchResult[][] = Array.from({ length: batches.length }, () => [])
+  let nextBatchIndex = 0
 
-      const scopedPatterns = scopedResults.reduce((sum, r) => sum + r.patterns.length, 0)
-      const scopedContradictions = scopedResults.reduce((sum, r) => sum + r.contradictions.length, 0)
-      const scopedGaps = scopedResults.reduce((sum, r) => sum + r.gaps.length, 0)
-      console.log(`   ✅ Batch ${i + 1}: ${scopedPatterns} patterns, ${scopedContradictions} contradictions, ${scopedGaps} gaps`)
-      
-    } catch (error) {
-      console.error(`   ❌ Batch ${i + 1} failed:`, error)
-      // Continue with other batches
+  const workerCount = Math.min(BATCH_ANALYSIS_CONCURRENCY, batches.length)
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const i = nextBatchIndex++
+      if (i >= batches.length) return
+
+      const batch = batches[i]
+      const batchPapers = new Set(batch.map(f => f.paperId)).size
+      console.log(`   📦 Batch ${i + 1}/${batches.length}: ${batch.length} findings from ${batchPapers} papers`)
+
+      try {
+        const scopedResults = await analyzeBatchAdaptive(batch, topic, `Batch ${i + 1}/${batches.length}`)
+        resultsByIndex[i] = scopedResults
+
+        const scopedPatterns = scopedResults.reduce((sum, r) => sum + r.patterns.length, 0)
+        const scopedContradictions = scopedResults.reduce((sum, r) => sum + r.contradictions.length, 0)
+        const scopedGaps = scopedResults.reduce((sum, r) => sum + r.gaps.length, 0)
+        console.log(`   ✅ Batch ${i + 1}: ${scopedPatterns} patterns, ${scopedContradictions} contradictions, ${scopedGaps} gaps`)
+      } catch (error) {
+        console.error(`   ❌ Batch ${i + 1} failed:`, error)
+        // Continue with other batches
+      }
     }
+  })
+
+  await Promise.all(workers)
+  for (const scopedResults of resultsByIndex) {
+    batchResults.push(...scopedResults)
   }
   
   // Merge results from all batches

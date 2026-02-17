@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateUser, createProject } from "@/lib/services/project-service";
 import { getResearchProject, getProjectWithContent } from "@/lib/db/research";
-import { inngest } from "@/lib/inngest/client";
 import {
   createRun,
   cancelRunningGenerations,
   getRunningRun,
+  emitError,
 } from "@/lib/generation/run-manager";
+import {
+  cancelGenerationJobsForRunIds,
+  enqueueGenerationJob,
+} from "@/lib/generation/job-queue";
+import { launchOneShotWorker } from "@/lib/generation/worker-launcher";
 import { createServiceClient } from "@/lib/supabase/service";
 import { warn, error as logError } from "@/lib/utils/logger";
 import { checkCanStartGeneration } from "@/lib/billing/gates";
@@ -61,7 +66,7 @@ export async function OPTIONS(request: NextRequest) {
  * Starts a new paper generation run.
  * - Cancels any existing running generation for the project
  * - Creates a new generation_runs record
- * - Triggers the Inngest function
+ * - Enqueues a worker queue job and launches a one-shot worker
  * - Returns the runId for the client to connect to events
  */
 export async function POST(request: NextRequest) {
@@ -230,17 +235,7 @@ export async function POST(request: NextRequest) {
       const cancelled = await cancelRunningGenerations(projectId);
       if (cancelled.length > 0) {
         console.log(`Cancelled ${cancelled.length} existing generation(s) for project ${projectId}`);
-        
-        // Also send cancel event to Inngest to stop the background job
-        for (const run of cancelled) {
-          await inngest.send({
-            name: "paper/generation.cancel",
-            data: {
-              runId: run.id,
-              projectId,
-            },
-          });
-        }
+        await cancelGenerationJobsForRunIds(cancelled.map((run) => run.id));
       }
     }
 
@@ -251,31 +246,40 @@ export async function POST(request: NextRequest) {
     const url = new URL(request.url);
     const baseUrl = url.origin;
 
-    // Trigger Inngest function
-    // Note: isNewProject is deprecated - billing now uses has_generated flag on project
-    await inngest.send({
-      name: "paper/generation.start",
-      data: {
-        runId: run.id,
-        projectId,
-        userId: user.id,
-        config: {
-          topic,
-          paperType: finalPaperType,
-          length,
-          citationStyle,
-          temperature,
-          maxTokens,
-          sources,
-          hasOriginalResearch: finalOriginalResearch?.has_original_research || hasOriginalResearch,
-          originalResearch: finalOriginalResearch,
-          customInstructions: finalCustomInstructions,
-          useLibraryOnly: finalUseLibraryOnly,
-          libraryPaperIds: finalLibraryPaperIds,
-        },
-        baseUrl,
+    const payload = {
+      runId: run.id,
+      projectId,
+      userId: user.id,
+      config: {
+        topic,
+        paperType: finalPaperType,
+        length,
+        citationStyle,
+        temperature,
+        maxTokens,
+        sources,
+        hasOriginalResearch: finalOriginalResearch?.has_original_research || hasOriginalResearch,
+        originalResearch: finalOriginalResearch,
+        customInstructions: finalCustomInstructions,
+        useLibraryOnly: finalUseLibraryOnly,
+        libraryPaperIds: finalLibraryPaperIds,
       },
-    });
+      baseUrl,
+    };
+
+    await enqueueGenerationJob(payload);
+    try {
+      await launchOneShotWorker(run.id);
+    } catch (launchError) {
+      await cancelGenerationJobsForRunIds([run.id]);
+      await emitError(
+        run.id,
+        launchError instanceof Error
+          ? `Failed to launch generation worker: ${launchError.message}`
+          : "Failed to launch generation worker"
+      );
+      throw launchError;
+    }
 
     if (isDev) {
       console.log("Started generation run:", {

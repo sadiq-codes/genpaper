@@ -100,10 +100,27 @@ function stripTrailingCitationMarkers(text: string): string {
   return text.replace(/(?:\s*\[@[^\]]+\]\s*)+$/g, '').trim()
 }
 
+function isLikelyCompleteMarkdownLine(line: string): boolean {
+  if (!line) return false
+  if (/^[-*+]\s+\S+/.test(line) || /^\d+\.\s+\S+/.test(line)) return true
+  if (/^\|.*\|$/.test(line) || /^```/.test(line)) return true
+  if (/^#{1,6}\s+\S+/.test(line)) return true
+  return false
+}
+
 function looksTruncated(text: string): boolean {
   const cleaned = stripTrailingCitationMarkers(text.trim())
   if (!cleaned) return false
-  const lastChar = cleaned.slice(-1)
+
+  const lines = cleaned
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+  const lastLine = lines[lines.length - 1] || ''
+
+  if (isLikelyCompleteMarkdownLine(lastLine)) return false
+
+  const lastChar = lastLine.slice(-1)
   // Consider sentence punctuation, table row terminator, and closing delimiters as complete endings.
   return !/[.!?;:|)\]"'`]/.test(lastChar)
 }

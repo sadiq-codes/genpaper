@@ -422,7 +422,7 @@ export function isRunTerminal(run: GenerationRun): boolean {
 // =============================================================================
 // Pipeline State Management
 // =============================================================================
-// These functions manage intermediate state for the multi-step Inngest pipeline.
+// These functions manage intermediate state for the multi-step generation pipeline.
 // State is stored in the pipeline_state JSONB column of generation_runs.
 
 import type { PaperProfile } from "@/lib/generation/paper-profile-types";
@@ -431,7 +431,7 @@ import type { SectionContext } from "@/lib/prompts/types";
 import type { StructuredCitation } from "@/lib/generation/unified-generator";
 
 /**
- * Pipeline state stored between Inngest steps
+ * Pipeline state stored between generation steps
  */
 export interface PipelineState {
   // Phase 1: Profile
@@ -620,7 +620,7 @@ export async function clearPipelineState(runId: string): Promise<void> {
 }
 
 // =============================================================================
-// Context Cache (avoids rebuilding contexts in every Inngest step)
+// Context Cache (avoids rebuilding contexts in every generation step)
 // =============================================================================
 
 import { gzipSync, gunzipSync } from "zlib";

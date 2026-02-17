@@ -223,7 +223,7 @@ export async function isInLibrary(
 // ============================================================================
 
 export async function getPapersByIds(paperIds: string[]): Promise<LibraryPaperWithAuthors[]> {
-  // Use service client to bypass RLS - this is called from Inngest background jobs
+  // Use service client to bypass RLS - this is called from background generation jobs
   // where there's no user session context
   const supabase = createServiceClient()
   

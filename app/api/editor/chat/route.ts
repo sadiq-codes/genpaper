@@ -127,6 +127,33 @@ const DEFAULT_CHAT_RAG_PROFILE: ChatRAGProfile = {
   useReranking: false,
 }
 
+// Short-lived cache to avoid repeatedly probing mentioned-paper retrieval when
+// those papers currently have no chunks. This reduces fallback latency spikes.
+const EMPTY_MENTIONED_RAG_CACHE_TTL_MS = 2 * 60 * 1000
+const emptyMentionedRagCache = new Map<string, number>()
+
+function getMentionedRagCacheKey(projectId: string, paperIds: string[]): string {
+  return `${projectId}:${[...paperIds].sort().join(',')}`
+}
+
+function hasFreshEmptyMentionedResult(projectId: string, paperIds: string[]): boolean {
+  if (paperIds.length === 0) return false
+  const key = getMentionedRagCacheKey(projectId, paperIds)
+  const expiresAt = emptyMentionedRagCache.get(key)
+  if (!expiresAt) return false
+  if (Date.now() > expiresAt) {
+    emptyMentionedRagCache.delete(key)
+    return false
+  }
+  return true
+}
+
+function markEmptyMentionedResult(projectId: string, paperIds: string[]): void {
+  if (paperIds.length === 0) return
+  const key = getMentionedRagCacheKey(projectId, paperIds)
+  emptyMentionedRagCache.set(key, Date.now() + EMPTY_MENTIONED_RAG_CACHE_TTL_MS)
+}
+
 function getAdaptiveChatRAGProfile(
   intent: IntentClassification['intent'],
   hasMentionedPapers: boolean
@@ -569,15 +596,26 @@ export async function POST(request: NextRequest) {
       // Get RAG context - use ONLY mentioned papers when explicitly @mentioned
       // This focuses retrieval on what the user cares about and speeds up the request
       if (mentionedPaperIds.length > 0) {
-        // Try mentioned papers first
-        ragResult = await getRAGContext(ragQuery, projectId, mentionedPaperIds, ragProfile)
-        
-        // Fallback: if mentioned-only returns 0 chunks (papers might not be ingested),
-        // retry with all processed papers to still provide useful context.
-        if (ragResult.chunks.length === 0 && paperIds.length > 0) {
-          console.log('[Chat API] RAG fallback - mentioned papers returned 0 chunks, trying all processed papers')
+        const shouldSkipMentionedProbe = hasFreshEmptyMentionedResult(projectId, mentionedPaperIds)
+
+        if (shouldSkipMentionedProbe && paperIds.length > 0) {
+          console.log('[Chat API] RAG fallback - skipping mentioned-only probe (recent empty result)')
           fallbackUsed = true
           ragResult = await getRAGContext(ragQuery, projectId, paperIds, ragProfile)
+        } else {
+          // Try mentioned papers first
+          ragResult = await getRAGContext(ragQuery, projectId, mentionedPaperIds, ragProfile)
+
+          // Fallback: if mentioned-only returns 0 chunks (papers might not be ingested),
+          // retry with all processed papers to still provide useful context.
+          if (ragResult.chunks.length === 0) {
+            markEmptyMentionedResult(projectId, mentionedPaperIds)
+            if (paperIds.length > 0) {
+              console.log('[Chat API] RAG fallback - mentioned papers returned 0 chunks, trying all processed papers')
+              fallbackUsed = true
+              ragResult = await getRAGContext(ragQuery, projectId, paperIds, ragProfile)
+            }
+          }
         }
       } else {
         // No mentions - search all processed papers
