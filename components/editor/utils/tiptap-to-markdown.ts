@@ -13,6 +13,8 @@ interface TipTapNode {
   text?: string
 }
 
+type TableAlignment = 'left' | 'center' | 'right' | null
+
 // Priority order for mark serialization (outermost to innermost)
 const MARK_PRIORITY = ['link', 'code', 'bold', 'italic', 'strike']
 
@@ -90,6 +92,37 @@ function serializeInline(nodes: TipTapNode[] | undefined): string {
         return ''
     }
   }).join('')
+}
+
+function normalizeTableCellText(raw: string): string {
+  const normalized = raw
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n/g, '<br>')
+    .replace(/\|/g, '\\|')
+
+  return normalized.trim().length > 0 ? normalized : ' '
+}
+
+function getTableCellAlignment(cell: TipTapNode | undefined): TableAlignment {
+  const paragraph = (cell?.content || []).find((node) => node.type === 'paragraph')
+  const align = paragraph?.attrs?.textAlign
+  if (align === 'left' || align === 'center' || align === 'right') {
+    return align
+  }
+  return null
+}
+
+function serializeTableSeparator(alignments: TableAlignment[], columnCount: number): string {
+  const count = Math.max(columnCount, alignments.length)
+  const separators = Array.from({ length: count }, (_, index) => {
+    const align = alignments[index] || null
+    if (align === 'left') return ':---'
+    if (align === 'center') return ':---:'
+    if (align === 'right') return '---:'
+    return '---'
+  })
+  return `| ${separators.join(' | ')} |`
 }
 
 /**
@@ -171,17 +204,21 @@ function serializeBlock(node: TipTapNode, depth: number = 0): string {
       if (rows.length === 0) return ''
       
       const lines: string[] = []
+      const headerRow = rows[0]
+      const headerCells = headerRow?.content || []
+      const alignments = headerCells.map((cell) => getTableCellAlignment(cell))
       
       rows.forEach((row, rowIndex) => {
         const cells = (row.content || []).map(cell => {
-          const content = serializeInline(cell.content?.[0]?.content)
-          return content || ' '
+          const paragraph = (cell.content || []).find((node) => node.type === 'paragraph')
+          const content = serializeInline(paragraph?.content)
+          return normalizeTableCellText(content)
         })
         lines.push(`| ${cells.join(' | ')} |`)
         
         // Add separator after header row
         if (rowIndex === 0) {
-          lines.push(`| ${cells.map(() => '---').join(' | ')} |`)
+          lines.push(serializeTableSeparator(alignments, cells.length))
         }
       })
       

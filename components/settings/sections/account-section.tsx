@@ -81,7 +81,7 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
   }
 
   const handleChangePassword = () => {
-    router.push('/auth/forgot-password')
+    router.push('/forgot-password')
   }
 
   return (

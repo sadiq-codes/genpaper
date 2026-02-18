@@ -2,8 +2,9 @@
 
 import { useRef, useEffect, useCallback, memo, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 // Native scroll used instead of Radix ScrollArea for reliable scrolling in nested flex layouts
-import { Bot, User, Wrench, Trash2, Square, MessageSquare } from 'lucide-react'
+import { Bot, User, Wrench, Trash2, Square, MessageSquare, X } from 'lucide-react'
 import { RichChatInput } from './RichChatInput'
 import { EvidencePanel } from './EvidencePanel'
 import { ChatLimitBanner } from '@/components/billing/chat-limit-banner'
@@ -21,6 +22,24 @@ import { useSubscription } from '@/lib/hooks/use-subscription'
 
 /** Citation marker regex: [@paperId#instanceId] or [@paperId] (also handles truncated #...) */
 const CITATION_MARKER_RE = /\[@([a-f0-9-]+)(?:#([a-f0-9-]+|\.{1,3}))?\]/gi
+const TABLE_SEPARATOR_RE = /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/m
+
+function containsMarkdownTable(content: string): boolean {
+  return TABLE_SEPARATOR_RE.test(content)
+}
+
+function replaceCitationMarkersWithText(
+  content: string,
+  paperMap: Map<string, ProjectPaper>
+): string {
+  return content.replace(
+    /\[@([a-f0-9-]+)(?:#([a-f0-9-]+|\.{1,3}))?\]/gi,
+    (_match, paperId: string) => {
+      const paper = paperMap.get(paperId)
+      return paper ? `(${getCitationLabel(paper)})` : '[citation]'
+    }
+  )
+}
 
 /**
  * Build the display label for a citation (e.g. "Smith et al., 2024").
@@ -103,9 +122,28 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
   papers?: ProjectPaper[]
 }) {
   const paperMap = useMemo(() => new Map(papers.map(p => [p.id, p])), [papers])
+  const markdownComponents = useMemo(() => ({
+    a: ({ href, children, ...props }: React.ComponentProps<'a'>) => (
+      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+    ),
+  }), [])
 
   const rendered = useMemo(() => {
     if (!content) return null
+
+    // Keep tables as a single markdown document so GFM parsing stays intact.
+    // Splitting around citations breaks table row structure.
+    if (containsMarkdownTable(content)) {
+      const normalized = replaceCitationMarkersWithText(content, paperMap)
+      return (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+        >
+          {normalized}
+        </ReactMarkdown>
+      )
+    }
 
     // Split content into text segments and citation markers
     const parts: { type: 'text' | 'citation'; value: string; paperId?: string; instanceId?: string }[] = []
@@ -128,11 +166,8 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
     if (parts.length === 1 && parts[0].type === 'text') {
       return (
         <ReactMarkdown
-          components={{
-            a: ({ href, children, ...props }) => (
-              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
-            ),
-          }}
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
         >
           {content}
         </ReactMarkdown>
@@ -152,17 +187,14 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
       return (
         <ReactMarkdown
           key={i}
-          components={{
-            a: ({ href, children, ...props }) => (
-              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
-            ),
-          }}
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
         >
           {part.value}
         </ReactMarkdown>
       )
     })
-  }, [content, paperMap])
+  }, [content, markdownComponents, paperMap])
 
   return <>{rendered}</>
 })
@@ -411,6 +443,9 @@ export function ChatTab() {
     pendingTools,
     clearChatHistory: onClearHistory,
     stopGeneration: onStop,
+    chatComposerPrefill,
+    chatSelectionContext,
+    clearChatComposerPrefill,
   } = useResearchEditor()
 
   const scrollAreaRef = useRef<HTMLDivElement>(null)
@@ -492,8 +527,17 @@ export function ChatTab() {
     mentionedPaperIds: string[], 
     attachedImages: string[]
   ) => {
+    const selectionContext = chatSelectionContext?.trim()
+    const contextPrefix = selectionContext
+      ? `Selected text context:\n"${selectionContext}"\n\n`
+      : ''
+    const requestContent =
+      selectionContext && !content.includes(selectionContext)
+        ? `${contextPrefix}${content}`
+        : content
+
     // Build display content with paper mentions visible
-    let displayContent = content
+    let displayContent = requestContent
     
     // Add paper mention indicators to the message for visibility
     if (mentionedPaperIds.length > 0 && papers) {
@@ -503,7 +547,7 @@ export function ChatTab() {
       
       if (mentionedPaperTitles.length > 0) {
         const paperRefs = mentionedPaperTitles.map(t => `📄 *${t}*`).join('\n')
-        displayContent = `${content}\n\n**Referenced:**\n${paperRefs}`
+        displayContent = `${requestContent}\n\n**Referenced:**\n${paperRefs}`
       }
     }
     
@@ -518,7 +562,11 @@ export function ChatTab() {
       // Backward compatible: just send content string
       onSendMessage(displayContent)
     }
-  }, [onSendMessage, papers])
+
+    if (selectionContext) {
+      clearChatComposerPrefill()
+    }
+  }, [chatSelectionContext, clearChatComposerPrefill, onSendMessage, papers])
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -594,6 +642,25 @@ export function ChatTab() {
       
       {/* Quick Actions - above input */}
       {messages.length > 0 && <QuickActions onSend={(prompt) => handleSend(prompt, [], [])} disabled={isLoading} />}
+
+      {chatSelectionContext && (
+        <div className="shrink-0 px-3 pb-1.5">
+          <div className="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-2.5 py-1.5">
+            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+              Selected text attached: &ldquo;{chatSelectionContext}&rdquo;
+            </span>
+            <button
+              type="button"
+              className="h-5 w-5 rounded-full inline-flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+              onClick={clearChatComposerPrefill}
+              aria-label="Remove selected text context"
+              title="Remove selected text context"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* Rich Input - always visible at bottom */}
       <div className="shrink-0">
@@ -605,6 +672,8 @@ export function ChatTab() {
           onCitePaper={handleCitePaper}
           onImageUpload={uploadImage}
           isUploadingImage={isUploading}
+          prefillId={chatComposerPrefill?.id}
+          prefillText={chatComposerPrefill?.text}
         />
       </div>
     </div>

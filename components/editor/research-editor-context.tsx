@@ -36,6 +36,9 @@ export interface ResearchEditorContextValue {
   sendMessage: (content: string | ChatSendOptions) => void
   clearChatHistory: () => void
   stopGeneration: () => void
+  chatComposerPrefill: { id: number; text: string } | null
+  chatSelectionContext: string | null
+  clearChatComposerPrefill: () => void
 
   // UI
   isMobile: boolean

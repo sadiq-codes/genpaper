@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { ResearchEditor } from '@/components/editor/ResearchEditor'
 import type { ProjectPaper } from '@/components/editor/types'
+import { getRunningRun } from '@/lib/generation/run-manager'
 
 interface EditorPageProps {
   params: Promise<{ projectId: string }>
@@ -21,8 +22,8 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     redirect('/login')
   }
 
-  // Fetch project, citations, and user preferences in ONE parallel batch
-  const [projectResult, citationsResult, prefsResult] = await Promise.all([
+  // Fetch project, citations, user preferences, and active run in ONE parallel batch
+  const [projectResult, citationsResult, prefsResult, activeRunResult] = await Promise.all([
     supabase
       .from('research_projects')
       .select('id, user_id, topic, content, status, citation_style, paper_type, generation_config')
@@ -42,11 +43,17 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
       .select('citation_style, auto_suggestions, include_citations, accept_key, use_external_sources')
       .eq('user_id', user.id)
       .single()
+    ,
+
+    // Active generation run for resume support (works even when partial content exists)
+    // Uses service-role access via run manager (independent from RLS policies).
+    getRunningRun(projectId)
   ])
 
   const { data: project, error: projectError } = projectResult
   const { data: citations } = citationsResult
   const userPrefs = prefsResult.data
+  const activeRun = activeRunResult?.user_id === user.id ? activeRunResult : null
 
   if (projectError || !project) {
     notFound()
@@ -146,11 +153,10 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
     useExternalSources: userPrefs?.use_external_sources ?? false,
   }
 
-  // Determine if we need to show generation progress
-  const shouldShowGeneration = !isWriteMode && 
-    isNewlyCreated && 
-    project.status === 'generating' && 
-    !project.content
+  // Determine if we need to show generation progress.
+  // Resume is based on an actual active run, not content emptiness.
+  const shouldShowGeneration = !isWriteMode &&
+    (isNewlyCreated || Boolean(activeRun))
 
   // Determine if project failed mid-generation and needs a retry option
   const isFailed = project.status === 'failed' && !project.content

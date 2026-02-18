@@ -126,8 +126,8 @@ system: |-
   REQUIRED: Include at least one markdown table in this section when appropriate.
   - Use valid markdown table syntax with a separator row.
   - Populate only with evidence-supported content.
-  - Do not include placeholder IDs or fabricated values.
   - If trustworthy row data is missing, omit the row.
+  - NEVER put raw paper_id UUIDs in table cells. Always use [@paper_id] markers to reference sources in tables, just like in prose.
   {{/requiresTable}}
 
   {{#voice}}
@@ -292,7 +292,7 @@ user: |-
   □ Each paragraph has 1-3 [@paper_id] citations (no more — quality over quantity)
   □ Content is SYNTHESIZED (comparing/integrating), not just described
   □ Pre-analyzed statistics used EXACTLY as provided
-  □ No unresolved placeholders or hash-like IDs in text/tables
+  □ No raw UUIDs or paper_id values visible in text or table cells — always use [@paper_id] markers
   □ Any "X of Y (Z%)" statement appears only if explicitly provided in prompt context
   □ Markdown tables include a valid header separator row
   □ No fabricated citations or paper_ids

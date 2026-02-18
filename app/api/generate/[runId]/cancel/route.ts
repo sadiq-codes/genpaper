@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateUser } from "@/lib/services/project-service";
 import { getRun, emitCancelled } from "@/lib/generation/run-manager";
 import { cancelGenerationJobForRun } from "@/lib/generation/job-queue";
+import { updateResearchProjectStatus } from "@/lib/db/research";
 import { warn, error as logError } from "@/lib/utils/logger";
+import type { PaperStatus } from "@/types/simplified";
 
 export const runtime = "nodejs";
 
@@ -97,6 +99,7 @@ export async function POST(
     await emitCancelled(runId);
 
     await cancelGenerationJobForRun(runId);
+    await updateResearchProjectStatus(run.project_id, "failed" as PaperStatus);
 
     if (isDev) {
       console.log("Cancelled generation run:", runId);

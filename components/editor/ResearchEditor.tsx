@@ -100,6 +100,8 @@ export function ResearchEditor({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [libraryDrawerOpen, setLibraryDrawerOpen] = useState(false)
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
+  const [chatComposerPrefill, setChatComposerPrefill] = useState<{ id: number; text: string } | null>(null)
+  const [chatSelectionContext, setChatSelectionContext] = useState<string | null>(null)
   const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
   const [currentTitle, setCurrentTitle] = useState(projectTitle)
@@ -336,13 +338,34 @@ export function ResearchEditor({
   // ============================================================================
 
   // Handle chat from floating toolbar
+  const clearChatComposerPrefill = useCallback(() => {
+    setChatComposerPrefill(null)
+    setChatSelectionContext(null)
+  }, [])
+
   const handleChatFromToolbar = useCallback(
     (selectedText: string) => {
+      const normalizedSelection = selectedText.replace(/\s+/g, " ").trim()
       setActiveTab("chat")
       if (isMobile) setMobileMenuOpen(true)
-      handleSendMessage(`I have a question about: "${selectedText}"`)
+
+      if (!normalizedSelection) {
+        clearChatComposerPrefill()
+        return
+      }
+
+      const trimmedSelection =
+        normalizedSelection.length > 600
+          ? `${normalizedSelection.slice(0, 600)}…`
+          : normalizedSelection
+
+      setChatSelectionContext(trimmedSelection)
+      setChatComposerPrefill({
+        id: Date.now(),
+        text: `Question about this selected text:\n"${trimmedSelection}"\n\n`,
+      })
     },
-    [handleSendMessage, isMobile]
+    [clearChatComposerPrefill, isMobile]
   )
 
   // Handle citation insertion
@@ -565,6 +588,9 @@ export function ResearchEditor({
     sendMessage: handleSendMessage,
     clearChatHistory,
     stopGeneration,
+    chatComposerPrefill,
+    chatSelectionContext,
+    clearChatComposerPrefill,
 
     // UI
     isMobile,

@@ -199,9 +199,9 @@ function LoginPageContent() {
       </form>
 
       <div className="text-center mt-4">
-        <a href="#" className="text-xs text-muted-foreground/50 hover:text-foreground transition-colors">
+        <Link href="/forgot-password" className="text-xs text-muted-foreground/50 hover:text-foreground transition-colors">
           Forgot your password?
-        </a>
+        </Link>
       </div>
 
       <div className="text-center mt-8 pt-6 border-t border-border/40">

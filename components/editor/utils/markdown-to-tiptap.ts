@@ -60,6 +60,20 @@ interface Mark {
   attrs?: Record<string, any>
 }
 
+type TableAlignment = 'left' | 'center' | 'right' | null
+
+function extractTableAlignments(node: Content): TableAlignment[] {
+  if (!('align' in node)) return []
+  const align = (node as { align?: unknown }).align
+  if (!Array.isArray(align)) return []
+  return align.map((entry) => {
+    if (entry === 'left' || entry === 'center' || entry === 'right') {
+      return entry
+    }
+    return null
+  })
+}
+
 /**
  * Parse markdown string into mdast AST
  */
@@ -440,16 +454,21 @@ function contentToTipTap(
 
     case 'table': {
       // GFM table support
+      const alignments = extractTableAlignments(node)
       const rows = node.children.map((row, rowIndex) => {
-        const cells = row.children.map((cell) => {
+        const cells = row.children.map((cell, cellIndex) => {
           const cellContent = cell.children.flatMap(child =>
             phrasingToTipTap(child as PhrasingContent, [], ctx)
           )
+          const alignment = alignments[cellIndex] || null
+          const paragraphNode: TipTapNode = {
+            type: 'paragraph',
+            ...(alignment ? { attrs: { textAlign: alignment } } : {}),
+            ...(cellContent.length > 0 ? { content: cellContent } : {}),
+          }
           return {
             type: rowIndex === 0 ? 'tableHeader' : 'tableCell',
-            content: cellContent.length > 0
-              ? [{ type: 'paragraph', content: cellContent }]
-              : [{ type: 'paragraph' }],
+            content: [paragraphNode],
           }
         })
         return {

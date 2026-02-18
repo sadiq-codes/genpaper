@@ -5,6 +5,7 @@ import { Loader2, Search, FileText, Sparkles, CheckCircle2, FileStack } from "lu
 import { GenerationLoadingUI, type ProgressStage, type CompletedSection } from "./GenerationLoadingUI"
 import { LimitReachedModal, type LimitType } from "@/components/billing/limit-modal"
 import { DEFAULT_LENGTH_BY_PAPER_TYPE } from "@/types/simplified"
+import { toast } from "sonner"
 
 interface GenerationProgressProps {
   projectId: string
@@ -99,7 +100,7 @@ function createInitialState(): GenerationState {
   return {
     progress: 0,
     currentStage: "start",
-    message: "Preparing to write your paper...",
+    message: "Preparing to write your paper…",
     stages: ORDERED_STAGES.map((id) => ({
       id,
       label: STAGE_CONFIG[id]?.label || id,
@@ -532,7 +533,7 @@ export function GenerationProgress({
                 payload: {
                   progress: parsed.progress,
                   stage: parsed.stage || status.currentStage || 'writing',
-                  message: parsed.message || 'Resuming generation...',
+                  message: parsed.message || 'Resuming generation…',
                   papersFound: parsed.papersFound,
                 },
               })
@@ -551,7 +552,7 @@ export function GenerationProgress({
             payload: {
               progress: status.progress || 0,
               stage: status.currentStage || 'writing',
-              message: 'Resuming generation...',
+              message: 'Resuming generation…',
             },
           })
         }
@@ -584,7 +585,19 @@ export function GenerationProgress({
         return
       }
       
-      // Case 4: No active run - start new generation
+      // Case 4: Previous generation was cancelled
+      if (status.status === 'cancelled') {
+        hasCompletedRef.current = true
+        completionNotifiedRef.current = true
+        dispatch({ type: 'ERROR', payload: { error: 'Generation was cancelled' } })
+        if (status.runId) {
+          localStorage.removeItem(`generation-progress-${status.runId}`)
+        }
+        onError('Generation was cancelled')
+        return
+      }
+
+      // Case 5: No active run - start new generation
       startGeneration()
       
     } catch (err) {
@@ -592,7 +605,7 @@ export function GenerationProgress({
       // Fall back to starting new generation
       startGeneration()
     }
-  }, [projectId, startGeneration, onComplete])
+  }, [projectId, startGeneration, onComplete, onError])
 
   // Start generation on mount
   useEffect(() => {
@@ -706,22 +719,36 @@ export function GenerationProgress({
   }, [connectionState.runId, connectionState.wasDisconnectedWhileHidden, connectionState.isConnected, onComplete, onError])
 
   const handleCancel = useCallback(async () => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close()
+    if (!connectionState.runId) {
+      onCancel?.()
+      return
     }
-    
-    // Cancel on server
-    if (connectionState.runId) {
-      try {
-        await fetch(`/api/generate/${connectionState.runId}/cancel`, {
-          method: 'POST',
-        })
-      } catch (err) {
-        console.warn('[Generation] Failed to cancel on server:', err)
+
+    try {
+      const response = await fetch(`/api/generate/${connectionState.runId}/cancel`, {
+        method: 'POST',
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null)
+        throw new Error(errorData?.error || 'Failed to cancel generation')
       }
+
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+
+      localStorage.removeItem(`generation-progress-${connectionState.runId}`)
+      onCancel?.()
+    } catch (err) {
+      console.warn('[Generation] Failed to cancel on server:', err)
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : 'Failed to cancel generation. Please try again.'
+      )
     }
-    
-    onCancel?.()
   }, [connectionState.runId, onCancel])
 
   const handleRetry = useCallback(() => {
@@ -729,7 +756,7 @@ export function GenerationProgress({
   }, [])
 
   const getTimeEstimate = () => {
-    if (progress === 0) return "Calculating..."
+    if (progress === 0) return "Calculating…"
     if (progress >= 100) return "Complete!"
 
     const remainingPercent = 100 - progress

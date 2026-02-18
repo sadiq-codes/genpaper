@@ -10,11 +10,14 @@ import {
   Packer,
   Paragraph,
   TextRun,
+  Table,
+  TableRow,
+  TableCell,
   HeadingLevel,
   AlignmentType,
+  BorderStyle,
+  WidthType,
   ExternalHyperlink,
-  TabStopType,
-  TabStopPosition,
   convertInchesToTwip,
 } from 'docx'
 import type {
@@ -27,7 +30,6 @@ import type {
 import {
   formatInlineCitation,
   formatBibliography,
-  isNumericCitationStyle,
 } from './citation-formatter'
 
 // =============================================================================
@@ -61,7 +63,7 @@ export async function generateDocx(
   }
   
   // Create document sections
-  const children: Paragraph[] = []
+  const children: Array<Paragraph | Table> = []
   
   // Title
   if (parsed.title) {
@@ -128,6 +130,11 @@ export async function generateDocx(
   
   // Content sections
   for (const section of parsed.sections) {
+    if (section.type === 'table') {
+      const tableElements = tableToElements(section, paperLookup, parsed.citationNumbers, style, opts)
+      children.push(...tableElements)
+      continue
+    }
     const paragraphs = sectionToParagraphs(section, paperLookup, parsed.citationNumbers, style, opts)
     children.push(...paragraphs)
   }
@@ -229,8 +236,7 @@ function sectionToParagraphs(
       ]
     
     case 'table':
-      // Tables are complex - flatten to text for now
-      return tableToParagraphs(section, paperLookup, citationNumbers, style, opts)
+      return []
     
     default:
       return [paragraphToParagraph(section, paperLookup, citationNumbers, style, opts)]
@@ -358,52 +364,75 @@ function codeBlockToParagraph(section: DocumentSection, opts: DocxOptions): Para
   })
 }
 
-function tableToParagraphs(
+function tableToElements(
   section: DocumentSection,
   paperLookup: Map<string, ExportPaper>,
   citationNumbers: Map<string, number>,
   style: string,
   opts: DocxOptions
-): Paragraph[] {
-  // Simplified table rendering - convert to text
-  const paragraphs: Paragraph[] = []
+): Array<Table | Paragraph> {
   const rows = section.rows || []
-  
-  for (const row of rows) {
-    const cells: string[] = []
-    for (const cell of row) {
-      const cellText = cell.map(s => 
-        s.content.map(c => {
-          if (c.type === 'text') return c.text
-          if (c.type === 'citation') {
-            const paper = paperLookup.get(c.paperId)
-            return paper 
-              ? formatInlineCitation(paper, c.citationNumber, style)
-              : `[${c.citationNumber}]`
-          }
-          return ''
-        }).join('')
-      ).join(' ')
-      cells.push(cellText)
-    }
-    
+  if (rows.length === 0) return []
+
+  const columnCount = rows.reduce((max, row) => Math.max(max, row.length), 0)
+  if (columnCount === 0) return []
+
+  const tableRows = rows.map((row, rowIndex) =>
+    new TableRow({
+      tableHeader: rowIndex === 0,
+      children: Array.from({ length: columnCount }, (_, colIndex) => {
+        const cellSections = row[colIndex] || []
+        return new TableCell({
+          children: tableCellToParagraphs(cellSections, paperLookup, citationNumbers, style, opts),
+        })
+      }),
+    })
+  )
+
+  const table = new Table({
+    rows: tableRows,
+    width: {
+      size: 100,
+      type: WidthType.PERCENTAGE,
+    },
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+      bottom: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+      left: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+      right: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: 'DDDDDD' },
+      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: 'DDDDDD' },
+    },
+  })
+
+  return [
+    table,
+    new Paragraph({
+      spacing: { after: 200 },
+    }),
+  ]
+}
+
+function tableCellToParagraphs(
+  cellSections: DocumentSection[],
+  paperLookup: Map<string, ExportPaper>,
+  citationNumbers: Map<string, number>,
+  style: string,
+  opts: DocxOptions
+): Paragraph[] {
+  const paragraphs: Paragraph[] = []
+
+  for (const cellSection of cellSections) {
+    if (cellSection.type === 'table') continue
     paragraphs.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: cells.join('\t|\t'),
-            font: opts.fontFamily,
-            size: opts.fontSize,
-          }),
-        ],
-        tabStops: [
-          { type: TabStopType.LEFT, position: TabStopPosition.MAX },
-        ],
-        spacing: { after: 100 },
-      })
+      ...sectionToParagraphs(cellSection, paperLookup, citationNumbers, style, opts)
     )
   }
-  
+
+  if (paragraphs.length === 0) {
+    return [new Paragraph({ children: [new TextRun({ text: '' })] })]
+  }
+
   return paragraphs
 }
 

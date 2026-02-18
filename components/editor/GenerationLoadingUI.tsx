@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useRef, useMemo, memo, useState } from "react"
+import { useEffect, useRef, useMemo, memo } from "react"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { 
@@ -117,7 +117,7 @@ function PaperSkeleton({ currentSection }: { currentSection: string | null }) {
           <div 
             key={section.name} 
             className={cn(
-              "space-y-3 p-4 rounded-xl transition-all duration-500",
+              "space-y-3 p-4 rounded-xl transition-[color,opacity] duration-500",
               isActive && "bg-foreground/3 ring-1 ring-foreground/10",
               isComplete && "opacity-60"
             )}
@@ -140,7 +140,7 @@ function PaperSkeleton({ currentSection }: { currentSection: string | null }) {
               />
               {isActive && (
                 <span className="text-[10px] text-muted-foreground font-medium ml-auto uppercase tracking-wide">
-                  Writing...
+                  Writing…
                 </span>
               )}
             </div>
@@ -406,12 +406,12 @@ function StatusPanel({
       </div>
 
       {/* Stage list */}
-      <div className="space-y-0.5 overflow-y-auto">
+      <div className="space-y-0.5 overflow-y-auto overscroll-contain">
         {stages.map((stage) => (
           <div
             key={stage.id}
             className={cn(
-              "flex items-center gap-3 py-2 px-3 rounded-lg text-xs transition-all",
+              "flex items-center gap-3 py-2 px-3 rounded-lg text-xs transition-colors",
               stage.status === "active" && "bg-foreground/5 text-foreground",
               stage.status === "complete" && "text-muted-foreground",
               stage.status === "pending" && "text-muted-foreground/50",
@@ -441,18 +441,21 @@ function StatusPanel({
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2 pt-2 md:pt-3 border-t border-border/30 mt-auto">
+      <div
+        className="flex gap-2 pt-2 md:pt-3 border-t border-border/30 mt-auto"
+        style={{ paddingBottom: "max(0px, env(safe-area-inset-bottom))" }}
+      >
         {error ? (
           <>
             <button
               onClick={onCancel}
-              className="flex-1 h-9 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors"
+              className="flex-1 h-9 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               Go Back
             </button>
             <button
               onClick={onRetry}
-              className="flex-1 h-9 rounded-full bg-foreground/80 text-background text-xs font-medium hover:bg-foreground transition-colors"
+              className="flex-1 h-9 rounded-full bg-foreground/80 text-background text-xs font-medium hover:bg-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               Retry
             </button>
@@ -461,7 +464,7 @@ function StatusPanel({
           onCancel && progress < 100 && (
             <button 
               onClick={onCancel} 
-              className="w-full h-9 rounded-full text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center justify-center gap-1.5"
+              className="w-full h-9 rounded-full text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               <X className="h-3 w-3" />
               Cancel
@@ -491,12 +494,37 @@ export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
   const showLiveContent = isGenerating && (hasContent || currentSection)
 
   return (
-    <div className="absolute inset-0 z-50 bg-background/98 backdrop-blur-sm flex items-center justify-center p-2 md:p-4">
-      <div className="w-full max-w-5xl h-[min(70vh,550px)] md:h-[min(85vh,700px)] bg-card border border-border/40 rounded-2xl shadow-2xl overflow-hidden">
-        <div className="h-full flex flex-col md:flex-row">
+    <div
+      className="absolute inset-0 z-50 bg-background/98 backdrop-blur-sm flex items-center justify-center p-2 md:p-4"
+      style={{
+        paddingTop: "max(0.5rem, env(safe-area-inset-top))",
+        paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))",
+      }}
+    >
+      <div className="w-full max-w-5xl h-[calc(100dvh-1rem)] md:h-[min(85vh,700px)] bg-card border border-border/40 rounded-2xl shadow-2xl overflow-hidden">
+        {/* Mobile: status on top (always visible), content preview scrollable below */}
+        <div className="h-full md:hidden flex flex-col">
+          <div className="shrink-0 bg-background border-b border-border/30">
+            <StatusPanel {...props} />
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain bg-muted/20">
+            {showLiveContent ? (
+              <LiveContentPreview
+                currentSection={currentSection}
+                currentSectionContent={currentSectionContent}
+                completedSections={completedSections}
+              />
+            ) : (
+              <PaperSkeleton currentSection={currentSection} />
+            )}
+          </div>
+        </div>
+
+        {/* Desktop: split preview + status */}
+        <div className="hidden h-full md:flex md:flex-row">
           {/* Left: Paper Preview or Skeleton */}
           <div className="flex-1 border-b md:border-b-0 md:border-r border-border/30 overflow-hidden bg-muted/20">
-            <ScrollArea className="h-full">
+            <ScrollArea className="h-full overscroll-contain">
               {showLiveContent ? (
                 <LiveContentPreview 
                   currentSection={currentSection}
@@ -510,7 +538,7 @@ export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
           </div>
 
           {/* Right: Status Panel */}
-          <div className="w-full md:w-80 lg:w-96 shrink-0 bg-background overflow-y-auto">
+          <div className="w-full md:w-80 lg:w-96 shrink-0 bg-background overflow-y-auto overscroll-contain">
             <StatusPanel {...props} />
           </div>
         </div>

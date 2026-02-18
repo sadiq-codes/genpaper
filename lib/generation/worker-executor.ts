@@ -22,6 +22,13 @@ export interface WorkerExecutionOptions {
   heartbeatIntervalMs: number;
 }
 
+class WorkerLeaseLostError extends Error {
+  constructor(jobId: string) {
+    super(`Worker lease lost for job ${jobId}`);
+    this.name = "WorkerLeaseLostError";
+  }
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
@@ -32,6 +39,8 @@ export async function processGenerationJob(
   options: WorkerExecutionOptions
 ): Promise<void> {
   const { workerId, leaseSeconds, heartbeatIntervalMs } = options;
+  let leaseLost = false;
+  let leaseLostLogged = false;
 
   console.log(
     `[generation-worker] Claimed job ${job.id} (run=${job.run_id}, attempt=${job.attempts}/${job.max_attempts})`
@@ -41,9 +50,13 @@ export async function processGenerationJob(
     try {
       const ok = await heartbeatGenerationJob(job.id, workerId, leaseSeconds);
       if (!ok) {
-        console.warn(
-          `[generation-worker] Heartbeat rejected for job ${job.id}; ownership may have changed`
-        );
+        leaseLost = true;
+        if (!leaseLostLogged) {
+          leaseLostLogged = true;
+          console.warn(
+            `[generation-worker] Heartbeat rejected for job ${job.id}; stopping worker because ownership changed`
+          );
+        }
       }
     } catch (error) {
       console.error(
@@ -54,10 +67,25 @@ export async function processGenerationJob(
   }, heartbeatIntervalMs);
 
   try {
-    await runGenerationPipeline(job.payload, async (_stepName, fn) => fn());
+    await runGenerationPipeline(job.payload, async (_stepName, fn) => {
+      if (leaseLost) {
+        throw new WorkerLeaseLostError(job.id);
+      }
+      return fn();
+    });
+
+    if (leaseLost) {
+      throw new WorkerLeaseLostError(job.id);
+    }
+
     await completeGenerationJob(job.id, workerId);
     console.log(`[generation-worker] Completed job ${job.id}`);
   } catch (error) {
+    if (error instanceof WorkerLeaseLostError) {
+      console.warn(`[generation-worker] Exiting after lease loss for job ${job.id}`);
+      return;
+    }
+
     const errorMessage = getErrorMessage(error);
     const run = await getRun(job.run_id).catch(() => null);
     const isCancelled =

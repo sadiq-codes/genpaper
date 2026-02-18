@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState, useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Button } from '@/components/ui/button'
@@ -47,13 +47,25 @@ export function FloatingToolbar({
   onInsertCitation,
   onChat,
 }: FloatingToolbarProps) {
-  const [linkUrl, setLinkUrl] = useState('')
   const selectionRef = useRef<{ from: number; to: number } | null>(null)
+
+  const getSelectionRange = useCallback(() => {
+    const saved = selectionRef.current
+    if (saved && saved.from !== saved.to) {
+      return saved
+    }
+    const { from, to } = editor.state.selection
+    if (from !== to) {
+      return { from, to }
+    }
+    return null
+  }, [editor])
   
   const getSelectedText = useCallback(() => {
-    const { from, to } = editor.state.selection
-    return editor.state.doc.textBetween(from, to, ' ')
-  }, [editor])
+    const range = getSelectionRange()
+    if (!range) return ''
+    return editor.state.doc.textBetween(range.from, range.to, ' ')
+  }, [editor, getSelectionRange])
 
   const handleAiEdit = useCallback(() => {
     const text = getSelectedText()
@@ -64,15 +76,6 @@ export function FloatingToolbar({
     const text = getSelectedText()
     if (text) onChat(text)
   }, [getSelectedText, onChat])
-
-  const setLink = useCallback(() => {
-    if (linkUrl) {
-      editor.chain().focus().setLink({ href: linkUrl }).run()
-      setLinkUrl('')
-    } else {
-      editor.chain().focus().unsetLink().run()
-    }
-  }, [editor, linkUrl])
 
   // Memoized formatting handlers
   const toggleBold = useCallback(() => editor.chain().focus().toggleBold().run(), [editor])
@@ -120,6 +123,7 @@ export function FloatingToolbar({
         variant="ghost"
         size="sm"
         className="h-7 gap-1.5 text-xs px-2.5 rounded-full text-foreground hover:bg-muted"
+        onMouseDown={(event) => event.preventDefault()}
         onClick={handleAiEdit}
       >
         <Sparkles className="h-3 w-3" />
@@ -130,6 +134,7 @@ export function FloatingToolbar({
         variant="ghost"
         size="sm"
         className="h-7 gap-1.5 text-xs px-2.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
+        onMouseDown={(event) => event.preventDefault()}
         onClick={handleChat}
       >
         <MessageSquare className="h-3 w-3" />
@@ -140,6 +145,7 @@ export function FloatingToolbar({
         variant="ghost"
         size="sm"
         className="h-7 gap-1.5 text-xs px-2.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
+        onMouseDown={(event) => event.preventDefault()}
         onClick={onInsertCitation}
       >
         <AtSign className="h-3 w-3" />

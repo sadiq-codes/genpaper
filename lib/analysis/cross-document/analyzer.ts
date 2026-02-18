@@ -160,6 +160,9 @@ type AnalysisObject = z.infer<typeof _AnalysisSchema>
 const ANALYSIS_PART_MAX_OUTPUT_TOKENS = 2200
 const ANALYSIS_PART_RETRY_MAX_OUTPUT_TOKENS = 3200
 const ANALYSIS_PART_FINAL_RETRY_MAX_OUTPUT_TOKENS = 4200
+const ANALYSIS_PART_HEAVY_MAX_OUTPUT_TOKENS = 3200
+const ANALYSIS_PART_HEAVY_RETRY_MAX_OUTPUT_TOKENS = 4200
+const ANALYSIS_PART_HEAVY_FINAL_RETRY_MAX_OUTPUT_TOKENS = 5200
 const ANALYSIS_PART_TIMEOUT_MS = Number(process.env.ANALYSIS_PART_TIMEOUT_MS || 120000)
 const MAX_CLAIM_CHARS = 220
 const MAX_EVIDENCE_CHARS = 160
@@ -236,6 +239,26 @@ function isLikelyTimeoutOrAbort(error: unknown): boolean {
   )
 }
 
+function getTokenBudgetsForPart(
+  partName: AnalysisPartName,
+  findingsCount: number
+): number[] {
+  const isHeavyPart = partName === 'patterns' || partName === 'meta'
+  const isLargeBatch = findingsCount >= 70
+  if (isHeavyPart && isLargeBatch) {
+    return [
+      ANALYSIS_PART_HEAVY_MAX_OUTPUT_TOKENS,
+      ANALYSIS_PART_HEAVY_RETRY_MAX_OUTPUT_TOKENS,
+      ANALYSIS_PART_HEAVY_FINAL_RETRY_MAX_OUTPUT_TOKENS,
+    ]
+  }
+  return [
+    ANALYSIS_PART_MAX_OUTPUT_TOKENS,
+    ANALYSIS_PART_RETRY_MAX_OUTPUT_TOKENS,
+    ANALYSIS_PART_FINAL_RETRY_MAX_OUTPUT_TOKENS,
+  ]
+}
+
 async function generateAnalysisPartWithRetry<T>(
   schema: z.ZodType<T>,
   findings: FindingWithPaper[],
@@ -250,11 +273,7 @@ Part-specific output requirement:
 ${PART_INSTRUCTIONS[partName]}
 
 Only return JSON matching the provided schema.`
-  const tokenBudgets = [
-    ANALYSIS_PART_MAX_OUTPUT_TOKENS,
-    ANALYSIS_PART_RETRY_MAX_OUTPUT_TOKENS,
-    ANALYSIS_PART_FINAL_RETRY_MAX_OUTPUT_TOKENS,
-  ]
+  const tokenBudgets = getTokenBudgetsForPart(partName, findings.length)
   let lastError: unknown = null
 
   for (let attempt = 0; attempt < tokenBudgets.length; attempt++) {
@@ -584,7 +603,7 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
  * Maximum findings per batch to avoid token overflow
  * ~150 findings × ~200 tokens = ~30k tokens, leaving room for response
  */
-const MAX_FINDINGS_PER_BATCH = 90
+const MAX_FINDINGS_PER_BATCH = 70
 
 /**
  * Threshold above which we use batched analysis

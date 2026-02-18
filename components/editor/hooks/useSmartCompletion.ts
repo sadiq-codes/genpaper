@@ -510,6 +510,8 @@ export function useSmartCompletion({
   const sentenceQueueRef = useRef<QueuedSentence[]>([])
   // Track the context when sentences were fetched (to invalidate queue on context change)
   const queueContextRef = useRef<string>('')
+  // Flag: set true while ghost text accept is in progress so handleUpdate skips cancel/retrigger
+  const acceptingGhostTextRef = useRef(false)
   
   // COMPLETION CACHE: Store recent completions for reuse when user continues typing
   // Key: prefix (preceding text), Value: { sentences, timestamp, section }
@@ -1220,9 +1222,13 @@ export function useSmartCompletion({
     if (!editor || !enabled) return
 
     const handleGhostTextAccepted = () => {
+      // Mark that we're processing a ghost text accept so handleUpdate
+      // doesn't cancel pending requests or clear the sentence queue.
+      acceptingGhostTextRef.current = true
       trackAutocompleteAccepted()
-      // Small delay to let the accepted text be inserted first
+      // Small delay to let the accepted text transaction settle
       setTimeout(() => {
+        acceptingGhostTextRef.current = false
         if (!editor || editor.isDestroyed || !mountedRef.current) return
         const showedQueuedSentence = showNextQueuedSentenceRef.current()
 
@@ -1268,6 +1274,12 @@ export function useSmartCompletion({
       
       // Ignore non-writing updates (formatting, citation metadata updates, undo/redo, paste, etc.).
       if (!shouldAutoTriggerFromTransaction(transaction, now, lastTypingEventAtRef.current)) {
+        return
+      }
+
+      // Skip cancel/retrigger when the doc change is from ghost text acceptance.
+      // The sentence queue handler will take care of showing the next sentence.
+      if (acceptingGhostTextRef.current) {
         return
       }
 

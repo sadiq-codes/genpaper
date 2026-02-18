@@ -5,7 +5,7 @@ import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import type { Editor } from '@tiptap/react'
 import { Button } from '@/components/ui/button'
-import { Sparkles, Check, X, Loader2 } from 'lucide-react'
+import { Sparkles, X, Loader2 } from 'lucide-react'
 import { calculateEdit, type CalculatedEdit } from '../services/edit-calculator'
 import { validateToolCall } from '@/lib/ai/tools/document-tools'
 import { serializeForAIContext } from '../utils/ai-context-serializer'
@@ -27,7 +27,7 @@ interface InlineEditBarProps {
   onClose: () => void
 }
 
-type Phase = 'input' | 'loading' | 'review'
+type Phase = 'input' | 'loading'
 
 interface PendingEdit {
   id: string
@@ -81,15 +81,10 @@ export function InlineEditBar({
 }: InlineEditBarProps) {
   const [instruction, setInstruction] = useState('')
   const [phase, setPhase] = useState<Phase>('input')
-  const [pendingEdits, setPendingEdits] = useState<PendingEdit[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const pendingEditsRef = useRef<PendingEdit[]>([])
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
-
-  useEffect(() => {
-    pendingEditsRef.current = pendingEdits
-  }, [pendingEdits])
 
   const [position, setPosition] = useState({ top: 0 })
 
@@ -139,7 +134,6 @@ export function InlineEditBar({
 
     const remaining = pendingEditsRef.current.filter(e => e.id !== editId)
     pendingEditsRef.current = remaining
-    setPendingEdits(remaining)
 
     if (remaining.length === 0) {
       toast.success('Edit applied')
@@ -152,14 +146,13 @@ export function InlineEditBar({
 
     const remaining = pendingEditsRef.current.filter(e => e.id !== editId)
     pendingEditsRef.current = remaining
-    setPendingEdits(remaining)
 
     if (remaining.length === 0) {
       onCloseRef.current()
     }
   }, [editor])
 
-  const { sendMessage, status } = useChat({
+  const { sendMessage } = useChat({
     id: chatId,
     transport,
     onFinish: ({ message }) => {
@@ -186,13 +179,13 @@ export function InlineEditBar({
 
       if (edits.length > 0) {
         pendingEditsRef.current = edits
-        setPendingEdits(edits)
         editor.commands.setGhostEdits(
           calculatedEdits,
           (editId: string) => handleAcceptEdit(editId),
           (editId: string) => handleRejectEdit(editId),
         )
-        setPhase('review')
+        toast.info('Review suggested edits in the diff blocks and accept/reject there.')
+        onCloseRef.current()
       } else {
         toast.error('Could not target the edit location')
         setPhase('input')
@@ -237,39 +230,17 @@ export function InlineEditBar({
     setPhase('loading')
   }, [instruction, selectedText, projectId, getEditorContext, sendMessage])
 
-  const handleAcceptAll = useCallback(() => {
-    import('../services/tool-executor').then(({ executeDocumentTool }) => {
-      for (const edit of pendingEditsRef.current) {
-        executeDocumentTool(editor, edit.toolName, edit.args, { ghostEditId: edit.id })
-      }
-    })
-    editor.commands.clearGhostEdits()
-    toast.success('Edit applied')
-    onClose()
-  }, [editor, onClose])
-
-  const handleRejectAll = useCallback(() => {
-    editor.commands.clearGhostEdits()
-    onClose()
-  }, [editor, onClose])
-
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
-      if (phase === 'review') {
-        handleRejectAll()
-      } else {
-        if (phase === 'loading') return
-        onClose()
-      }
+      if (phase === 'loading') return
+      onClose()
     } else if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (phase === 'input') {
         handleSubmit()
-      } else if (phase === 'review') {
-        handleAcceptAll()
       }
     }
-  }, [phase, handleSubmit, handleAcceptAll, handleRejectAll, onClose])
+  }, [phase, handleSubmit, onClose])
 
   return (
     <div
@@ -321,37 +292,12 @@ export function InlineEditBar({
           </>
         )}
 
-        {phase === 'review' && (
-          <>
-            <span className="flex-1 text-sm text-muted-foreground">
-              {pendingEdits.length} edit{pendingEdits.length !== 1 ? 's' : ''} ready
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-3 text-xs rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
-              onClick={handleRejectAll}
-            >
-              <X className="h-3 w-3 mr-1" />
-              Reject
-            </Button>
-            <Button
-              size="sm"
-              className="h-7 px-3 text-xs rounded-full bg-foreground text-background hover:bg-foreground/90"
-              onClick={handleAcceptAll}
-            >
-              <Check className="h-3 w-3 mr-1" />
-              Accept
-            </Button>
-          </>
-        )}
       </div>
 
       {/* Keyboard hints */}
       <div className="flex justify-end mt-1 px-1 max-w-3xl mx-auto">
         <span className="text-[10px] text-muted-foreground/40">
           {phase === 'input' && 'Enter to submit · Esc to cancel'}
-          {phase === 'review' && 'Enter to accept · Esc to reject'}
         </span>
       </div>
     </div>

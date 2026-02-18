@@ -800,6 +800,12 @@ export function DocumentEditor({
     )
   }
 
+  const canAddRow = editor.can().chain().focus().addRowAfter().run()
+  const canAddColumn = editor.can().chain().focus().addColumnAfter().run()
+  const canDeleteRow = editor.can().chain().focus().deleteRow().run()
+  const canDeleteColumn = editor.can().chain().focus().deleteColumn().run()
+  const canDeleteTable = editor.can().chain().focus().deleteTable().run()
+
   return (
     <div className="flex flex-col h-full bg-background">
       {/* Editor toolbar */}
@@ -923,24 +929,24 @@ export function DocumentEditor({
           shouldShow={({ editor: e }) => e.isActive('table')}
           className="flex items-center gap-0.5 p-1 bg-card border border-border rounded-lg shadow-md"
         >
-          <Button variant="ghost" size="sm" aria-label="Add row" className="h-7 px-2 text-xs gap-1" onClick={() => editor.chain().focus().addRowAfter().run()}>
+          <Button variant="ghost" size="sm" aria-label="Add row" className="h-7 px-2 text-xs gap-1" disabled={!canAddRow} onClick={() => editor.chain().focus().addRowAfter().run()}>
             <Rows3 className="h-3 w-3" aria-hidden="true" /> Row
             <Plus className="h-2.5 w-2.5" aria-hidden="true" />
           </Button>
-          <Button variant="ghost" size="sm" aria-label="Add column" className="h-7 px-2 text-xs gap-1" onClick={() => editor.chain().focus().addColumnAfter().run()}>
+          <Button variant="ghost" size="sm" aria-label="Add column" className="h-7 px-2 text-xs gap-1" disabled={!canAddColumn} onClick={() => editor.chain().focus().addColumnAfter().run()}>
             <Columns3 className="h-3 w-3" aria-hidden="true" /> Col
             <Plus className="h-2.5 w-2.5" aria-hidden="true" />
           </Button>
-          <Button variant="ghost" size="sm" aria-label="Delete row" className="h-7 px-2 text-xs gap-1 text-muted-foreground" onClick={() => editor.chain().focus().deleteRow().run()}>
+          <Button variant="ghost" size="sm" aria-label="Delete row" className="h-7 px-2 text-xs gap-1 text-muted-foreground" disabled={!canDeleteRow} onClick={() => editor.chain().focus().deleteRow().run()}>
             <Rows3 className="h-3 w-3" aria-hidden="true" />
             <Minus className="h-2.5 w-2.5" aria-hidden="true" />
           </Button>
-          <Button variant="ghost" size="sm" aria-label="Delete column" className="h-7 px-2 text-xs gap-1 text-muted-foreground" onClick={() => editor.chain().focus().deleteColumn().run()}>
+          <Button variant="ghost" size="sm" aria-label="Delete column" className="h-7 px-2 text-xs gap-1 text-muted-foreground" disabled={!canDeleteColumn} onClick={() => editor.chain().focus().deleteColumn().run()}>
             <Columns3 className="h-3 w-3" aria-hidden="true" />
             <Minus className="h-2.5 w-2.5" aria-hidden="true" />
           </Button>
           <div className="w-px h-4 bg-border mx-0.5" />
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => editor.chain().focus().deleteTable().run()}>
+          <Button variant="ghost" size="sm" aria-label="Delete table" className="h-7 px-2 text-xs gap-1 text-destructive hover:text-destructive hover:bg-destructive/10" disabled={!canDeleteTable} onClick={() => editor.chain().focus().deleteTable().run()}>
             <Trash2 className="h-3 w-3" /> Delete
           </Button>
         </BubbleMenu>

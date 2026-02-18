@@ -55,6 +55,15 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Handle hash-based recovery/signup tokens (Supabase PKCE flow).
+  // When the user clicks the email link, Supabase redirects with tokens in the
+  // URL hash fragment. The server can't read those, so redirect to the client
+  // page which will pick them up automatically via the Supabase client SDK.
+  const type = searchParams.get('type')
+  if (type === 'recovery') {
+    return NextResponse.redirect(toRedirectUrl('/reset-password'))
+  }
+
   // No code provided, redirect to login
   return NextResponse.redirect(toRedirectUrl('/login'))
 }

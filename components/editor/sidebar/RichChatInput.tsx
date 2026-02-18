@@ -44,6 +44,10 @@ export interface RichChatInputProps {
   onImageUpload?: (file: File) => Promise<string | null>
   /** Whether an image is being uploaded */
   isUploadingImage?: boolean
+  /** One-shot prefill request id */
+  prefillId?: number
+  /** One-shot text inserted into the composer */
+  prefillText?: string
 }
 
 export interface RichChatInputRef {
@@ -92,8 +96,11 @@ export function RichChatInput({
   onCitePaper,
   onImageUpload,
   isUploadingImage = false,
+  prefillId,
+  prefillText,
 }: RichChatInputProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null)
+  const lastAppliedPrefillIdRef = useRef<number | null>(null)
   const [isEmpty, setIsEmpty] = useState(true)
 
   // Create the search function for mentions
@@ -216,6 +223,21 @@ export function RichChatInput({
       editor.commands.focus()
     }
   }, [disabled, editor])
+
+  useEffect(() => {
+    if (!editor || !prefillId || !prefillText) return
+    if (lastAppliedPrefillIdRef.current === prefillId) return
+
+    const hasText = !!editor.getText().trim()
+    const hasImage = editor.getHTML().includes('<img')
+
+    if (!hasText && !hasImage) {
+      editor.commands.clearContent()
+      editor.chain().focus().insertContent(prefillText).run()
+    }
+
+    lastAppliedPrefillIdRef.current = prefillId
+  }, [editor, prefillId, prefillText])
 
   const handleImageUpload = useCallback(async (file: File) => {
     if (!onImageUpload || !editor) return
