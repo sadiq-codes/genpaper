@@ -15,9 +15,15 @@ import { extractPdfMetadataTiered } from '@/lib/pdf/tiered-extractor'
 import { extractPaper } from '@/lib/extraction'
 import { saveExtractionService, hasExtractionService } from '@/lib/extraction/db-service'
 import pLimit from 'p-limit'
+import {
+  normalizePaperProcessingStatus,
+  isChunkReadyStatus,
+  type PaperProcessingStatus,
+} from './processing-status'
+import { setPaperProcessingStatus } from './processing-status-service'
 
 // Processing status types
-export type ProcessingStatus = 'pending' | 'processing' | 'processed' | 'failed'
+export type ProcessingStatus = PaperProcessingStatus
 
 export interface ProcessingResult {
   paperId: string
@@ -151,10 +157,10 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
       return { paperId, status: 'failed', error: 'Paper not found' }
     }
     
-    // 2. Skip if already processed
-    if (paper.processing_status === 'processed') {
-      console.log(`[BackgroundProcessor] Paper ${paperId} already processed, skipping`)
-      return { paperId, status: 'processed' }
+    // 2. Skip if full text is already ready
+    if (normalizePaperProcessingStatus(paper.processing_status) === 'full_text_ready') {
+      console.log(`[BackgroundProcessor] Paper ${paperId} already full-text ready, skipping`)
+      return { paperId, status: 'full_text_ready' }
     }
     
     // 3. Check if we already have content
@@ -163,23 +169,14 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
       return await createChunksFromContent(paperId, paper.pdf_content)
     }
     
-    // 4. Update status to processing
-    await supabase
-      .from('papers')
-      .update({ processing_status: 'processing' })
-      .eq('id', paperId)
-    
-    // 5. Get PDF from storage
+    // 4. Get PDF from storage
     if (!paper.pdf_url) {
       console.error(`[BackgroundProcessor] Paper ${paperId} has no PDF URL`)
-      await supabase
-        .from('papers')
-        .update({ processing_status: 'failed' })
-        .eq('id', paperId)
+      await setPaperProcessingStatus(paperId, 'failed', { serviceClient: supabase })
       return { paperId, status: 'failed', error: 'No PDF URL available' }
     }
     
-    // 6. Download PDF from storage
+    // 5. Download PDF from storage
     let pdfBuffer: Buffer
     try {
       pdfBuffer = await withTransientRetries(
@@ -191,17 +188,14 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
     } catch (downloadError) {
       console.error(`[BackgroundProcessor] Failed to download PDF for ${paperId}:`, downloadError)
       const statusCode = getStatusCodeFromError(downloadError)
-      await supabase
-        .from('papers')
-        .update({ processing_status: 'failed' })
-        .eq('id', paperId)
+      await setPaperProcessingStatus(paperId, 'failed', { serviceClient: supabase })
       const errorDetail = statusCode
         ? `Failed to download PDF (HTTP ${statusCode})`
         : 'Failed to download PDF'
       return { paperId, status: 'failed', error: errorDetail }
     }
     
-    // 7. Extract text and metadata from PDF
+    // 6. Extract text and metadata from PDF
     console.log(`[BackgroundProcessor] Extracting text from PDF for paper ${paperId}`)
     let extractedText: string
     let extractedMetadata: {
@@ -243,20 +237,18 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
     } catch (extractionError) {
       console.error(`[BackgroundProcessor] Text extraction failed for ${paperId}:`, extractionError)
       const statusCode = getStatusCodeFromError(extractionError)
-      await supabase
-        .from('papers')
-        .update({ processing_status: 'failed' })
-        .eq('id', paperId)
+      await setPaperProcessingStatus(paperId, 'failed', { serviceClient: supabase })
       const errorDetail = statusCode
         ? `Text extraction failed (HTTP ${statusCode})`
         : 'Text extraction failed'
       return { paperId, status: 'failed', error: errorDetail }
     }
     
-    // 8. Save extracted content AND metadata to paper record
+    // 7. Save extracted content AND metadata to paper record
     // Only update fields if we extracted better data than the filename-based defaults
     const updateData: Record<string, unknown> = {
       pdf_content: extractedText,
+      content_source: 'pdf',
     }
     
     // Update title if we extracted a real one (not just filename)
@@ -293,17 +285,14 @@ export async function processPaper(paperId: string): Promise<ProcessingResult> {
       .update(updateData)
       .eq('id', paperId)
     
-    // 9. Create chunks with embeddings
+    // 8. Create chunks with embeddings
     return await createChunksFromContent(paperId, extractedText)
     
   } catch (error) {
     console.error(`[BackgroundProcessor] Unexpected error processing ${paperId}:`, error)
     
     // Update status to failed
-    await supabase
-      .from('papers')
-      .update({ processing_status: 'failed' })
-      .eq('id', paperId)
+    await setPaperProcessingStatus(paperId, 'failed', { serviceClient: supabase })
     
     return { 
       paperId, 
@@ -327,22 +316,28 @@ async function createChunksFromContent(paperId: string, content: string): Promis
     // This extracts findings, claims, methodology for cross-document analysis
     await runStructuredExtraction(paperId, content)
     
-    // Update status to processed
+    // Full text is now chunked and ready
     await supabase
       .from('papers')
-      .update({ processing_status: 'processed' })
+      .update({
+        pdf_content: content.slice(0, 1_000_000),
+        content_source: 'pdf',
+      })
       .eq('id', paperId)
+
+    await setPaperProcessingStatus(paperId, 'full_text_ready', {
+      serviceClient: supabase,
+      pdfContent: content,
+      contentSource: 'pdf',
+    })
     
-    console.log(`[BackgroundProcessor] Paper ${paperId} processed successfully, ${chunksCreated} chunks created`)
-    return { paperId, status: 'processed', chunksCreated }
+    console.log(`[BackgroundProcessor] Paper ${paperId} full-text ready, ${chunksCreated} chunks created`)
+    return { paperId, status: 'full_text_ready', chunksCreated }
     
   } catch (error) {
     console.error(`[BackgroundProcessor] Failed to create chunks for ${paperId}:`, error)
     
-    await supabase
-      .from('papers')
-      .update({ processing_status: 'failed' })
-      .eq('id', paperId)
+    await setPaperProcessingStatus(paperId, 'failed', { serviceClient: supabase })
     
     return { 
       paperId, 
@@ -488,7 +483,7 @@ export async function processMultiplePapers(
     paperIds.map(paperId => limit(() => processPaper(paperId)))
   )
   
-  const successful = results.filter(r => r.status === 'processed').length
+  const successful = results.filter(r => r.status === 'full_text_ready').length
   const failed = results.filter(r => r.status === 'failed').length
   console.log(`[BackgroundProcessor] Completed: ${successful} successful, ${failed} failed`)
   
@@ -522,7 +517,7 @@ export async function processProjectPapers(projectId: string): Promise<Processin
   const pendingPaperIds = (projectCitations || [])
     .filter(pc => {
       const paper = pc.papers as unknown as { id: string; processing_status: string }
-      return paper && paper.processing_status !== 'processed'
+      return paper && normalizePaperProcessingStatus(paper.processing_status) !== 'full_text_ready'
     })
     .map(pc => pc.paper_id)
   
@@ -538,7 +533,7 @@ export async function processProjectPapers(projectId: string): Promise<Processin
 /**
  * Get processing status for multiple papers
  * 
- * Falls back to checking if chunks exist when processing_status column is unavailable
+ * Falls back to chunk-ready status when processing_status column is unavailable
  */
 export async function getPapersProcessingStatus(
   paperIds: string[]
@@ -558,8 +553,8 @@ export async function getPapersProcessingStatus(
   if (error) {
     console.error(`[BackgroundProcessor] Failed to fetch processing status:`, error)
     
-    // Fallback: If the column doesn't exist, check for chunks instead
-    // A paper with chunks is considered "processed"
+    // Fallback: If the column doesn't exist, check for chunks instead.
+    // A paper with chunks is considered abstract-ready.
     if (error.message?.includes('processing_status') || error.code === 'PGRST116') {
       console.log('[BackgroundProcessor] Falling back to chunk-based status detection')
       return await getStatusFromChunks(paperIds)
@@ -570,7 +565,7 @@ export async function getPapersProcessingStatus(
   
   const statusMap = new Map<string, ProcessingStatus>()
   for (const paper of data || []) {
-    statusMap.set(paper.id, (paper.processing_status as ProcessingStatus) || 'pending')
+    statusMap.set(paper.id, normalizePaperProcessingStatus(paper.processing_status))
   }
   
   // For any papers not found in result, mark as pending
@@ -606,17 +601,17 @@ async function getStatusFromChunks(paperIds: string[]): Promise<Map<string, Proc
     return statusMap
   }
   
-  // Papers with at least one chunk are considered processed
+  // Papers with at least one chunk are considered abstract-ready
   const papersWithChunks = new Set(chunks?.map(c => c.paper_id) || [])
   for (const paperId of papersWithChunks) {
-    statusMap.set(paperId, 'processed')
+    statusMap.set(paperId, 'abstract_ready')
   }
   
   return statusMap
 }
 
 /**
- * Check if all papers for a project are processed
+ * Check if all papers for a project are chunk-ready
  */
 export async function areProjectPapersProcessed(projectId: string): Promise<boolean> {
   const supabase = createServiceClient()
@@ -637,6 +632,6 @@ export async function areProjectPapersProcessed(projectId: string): Promise<bool
   
   return data.every(pc => {
     const paper = pc.papers as unknown as { processing_status: string }
-    return paper?.processing_status === 'processed'
+    return isChunkReadyStatus(normalizePaperProcessingStatus(paper?.processing_status))
   })
 }

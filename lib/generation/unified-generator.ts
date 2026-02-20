@@ -359,6 +359,40 @@ function extractSectionSummary(title: string, content: string, citations: Struct
   return `**${title}**: ${preview}${citedStr}`
 }
 
+function buildCitationHistoryDirective(
+  citationUsage: Map<string, number>,
+  sectionPaperIds: string[]
+): string {
+  const totalHistoricalCitations = Array.from(citationUsage.values()).reduce((sum, count) => sum + count, 0)
+  if (totalHistoricalCitations < 4) return ''
+
+  const sortedUsage = Array.from(citationUsage.entries()).sort((a, b) => b[1] - a[1])
+  const dominantPaperIds = sortedUsage
+    .filter(([, count], index) => index < 5 || count / totalHistoricalCitations >= 0.18)
+    .slice(0, 5)
+    .map(([paperId]) => paperId)
+
+  const uniqueSectionPaperIds = [...new Set(sectionPaperIds)].filter(Boolean)
+  const underusedInSection = uniqueSectionPaperIds
+    .filter(paperId => (citationUsage.get(paperId) || 0) <= 1)
+    .slice(0, 8)
+
+  const lines = [
+    '--- Citation diversity guidance for this section ---',
+    '- Prefer paper_ids that have been used less in earlier sections when evidence quality is comparable.',
+  ]
+
+  if (dominantPaperIds.length > 0) {
+    lines.push(`- Avoid over-relying on these already dominant paper_ids unless uniquely necessary: ${dominantPaperIds.join(', ')}`)
+  }
+
+  if (underusedInSection.length > 0) {
+    lines.push(`- Prefer introducing support from these underused in-context paper_ids: ${underusedInSection.join(', ')}`)
+  }
+
+  return lines.join('\n')
+}
+
 /**
  * Generate a section by producing each subsection separately, then combining.
  * This overcomes the token/verbosity limitation of single-call generation
@@ -478,6 +512,7 @@ export async function generateMultipleSectionsUnified(
 ): Promise<UnifiedGenerationResult[]> {
   const results: UnifiedGenerationResult[] = []
   const sectionSummaries: string[] = []
+  const citationUsage = new Map<string, number>()
   
   for (let i = 0; i < contexts.length; i++) {
     const sectionTitle = contexts[i].title || contexts[i].sectionKey
@@ -486,7 +521,13 @@ export async function generateMultipleSectionsUnified(
     // Build rolling summary of all previous sections for coherence
     const sectionOptions = { ...options }
     if (sectionSummaries.length > 0) {
-      sectionOptions.previousSectionsSummary = sectionSummaries.join('\n')
+      const diversityDirective = buildCitationHistoryDirective(
+        citationUsage,
+        (contexts[i].contextChunks || []).map(chunk => chunk.paper_id)
+      )
+      sectionOptions.previousSectionsSummary = [sectionSummaries.join('\n'), diversityDirective]
+        .filter(Boolean)
+        .join('\n\n')
     }
     
     // Track accumulated content for this section to pass to streaming callback
@@ -521,6 +562,10 @@ export async function generateMultipleSectionsUnified(
     }
 
     results.push(result)
+
+    for (const citation of result.citations) {
+      citationUsage.set(citation.paperId, (citationUsage.get(citation.paperId) || 0) + 1)
+    }
     
     // Build summary from completed section for subsequent sections
     sectionSummaries.push(extractSectionSummary(sectionTitle, result.content, result.citations))

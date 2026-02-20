@@ -14,13 +14,30 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createAzure } from "@ai-sdk/azure";
+import { shouldUseAzureOpenAIForLLM, getAzureDeploymentForModel } from "../ai/config";
 
-// Use GPT-4o-mini for fast, cheap parsing (same pattern as intent-classifier)
-const PARSER_MODEL = "gpt-4o-mini";
+// Use GPT-4.1-mini for fast, cheap parsing
+const PARSER_MODEL = "gpt-4.1-mini";
 
-const parserClient = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+/**
+ * Get the language model for topic parsing.
+ * Uses Azure OpenAI if configured, otherwise falls back to OpenAI.
+ */
+function getParserModel() {
+  if (shouldUseAzureOpenAIForLLM()) {
+    const azure = createAzure({
+      resourceName: process.env.AZURE_OPENAI_RESOURCE_NAME!,
+      apiKey: process.env.AZURE_OPENAI_API_KEY!,
+    });
+    return azure.languageModel(getAzureDeploymentForModel(PARSER_MODEL));
+  }
+  
+  const openai = createOpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+  });
+  return openai.languageModel(PARSER_MODEL);
+}
 
 const ParsedTopicSchema = z.object({
   title: z
@@ -82,7 +99,7 @@ export async function parseTopicInput(
 
   try {
     const result = await generateObject({
-      model: parserClient.languageModel(PARSER_MODEL),
+      model: getParserModel(),
       schema: ParsedTopicSchema,
       system: SYSTEM_PROMPT,
       prompt: trimmed,

@@ -119,19 +119,19 @@ function getYear(dateString: string | null): string {
 
 // Processing status label
 function ProcessingStatusLabel({ status, chunkCount }: { status: string | null; chunkCount: number }) {
-  if (status === 'processed' && chunkCount > 0) {
+  if (status === 'full_text_ready' && chunkCount > 0) {
     return (
       <span className="inline-flex items-center gap-1 text-[9px] text-emerald-600/70 uppercase tracking-wide font-medium">
         <CheckCircle className="h-2.5 w-2.5" />
-        Processed
+        Full Text Ready
       </span>
     )
   }
-  if (status === 'processing') {
+  if (status === 'abstract_ready' && chunkCount > 0) {
     return (
       <span className="inline-flex items-center gap-1 text-[9px] text-blue-500/70 uppercase tracking-wide font-medium">
-        <Loader2 className="h-2.5 w-2.5 animate-spin" />
-        Processing
+        <CheckCircle className="h-2.5 w-2.5" />
+        Abstract Ready
       </span>
     )
   }

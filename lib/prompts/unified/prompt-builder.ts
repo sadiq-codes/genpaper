@@ -1,20 +1,12 @@
 import 'server-only'
 import type { 
-  SectionContext, 
-  PaperTypeKey,
-  SynthesisPatternData,
-  SynthesisContradictionData,
-  SynthesisGapData,
-  SectionWritingGuidance
+  SectionContext
 } from '../types'
 import { PromptService, type PromptData, type TemplateOptions, type BuiltPrompt } from '@/lib/prompts/prompt-service'
 import { info, warn } from '@/lib/utils/logger'
 import { 
-  type VoiceProfileId, 
-  type VoiceProfileCore,
   type TemplateVoiceData,
-  formatVoiceForTemplate,
-  DEFAULT_VOICE_PROFILE_ID
+  formatVoiceForTemplate
 } from '@/lib/generation/voice-profiles'
 import type { PaperVoiceConfig, QualityCriterion } from '@/lib/generation/paper-profile-types'
 import type { EnrichedSectionContext } from '@/lib/synthesis-engine/outline-enricher'
@@ -213,16 +205,18 @@ async function generatePromptData(
   const targetWords = options.targetWords 
     ?? (options.sentenceMode ? 50 : Math.max(MIN_SECTION_WORDS, context.expectedWords ?? 500))
 
-  // Build new contextual data for repetition reduction
-  // Note: alreadyCovered is empty until project service integration provides claim tracking
-  const alreadyCovered = ''
-  const topic = options.topic || projectData.title
-  const paperType = options.paperType || 'researchArticle'
+  const synthesisData = buildSynthesisData(context)
   // Use profile criteria directly - no LLM call
   const sectionPurpose = buildSectionPurpose(context.title || String(context.sectionKey), options.profileCriteria)
-  const exclusions = await buildExclusions(previousSummary)
   // Use profile criteria directly - no LLM call
   const { requiredPoints, qualityCriteria } = buildPlanningData(context.title || String(context.sectionKey), options.profileCriteria)
+  const citationDiversityGuidance = buildCitationDiversityGuidance(sourceDiversityTarget, distinctPapers)
+  const requiredPointsWithDiversity = [requiredPoints, citationDiversityGuidance.requiredPoint]
+    .filter(Boolean)
+    .join('\n')
+  const qualityCriteriaWithDiversity = [qualityCriteria, citationDiversityGuidance.qualityCriterion]
+    .filter(Boolean)
+    .join('\n')
 
   // Original research context (if provided)
   const originalResearch = options.originalResearch
@@ -253,12 +247,10 @@ async function generatePromptData(
     paperObjectives: projectData.objectives,
     outlineTree,
     previousSectionsSummary: previousSummary,
-    alreadyCovered,
     sectionPath,
     sectionPurpose,
-    exclusions,
-    requiredPoints,
-    qualityCriteria,
+    requiredPoints: requiredPointsWithDiversity,
+    qualityCriteria: qualityCriteriaWithDiversity,
     customInstructions: options.customInstructions,
     targetWords,
     subsectionsPlan: (context.subsections && context.subsections.length > 0)
@@ -284,7 +276,7 @@ async function generatePromptData(
     literatureStats: quantificationContext,
     
     // Synthesis enrichment (from EnrichedSectionContext if available)
-    ...buildSynthesisData(context)
+    ...synthesisData
   }
 }
 
@@ -364,15 +356,9 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
   // Add writing guidance if available
   if (enriched.writingGuidance) {
     result.sectionWritingGuidance = enriched.writingGuidance
-    
-    // Pass mustNotRepeat as alreadyCovered for template
-    if (enriched.writingGuidance.mustNotRepeat && enriched.writingGuidance.mustNotRepeat.length > 0) {
-      ;(result as Record<string, unknown>).alreadyCovered = enriched.writingGuidance.mustNotRepeat.join('\n- ')
-    }
   }
   
   // Diagnostic logging for synthesis pipeline debugging
-  const alreadyCoveredValue = (result as Record<string, unknown>).alreadyCovered as string | undefined
   const sectionName = enriched.title || String(enriched.sectionKey)
   info({
     stage: 'synthesis-pipeline',
@@ -392,23 +378,8 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
       keyPointsCount: result.sectionWritingGuidance?.keyPointsToMake?.length || 0,
       approach: result.sectionWritingGuidance?.approach || 'none',
       tone: result.sectionWritingGuidance?.tone || 'none'
-    },
-    alreadyCovered: {
-      isSet: !!alreadyCoveredValue,
-      length: alreadyCoveredValue?.length || 0,
-      preview: alreadyCoveredValue ? alreadyCoveredValue.slice(0, 100) + (alreadyCoveredValue.length > 100 ? '...' : '') : null
     }
   }, `Prompt data built for: ${sectionName}`)
-  
-  // Warn if this is not the first section and alreadyCovered is not set
-  const sectionKeyStr = String(enriched.sectionKey).toLowerCase()
-  if (!alreadyCoveredValue && sectionKeyStr !== 'introduction' && !sectionName.toLowerCase().includes('introduction')) {
-    warn({
-      stage: 'synthesis-pipeline',
-      issue: 'no-already-covered',
-      section: sectionName
-    }, `⚠️ Section "${sectionName}" has no alreadyCovered content - repetition may occur`)
-  }
   
   return result
 }
@@ -513,33 +484,6 @@ function buildSectionPurpose(sectionTitle: string, profileCriteria?: QualityCrit
 }
 
 /**
- * Build exclusions based on what was already covered
- */
-async function buildExclusions(previousSummary: string): Promise<string> {
-  if (!previousSummary) {
-    return ''
-  }
-
-  const exclusions: string[] = []
-  
-  // Extract common background elements that shouldn't be repeated
-  if (previousSummary.includes('background') || previousSummary.includes('context')) {
-    exclusions.push('background context already established')
-  }
-  if (previousSummary.includes('definition') || previousSummary.includes('defined')) {
-    exclusions.push('term definitions already provided')  
-  }
-  if (previousSummary.includes('literature') || previousSummary.includes('review')) {
-    exclusions.push('literature survey already completed')
-  }
-  if (previousSummary.includes('motivation') || previousSummary.includes('rationale')) {
-    exclusions.push('research motivation already explained')
-  }
-
-  return exclusions.map(ex => `• ${ex}`).join('\n')
-}
-
-/**
  * Build planning data (required points and quality criteria) using section planning
  */
 /**
@@ -615,44 +559,6 @@ async function buildPreviousSectionsSummary(currentSectionKey?: string): Promise
   return 'No previous sections approved yet.'
 }
 
-/**
- * Generate a basic section summary based on title and evidence usage
- * Uses generic language that works across disciplines (STEM, humanities, social sciences)
- */
-function generateBasicSectionSummary(sectionTitle: string, chunkCount: number): string {
-  const titleLower = sectionTitle.toLowerCase()
-  
-  // Generic section type detection - works across paper types
-  // Introduction-like sections (context, background, overview)
-  if (titleLower.includes('introduction') || titleLower.includes('background') || titleLower.includes('overview')) {
-    return `Established context and framing using ${chunkCount} sources. Background and scope covered.`
-  } 
-  // Methodology-like sections (methods, approach, framework, design)
-  else if (titleLower.includes('method') || titleLower.includes('approach') || titleLower.includes('framework') || titleLower.includes('design')) {
-    return `Detailed approach and framework using ${chunkCount} sources. Methodology defined.`
-  } 
-  // Results/Findings-like sections (results, findings, analysis)
-  else if (titleLower.includes('result') || titleLower.includes('finding') || titleLower.includes('analysis')) {
-    return `Presented findings using ${chunkCount} sources. Key outcomes reported.`
-  } 
-  // Discussion/Interpretation-like sections (discussion, interpretation, implications)
-  else if (titleLower.includes('discussion') || titleLower.includes('interpretation') || titleLower.includes('implication')) {
-    return `Interpreted findings using ${chunkCount} sources. Analysis and implications provided.`
-  } 
-  // Literature/Review-like sections (literature, review, prior work, related work)
-  else if (titleLower.includes('literature') || titleLower.includes('review') || titleLower.includes('prior work') || titleLower.includes('related')) {
-    return `Reviewed relevant scholarship using ${chunkCount} sources. Prior work examined.`
-  } 
-  // Conclusion-like sections (conclusion, summary, synthesis)
-  else if (titleLower.includes('conclusion') || titleLower.includes('summary') || titleLower.includes('synthesis')) {
-    return `Synthesized key contributions using ${chunkCount} sources. Conclusions provided.`
-  } 
-  // Thematic sections common in humanities (often have descriptive titles)
-  else {
-    return `Covered "${sectionTitle}" using ${chunkCount} sources from evidence base.`
-  }
-}
-
 // Removed placeholder functions:
 // - buildSectionPath: was just returning input, now inlined
 // - getCurrentText: was returning null, now inlined  
@@ -683,4 +589,24 @@ function calculateSourceDiversityTarget(paperType: string, availablePapers: numb
   const minPapers = Math.ceil(availablePapers * (percentage / 100))
   
   return { percentage, minPapers }
+}
+
+function buildCitationDiversityGuidance(
+  sourceDiversityTarget: { percentage: number; minPapers: number },
+  usablePapers: number
+): { requiredPoint: string; qualityCriterion: string } {
+  if (usablePapers < 2) {
+    return { requiredPoint: '', qualityCriterion: '' }
+  }
+
+  const sectionDistinctTarget = usablePapers >= 12 ? 4 : usablePapers >= 6 ? 3 : 2
+  const dominanceCap = usablePapers >= 8 ? 35 : 45
+
+  return {
+    requiredPoint: `• Use at least ${sectionDistinctTarget} distinct paper_ids in this section when evidence allows`,
+    qualityCriterion: [
+      `• Citation diversity: avoid source dominance (no single paper should drive more than ${dominanceCap}% of citations in this section unless evidence is sparse)`,
+      `• Full-paper diversity target: cite about ${sourceDiversityTarget.minPapers} distinct papers (${sourceDiversityTarget.percentage}% of usable sources) across the complete document`
+    ].join('\n')
+  }
 }

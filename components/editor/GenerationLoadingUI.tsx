@@ -8,7 +8,6 @@ import {
   Loader2, 
   Search, 
   FileText, 
-  BookOpen, 
   Sparkles, 
   CheckCircle2, 
   XCircle, 
@@ -58,12 +57,11 @@ interface GenerationLoadingUIProps {
 // =============================================================================
 
 const STAGE_ICONS: Record<string, React.ReactNode> = {
-  search: <Search className="h-3.5 w-3.5" />,
-  outline: <FileText className="h-3.5 w-3.5" />,
-  context: <BookOpen className="h-3.5 w-3.5" />,
-  generation: <Sparkles className="h-3.5 w-3.5" />,
-  quality: <CheckCircle2 className="h-3.5 w-3.5" />,
-  saving: <Loader2 className="h-3.5 w-3.5" />,
+  profiling: <Search className="h-3.5 w-3.5" />,
+  search: <FileStack className="h-3.5 w-3.5" />,
+  planning: <FileText className="h-3.5 w-3.5" />,
+  writing: <Sparkles className="h-3.5 w-3.5" />,
+  finishing: <CheckCircle2 className="h-3.5 w-3.5" />,
 }
 
 // =============================================================================
@@ -488,8 +486,10 @@ export function GenerationLoadingUI(props: GenerationLoadingUIProps) {
     completedSections = [] 
   } = props
 
-  // Show live content when we're in writing/generation stage and have content or are actively writing
-  const isGenerating = currentStage === 'writing' || currentStage === 'generation' || currentStage === 'quality' || currentStage === 'saving' || currentStage === 'complete'
+  const isGenerating =
+    currentStage === 'writing' ||
+    currentStage === 'finishing' ||
+    currentStage === 'complete'
   const hasContent = completedSections.length > 0 || (currentSection && currentSectionContent.length > 0)
   const showLiveContent = isGenerating && (hasContent || currentSection)
 

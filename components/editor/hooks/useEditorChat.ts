@@ -54,6 +54,8 @@ function generateSafeToolId(messageId: string, toolName: string, args: Record<st
   return `${messageId}-${toolName}-${hashHex}`
 }
 
+const MAX_TOOL_CALLS_PER_MESSAGE = 8
+
 /**
  * Generate a brief summary of what a tool did/would do.
  * Used for AI follow-up responses.
@@ -737,7 +739,19 @@ export function useEditorChat({
     // Queue auto-executed tools for undo grouping
     const autoExecQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string }> = []
 
-    for (const invocation of invocations) {
+    const cappedInvocations = invocations.slice(0, MAX_TOOL_CALLS_PER_MESSAGE)
+    const droppedInvocations = invocations.length - cappedInvocations.length
+    if (droppedInvocations > 0) {
+      console.warn(
+        `[useEditorChat] Dropping ${droppedInvocations} tool call(s): over per-message cap of ${MAX_TOOL_CALLS_PER_MESSAGE}`
+      )
+      toast.warning(`Limited to ${MAX_TOOL_CALLS_PER_MESSAGE} edits in one response`, {
+        description: `${droppedInvocations} additional tool call${droppedInvocations > 1 ? 's were' : ' was'} skipped.`,
+        duration: 5000,
+      })
+    }
+
+    for (const invocation of cappedInvocations) {
       const toolName = invocation.toolName
       const args = invocation.args as Record<string, unknown>
       

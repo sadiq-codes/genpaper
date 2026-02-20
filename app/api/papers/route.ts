@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
+import { searchAcademicPapers } from '@/lib/services/paper-aggregation'
+import { ensureBulkPaperMetadata, ensureBulkPaperContentReady } from '@/lib/services/paper-content-service'
 import { z } from 'zod'
 import { shortHash } from '@/lib/utils/hash'
 import {
@@ -40,7 +41,7 @@ const PapersRequestSchema = z.object({
   sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
   
   // Processing options
-  ingest: z.boolean().optional().default(true),
+  ingest: z.boolean().optional().default(false),
   
   // Pagination for library queries
   offset: z.number().int().min(0).optional().default(0),
@@ -88,7 +89,7 @@ function parseQueryParams(url: URL): z.infer<typeof PapersRequestSchema> {
     openAccessOnly: url.searchParams.get('openAccessOnly') === 'true',
     sortBy: (url.searchParams.get('sortBy') as 'relevance' | 'date' | 'citations' | 'added_at') || 'relevance',
     sortOrder: (url.searchParams.get('sortOrder') as 'asc' | 'desc') || 'desc',
-    ingest: url.searchParams.get('ingest') !== 'false',
+    ingest: url.searchParams.get('ingest') === 'true',
     offset: parseInt(url.searchParams.get('offset') || '0'),
   }
 }
@@ -301,8 +302,8 @@ async function handleExternalSearch(
     })
   }
 
-  // Perform external search
-  const result = await searchAndIngestPapers(params.search!, {
+  // Perform external search (metadata only)
+  const rankedPapers = await searchAcademicPapers(params.search!, {
     maxResults: params.maxResults,
     sources: params.sources,
     includePreprints: params.includePreprints,
@@ -311,9 +312,16 @@ async function handleExternalSearch(
     openAccessOnly: params.openAccessOnly,
   })
 
+  // Explicit content processing stage:
+  // - ingest=true: full-text + chunks
+  // - ingest=false: metadata registration only
+  const processed = params.ingest
+    ? await ensureBulkPaperContentReady(rankedPapers, params.search!)
+    : await ensureBulkPaperMetadata(rankedPapers, params.search!)
+
   const response = {
     success: true,
-    papers: result.papers.map(paper => ({
+    papers: processed.papers.map(paper => ({
       canonical_id: paper.canonical_id,
       title: paper.title,
       abstract: paper.abstract?.substring(0, 500),
@@ -325,14 +333,14 @@ async function handleExternalSearch(
       relevanceScore: paper.relevanceScore,
       source: paper.source,
     })),
-    count: result.papers.length,
+    count: processed.papers.length,
     cached: false,
     source: 'external_search',
-    ingestedIds: params.ingest ? result.ingestedIds : undefined,
+    ingestedIds: params.ingest ? processed.paperIds : undefined,
   }
 
   // Cache successful response
-  if (result.papers.length > 0) {
+  if (processed.papers.length > 0) {
     try {
       await supabase
         .from('papers_api_cache')

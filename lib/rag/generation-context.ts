@@ -10,7 +10,7 @@ import {
 } from './base-retrieval'
 import { ChunkRetriever } from './chunk-retriever'
 import { ContextBuilder } from './context-builder'
-import { getContentStatus } from '@/lib/content'
+import { getPaperProcessingStatusMap, isChunkReadyStatus } from '@/lib/content'
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
 import { 
   ContentRetrievalError, 
@@ -61,6 +61,10 @@ export interface GenerationRetrievalParams {
   maxTokens?: number
   /** Token budget for evidence chunks (default 25000) */
   maxEvidenceTokens?: number
+  /** Hard cap on chunks per paper to prevent dominance */
+  maxChunksPerPaper?: number
+  /** Distinct-paper frontier to force breadth before depth */
+  minDistinctPapers?: number
 }
 
 export interface GenerationRetrievalResult extends BaseRetrievalResult {
@@ -153,6 +157,9 @@ function getRetriever(params: GenerationRetrievalParams): ChunkRetriever {
     rerankTopK: params.rerankTopK || 60,
     // Token budget for evidence - replaces arbitrary chunk limits
     maxEvidenceTokens: params.maxEvidenceTokens || 25000,
+    // Enforce paper diversity in generation contexts.
+    maxChunksPerPaper: params.maxChunksPerPaper ?? 3,
+    minDistinctPapers: params.minDistinctPapers ?? 12,
   }
   
   if (!retrieverInstance) {
@@ -310,8 +317,8 @@ export class GenerationContextService {
     
     // Retrieval-only path: ingestion/chunking is handled upstream by pipeline preflight.
     // We only read available chunked papers here.
-    const statusMap = await getContentStatus(paperIds)
-    const papersWithChunks = paperIds.filter(id => (statusMap.get(id)?.chunkCount || 0) > 0)
+    const statusMap = await getPaperProcessingStatusMap(paperIds)
+    const papersWithChunks = paperIds.filter(id => isChunkReadyStatus(statusMap.get(id) || 'pending'))
     
     console.log(`📊 Chunk availability: ${papersWithChunks.length}/${paperIds.length} papers`)
     
@@ -325,6 +332,9 @@ export class GenerationContextService {
         limit: Math.max(chunkLimit * 2, 90),
         // REDUCED from 0.15 to 0.1: Allow more papers through for niche topics
         minScore: 0.1,
+        // Prevent context collapse onto a handful of high-score papers.
+        maxChunksPerPaper: 3,
+        minDistinctPapers: Math.min(12, papersWithChunks.length),
         useCompression: false // Don't compress for getRelevantChunks
       })
       retrievedChunks = retrievalResult.chunks

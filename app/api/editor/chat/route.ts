@@ -15,6 +15,7 @@ import {
 import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 import { shouldSkipRAG, type IntentClassification } from '@/lib/ai/intent-classifier'
 import { checkAndIncrementChatUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
+import { normalizePaperProcessingStatus, isChunkReadyStatus } from '@/lib/content'
 
 // =============================================================================
 // TYPES
@@ -294,6 +295,33 @@ function getTextFromUIMessage(message: UIMessage): string {
   return textParts.map(p => 'text' in p ? p.text : '').join('')
 }
 
+function isShortActionConfirmation(text: string): boolean {
+  const normalized = text.trim().toLowerCase()
+  if (!normalized) return false
+
+  return /^(do it|do that|yes|y|sure|ok(?:ay)?|go ahead|proceed|apply(?: it)?|please do|sounds good|confirm)$/i
+    .test(normalized)
+}
+
+function assistantProposedCitationEdit(text: string): boolean {
+  const normalized = text.toLowerCase()
+  const askedForConfirmation = /(would you like me|want me to|should i|shall i)/i.test(normalized)
+  const editAction = /(insert|add|rewrite|replace|paragraph|section)/i.test(normalized)
+  const citationContext = /(citation|cite|sources?|references?|supporting quote|with citations)/i.test(normalized)
+  return askedForConfirmation && editAction && citationContext
+}
+
+function shouldForceResearchForConfirmation(
+  userMessage: string,
+  lastAssistantMessage: string,
+  hasMentions: boolean,
+  hasImages: boolean
+): boolean {
+  if (hasMentions || hasImages) return false
+  if (!isShortActionConfirmation(userMessage)) return false
+  return assistantProposedCitationEdit(lastAssistantMessage)
+}
+
 /**
  * Save messages to Supabase.
  */
@@ -423,6 +451,12 @@ export async function POST(request: NextRequest) {
     const ragQuery = lastUserMessage 
       ? getTextFromUIMessage(lastUserMessage)
       : ''
+    const lastAssistantMessage = [...messages]
+      .reverse()
+      .find(m => m.role === 'assistant')
+    const lastAssistantMessageText = lastAssistantMessage
+      ? getTextFromUIMessage(lastAssistantMessage)
+      : ''
 
     // Fast path for tool-result follow-up turns:
     // skip expensive intent/RAG/paper work and just return a natural confirmation.
@@ -476,6 +510,24 @@ export async function POST(request: NextRequest) {
       intentClassification = intentResult.classification
       project = projectResult.data
       projectError = projectResult.error
+
+      const forceResearchForConfirmation = shouldForceResearchForConfirmation(
+        ragQuery,
+        lastAssistantMessageText,
+        mentionedPaperIds.length > 0,
+        attachedImages.length > 0
+      )
+
+      if (forceResearchForConfirmation) {
+        skipRAG = false
+        intentClassification = {
+          intent: 'research',
+          confidence: Math.max(intentClassification.confidence, 0.85),
+          needsRetrieval: true,
+          reasoning: 'Short confirmation detected after citation-edit proposal; forcing retrieval',
+        }
+        console.log('[Chat API] Overriding short confirmation to research intent for citation-safe edits')
+      }
 
       // For chat/meta intents with no @mentions, skip paper fetch and paper processing.
       isTrivialMessage =
@@ -566,8 +618,12 @@ export async function POST(request: NextRequest) {
 
       // Use all papers for chat context; only processed papers should be used for RAG
       papers = allPapers
-      processedPapers = allPapers.filter(p => p.processing_status === 'processed' || !p.processing_status)
-      const pendingPapers = allPapers.filter(p => p.processing_status === 'pending' || p.processing_status === 'processing')
+      processedPapers = allPapers.filter(p =>
+        isChunkReadyStatus(normalizePaperProcessingStatus(p.processing_status))
+      )
+      const pendingPapers = allPapers.filter(p =>
+        normalizePaperProcessingStatus(p.processing_status) === 'pending'
+      )
       
       if (pendingPapers.length > 0) {
         console.log('[Chat API] Papers still processing:', pendingPapers.map(p => p.title?.slice(0, 30)))

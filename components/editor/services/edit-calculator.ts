@@ -267,7 +267,7 @@ function calculateReplace(
 
   // Text-level replacement (structure-aware)
   if (searchPhrase) {
-    const match = findTextInStructure(editor, searchPhrase, { blockId })
+    const match = findTextInStructure(editor, searchPhrase, { blockId, section })
     if (!match.found) {
       return { success: false, error: `Could not find text: "${searchPhrase.slice(0, 50)}..."` }
     }
@@ -369,7 +369,7 @@ function calculateDelete(
 
   // Text-level deletion (structure-aware)
   if (searchPhrase) {
-    const match = findTextInStructure(editor, searchPhrase, { blockId })
+    const match = findTextInStructure(editor, searchPhrase, { blockId, section })
     if (!match.found) {
       return { success: false, error: `Could not find text: "${searchPhrase.slice(0, 50)}..."` }
     }

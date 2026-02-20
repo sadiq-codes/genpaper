@@ -169,6 +169,157 @@ function normalizePlannerShape(input: unknown): unknown {
   }
 }
 
+function uniqueIds(ids: string[], limit = Number.POSITIVE_INFINITY): string[] {
+  const deduped: string[] = []
+  const seen = new Set<string>()
+
+  for (const id of ids) {
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    deduped.push(id)
+    if (deduped.length >= limit) break
+  }
+
+  return deduped
+}
+
+function computePrimaryDominance(
+  sections: SectionPlan[]
+): { dominanceRatio: number; uniquePrimaryCount: number } {
+  const paperCounts = new Map<string, number>()
+  let totalPrimaryAssignments = 0
+
+  for (const section of sections) {
+    const primaryIds = uniqueIds(section.papers.primary || [])
+    for (const paperId of primaryIds) {
+      paperCounts.set(paperId, (paperCounts.get(paperId) || 0) + 1)
+      totalPrimaryAssignments++
+    }
+  }
+
+  let maxCount = 0
+  for (const count of paperCounts.values()) {
+    if (count > maxCount) maxCount = count
+  }
+
+  return {
+    dominanceRatio: totalPrimaryAssignments > 0 ? maxCount / totalPrimaryAssignments : 0,
+    uniquePrimaryCount: paperCounts.size,
+  }
+}
+
+function rebalancePrimaryPapersAcrossSections(
+  sections: SectionPlan[],
+  availablePaperIds: string[]
+): {
+  rebalanced: boolean
+  beforeDominance: number
+  afterDominance: number
+  uniquePrimaryBefore: number
+  uniquePrimaryAfter: number
+} {
+  const literatureSections = sections.filter(section => section.isLiteratureFocused)
+  const validPaperIds = uniqueIds(availablePaperIds)
+
+  if (literatureSections.length < 2 || validPaperIds.length < 6) {
+    return {
+      rebalanced: false,
+      beforeDominance: 0,
+      afterDominance: 0,
+      uniquePrimaryBefore: 0,
+      uniquePrimaryAfter: 0,
+    }
+  }
+
+  const validSet = new Set(validPaperIds)
+  const paperOrder = new Map(validPaperIds.map((paperId, index) => [paperId, index]))
+
+  // Sanitize paper lists before calculating dominance.
+  for (const section of sections) {
+    const primary = uniqueIds((section.papers.primary || []).filter(id => validSet.has(id)))
+    const supporting = uniqueIds(
+      (section.papers.supporting || []).filter(id => validSet.has(id) && !primary.includes(id))
+    )
+    section.papers.primary = primary
+    section.papers.supporting = supporting
+  }
+
+  const before = computePrimaryDominance(literatureSections)
+  const targetPrimaryPerSection = Math.min(
+    validPaperIds.length,
+    Math.max(3, Math.min(10, Math.ceil(validPaperIds.length / literatureSections.length) + 2))
+  )
+
+  const minExpectedUniquePrimary = Math.min(
+    validPaperIds.length,
+    literatureSections.length * Math.max(2, targetPrimaryPerSection - 2)
+  )
+
+  const shouldRebalance =
+    before.dominanceRatio > 0.5 ||
+    before.uniquePrimaryCount < minExpectedUniquePrimary
+
+  if (!shouldRebalance) {
+    return {
+      rebalanced: false,
+      beforeDominance: before.dominanceRatio,
+      afterDominance: before.dominanceRatio,
+      uniquePrimaryBefore: before.uniquePrimaryCount,
+      uniquePrimaryAfter: before.uniquePrimaryCount,
+    }
+  }
+
+  const usageByPaper = new Map<string, number>(validPaperIds.map(id => [id, 0]))
+
+  for (const section of literatureSections) {
+    const currentPrimary = uniqueIds(section.papers.primary)
+    const currentSupporting = uniqueIds(
+      section.papers.supporting.filter(id => !currentPrimary.includes(id))
+    )
+
+    const keepCount = Math.min(
+      currentPrimary.length,
+      Math.max(1, Math.floor(targetPrimaryPerSection * 0.35))
+    )
+    const keptPrimary = currentPrimary.slice(0, keepCount)
+
+    const sortedCandidates = validPaperIds
+      .filter(id => !keptPrimary.includes(id))
+      .sort((a, b) => {
+        const usageDiff = (usageByPaper.get(a) || 0) - (usageByPaper.get(b) || 0)
+        if (usageDiff !== 0) return usageDiff
+        return (paperOrder.get(a) || 0) - (paperOrder.get(b) || 0)
+      })
+
+    const needed = Math.max(0, targetPrimaryPerSection - keptPrimary.length)
+    const addedPrimary = sortedCandidates.slice(0, needed)
+    const rebalancedPrimary = uniqueIds([...keptPrimary, ...addedPrimary], targetPrimaryPerSection)
+
+    for (const paperId of rebalancedPrimary) {
+      usageByPaper.set(paperId, (usageByPaper.get(paperId) || 0) + 1)
+    }
+
+    const carryOverPrimary = currentPrimary.filter(id => !rebalancedPrimary.includes(id))
+    const rebalancedSupporting = uniqueIds(
+      [...currentSupporting, ...carryOverPrimary],
+      12
+    )
+
+    section.papers.primary = rebalancedPrimary
+    section.papers.supporting = rebalancedSupporting
+  }
+
+  const after = computePrimaryDominance(literatureSections)
+
+  return {
+    rebalanced: true,
+    beforeDominance: before.dominanceRatio,
+    afterDominance: after.dominanceRatio,
+    uniquePrimaryBefore: before.uniquePrimaryCount,
+    uniquePrimaryAfter: after.uniquePrimaryCount,
+  }
+}
+
 // =============================================================================
 // Prompt
 // =============================================================================
@@ -708,6 +859,25 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
         }
       }
     }
+
+    const paperRebalance = rebalancePrimaryPapersAcrossSections(
+      plan.sections,
+      input.papers.map(p => p.id)
+    )
+
+    if (paperRebalance.rebalanced) {
+      info(
+        {
+          stage: 'synthesis-pipeline',
+          step: 'paper-priority-rebalance',
+          beforeDominance: Number((paperRebalance.beforeDominance * 100).toFixed(1)),
+          afterDominance: Number((paperRebalance.afterDominance * 100).toFixed(1)),
+          uniquePrimaryBefore: paperRebalance.uniquePrimaryBefore,
+          uniquePrimaryAfter: paperRebalance.uniquePrimaryAfter,
+        },
+        'Rebalanced section paper priorities for stronger citation diversity'
+      )
+    }
     
     // Diagnostic logging for synthesis pipeline debugging
     const emptyKeyPointsSections = plan.sections
@@ -759,10 +929,19 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
     }
     
   } catch (error) {
-    warn({ error }, 'Plan generation failed')
+    const err = error instanceof Error ? error : new Error(String(error))
+    warn({
+      error_name: err.name,
+      error_message: err.message,
+      error_stack: err.stack,
+      patterns: input.analysis.patterns.length,
+      contradictions: input.analysis.contradictions.length,
+      gaps: input.analysis.gaps.length,
+      sectionCount: input.outlineSections.length,
+    }, 'Plan generation failed')
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: err.message,
       timeMs: Date.now() - startTime
     }
   }

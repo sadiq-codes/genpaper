@@ -15,9 +15,22 @@ export {
   createContentError
 } from './errors'
 
+// Processing status helpers
+export {
+  normalizePaperProcessingStatus,
+  isChunkReadyStatus,
+  isFullTextReadyStatus,
+  canMarkFullTextReady,
+  FULL_TEXT_READY_MIN_CHARS,
+  type PaperProcessingStatus,
+} from './processing-status'
+
+export { setPaperProcessingStatus } from './processing-status-service'
+
 // Ingestion functions
 export {
   getContentStatus,
+  getPaperProcessingStatusMap,
   ensurePapersExist,
   createChunksForPaper,
   ensureBulkContentIngestion,

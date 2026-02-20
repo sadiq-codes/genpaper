@@ -2,7 +2,8 @@
 // @ts-nocheck
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts"
-import { searchAndIngestPapers } from "../../../lib/services/paper-aggregation.ts"
+import { searchAcademicPapers } from "../../../lib/services/paper-aggregation.ts"
+import { ensureBulkPaperContentReady } from "../../../lib/services/paper-content-service.ts"
 
 // Minimal JSON POST handler. Delegates search to shared helper.
 serve(async (req) => {
@@ -32,12 +33,13 @@ serve(async (req) => {
   }
 
   try {
-    const { papers, ingestedIds } = await searchAndIngestPapers(topic, {
+    const papers = await searchAcademicPapers(topic, {
       maxResults: body.maxResults ?? 50,
       sources: ['openalex', 'crossref', 'semantic_scholar']
     })
+    const processed = await ensureBulkPaperContentReady(papers, topic)
 
-    return new Response(JSON.stringify({ count: papers.length, ingestedIds }), {
+    return new Response(JSON.stringify({ count: processed.papers.length, ingestedIds: processed.paperIds }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     })

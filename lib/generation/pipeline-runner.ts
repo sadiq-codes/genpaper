@@ -17,9 +17,9 @@ import {
 import {
   runProfilePhase,
   runDiscoveryPhase,
+  runContentReadinessPhase,
   runExtractionCheckPhase,
   runExtractionBatchPhase,
-  runPreflightContentPhase,
   runAnalysisPhase,
   runBuildContextsPhase,
   runSectionGenerationPhase,
@@ -284,7 +284,33 @@ export async function runGenerationPipeline(
   });
 
   // =========================================================================
-  // Step 4: Check Extraction Cache
+  // Step 4: Content Readiness Gate (early, before extraction)
+  // =========================================================================
+  await runStep("content-readiness", async () => {
+    const run = await getRun(runId);
+    if (run?.status === "cancelled") throw new Error("Run was cancelled");
+
+    const state = await getPipelineState(runId);
+    if (!state.paperIds || !state.profile) {
+      throw new Error("State incomplete for content readiness");
+    }
+
+    const papers = await getPapersByIds(state.paperIds);
+    const readiness = await runContentReadinessPhase(
+      config.topic,
+      state.profile,
+      papers,
+      onProgress
+    );
+
+    // Narrow downstream pipeline to chunk-ready papers only.
+    await updatePipelineState(runId, { paperIds: readiness.readyPaperIds });
+
+    return readiness;
+  });
+
+  // =========================================================================
+  // Step 5: Check Extraction Cache
   // =========================================================================
   const extractionCheck = await runStep("extract-check", async () => {
     const run = await getRun(runId);
@@ -324,11 +350,9 @@ export async function runGenerationPipeline(
         throw new Error("Extraction state not found");
       }
 
-      const papers = await getPapersByIds(state.paperIds);
       const extracted = await runExtractionBatchPhase(
         batchIndex,
         state.extractionProgress.pendingPaperIds,
-        papers,
         onProgress
       );
 
@@ -339,33 +363,7 @@ export async function runGenerationPipeline(
   }
 
   // =========================================================================
-  // Step N: Preflight Content Gate
-  // =========================================================================
-  await runStep("preflight-content", async () => {
-    const run = await getRun(runId);
-    if (run?.status === "cancelled") throw new Error("Run was cancelled");
-
-    const state = await getPipelineState(runId);
-    if (!state.paperIds) {
-      throw new Error("Paper IDs not found for content preflight");
-    }
-
-    const papers = await getPapersByIds(state.paperIds);
-    const preflight = await runPreflightContentPhase(state.paperIds, papers, onProgress);
-
-    // Narrow downstream analysis/retrieval to papers that are actually chunk-ready.
-    if (
-      preflight.readyPaperIds.length > 0 &&
-      preflight.readyPaperIds.length !== state.paperIds.length
-    ) {
-      await updatePipelineState(runId, { paperIds: preflight.readyPaperIds });
-    }
-
-    return preflight;
-  });
-
-  // =========================================================================
-  // Step N+1: Analyze Findings & Build Contexts (merged for efficiency)
+  // Step N: Analyze Findings & Build Contexts (merged for efficiency)
   // =========================================================================
   const contextsResult = await runStep(
     "analyze-and-build-contexts",

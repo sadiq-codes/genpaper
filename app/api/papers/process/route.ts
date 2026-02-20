@@ -9,12 +9,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { 
-  processPaper, 
-  processProjectPapers, 
-  getPapersProcessingStatus,
-  type ProcessingResult 
-} from '@/lib/content/background-processor'
+import { getPapersProcessingStatus, type ProcessingResult } from '@/lib/content/background-processor'
+import { ensureBulkPaperContentReadyByIds } from '@/lib/services/paper-content-service'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // 5 minutes max for processing
@@ -109,20 +105,48 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Start processing
+    // Resolve target paper IDs once for both sync and async modes.
+    let targetPaperIds: string[] = []
+    if (projectId) {
+      const { data: citations, error: citationsError } = await supabase
+        .from('project_citations')
+        .select('paper_id')
+        .eq('project_id', projectId)
+
+      if (citationsError) {
+        return NextResponse.json({ error: 'Failed to fetch project papers' }, { status: 500 })
+      }
+      targetPaperIds = (citations || []).map(c => c.paper_id).filter(Boolean)
+    } else {
+      targetPaperIds = (paperIds || []).filter(Boolean)
+    }
+
+    if (targetPaperIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        processed: 0,
+        failed: 0,
+        results: [] as ProcessingResult[],
+      })
+    }
+
     if (waitForCompletion) {
       // Synchronous mode - wait for results
       console.log('[Process API] Starting synchronous processing')
-      
-      let results: ProcessingResult[]
-      if (projectId) {
-        results = await processProjectPapers(projectId)
-      } else {
-        const { processMultiplePapers } = await import('@/lib/content/background-processor')
-        results = await processMultiplePapers(paperIds!)
-      }
 
-      const successful = results.filter(r => r.status === 'processed')
+      const processed = await ensureBulkPaperContentReadyByIds(targetPaperIds, {
+        searchQuery: 'papers_process_api',
+        waitForStructuredExtraction: true,
+      })
+
+      const successIds = new Set(processed.paperIds)
+      const results: ProcessingResult[] = targetPaperIds.map(id => (
+        successIds.has(id)
+          ? { paperId: id, status: 'full_text_ready' }
+          : { paperId: id, status: 'failed', error: 'Processing failed' }
+      ))
+
+      const successful = results.filter(r => r.status === 'full_text_ready')
       const failed = results.filter(r => r.status === 'failed')
 
       console.log('[Process API] Processing complete:', {
@@ -137,29 +161,22 @@ export async function POST(request: NextRequest) {
         failed: failed.length,
         results
       })
-    } else {
-      // Async mode - start processing and return immediately
-      console.log('[Process API] Starting async processing')
-      
-      // Start processing in background (fire and forget)
-      if (projectId) {
-        processProjectPapers(projectId).catch(err => {
-          console.error('[Process API] Background project processing error:', err)
-        })
-      } else {
-        import('@/lib/content/background-processor').then(({ processMultiplePapers }) => {
-          processMultiplePapers(paperIds!).catch(err => {
-            console.error('[Process API] Background paper processing error:', err)
-          })
-        })
-      }
-
-      return NextResponse.json({
-        success: true,
-        message: 'Processing started in background',
-        paperCount: paperIds?.length || 'all project papers'
-      })
     }
+
+    // Async mode - start processing and return immediately
+    console.log('[Process API] Starting async processing')
+    ensureBulkPaperContentReadyByIds(targetPaperIds, {
+      searchQuery: 'papers_process_api',
+      waitForStructuredExtraction: false,
+    }).catch(err => {
+      console.error('[Process API] Background paper processing error:', err)
+    })
+
+    return NextResponse.json({
+      success: true,
+      message: 'Processing started in background',
+      paperCount: targetPaperIds.length
+    })
 
   } catch (error) {
     console.error('[Process API] Error:', error)
@@ -226,10 +243,10 @@ export async function GET(request: NextRequest) {
       statuses[id] = status
     }
 
-    // Summary stats
+    // Summary stats (canonical processing_status state machine)
     const pending = Object.values(statuses).filter(s => s === 'pending').length
-    const processing = Object.values(statuses).filter(s => s === 'processing').length
-    const processed = Object.values(statuses).filter(s => s === 'processed').length
+    const abstractReady = Object.values(statuses).filter(s => s === 'abstract_ready').length
+    const fullTextReady = Object.values(statuses).filter(s => s === 'full_text_ready').length
     const failed = Object.values(statuses).filter(s => s === 'failed').length
 
     return NextResponse.json({
@@ -237,10 +254,10 @@ export async function GET(request: NextRequest) {
       summary: {
         total: paperIds.length,
         pending,
-        processing,
-        processed,
+        abstractReady,
+        fullTextReady,
         failed,
-        allProcessed: processed === paperIds.length
+        allProcessed: fullTextReady === paperIds.length
       }
     })
 

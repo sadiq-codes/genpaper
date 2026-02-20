@@ -217,11 +217,6 @@ user: |-
   {{previousSectionsSummary}}
   {{/previousSectionsSummary}}
   
-  {{#alreadyCovered}}
-  ## Already Covered (DO NOT REPEAT)
-  {{alreadyCovered}}
-  {{/alreadyCovered}}
-  
   ## Current Task
   **Section:** {{sectionPath}}
   **MANDATORY word count: {{targetWords}} words (write at least 80% of this — short outputs will be rejected)**
@@ -296,7 +291,7 @@ user: |-
   □ Any "X of Y (Z%)" statement appears only if explicitly provided in prompt context
   □ Markdown tables include a valid header separator row
   □ No fabricated citations or paper_ids
-  □ Different from "Already Covered" content
+  □ Advances beyond prior section summaries (avoid repeating earlier claims)
   □ paper_id values are copied EXACTLY from evidence snippets
   □ No em dash (—) or en dash (–) characters
   {{#hasOriginalResearch}}

@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
-import { processPaper } from '@/lib/content/background-processor'
+import { ensurePaperContentReadyById } from '@/lib/services/paper-content-service'
 
 /**
  * GET /api/editor/papers?projectId=xxx
@@ -247,10 +247,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Trigger background processing directly (no HTTP round-trip needed).
-    // processPaper uses createServiceClient() internally, so no auth cookies required.
-    processPaper(paperId).then(result => {
-      console.log(`[Editor Papers] Processing result for ${paperId}:`, result.status)
+    // Trigger ingestion in the dedicated content service (fire-and-forget).
+    ensurePaperContentReadyById(paperId, {
+      searchQuery: 'editor_add_paper',
+      waitForStructuredExtraction: false,
+    }).then(result => {
+      console.log(`[Editor Papers] Processing result for ${paperId}:`, result.paperId)
     }).catch(err => {
       console.warn('[Editor Papers] Background processing failed:', err)
     })

@@ -280,8 +280,17 @@ export async function emitEvent(
     .single();
   
   if (error) {
-    // Log but don't throw for non-critical events
-    console.error(`Failed to emit event ${eventType}: ${error.message}`);
+    const message = error.message.toLowerCase();
+    const isStaleRunForeignKey =
+      message.includes("violates foreign key constraint") ||
+      message.includes("generation_events_run_id_fkey");
+
+    // Log but don't throw for non-critical events.
+    // FK violations happen for stale/deleted runs and are expected noise.
+    if (!isStaleRunForeignKey) {
+      console.error(`Failed to emit event ${eventType}: ${error.message}`);
+    }
+
     // Return a mock event to allow pipeline to continue
     return {
       id: -1,

@@ -37,7 +37,7 @@ const STAGE_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
   // Main stages (shown in list)
   profiling: { label: "Understanding Your Research", icon: <Search className="h-4 w-4" /> },
   search: { label: "Finding Sources", icon: <FileStack className="h-4 w-4" /> },
-  planning: { label: "Designing Structure", icon: <FileText className="h-4 w-4" /> },
+  planning: { label: "Analyzing & Structuring", icon: <FileText className="h-4 w-4" /> },
   writing: { label: "Writing Your Paper", icon: <Sparkles className="h-4 w-4" /> },
   finishing: { label: "Final Touches", icon: <CheckCircle2 className="h-4 w-4" /> },
   complete: { label: "Complete", icon: <CheckCircle2 className="h-4 w-4" /> },
@@ -46,16 +46,16 @@ const STAGE_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
 // UI stages displayed to user (5 clear stages)
 const ORDERED_STAGES = ["profiling", "search", "planning", "writing", "finishing"]
 
-// Map pipeline stages to UI stages (for stages that were combined)
+// Map pipeline stages to UI stages
 const STAGE_MAPPING: Record<string, string> = {
+  'start': 'start',
+  'initialization': 'initialization',
   'profiling': 'profiling',
   'search': 'search',
-  'themes': 'planning',
-  'outline': 'planning',
-  'context': 'writing',
-  'generation': 'writing',
-  'quality': 'finishing',
-  'saving': 'finishing',
+  'planning': 'planning',
+  'writing': 'writing',
+  'finishing': 'finishing',
+  'complete': 'complete',
 }
 
 // =============================================================================
@@ -119,6 +119,9 @@ function createInitialState(): GenerationState {
 function updateStageStatuses(stages: ProgressStage[], pipelineStage: string): ProgressStage[] {
   const uiStage = STAGE_MAPPING[pipelineStage] || pipelineStage
   const activeIndex = ORDERED_STAGES.indexOf(uiStage)
+  if (activeIndex === -1) {
+    return stages
+  }
   
   return stages.map((stage, index) => {
     if (index < activeIndex) {

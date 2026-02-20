@@ -62,7 +62,6 @@ export interface PromptData {
   
   // Section coherence data
   previousSectionsSummary: string
-  alreadyCovered?: string
   sectionPath: string
   sectionPurpose?: string
   exclusions?: string

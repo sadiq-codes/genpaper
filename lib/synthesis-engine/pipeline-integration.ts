@@ -7,25 +7,21 @@
  * Key integration points:
  * 1. extractThemesHybrid() - Extracts findings and analyzes patterns
  * 2. enrichAndBuildContexts() - Enriches outline sections with synthesis data
- * 3. generateSectionsHybrid() - Generates using hybrid writer (deprecated, use enriched contexts instead)
  * 
  * @module lib/synthesis-engine/pipeline-integration
  */
 
 import 'server-only'
 import pLimit from 'p-limit'
-import { extractPaper } from '@/lib/extraction'
 import { 
   getExtractionsService, 
-  getPapersNeedingExtractionService,
-  saveExtractionService 
+  getPapersNeedingExtractionService
 } from '@/lib/extraction/db-service'
 import { analyzeFindings, type FindingWithPaper, type AnalysisResult } from '@/lib/analysis/cross-document'
-import { buildSynthesisPlan } from './plan-builder'
-import { writeHybridSynthesis } from './hybrid-writer'
+import { ensurePaperContentReadyById } from '@/lib/services/paper-content-service'
 import { enrichOutlineSections, type EnrichedSectionContext } from './outline-enricher'
 import { buildConstraintsFromProfile } from './constraint-builder'
-import type { PaperInfo, StructuralConstraints } from './types'
+import type { StructuralConstraints } from './types'
 import type { PaperProfile } from '@/lib/generation/paper-profile-types'
 import type { PaperWithAuthors } from '@/types/simplified'
 import type { GeneratedOutline } from '@/lib/prompts/types'
@@ -46,23 +42,6 @@ export interface HybridThemeExtractionResult {
   }
   // NEW: Pre-built structural constraints for plan builder
   structuralConstraints?: StructuralConstraints
-}
-
-export interface HybridGenerationResult {
-  content: string
-  sections: Array<{
-    title: string
-    content: string
-    wordCount: number
-  }>
-  metadata: {
-    totalWords: number
-    patternsDiscussed: number
-    contradictionsAddressed: number
-    gapsIdentified: number
-    chunksUsed: number
-    generationTimeMs: number
-  }
 }
 
 // =============================================================================
@@ -373,40 +352,29 @@ export async function extractThemesHybrid(
           totalFullTextAvailable
         })
 
-        const results = await Promise.all(
+        await Promise.all(
           batchPaperIds.map(paperId =>
             limit(async () => {
-              const paper = papers.find(p => p.id === paperId)
-              if (!paper) return null
-
-              const pdfContent = getPdfContent(paper)
-              if (pdfContent.length < MIN_FULL_TEXT_LENGTH) {
-                // Defensive: should have been filtered already
-                completed++
-                return null
-              }
-
               try {
-                const result = await extractPaper({ paperId, text: pdfContent })
+                await ensurePaperContentReadyById(paperId, {
+                  skipStructuredExtraction: false,
+                  waitForStructuredExtraction: true,
+                })
                 completed++
                 onProgress?.(`Extracted ${completed}/${batchPaperIds.length} papers...`, { round: roundLabel })
-
-                if (result.success && result.extraction) {
-                  await saveExtractionService(result.extraction)
-                  return { paperId, extraction: result.extraction }
-                }
               } catch (error) {
                 console.warn(`Extraction failed for ${paperId}:`, error)
                 completed++
               }
-
-              return null
             })
           )
         )
 
-        for (const r of results) {
-          if (r) newExtractions.set(r.paperId, r.extraction)
+        const refreshedExtractions = await getExtractionsService(batchPaperIds)
+        for (const [paperId, extraction] of refreshedExtractions.entries()) {
+          if (!cachedExtractions.has(paperId)) {
+            newExtractions.set(paperId, extraction)
+          }
         }
       }
 
@@ -626,102 +594,6 @@ export async function enrichAndBuildContexts(
   } catch (error) {
     warn({ error }, 'Outline enrichment failed')
     throw error
-  }
-}
-
-/**
- * Generate sections using the hybrid approach
- * 
- * @deprecated Use enrichAndBuildContexts() + generateMultipleSectionsUnified() instead.
- * This function is kept for backwards compatibility with test scripts.
- * 
- * For production use, the new approach is:
- * 1. Call extractThemesHybrid() to get analysis results
- * 2. Call enrichAndBuildContexts() to enrich outline sections
- * 3. Pass enriched contexts to generateMultipleSectionsUnified()
- */
-export async function generateSectionsHybrid(
-  analysisResult: HybridThemeExtractionResult['analysisResult'],
-  papers: PaperWithAuthors[],
-  topic: string,
-  targetWordCount: number,
-  profile: PaperProfile,
-  onProgress?: (message: string, sectionIndex?: number, content?: string) => void
-): Promise<HybridGenerationResult> {
-  
-  // Build paper info for the plan
-  const paperInfos: PaperInfo[] = papers.map(p => ({
-    id: p.id,
-    title: p.title,
-    authors: p.author_names || [],
-    year: p.publication_date ? new Date(p.publication_date).getFullYear() : undefined,
-    domain: profile.discipline.primary
-  }))
-  
-  // Build constraints from profile
-  const constraints = buildConstraintsFromProfile(profile)
-  
-  onProgress?.('Building synthesis plan...')
-  
-  // Step 1: Build synthesis plan with paper type awareness
-  const planResult = await buildSynthesisPlan({
-    projectId: 'pipeline',
-    analysis: analysisResult,
-    papers: paperInfos,
-    paperType: constraints.paperType,
-    paperProfile: profile,
-    structuralConstraints: constraints,
-    outlineSections: constraints.requiredSections.map(s => ({
-      sectionKey: s.key,
-      title: s.name,
-      expectedWords: s.minWords,
-      isLiteratureFocused: s.isLiteratureFocused
-    })),
-    targetWordCount,
-    audienceLevel: 'academic'
-  })
-  
-  if (!planResult.success || !planResult.plan) {
-    throw new Error(`Failed to build synthesis plan: ${planResult.error}`)
-  }
-  
-  const plan = planResult.plan
-  
-  onProgress?.(`Plan created: ${plan.sections.length} sections`)
-  
-  // Step 2: Write using hybrid approach
-  const writerResult = await writeHybridSynthesis({
-    projectId: 'pipeline',
-    plan,
-    analysis: analysisResult,
-    papers: paperInfos,
-    onSectionStart: (title, index, _total) => {
-      onProgress?.(`Writing ${title}...`, index)
-    },
-    onSectionComplete: (_title, _wordCount) => {
-      // Could send content here for streaming
-    }
-  })
-  
-  if (!writerResult.success) {
-    throw new Error(`Hybrid writing failed: ${writerResult.error}`)
-  }
-  
-  return {
-    content: writerResult.fullContent,
-    sections: writerResult.sections.map(s => ({
-      title: s.title,
-      content: s.content,
-      wordCount: s.wordCount
-    })),
-    metadata: {
-      totalWords: writerResult.metadata.totalWords,
-      patternsDiscussed: writerResult.metadata.patternsDiscussed,
-      contradictionsAddressed: writerResult.metadata.contradictionsAddressed,
-      gapsIdentified: writerResult.metadata.gapsIdentified,
-      chunksUsed: writerResult.metadata.totalChunksUsed,
-      generationTimeMs: writerResult.metadata.totalGenerationTimeMs
-    }
   }
 }
 

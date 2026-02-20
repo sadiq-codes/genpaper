@@ -9,6 +9,12 @@ import { getServiceClient } from '@/lib/supabase/service'
 import { chunkByTokens, normalizeText, type TokenChunkOptions } from '@/lib/utils/text'
 import { collisionResistantHash } from '@/lib/utils/hash'
 import { ContentRetrievalError, IngestionError, ChunkingError } from './errors'
+import {
+  normalizePaperProcessingStatus,
+  isChunkReadyStatus,
+  isFullTextReadyStatus,
+  type PaperProcessingStatus,
+} from './processing-status'
 import { getPDFContent, hasPDFContent } from '@/lib/pdf/pdf-utils'
 import { isQdrantConfigured, upsertChunks as upsertQdrantChunks, deleteChunksByPaperId as deleteQdrantChunks } from '@/lib/qdrant/client'
 import type { PaperWithAuthors } from '@/types/simplified'
@@ -41,6 +47,13 @@ export interface BulkIngestionSummary {
   failed: number
   totalChunks: number
   results: IngestionResult[]
+}
+
+function sanitizeUnicode(text: string): string {
+  return text
+    .replace(/[\uD800-\uDFFF]/g, '')
+    .replace(/\\u(?![0-9a-fA-F]{4})\w*/g, '')
+    .replace(/\u0000/g, '')
 }
 
 async function updateQdrantSyncStatus(
@@ -97,6 +110,45 @@ async function updateQdrantSyncStatus(
   }
 }
 
+export async function getPaperProcessingStatusMap(
+  paperIds: string[]
+): Promise<Map<string, PaperProcessingStatus>> {
+  if (paperIds.length === 0) {
+    return new Map()
+  }
+
+  try {
+    const supabase = getServiceClient()
+    const { data, error } = await supabase
+      .from('papers')
+      .select('id, processing_status')
+      .in('id', paperIds)
+
+    if (error) {
+      throw new ContentRetrievalError(`Failed to fetch paper processing_status: ${error.message}`)
+    }
+
+    const statusMap = new Map<string, PaperProcessingStatus>()
+    for (const row of data || []) {
+      statusMap.set(
+        row.id,
+        normalizePaperProcessingStatus((row as { processing_status?: string | null }).processing_status)
+      )
+    }
+
+    for (const paperId of paperIds) {
+      if (!statusMap.has(paperId)) {
+        statusMap.set(paperId, 'pending')
+      }
+    }
+
+    return statusMap
+  } catch (error) {
+    console.error('Error getting processing status map:', error)
+    throw new ContentRetrievalError(`Processing status lookup failed: ${error}`)
+  }
+}
+
 /**
  * Get content availability status for multiple papers
  */
@@ -106,72 +158,23 @@ export async function getContentStatus(paperIds: string[]): Promise<Map<string, 
   }
 
   try {
-    // Use service client to bypass RLS - this is called from background generation jobs
-    const supabase = getServiceClient()
-    
-    // Get papers with their content info
-    const { data: papers, error } = await supabase
-      .from('papers')
-      .select(`
-        id,
-        abstract,
-        pdf_content,
-        paper_chunks(count)
-      `)
-      .in('id', paperIds)
-
-    if (error) {
-      throw new ContentRetrievalError(`Failed to fetch content status: ${error.message}`)
-    }
+    const processingStatusMap = await getPaperProcessingStatusMap(paperIds)
 
     const statusMap = new Map<string, ContentStatus>()
-
-    for (const paper of papers || []) {
-      const hasPdf = !!(paper.pdf_content && paper.pdf_content.length > 0)
-      const hasAbstract = !!(paper.abstract && paper.abstract.length > 100)
-      // NOTE: `paper_chunks(count)` returns an array with a single `{ count: number }` row.
-      // Using `.length` here incorrectly reports `1` even when the true count is `0`.
-      const chunkCount = (() => {
-        const rel = (paper as unknown as { paper_chunks?: Array<{ count?: number }> }).paper_chunks
-        if (!Array.isArray(rel) || rel.length === 0) return 0
-        const c = rel[0]?.count
-        return typeof c === 'number' ? c : 0
-      })()
-
-      let contentType: 'pdf' | 'abstract' | 'none' = 'none'
-      let contentLength = 0
-      let hasContent = false
-
-      if (hasPdf) {
-        contentType = 'pdf'
-        contentLength = paper.pdf_content.length
-        hasContent = true
-      } else if (hasAbstract) {
-        contentType = 'abstract'
-        contentLength = paper.abstract.length
-        hasContent = true
-      }
-
-      statusMap.set(paper.id, {
-        paperId: paper.id,
-        hasContent,
-        contentType,
-        contentLength,
-        chunkCount
-      })
-    }
-
-    // Add missing papers as having no content
     for (const paperId of paperIds) {
-      if (!statusMap.has(paperId)) {
-        statusMap.set(paperId, {
-          paperId,
-          hasContent: false,
-          contentType: 'none',
-          contentLength: 0,
-          chunkCount: 0
-        })
-      }
+      const processingStatus = processingStatusMap.get(paperId) || 'pending'
+      statusMap.set(paperId, {
+        paperId,
+        hasContent: isChunkReadyStatus(processingStatus),
+        contentType: isFullTextReadyStatus(processingStatus)
+          ? 'pdf'
+          : processingStatus === 'abstract_ready'
+            ? 'abstract'
+            : 'none',
+        // Exact content length is intentionally not derived here.
+        contentLength: 0,
+        chunkCount: isChunkReadyStatus(processingStatus) ? 1 : 0,
+      })
     }
 
     return statusMap
@@ -270,7 +273,7 @@ export async function createChunksForPaper(
       // Continue; we'll attempt to (re)create chunks
     }
 
-    const normalizedContent = normalizeText(trimmed)
+    const normalizedContent = sanitizeUnicode(normalizeText(trimmed))
     const newHash = collisionResistantHash(normalizedContent)
 
     const existingConcatenated = (existingChunks || []).map(c => c.content).join('\n\n')

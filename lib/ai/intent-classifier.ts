@@ -9,6 +9,8 @@
 import { generateObject } from 'ai'
 import { z } from 'zod'
 import { createOpenAI } from '@ai-sdk/openai'
+import { createAzure } from '@ai-sdk/azure'
+import { shouldUseAzureOpenAIForLLM, getAzureDeploymentForModel } from './config'
 
 // =============================================================================
 // TYPES
@@ -41,10 +43,24 @@ const CLASSIFIER_MODEL = 'gpt-4.1-nano'
 // Confidence threshold - if below this, default to research (safer)
 const CONFIDENCE_THRESHOLD = 0.7
 
-// Create a dedicated OpenAI client for the classifier
-const classifierClient = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-})
+/**
+ * Get the language model for intent classification.
+ * Uses Azure OpenAI if configured, otherwise falls back to OpenAI.
+ */
+function getClassifierModel() {
+  if (shouldUseAzureOpenAIForLLM()) {
+    const azure = createAzure({
+      resourceName: process.env.AZURE_OPENAI_RESOURCE_NAME!,
+      apiKey: process.env.AZURE_OPENAI_API_KEY!,
+    })
+    return azure.languageModel(getAzureDeploymentForModel(CLASSIFIER_MODEL))
+  }
+  
+  const openai = createOpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+  })
+  return openai.languageModel(CLASSIFIER_MODEL)
+}
 
 // =============================================================================
 // SCHEMA
@@ -198,7 +214,7 @@ export async function classifyIntent(
     const startTime = performance.now()
     
     const result = await generateObject({
-      model: classifierClient.languageModel(CLASSIFIER_MODEL),
+      model: getClassifierModel(),
       schema: IntentSchema,
       system: CLASSIFIER_SYSTEM_PROMPT,
       prompt: message,

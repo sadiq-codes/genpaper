@@ -5,9 +5,7 @@ import { collectPapers } from '@/lib/generation/discovery'
 // generateOutline removed — outline now comes from paper profile
 import { generateMultipleSectionsUnified, type StructuredCitation } from '@/lib/generation/unified-generator'
 import { GenerationContextService } from '@/lib/rag/generation-context'
-import { SectionReviewer } from '@/lib/quality/section-reviewer'
 // Legacy validatePaperType removed - using profile-based validation only
-import { fourGramOverlapRatio } from '@/lib/utils/overlap'
 import { sanitizeTopic } from '@/lib/utils/prompt-safety'
 import { classifyError, CancellationError } from '@/lib/generation/errors'
 import { warn, error as logError, info } from '@/lib/utils/logger'
@@ -59,10 +57,10 @@ export interface PipelineMetrics {
     generationMs: number
     qualityCheckMs: number
     wasRewritten: boolean
-    rewriteReason?: 'overlap' | 'length' | 'citation_verification'
+    rewriteReason?: 'citation_verification'
   }>
   
-  // Overlap detection stats
+  // Reserved for legacy compatibility; no overlap rewrite logic.
   overlapStats: {
     sectionsChecked: number
     sectionsExceedingThreshold: number
@@ -250,16 +248,6 @@ function convertNumberedCitationsToStorage(
 }
 
 /**
- * Convert StructuredCitation array to the format expected by SectionReviewer
- */
-function toReviewerFormat(citations: StructuredCitation[]): Array<{ paperId: string; citationText: string }> {
-  return citations.map(c => ({
-    paperId: c.paperId,
-    citationText: `[${c.index}]`
-  }))
-}
-
-/**
  * Progress callback interface for streaming updates
  */
 export interface ProgressCallback {
@@ -276,10 +264,10 @@ export interface ProgressCallback {
  * This is the single entry point that replaces the complex route logic with
  * a clean, testable pipeline that follows the 5-layer architecture:
  * 1. Search: collectPapers()
- * 2. Ingestion: ensureBulkContentIngestion() (handled within collectPapers)
+ * 2. Content readiness: metadata registration + targeted full-text/chunk upgrades
  * 3. RAG: GenerationContextService.buildContexts()
  * 4. Generation: generateMultipleSectionsUnified()
- * 5. Quality: comprehensive overlap check + SectionReviewer + evidence tracking
+ * 5. Quality: citation verification + evidence tracking
  */
 export async function generatePaper(
   config: PipelineConfig,
@@ -395,17 +383,21 @@ export async function generatePaper(
       })
       
       try {
-        const { processMultiplePapers } = await import('@/lib/content/background-processor')
-        const processingResults = await processMultiplePapers(config.libraryPaperIds!)
-        
-        const successful = processingResults.filter(r => r.status === 'processed').length
-        const failed = processingResults.filter(r => r.status === 'failed').length
+        const { ensureBulkPaperContentReadyByIds } = await import('@/lib/services/paper-content-service')
+        const processingResults = await ensureBulkPaperContentReadyByIds(config.libraryPaperIds!, {
+          searchQuery: sanitizedTopic,
+          waitForStructuredExtraction: false,
+        })
+        const successfulIds = new Set(processingResults.paperIds)
+        const successful = successfulIds.size
+        const failedIds = config.libraryPaperIds!.filter(id => !successfulIds.has(id))
+        const failed = failedIds.length
         
         if (failed > 0) {
           warn({ 
             successful, 
             failed, 
-            failedIds: processingResults.filter(r => r.status === 'failed').map(r => r.paperId)
+            failedIds
           }, 'Some papers failed to process')
         }
         
@@ -846,14 +838,9 @@ export async function generatePaper(
     // Step 5: Finishing (Quality Checks + Save)
     metrics.sectionGenerationDuration = Date.now() - generationStartTime
     const qualityStartTime = Date.now()
-    onProgress?.('finishing', 88, 'Checking for consistency and quality...')
+    onProgress?.('finishing', 88, 'Verifying citations and final consistency...')
     
     let totalQualityScore = 0
-    let qualityIssues: string[] = []
-    const OVERLAP_THRESHOLD = 0.22
-    
-    // Track overlap ratios for metrics
-    const overlapRatios: number[] = []
     
     for (let i = 0; i < results.length; i++) {
       // Check cancellation at each section in quality loop
@@ -863,89 +850,12 @@ export async function generatePaper(
       let result = results[i]
       const sectionContext = sectionContexts[i]
       let wasRewritten = false
-      let rewriteReason: 'overlap' | 'length' | 'citation_verification' | undefined
-      
-      // Check cross-section overlap and rewrite if necessary
-      const overlap = fourGramOverlapRatio(result.content, fullContent)
-      overlapRatios.push(overlap)
-      metrics.overlapStats.sectionsChecked++
-      
-      if (fullContent && overlap > OVERLAP_THRESHOLD) {
-        metrics.overlapStats.sectionsExceedingThreshold++
-        warn({ section: sectionContext.title, overlap: overlap.toFixed(2) }, 'High overlap detected, triggering rewrite')
-        try {
-          metrics.overlapStats.rewritesTriggered++
-          wasRewritten = true
-          rewriteReason = 'overlap'
-          const prevSummary = `Avoid repeating earlier content; focus only on new insights for ${sectionContext.title}.`
-          const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
-          result = await generateWithUnifiedTemplate({
-            context: sectionContext,
-            options: {
-              temperature: config.temperature || 0.2,
-              maxTokens: perSectionTokens,
-              forceRewrite: true,
-              rewriteText: result.content,
-              previousSectionsSummary: prevSummary,
-              outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n'),
-              // Preserve profile guidance during rewrite to maintain paper type rules
-              profileGuidance,
-              paperType: config.paperType,
-              topic: sanitizedTopic,
-              // Preserve voice configuration during rewrite for consistent authorial persona
-              voiceConfig: paperProfile.voice,
-              // Pass quality criteria from profile
-              profileCriteria: paperProfile.qualityCriteria,
-              customInstructions: config.customInstructions
-            }
-          })
-        } catch (rewriteError) {
-          warn({ section: sectionContext.title, error: rewriteError }, 'Rewrite failed')
-        }
-      }
-
-      // Enforce target length (root fix for chronic under-generation)
-      // Skip if an overlap rewrite already fired — avoid double-rewriting in the same iteration.
-      try {
-        const targetWords = sectionContext.expectedWords || 300
-        const actualWords = result.content.split(/\s+/).filter(w => w.length > 0).length
-
-        // Only enforce for substantial sections; keep short sections flexible
-        if (!wasRewritten && targetWords >= 800 && actualWords < targetWords * 0.7) {
-          warn(
-            { section: sectionContext.title, actualWords, targetWords },
-            'Section too short vs target words, triggering rewrite'
-          )
-          const { generateWithUnifiedTemplate } = await import('@/lib/generation/unified-generator')
-          wasRewritten = true
-          rewriteReason = 'length'
-
-          // Do NOT pass the short draft as rewriteText — the model will anchor on it
-          // and just lightly edit. Instead, regenerate from scratch with stronger instructions.
-          result = await generateWithUnifiedTemplate({
-            context: sectionContext,
-            options: {
-              temperature: config.temperature || 0.2,
-              maxTokens: perSectionTokens,
-              previousSectionsSummary: `IMPORTANT: Your previous attempt for "${sectionContext.title}" was only ${actualWords} words (target: ${targetWords}). This time you MUST write at least ${Math.round(targetWords * 0.8)} words. Use ALL subsections, write 150-250 words per paragraph, and ensure thorough coverage of every key point with evidence from the provided snippets.`,
-              outlineTree: typedOutline.sections.map(s => `• ${s.title}`).join('\n'),
-              profileGuidance,
-              paperType: config.paperType,
-              topic: sanitizedTopic,
-              voiceConfig: paperProfile.voice,
-              profileCriteria: paperProfile.qualityCriteria
-            }
-          })
-        }
-      } catch (lenErr) {
-        warn({ section: sectionContext.title, error: lenErr }, 'Length-based rewrite failed')
-      }
+      let rewriteReason: 'citation_verification' | undefined
       
       // NOTE: Evidence tracking removed to allow all sections access to all chunks
       // Previously, trackBulkUsage() marked chunks as "used" after each section,
       // which caused later sections to have 0 available chunks.
       // Now all sections can cite from the full evidence pool.
-      // Overlap detection (fourGramOverlapRatio) still guards against repetition.
       
       // Log citation feedback for RAG improvement (non-blocking)
       // This tracks which chunks were actually cited to improve future retrieval
@@ -963,30 +873,7 @@ export async function generatePaper(
         })
       }
       
-      // Comprehensive section quality review (pipeline-level assessment)
-      try {
-        const review = await SectionReviewer.reviewSection(
-          sectionContext.sectionKey,
-          result.content,
-          toReviewerFormat(result.citations),
-          sectionContext.contextChunks || [],
-          sectionContext.expectedWords || 300
-        )
-        
-        totalQualityScore += review.score
-        if (!review.passed) {
-          qualityIssues.push(`${sectionContext.title}: ${review.issues.join(', ')}`)
-        }
-      } catch (err) {
-        warn({ section: sectionContext.title, error: err }, 'Quality review failed')
-        // Use a default score if review fails
-        totalQualityScore += 75
-      }
-      
-      // Citation verification - verify that cited papers actually support the claims
-      // Simplified policy:
-      // - Always run verification (integrity signal)
-      // - Only regenerate when failure is SEVERE (avoid costly regen loops)
+      // Single hard quality gate: citation verification.
       try {
         const { verifySectionCitations, buildCitationFeedback } = await import('@/lib/quality/citation-verifier')
         const citationReport = await verifySectionCitations(
@@ -1022,7 +909,8 @@ export async function generatePaper(
               : 'Citation verification failed (non-severe) - keeping section'
           )
 
-          if (isSevere) {
+          // Max one rewrite per section.
+          if (isSevere && !wasRewritten) {
             // Build feedback about which citations failed
             const citationFeedback = buildCitationFeedback(citationReport)
 
@@ -1071,23 +959,19 @@ export async function generatePaper(
                 )
               } else {
                 warn({ section: sectionContext.title }, 'Citation regeneration did not improve - keeping original')
-                qualityIssues.push(`${sectionContext.title}: Some citations could not be verified`)
               }
             } catch (regenError) {
               warn({ section: sectionContext.title, error: regenError }, 'Citation-based regeneration failed')
-              qualityIssues.push(`${sectionContext.title}: Citation verification issues detected`)
             }
-          } else {
-            // Non-severe: keep content; surface as quality issue but don't spend an LLM call
-            qualityIssues.push(`${sectionContext.title}: Some citations could not be verified`)
           }
         }
         
-        // Adjust quality score based on citation verification
-        totalQualityScore += citationReport.score * 10 // Bonus for verified citations
+        // Quality score follows citation integrity directly.
+        totalQualityScore += citationReport.score * 100
       } catch (err) {
         // Don't fail pipeline on citation verification errors
         warn({ section: sectionContext.title, error: err }, 'Citation verification failed')
+        totalQualityScore += 60
       }
       
       // Verify section has proper markdown heading (prompt now instructs AI to include it)
@@ -1129,15 +1013,9 @@ export async function generatePaper(
       }
     }
     
-    // Finalize overlap stats
-    if (overlapRatios.length > 0) {
-      metrics.overlapStats.avgOverlapRatio = overlapRatios.reduce((a, b) => a + b, 0) / overlapRatios.length
-      metrics.overlapStats.maxOverlapRatio = Math.max(...overlapRatios)
-    }
-    
     metrics.qualityCheckDuration = Date.now() - qualityStartTime
     
-    const avgQualityScore = totalQualityScore / results.length
+    const avgQualityScore = results.length > 0 ? totalQualityScore / results.length : 0
     
     // Paper type validation - use profile-based validation for contextual accuracy
     const validPaperIdsForValidation = new Set(allPapers.map(p => p.id))
@@ -1152,7 +1030,6 @@ export async function generatePaper(
         discipline: paperProfile.discipline.primary,
         issues: profileValidation.issues 
       }, 'Profile-based validation issues detected')
-      qualityIssues.push(...profileValidation.issues)
     }
     
     if (profileValidation.warnings.length > 0) {

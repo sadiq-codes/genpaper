@@ -4,10 +4,10 @@ import { hybridSearchPapers } from '@/lib/db/papers'
 import { getSB } from '@/lib/supabase/server'
 import type { PaperWithAuthors, PaperSource } from '@/types/simplified'
 import type { AggregatedSearchOptions } from '@/lib/services/paper-aggregation'
-import { DEFAULT_WEIGHTS } from '@/lib/services/paper-aggregation'
+import { DEFAULT_WEIGHTS, searchAcademicPapers } from '@/lib/services/paper-aggregation'
 import pLimit from 'p-limit'
 import { generateDeterministicAuthorId, generateDeterministicPaperId } from '@/lib/utils/deterministic-id'
-import { searchAndIngestPapers } from '@/lib/services/paper-aggregation'
+import { ensureBulkPaperMetadata } from '@/lib/services/paper-content-service'
 import { simpleDeduplicatePapers } from '@/lib/search/deduplication'
 import { quickRelevanceCheck } from '@/lib/search/semantic-rerank'
 
@@ -167,10 +167,11 @@ export async function unifiedSearch(
           discipline  // Pass discipline for API-level filtering
         }
         
-        const { papers: rankedPapers } = await searchAndIngestPapers(query, academicOptions)
+        const rankedPapers = await searchAcademicPapers(query, academicOptions)
+        const { papers: metadataRegisteredPapers } = await ensureBulkPaperMetadata(rankedPapers, query)
         
         // Convert to PaperWithAuthors format using helper
-        const convertedPapers: PaperWithAuthors[] = rankedPapers.map(convertRankedToPaperWithAuthors)
+        const convertedPapers: PaperWithAuthors[] = metadataRegisteredPapers.map(convertRankedToPaperWithAuthors)
         
         return { papers: convertedPapers, strategy: 'academic_apis' }
       } catch (error) {

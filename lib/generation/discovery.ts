@@ -172,7 +172,10 @@ export async function collectPapers(
 
         const phaseResults = await Promise.allSettled(
           phaseQueries.map(query => limit(async () => {
-            const queryOptions = { ...searchOptions, maxResults: perQueryMax }
+            const queryOptions = {
+              ...searchOptions,
+              maxResults: perQueryMax,
+            }
             console.log(`🔎 Searching: "${query.slice(0, 60)}${query.length > 60 ? '...' : ''}"`)
             const searchResult = await unifiedSearch(query, queryOptions)
             return { query, searchResult }
@@ -213,24 +216,24 @@ export async function collectPapers(
       discoveredPapers = []
     }
 
-    // Note: unifiedSearch already performs ingestion via searchAndIngestPapers.
-    // Avoid re-ingesting here to prevent duplicate writes and queueing.
+    // Note: search results are metadata-registered here (no heavy PDF ingestion).
+    // Full-text/chunk upgrades are handled by the pipeline readiness phase.
   }
 
   // Combine pinned and discovered papers
   const pinnedPaperObjects = pinnedPapers.map(lp => lp.paper as PaperWithAuthors)
   
-  // discoveredPapers now contains the complete ingested papers from database
-  // or is empty if ingestion failed - ensuring we only use properly stored papers
+  // discoveredPapers now contains metadata-registered papers from database
+  // (canonical IDs exist, but full-text may still be pending).
   const allPapers = [...pinnedPaperObjects, ...discoveredPapers]
 
   console.log(`📋 Total Papers Collected: ${allPapers.length}`)
   console.log(`   📌 From Library: ${pinnedPaperObjects.length}`)
-  console.log(`   🔍 From Search (Ingested): ${discoveredPapers.length}`)
+  console.log(`   🔍 From Search (Metadata Registered): ${discoveredPapers.length}`)
   
   // Debug: Show final papers that will be used for generation
   if (discoveredPapers.length > 0) {
-    console.log(`🔍 FINAL INGESTED PAPERS FOR GENERATION:`)
+    console.log(`🔍 FINAL DISCOVERED PAPERS FOR GENERATION:`)
     discoveredPapers.forEach((paper, idx) => {
       console.log(`   ${idx + 1}. "${paper.title}" (ID: ${paper.id})`)
       console.log(`      📄 DOI: ${paper.doi || 'NONE'}`) 
@@ -259,15 +262,16 @@ export async function collectPapers(
       // Check if any papers have PDF URLs that could be processed
       const papersWithPdfs = finalPapers.filter(p => p.pdf_url && isLikelyDirectPdfUrl(p.pdf_url))
       
-      // Since PDF processing is now synchronous during ingestion, just log the final coverage
-      console.log(`   📊 Final coverage check after ingestion: ${(initialCoverage * 100).toFixed(1)}%`)
+      // Coverage can be low here because discovery is metadata-first.
+      // The readiness gate later upgrades a targeted subset to full-text.
+      console.log(`   📊 Coverage at discovery stage: ${(initialCoverage * 100).toFixed(1)}%`)
       
       if (initialCoverage < 0.7) {
         console.warn(`⚠️ Content coverage is low (${(initialCoverage * 100).toFixed(1)}% < 70%). This may impact generation quality.`)
         if (papersWithPdfs.length === 0) {
           console.warn(`   💡 No PDFs were available for processing - content limited to abstracts`)
         } else {
-          console.warn(`   💡 PDF processing was attempted but may have failed for some papers`)
+          console.warn(`   💡 Full-text upgrades will be attempted in the readiness phase`)
         }
       } else {
         console.log(`   ✅ Good content coverage achieved - proceeding with generation`)

@@ -473,7 +473,7 @@ export function validateToolCall(
       // Check citation format
       const insertCitationWarning = checkCitationFormat(args.content, citations)
       if (insertCitationWarning) {
-        console.warn(`[validateToolCall] ⚠️ insertContent: ${insertCitationWarning}`)
+        return { valid: false, error: insertCitationWarning }
       }
       break
       
@@ -488,7 +488,7 @@ export function validateToolCall(
       // Check citation format
       const replaceCitationWarning = checkCitationFormat(args.newContent as string, citations)
       if (replaceCitationWarning) {
-        console.warn(`[validateToolCall] ⚠️ replaceBlock: ${replaceCitationWarning}`)
+        return { valid: false, error: replaceCitationWarning }
       }
       break
       
@@ -502,7 +502,7 @@ export function validateToolCall(
       // Check citation format
       const rewriteWarning = checkCitationFormat(args.newContent, citations)
       if (rewriteWarning) {
-        console.warn(`[validateToolCall] ⚠️ rewriteSection: ${rewriteWarning}`)
+        return { valid: false, error: rewriteWarning }
       }
       break
       

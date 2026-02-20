@@ -8,19 +8,11 @@ import {
   searchCore,
   searchPubMedCentral,
   searchEuropePMC,
-  enhancePdfUrls,
-  getPaperReferences
+  enhancePdfUrls
 } from './academic-apis'
 import pLimit from 'p-limit'
-import { checkPaperExists, createPaperMetadata } from '@/lib/db/papers'
-import { createChunksForPaper } from '@/lib/content/ingestion'
-import { getOrExtractFullText } from '@/lib/services/pdf-processor'
-import { tryHtmlFallbackFromDoi, tryEuropePmcFullText, normalizeDoiForLookup } from '@/lib/content/html-extractor'
-import type { PaperDTO } from '@/lib/schemas/paper'
+import { normalizeDoiForLookup } from '@/lib/content/html-extractor'
 import { PaperSources } from '@/types/simplified'
-import { getSB } from '@/lib/supabase/server'
-
-import { createClient as createSB } from '@/lib/supabase/client'
 import { generateQueryRewrites } from '@/lib/search/query-rewrite'
 import { semanticRerank, quickRelevanceCheck } from '@/lib/search/semantic-rerank'
 import { deduplicatePapers, normalizeTitle } from '@/lib/search/deduplication'
@@ -30,8 +22,6 @@ import {
   recordFailure
 } from '@/lib/search/circuit-breaker'
 import { getCached, setCached } from '@/lib/search/source-cache'
-import { getServiceClient } from '@/lib/supabase/service'
-import { extractPaper, saveExtraction, hasExtraction } from '@/lib/extraction'
 
 // Enhanced paper type with ranking metadata
 export interface RankedPaper extends AcademicPaper {
@@ -50,48 +40,6 @@ export const DEFAULT_WEIGHTS = {
   authorityWeight: 0.5,
   recencyWeight: 0.1
 } as const
-
-type PdfFailureType =
-  | 'paywall-or-landing'
-  | 'timeout'
-  | 'http-4xx'
-  | 'http-5xx'
-  | 'invalid-pdf'
-  | 'too-large'
-  | 'network'
-  | 'unknown'
-
-function classifyPdfFailure(message: string): PdfFailureType {
-  const msg = message.toLowerCase()
-  if (msg.includes('html page') || msg.includes('landing page') || msg.includes('paywall') || msg.includes('forbidden')) {
-    return 'paywall-or-landing'
-  }
-  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('abort')) {
-    return 'timeout'
-  }
-  if (msg.includes('http 4') || msg.includes('status 4')) {
-    return 'http-4xx'
-  }
-  if (msg.includes('http 5') || msg.includes('status 5')) {
-    return 'http-5xx'
-  }
-  if (msg.includes('invalid pdf')) {
-    return 'invalid-pdf'
-  }
-  if (msg.includes('too large')) {
-    return 'too-large'
-  }
-  if (msg.includes('socket') || msg.includes('fetch failed') || msg.includes('econnreset') || msg.includes('network')) {
-    return 'network'
-  }
-  return 'unknown'
-}
-
-function shouldAttemptDoiRecovery(failureType: PdfFailureType): boolean {
-  // DOI recovery is most effective for access/URL-shape failures.
-  // For timeouts/network faults, retrying through DOI adds load without improving odds.
-  return failureType === 'paywall-or-landing' || failureType === 'http-4xx'
-}
 
 // Search configuration
 export interface AggregatedSearchOptions extends SearchOptions {
@@ -559,486 +507,45 @@ export async function parallelSearch(
 
 
 
-// Convert AcademicPaper to PaperDTO for ingestion with proper guards
-function convertToPaperDTO(paper: RankedPaper, searchQuery: string): PaperDTO {
-  // Normalize impact score to 0-1 range with guard against exceeding 1.0
-  const rawScore = paper.combinedScore || 0
-  const _normalizedImpactScore = rawScore > 0 ? 
-    Math.min(0.999, 1 - 1 / (rawScore + 1)) : 0 // Guard against floating point precision issues
-  const normalizedDoi = normalizeDoiForLookup(paper.doi || undefined)
+function dedupeByIdentity(papers: RankedPaper[]): RankedPaper[] {
+  const seen = new Set<string>()
+  const unique: RankedPaper[] = []
 
-  return {
-    title: paper.title,
-    abstract: paper.abstract || undefined,
-    publication_date: paper.year ? `${paper.year}-01-01` : undefined,
-    venue: paper.venue || undefined,
-    doi: normalizedDoi || undefined,
-    pdf_url: paper.pdf_url || undefined,
-    metadata: {
-      search_query: searchQuery,
-      found_at: new Date().toISOString(),
-      relevance_score: paper.relevanceScore,
-      combined_score: paper.combinedScore,
-      authority_score: paper.authorityScore,
-      recency_score: paper.recencyScore,
-      bm25_score: paper.bm25Score,
-      canonical_id: paper.canonical_id,
-      api_source: paper.source,
-      preprint_id: paper.preprint_id,
-      siblings: paper.siblings
-    },
-    source: `academic_search_${paper.source}`,
-    citation_count: paper.citationCount,
-    authors: (paper.authors && paper.authors.length > 0) ? paper.authors : [],
-    // Additional bibliographic fields for complete citations
-    volume: paper.volume || undefined,
-    issue: paper.issue || undefined,
-    pages: paper.pages || undefined,
-    publisher: paper.publisher || undefined,
-    // Extended metadata
-    paper_type: paper.paper_type || undefined,
-    keywords: paper.keywords || undefined,
-    fields_of_study: paper.fields_of_study || undefined,
-    tldr: paper.tldr || undefined,
-    is_open_access: paper.is_open_access,
-    open_access_status: paper.open_access_status || undefined,
-    license: paper.license || undefined,
-    influential_citation_count: paper.influential_citation_count || undefined,
-    references_count: paper.references_count || undefined,
-    is_retracted: paper.is_retracted || undefined,
-    external_ids: paper.external_ids || undefined,
-    language: paper.language || undefined,
-  }
-}
-
-// Main function to search and ingest papers
-export async function searchAndIngestPapers(
-  query: string,
-  options: AggregatedSearchOptions = {}
-): Promise<{ papers: RankedPaper[], ingestedIds: string[] }> {
-  console.log(`Starting academic search and ingestion for: "${query}"`)
-  
-  // Perform parallel search
-  const rankedPapers = await parallelSearch(query, options)
-  
-  if (rankedPapers.length === 0) {
-    console.log('No papers found for query')
-    return { papers: [], ingestedIds: [] }
-  }
-  
-  // Enhance with PDF URLs using comprehensive strategies
-  console.log(`🔍 Enhancing PDF URLs using multiple strategies...`)
-  const enhancedPapers = (await enhancePdfUrls(rankedPapers)) as RankedPaper[]
-  
-  // Convert to PaperDTO format and ingest with chunks
-  const ingestedIds: string[] = []
-  const ingestedPapers: RankedPaper[] = []
-  const processedPapers = new Set<string>() // Track processed papers to avoid duplicates
-  
-  // Filter out any duplicate papers before processing
-  const uniquePapers = enhancedPapers.filter(paper => {
-    const key = normalizeDoiForLookup(paper.doi || undefined) || paper.title.toLowerCase().trim()
-    if (processedPapers.has(key)) {
+  for (const paper of papers) {
+    const key = normalizeDoiForLookup(paper.doi || undefined) || normalizeTitle(paper.title)
+    if (seen.has(key)) {
       console.log(`📚 Skipping duplicate paper: ${paper.title}`)
-      return false
+      continue
     }
-    processedPapers.add(key)
-    return true
-  })
-  
-  console.log(`📊 Deduplicated ${enhancedPapers.length} papers to ${uniquePapers.length} unique papers`)
-  
-  // Process PDFs with continuous concurrency using p-limit
-  // This avoids batch synchronization where slowest paper in batch holds up the next batch
-  // GROBID has 10 internal engines; we use 8 concurrent slots to leave buffer
-  const PDF_CONCURRENCY = 8
-  const pdfLimit = pLimit(PDF_CONCURRENCY)
-  const pdfProcessingStartTime = Date.now()
-  
-  console.log(`📄 Processing ${uniquePapers.length} papers with ${PDF_CONCURRENCY} concurrent slots`)
-  
-  // Track progress for logging
-  let completedCount = 0
-  const totalCount = uniquePapers.length
-  
-  // Process all papers with continuous concurrency (no batch synchronization)
-  const allResults = await Promise.allSettled(
-    uniquePapers.map(paper => 
-      pdfLimit(async () => {
-        const result = await processPaperWithPdf(paper, query)
-        completedCount++
-        // Log progress every 5 papers or at completion
-        if (completedCount % 5 === 0 || completedCount === totalCount) {
-          const elapsed = Date.now() - pdfProcessingStartTime
-          const avgPerPaper = Math.round(elapsed / completedCount)
-          console.log(`📄 Progress: ${completedCount}/${totalCount} papers (${avgPerPaper}ms avg)`)
-        }
-        return result
-      })
-    )
-  )
-  
-  // Collect successful results
-  for (const result of allResults) {
-    if (result.status === 'fulfilled') {
-      ingestedIds.push(result.value.paperId)
-      ingestedPapers.push(result.value.paper)
-    } else {
-      console.warn('Paper processing failed:', result.reason)
-    }
+    seen.add(key)
+    unique.push(paper)
   }
-  
-  const totalPdfProcessingTime = Date.now() - pdfProcessingStartTime
-  console.log(`📊 [METRICS] PDF processing complete: ${uniquePapers.length} papers in ${totalPdfProcessingTime}ms (avg: ${Math.round(totalPdfProcessingTime / uniquePapers.length)}ms/paper)`)
-  
-  return { papers: ingestedPapers, ingestedIds }
-}
 
-// In-memory lock to prevent concurrent processing of the same paper
-// Key: DOI or normalized title, Value: Promise that resolves when processing completes
-const paperProcessingLocks = new Map<string, Promise<{ paperId: string; paper: RankedPaper }>>()
-
-function getPaperLockKey(paper: RankedPaper): string {
-  return normalizeDoiForLookup(paper.doi || undefined) || normalizeTitle(paper.title)
-}
-
-// Extract paper processing logic into separate function for parallel execution
-async function processPaperWithPdf(paper: RankedPaper, searchQuery: string = ''): Promise<{ paperId: string; paper: RankedPaper }> {
-    const lockKey = getPaperLockKey(paper)
-    
-    // Check if this paper is already being processed
-    const existingLock = paperProcessingLocks.get(lockKey)
-    if (existingLock) {
-      console.log(`⏳ Paper already being processed, waiting: ${paper.title.slice(0, 50)}...`)
-      return existingLock
-    }
-    
-    // Create a new lock for this paper
-    const processingPromise = (async () => {
-      try {
-        return await processPaperWithPdfInternal(paper, searchQuery)
-      } finally {
-        // Clean up lock after processing completes
-        paperProcessingLocks.delete(lockKey)
-      }
-    })()
-    
-    paperProcessingLocks.set(lockKey, processingPromise)
-    return processingPromise
-}
-
-// Internal implementation of paper processing
-async function processPaperWithPdfInternal(paper: RankedPaper, searchQuery: string = ''): Promise<{ paperId: string; paper: RankedPaper }> {
-    const paperDTO = convertToPaperDTO(paper, searchQuery)
-    const normalizedDoi = normalizeDoiForLookup(paperDTO.doi || undefined) || undefined
-    if (normalizedDoi && paperDTO.doi !== normalizedDoi) {
-      paperDTO.doi = normalizedDoi
-    }
-    
-    // Step 1: Ensure paper exists in DB first (get actual paperId)
-    const { exists, paperId: existingId } = await checkPaperExists(paperDTO.doi, paperDTO.title)
-    let paperId: string
-    
-    if (exists && existingId) {
-      paperId = existingId
-      console.log(`📚 Paper already exists: ${paperId}`)
-    } else {
-      paperId = await createPaperMetadata(paperDTO)
-      console.log(`📚 Created new paper: ${paperId}`)
-    }
-    
-    // Step 2: Check if paper already has full-text content (pdf_content field)
-    // This is more reliable than counting chunks - directly checks if we have extracted text
-    const supabase = await getSB()
-    const { data: paperRecord } = await supabase
-      .from('papers')
-      .select('pdf_content, content_source')
-      .eq('id', paperId)
-      .single()
-    
-    const hasFullText = paperRecord?.pdf_content && paperRecord.pdf_content.length > 500
-    
-    if (hasFullText) {
-      // Paper has full-text content already (from PDF or HTML)
-      // But verify chunks exist — pdf_content can exist without chunks if a previous run
-      // failed mid-way or chunks were lost (Qdrant reindex, migration, etc.)
-      const serviceClient = getServiceClient()
-      const { count: chunkCount } = await serviceClient
-        .from('paper_chunks')
-        .select('*', { count: 'exact', head: true })
-        .eq('paper_id', paperId)
-
-      if (chunkCount && chunkCount > 0) {
-        console.log(`📚 Full-text + ${chunkCount} chunks exist (${paperRecord.pdf_content.length} chars, source: ${paperRecord.content_source}), skipping: ${paperDTO.title}`)
-      } else {
-        // Has content but no chunks — re-chunk from existing pdf_content
-        console.warn(`⚠️ Full-text exists but 0 chunks for ${paperId}, re-chunking...`)
-        const rechunked = await createChunksForPaper(paperId, paperRecord.pdf_content)
-        console.log(`📚 Re-chunked existing content: ${rechunked} chunks for ${paperDTO.title}`)
-      }
-      
-      // Ensure processing_status is 'processed' for papers with full content
-      try {
-        await serviceClient
-          .from('papers')
-          .update({ processing_status: 'processed' })
-          .eq('id', paperId)
-      } catch (statusErr) {
-        console.warn(`Failed to update processing_status for existing paper ${paperId}:`, statusErr)
-      }
-      
-      // Create ingested paper object with database ID
-      const ingestedPaper: RankedPaper = {
-        ...paper,
-        canonical_id: paperId,
-        relevanceScore: paper.relevanceScore,
-        combinedScore: paper.combinedScore,
-        bm25Score: paper.bm25Score,
-        authorityScore: paper.authorityScore,
-        recencyScore: paper.recencyScore,
-        pdf_url: paper.pdf_url
-      }
-      
-      return { paperId, paper: ingestedPaper }
-    }
-    
-    // No full-text content yet - proceed with extraction
-    console.log(`📄 No full-text content (${paperRecord?.pdf_content?.length || 0} chars) - attempting extraction: ${paperDTO.title}`)
-    
-    // Step 3: Collect all content (title, abstract, PDF text)
-    // SIMPLIFIED: No separate abstract chunking - createChunksForPaper handles all content uniformly
-    const contentParts: string[] = []
-    
-    // Always include title for title-based matching
-    contentParts.push(paperDTO.title)
-    
-    // Add abstract if available
-    if (paperDTO.abstract) {
-      contentParts.push(paperDTO.abstract)
-    }
-    
-    // Step 4: Check for PDF content and extract if needed
-    let pdfProcessingMs = 0
-    
-    if (paperDTO.pdf_url) {
-      const pdfStartTime = Date.now()
-      try {
-        // Use unified processor with actual paperId
-        const text = await getOrExtractFullText({ pdfUrl: paperDTO.pdf_url, paperId, ocr: true, timeoutMs: 60000 })
-        pdfProcessingMs = Date.now() - pdfStartTime
-        
-        if (text && text.length > 100) {
-          contentParts.push(text)
-          console.log(`✅ PDF success: ${text.length} chars from ${paperDTO.pdf_url} [${pdfProcessingMs}ms]`)
-        } else {
-          console.warn(`⚠️ PDF empty: ${paperDTO.pdf_url} returned ${text?.length || 0} chars [${pdfProcessingMs}ms]`)
-        }
-      } catch (pdfErr) {
-        pdfProcessingMs = Date.now() - pdfStartTime
-        const errorMessage = pdfErr instanceof Error ? pdfErr.message : String(pdfErr)
-        const failureType = classifyPdfFailure(errorMessage)
-        
-        console.warn(`❌ PDF failed [${failureType}]: ${paperDTO.pdf_url}`)
-        console.warn(`   Reason: ${errorMessage.slice(0, 200)}`)
-        console.warn(`   Duration: ${pdfProcessingMs}ms | Paper: "${paperDTO.title.slice(0, 50)}..."`)
-        
-        // DOI fallback is deterministic: only for URL/access failures and valid normalized DOIs.
-        if (normalizedDoi && shouldAttemptDoiRecovery(failureType)) {
-          let recovered = false
-          
-          // Try 1: HTML from publisher landing page
-          try {
-            const htmlResult = await tryHtmlFallbackFromDoi(normalizedDoi, 30_000)
-            if (htmlResult?.content && htmlResult.content.length > 200) {
-              contentParts.push(htmlResult.content)
-              console.log(`✅ HTML-from-DOI recovery: ${htmlResult.content.length} chars after PDF failure`)
-              recovered = true
-              try {
-                const serviceClient = getServiceClient()
-                await serviceClient.from('papers').update({
-                  pdf_content: htmlResult.content,
-                  content_source: 'html'
-                }).eq('id', paperId)
-              } catch (persistErr) {
-                console.warn(`Failed to persist HTML content for ${paperId}:`, persistErr)
-              }
-            }
-          } catch (htmlErr) {
-            console.warn(`❌ HTML-from-DOI recovery failed for ${normalizedDoi}:`, htmlErr instanceof Error ? htmlErr.message : String(htmlErr))
-          }
-          
-          // Try 2: Europe PMC full-text XML (if paper is in PMC)
-          if (!recovered) {
-            try {
-              const epmcResult = await tryEuropePmcFullText(normalizedDoi, 30_000)
-              if (epmcResult?.content && epmcResult.content.length > 200) {
-                contentParts.push(epmcResult.content)
-                console.log(`✅ Europe PMC XML recovery: ${epmcResult.content.length} chars after PDF failure`)
-                try {
-                  const serviceClient = getServiceClient()
-                  await serviceClient.from('papers').update({
-                    pdf_content: epmcResult.content,
-                    content_source: 'html'
-                  }).eq('id', paperId)
-                } catch (persistErr) {
-                  console.warn(`Failed to persist EPMC content for ${paperId}:`, persistErr)
-                }
-              }
-            } catch (epmcErr) {
-              console.warn(`❌ Europe PMC XML recovery failed for ${normalizedDoi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
-            }
-          }
-        } else if (normalizedDoi) {
-          console.log(`📄 Skipping DOI fallback for failure class "${failureType}"`)
-        }
-      }
-    } else if (normalizedDoi) {
-      // No PDF URL but DOI exists — try content extraction fallbacks
-      console.log(`📄 No PDF URL, trying content fallbacks via DOI for: "${paperDTO.title.slice(0, 50)}..."`)
-      let recovered = false
-      
-      // Try 1: HTML from publisher landing page
-      try {
-        const htmlResult = await tryHtmlFallbackFromDoi(normalizedDoi, 30_000)
-        if (htmlResult?.content && htmlResult.content.length > 200) {
-          contentParts.push(htmlResult.content)
-          console.log(`✅ HTML-from-DOI success: ${htmlResult.content.length} chars for "${paperDTO.title.slice(0, 50)}..."`)
-          recovered = true
-          try {
-            const serviceClient = getServiceClient()
-            await serviceClient.from('papers').update({
-              pdf_content: htmlResult.content,
-              content_source: 'html'
-            }).eq('id', paperId)
-          } catch (persistErr) {
-            console.warn(`Failed to persist HTML content for ${paperId}:`, persistErr)
-          }
-        }
-      } catch (htmlErr) {
-        console.warn(`❌ HTML-from-DOI failed for ${normalizedDoi}:`, htmlErr instanceof Error ? htmlErr.message : String(htmlErr))
-      }
-      
-      // Try 2: Europe PMC full-text XML (if paper is in PMC)
-      if (!recovered) {
-        try {
-          const epmcResult = await tryEuropePmcFullText(normalizedDoi, 30_000)
-          if (epmcResult?.content && epmcResult.content.length > 200) {
-            contentParts.push(epmcResult.content)
-            console.log(`✅ Europe PMC XML success: ${epmcResult.content.length} chars for "${paperDTO.title.slice(0, 50)}..."`)
-            try {
-              const serviceClient = getServiceClient()
-              await serviceClient.from('papers').update({
-                pdf_content: epmcResult.content,
-                content_source: 'html'
-              }).eq('id', paperId)
-            } catch (persistErr) {
-              console.warn(`Failed to persist EPMC content for ${paperId}:`, persistErr)
-            }
-          }
-        } catch (epmcErr) {
-          console.warn(`❌ Europe PMC XML failed for ${normalizedDoi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
-        }
-      }
-    } else {
-      console.log(`📄 No PDF URL and no DOI for: "${paperDTO.title.slice(0, 50)}..."`)
-    }
-    
-    // Step 5: Create chunks using unified chunker (same settings for all content types)
-    // This eliminates the separate abstract chunking path for consistency
-    const finalChunkCount = await createChunksForPaper(paperId, contentParts.join('\n\n'))
-    console.log(`📚 Ingested paper with ${finalChunkCount} chunks: ${paperDTO.title}`)
-
-    // Step 5b: Run structured extraction (non-blocking, best-effort)
-    // This extracts claims, findings, effect sizes, themes for cross-document synthesis
-    if (finalChunkCount > 0) {
-      runStructuredExtraction(paperId, paperDTO, contentParts.join('\n\n')).catch(err => {
-        console.warn(`⚠️ Structured extraction failed for ${paperId}:`, err instanceof Error ? err.message : err)
-      })
-    }
-
-    // Step 6: Update processing_status to 'processed' since chunks are created
-    // This ensures the UI shows "Ready" instead of "Pending" for papers
-    if (finalChunkCount > 0) {
-      try {
-        const serviceClient = getServiceClient()
-        await serviceClient
-          .from('papers')
-          .update({ processing_status: 'processed' })
-          .eq('id', paperId)
-      } catch (statusErr) {
-        console.warn(`Failed to update processing_status for paper ${paperId}:`, statusErr)
-      }
-    } else {
-      // No chunks created - mark as failed
-      try {
-        const serviceClient = getServiceClient()
-        await serviceClient
-          .from('papers')
-          .update({ processing_status: 'failed' })
-          .eq('id', paperId)
-        console.warn(`⚠️ No chunks created for paper ${paperId}, marked as failed`)
-      } catch (statusErr) {
-        console.warn(`Failed to update processing_status to failed for paper ${paperId}:`, statusErr)
-      }
-    }
-
-    // Create ingested paper object with database ID and enhanced PDF URLs
-    const ingestedPaper: RankedPaper = {
-      ...paper, // This includes the enhanced PDF URLs from enhancePdfUrls()
-      canonical_id: paperId, // Use database ID as canonical ID
-      // Keep all the ranking scores from the original paper
-      relevanceScore: paper.relevanceScore,
-      combinedScore: paper.combinedScore,
-      bm25Score: paper.bm25Score,
-      authorityScore: paper.authorityScore,
-      recencyScore: paper.recencyScore,
-      // Ensure PDF URL is preserved at top level
-      pdf_url: paper.pdf_url
-    }
-
-    // Fetch and store references for the paper (using canonical_id as fallback)
-    await fetchAndStoreReferencesForPaper(paper, paperId)
-    
-    return { paperId, paper: ingestedPaper }
+  return unique
 }
 
 /**
- * Run structured extraction asynchronously (non-blocking)
- * 
- * Extracts findings from paper for cross-document synthesis.
- * Runs in background - failures don't block ingestion.
+ * Search academic APIs and return ranked, de-duplicated paper metadata only.
+ * No database writes, no PDF download, and no chunking are performed here.
  */
-async function runStructuredExtraction(
-  paperId: string,
-  paper: PaperDTO,
-  fullText: string
-): Promise<void> {
-  // Skip if extraction already exists
-  const alreadyExtracted = await hasExtraction(paperId)
-  if (alreadyExtracted) {
-    console.log(`📄 Extraction already exists for: ${paper.title.slice(0, 50)}...`)
-    return
-  }
-
-  console.log(`🔬 Starting extraction for: ${paper.title.slice(0, 50)}...`)
-
-  // Build full text with title and abstract for better LLM context
-  const textParts = []
-  if (paper.title) textParts.push(`Title: ${paper.title}`)
-  if (paper.abstract) textParts.push(`Abstract: ${paper.abstract}`)
-  if (fullText) textParts.push(fullText)
+export async function searchAcademicPapers(
+  query: string,
+  options: AggregatedSearchOptions = {}
+): Promise<RankedPaper[]> {
+  console.log(`Starting academic metadata search for: "${query}"`)
   
-  const result = await extractPaper({
-    paperId,
-    text: textParts.join('\n\n')
-  })
-
-  if (result.success && result.extraction) {
-    await saveExtraction(result.extraction)
-    console.log(`✅ Extraction saved for: ${paper.title.slice(0, 50)}...`)
-  } else {
-    console.warn(`⚠️ Extraction failed for ${paperId}: ${result.error || 'unknown error'}`)
+  const rankedPapers = await parallelSearch(query, options)
+  if (rankedPapers.length === 0) {
+    console.log('No papers found for query')
+    return []
   }
+  
+  console.log('🔍 Enhancing PDF URLs using multiple strategies...')
+  const enhancedPapers = (await enhancePdfUrls(rankedPapers)) as RankedPaper[]
+  const uniquePapers = dedupeByIdentity(enhancedPapers)
+  
+  console.log(`📊 Deduplicated ${enhancedPapers.length} papers to ${uniquePapers.length} unique papers`)
+  return uniquePapers
 }
 
 // Smart batch delay with exponential backoff
@@ -1053,22 +560,22 @@ async function smartDelay(previousHadRateLimit: boolean, iteration: number): Pro
   }
 }
 
-// Batch search for multiple queries with smart delays
-export async function batchSearchAndIngest(
+// Batch metadata search for multiple queries with smart delays
+export async function batchSearchAcademicPapers(
   queries: string[],
   options: AggregatedSearchOptions = {}
-): Promise<Array<{ query: string, papers: RankedPaper[], ingestedIds: string[] }>> {
+): Promise<Array<{ query: string, papers: RankedPaper[] }>> {
   console.log(`Starting batch search for ${queries.length} queries`)
   
-  const results = []
+  const results: Array<{ query: string, papers: RankedPaper[] }> = []
   let previousHadRateLimit = false
   
   for (let i = 0; i < queries.length; i++) {
     const query = queries[i]
     
     try {
-      const result = await searchAndIngestPapers(query, options)
-      results.push({ query, ...result })
+      const papers = await searchAcademicPapers(query, options)
+      results.push({ query, papers })
       
       // Reset rate limit flag on success
       previousHadRateLimit = false
@@ -1084,7 +591,7 @@ export async function batchSearchAndIngest(
       const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''
       previousHadRateLimit = errorMessage.includes('rate limit') || errorMessage.includes('429')
       
-      results.push({ query, papers: [], ingestedIds: [] })
+      results.push({ query, papers: [] })
       
       // Longer delay if we hit rate limits
       if (i < queries.length - 1) {
@@ -1104,45 +611,4 @@ export interface SearchConfig {
   toYear?: number
   openAccessOnly?: boolean
   fastMode?: boolean // Add fast mode option
-}
-
-// References ingestion with correct fallback ID
-async function fetchAndStoreReferencesForPaper(paper: AcademicPaper, paperId: string) {
-  try {
-    // Use canonical_id as fallback instead of paperId (which is a Supabase UUID)
-    const refs = await getPaperReferences(paper.doi, paper.canonical_id)
-    if (refs.length === 0) return
-
-    const supabase = await getSB()
-    // prepare rows
-    const rows = refs.slice(0, 100).map(r => ({
-      paper_id: paperId,
-      reference_csl: r
-    }))
-    await supabase.from('paper_references').insert(rows).select()
-    console.log(`📚 Stored ${rows.length} references for paper ${paperId}`)
-  } catch (e) {
-    console.warn('Reference ingestion failed', e)
-  }
-}
-
-// ---------- PDF observability ----------
-async function _recordPdfExtractionMetric(params: {
-  doi?: string
-  extractionMethod: string
-  confidence: 'high' | 'medium' | 'low'
-  extractionTimeMs: number
-}): Promise<void> {
-  try {
-    const sb = await createSB()
-    await sb.from('pdf_extraction_metrics').insert({
-      doi: params.doi || null,
-      extraction_method: params.extractionMethod,
-      confidence: params.confidence,
-      extraction_time_ms: params.extractionTimeMs,
-      timestamp: new Date().toISOString()
-    })
-  } catch (err) {
-    console.warn('Failed to record PDF metric', err)
-  }
 } 

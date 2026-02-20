@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getOrExtractFullText } from '@/lib/services/pdf-processor'
-import { createChunksForPaper } from '@/lib/content/ingestion'
+import { ensurePaperContentReadyById } from '@/lib/services/paper-content-service'
 
 // Download PDF for a single paper
 export async function POST(request: NextRequest) {
@@ -33,15 +32,18 @@ export async function POST(request: NextRequest) {
             })
             continue
           }
-          
-          const text = await getOrExtractFullText({ pdfUrl: paper.pdf_url, paperId: paper.id, ocr: true, timeoutMs: 60000 })
-          if (text && text.length > 100) {
-            await createChunksForPaper(paper.id, text)
-            results.push({ paperId: paper.id, status: 'completed' })
-          } else {
-            results.push({ paperId: paper.id, status: 'skipped' })
-          }
-          
+
+          await supabase
+            .from('papers')
+            .update({ pdf_url: paper.pdf_url })
+            .eq('id', paper.id)
+
+          await ensurePaperContentReadyById(paper.id, {
+            searchQuery: 'manual_pdf_download',
+            skipStructuredExtraction: true,
+          })
+
+          results.push({ paperId: paper.id, status: 'completed' })
         } catch (error) {
           results.push({ 
             paperId: paper.id || 'unknown', 
@@ -63,14 +65,26 @@ export async function POST(request: NextRequest) {
     // Handle direct PDF URL case (from LibraryManager)
     if (directPdfUrl && directTitle) {
       console.log(`📄 Processing direct PDF for: ${directTitle}`)
-      
-              try {
-        const text = await getOrExtractFullText({ pdfUrl: directPdfUrl, paperId, ocr: true, timeoutMs: 60000 })
-        if (text && text.length > 100) {
-          await createChunksForPaper(paperId, text)
-          return NextResponse.json({ success: true, status: 'completed' })
-        }
-        return NextResponse.json({ success: true, status: 'skipped' })
+
+      if (!paperId) {
+        return NextResponse.json({
+          success: false,
+          error: 'paperId is required when directPdfUrl is provided'
+        }, { status: 400 })
+      }
+
+      try {
+        await supabase
+          .from('papers')
+          .update({ pdf_url: directPdfUrl })
+          .eq('id', paperId)
+
+        await ensurePaperContentReadyById(paperId, {
+          searchQuery: 'manual_pdf_download',
+          skipStructuredExtraction: true,
+        })
+
+        return NextResponse.json({ success: true, status: 'completed' })
       } catch (error) {
         return NextResponse.json({
           success: false,
@@ -112,15 +126,12 @@ export async function POST(request: NextRequest) {
       }, { status: 404 })
     }
     
-    const pdfUrl = paper.pdf_url
-
     try {
-      const text = await getOrExtractFullText({ pdfUrl, paperId, ocr: true, timeoutMs: 60000 })
-      if (text && text.length > 100) {
-        await createChunksForPaper(paperId, text)
-        return NextResponse.json({ success: true, status: 'completed' })
-      }
-      return NextResponse.json({ success: true, status: 'skipped' })
+      await ensurePaperContentReadyById(paperId, {
+        searchQuery: 'manual_pdf_download',
+        skipStructuredExtraction: true,
+      })
+      return NextResponse.json({ success: true, status: 'completed' })
     } catch (error) {
       return NextResponse.json({
         success: false,

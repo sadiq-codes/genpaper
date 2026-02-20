@@ -436,7 +436,7 @@ async function processSinglePdf(
       .from('papers')
       .update({
         pdf_content: extraction.fullText.slice(0, 1000000), // Limit to 1M chars
-        processing_status: 'processed',
+        processing_status: 'full_text_ready',
         content_source: contentSource
       })
       .eq('id', paperId)
@@ -647,7 +647,7 @@ async function batchInsertPapers(
     metadata: p.metadata,
     owner_id: null,       // Global paper
     is_public: false,
-    processing_status: 'processed',
+    processing_status: 'full_text_ready',
   }))
 
   const { error } = await supabase

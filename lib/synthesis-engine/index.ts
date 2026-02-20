@@ -31,15 +31,6 @@ export type {
   OutlineSectionInput
 } from './types'
 
-// =============================================================================
-// Types - Hybrid (Phase 5)
-// =============================================================================
-export type {
-  HybridWriterInput,
-  HybridWriterOutput,
-  HybridGeneratedSection
-} from './hybrid-writer'
-
 export type {
   HybridSectionContext,
   HybridContextConfig
@@ -67,11 +58,6 @@ export type {
 // Functions - Planning (Phase 3)
 // =============================================================================
 export { buildSynthesisPlan } from './plan-builder'
-
-// =============================================================================
-// Functions - Hybrid Writing (Phase 5 - Data + Chunks)
-// =============================================================================
-export { writeHybridSynthesis } from './hybrid-writer'
 
 export {
   buildHybridSectionContext,
@@ -108,10 +94,9 @@ export {
 
 // Types are safe to re-export
 export type {
-  HybridThemeExtractionResult,
-  HybridGenerationResult
+  HybridThemeExtractionResult
 } from './pipeline-integration'
 
 // DO NOT re-export server-only functions here
 // They are available via: import { ... } from '@/lib/synthesis-engine/pipeline-integration'
-// Functions: extractThemesHybrid, generateSectionsHybrid, canUseHybridSynthesis
+// Functions: extractThemesHybrid, canUseHybridSynthesis

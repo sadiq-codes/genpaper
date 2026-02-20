@@ -320,7 +320,7 @@ async function main() {
                 doi, pdf_url: w.downloadUrl || null, source: 'core',
                 citation_count: w.citationCount || 0, embedding: embeddings[i],
                 metadata: { coreId: w.id, documentType: w.documentType },
-                owner_id: null, is_public: false, processing_status: 'processed',
+                owner_id: null, is_public: false, processing_status: 'full_text_ready',
               }
             })
 

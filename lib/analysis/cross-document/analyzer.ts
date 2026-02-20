@@ -239,6 +239,49 @@ function isLikelyTimeoutOrAbort(error: unknown): boolean {
   )
 }
 
+function isRateLimitError(error: unknown): boolean {
+  const text = getErrorText(error).toLowerCase()
+  return (
+    text.includes('429') ||
+    text.includes('rate limit') ||
+    text.includes('too many requests')
+  )
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function generateObjectWithRateLimitRetry<T>(
+  execute: () => Promise<{ object: T }>,
+  scope: string,
+  partName: AnalysisPartName
+): Promise<{ object: T }> {
+  const RATE_LIMIT_RETRY_COUNT = 3
+  const RATE_LIMIT_BASE_BACKOFF_MS = 1000
+  let lastError: unknown = null
+
+  for (let rateLimitRetry = 0; rateLimitRetry <= RATE_LIMIT_RETRY_COUNT; rateLimitRetry++) {
+    try {
+      return await execute()
+    } catch (error) {
+      lastError = error
+      const hasRateLimitRetryRemaining = rateLimitRetry < RATE_LIMIT_RETRY_COUNT
+      if (isRateLimitError(error) && hasRateLimitRetryRemaining) {
+        const backoffMs = RATE_LIMIT_BASE_BACKOFF_MS * (2 ** rateLimitRetry)
+        console.warn(
+          `⚠️ ${scope} (${partName}) hit rate limit (429); retrying in ${backoffMs}ms (${rateLimitRetry + 1}/${RATE_LIMIT_RETRY_COUNT})`
+        )
+        await sleep(backoffMs)
+        continue
+      }
+      throw error
+    }
+  }
+
+  throw lastError || new Error(`${scope} (${partName}) failed after rate limit retries`)
+}
+
 function getTokenBudgetsForPart(
   partName: AnalysisPartName,
   findingsCount: number
@@ -278,18 +321,28 @@ Only return JSON matching the provided schema.`
 
   for (let attempt = 0; attempt < tokenBudgets.length; attempt++) {
     const maxOutputTokens = tokenBudgets[attempt]
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), ANALYSIS_PART_TIMEOUT_MS)
     try {
-      const { object } = await generateObject({
-        model: getLanguageModel(),
-        schema,
-        system: SYSTEM_PROMPT,
-        prompt,
-        temperature: 0.2,
-        maxOutputTokens,
-        abortSignal: controller.signal,
-      })
+      const { object } = await generateObjectWithRateLimitRetry(
+        async () => {
+          const controller = new AbortController()
+          const timeout = setTimeout(() => controller.abort(), ANALYSIS_PART_TIMEOUT_MS)
+          try {
+            return await generateObject({
+              model: getLanguageModel(),
+              schema,
+              system: SYSTEM_PROMPT,
+              prompt,
+              temperature: 0.2,
+              maxOutputTokens,
+              abortSignal: controller.signal,
+            })
+          } finally {
+            clearTimeout(timeout)
+          }
+        },
+        scope,
+        partName
+      )
       return object
     } catch (error) {
       lastError = error
@@ -310,8 +363,6 @@ Only return JSON matching the provided schema.`
         continue
       }
       throw error
-    } finally {
-      clearTimeout(timeout)
     }
   }
 
@@ -611,7 +662,7 @@ const MAX_FINDINGS_PER_BATCH = 70
 const BATCH_THRESHOLD = 120
 const MIN_FINDINGS_TO_SPLIT = 30
 const MAX_BATCH_SPLIT_DEPTH = 3
-const BATCH_ANALYSIS_CONCURRENCY = 2
+const BATCH_ANALYSIS_CONCURRENCY = 1
 
 type TransformedBatchResult = {
   patterns: Pattern[]

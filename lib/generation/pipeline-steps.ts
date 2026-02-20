@@ -17,29 +17,28 @@ import { collectPapers } from '@/lib/generation/discovery'
 import { generatePaperProfile, buildProfileGuidanceForPrompt, scaleProfileOutlineForLength } from '@/lib/generation/paper-profile'
 import { generateWithUnifiedTemplate, generateSectionBySubsections, type StructuredCitation } from '@/lib/generation/unified-generator'
 import { GenerationContextService } from '@/lib/rag/generation-context'
-import { SectionReviewer } from '@/lib/quality/section-reviewer'
-import { fourGramOverlapRatio } from '@/lib/utils/overlap'
 import { sanitizeTopic } from '@/lib/utils/prompt-safety'
 import { mergeAnalysisResultIntoProfile } from '@/lib/generation/theme-extraction'
 import { enrichAndBuildContexts, type HybridThemeExtractionResult } from '@/lib/synthesis-engine/pipeline-integration'
 import { 
-  extractPaper 
-} from '@/lib/extraction'
-import { 
   getExtractionsService, 
-  getPapersNeedingExtractionService,
-  saveExtractionService 
+  getPapersNeedingExtractionService
 } from '@/lib/extraction/db-service'
-import { getContentStatus, createChunksForPaper } from '@/lib/content'
-import { analyzeFindings, type FindingWithPaper, type AnalysisResult } from '@/lib/analysis/cross-document'
-import { updateProjectContent, updateResearchProjectStatus, savePartialContent } from '@/lib/db/research'
+import {
+  getPaperProcessingStatusMap,
+  isChunkReadyStatus,
+  isFullTextReadyStatus,
+} from '@/lib/content'
+import { analyzeFindings, type FindingWithPaper } from '@/lib/analysis/cross-document'
+import { updateProjectContent, updateResearchProjectStatus } from '@/lib/db/research'
 import { getServiceClient } from '@/lib/supabase/service'
-import { info, warn, error as logError } from '@/lib/utils/logger'
+import { info, warn } from '@/lib/utils/logger'
 import pLimit from 'p-limit'
+import { ensurePaperContentReadyById } from '@/lib/services/paper-content-service'
 
 import type { PaperProfile } from '@/lib/generation/paper-profile-types'
 import type { PaperWithAuthors, PaperStatus, PaperTypeKey as SimplifiedPaperTypeKey } from '@/types/simplified'
-import type { GeneratedOutline, SectionContext, PaperTypeKey } from '@/lib/prompts/types'
+import type { GeneratedOutline, SectionContext } from '@/lib/prompts/types'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
 import type { EnrichedSectionContext } from '@/lib/synthesis-engine/outline-enricher'
 import type { PipelineConfig, CitationInstance } from '@/lib/generation/pipeline'
@@ -63,7 +62,7 @@ export interface SectionResult {
 
 export interface QualityIssue {
   sectionIndex: number
-  issue: 'overlap' | 'length' | 'citation' | 'truncation'
+  issue: 'truncation'
   details?: string
 }
 
@@ -81,7 +80,7 @@ export async function runProfilePhase(
 ): Promise<PaperProfile> {
   const sanitizedTopic = sanitizeTopic(config.topic)
   
-  onProgress?.('profiling', 5, 'Analyzing your topic...')
+  onProgress?.('profiling', 5, 'Understanding your research area...')
   
   const rawProfile = await generatePaperProfile({
     topic: sanitizedTopic,
@@ -100,7 +99,7 @@ export async function runProfilePhase(
     minSources: profile.sourceExpectations.minimumUniqueSources,
   }, 'Paper profile generated')
   
-  onProgress?.('profiling', 10, `Identified as ${profile.discipline.primary} research`)
+  onProgress?.('profiling', 10, `Tailoring approach for ${profile.discipline.primary} research`)
   
   return profile
 }
@@ -122,7 +121,7 @@ export async function runDiscoveryPhase(
 ): Promise<PaperWithAuthors[]> {
   const sanitizedTopic = sanitizeTopic(config.topic)
   
-  onProgress?.('search', 15, 'Searching for relevant papers...')
+  onProgress?.('search', 15, 'Searching academic databases for relevant studies...')
   
   const discoveryOptions: EnhancedGenerationOptions = {
     projectId,
@@ -162,7 +161,7 @@ export async function runDiscoveryPhase(
     throw new Error('No papers found for the given topic')
   }
   
-  onProgress?.('search', 22, `Found ${papers.length} relevant papers`)
+  onProgress?.('search', 22, `Found ${papers.length} relevant sources`)
   
   return papers
 }
@@ -171,8 +170,147 @@ export async function runDiscoveryPhase(
 // Phase 3: Theme Extraction (Split into batches)
 // =============================================================================
 
-const MIN_FULL_TEXT_LENGTH = 5000
 const EXTRACTION_BATCH_SIZE = 8 // Higher throughput while staying within step budget
+
+/**
+ * Early content readiness gate:
+ * 1) Read explicit paper processing_status values
+ * 2) Upgrade a bounded subset of papers to full-text until minimum target is met
+ * 3) Return chunk-ready paper IDs for downstream analysis/writing
+ */
+export async function runContentReadinessPhase(
+  topic: string,
+  profile: PaperProfile,
+  papers: PaperWithAuthors[],
+  onProgress?: StepProgressCallback
+): Promise<{
+  readyPaperIds: string[]
+  fullTextReadyPaperIds: string[]
+  targetFullTextReady: number
+  upgradedToFullText: number
+  rechunked: number
+}> {
+  const paperIds = papers.map(p => p.id)
+  if (paperIds.length === 0) {
+    throw new Error('No papers available for content readiness checks')
+  }
+
+  const paperById = new Map(papers.map(p => [p.id, p]))
+  const minimumUniqueSources = Math.max(1, profile.sourceExpectations?.minimumUniqueSources || 8)
+  const targetFullTextReady = Math.min(paperIds.length, minimumUniqueSources)
+
+  onProgress?.('planning', 23, `Preparing ${paperIds.length} sources for deep reading...`)
+
+  let statusMap = await getPaperProcessingStatusMap(paperIds)
+
+  const classify = () => {
+    const readyPaperIds: string[] = []
+    const fullTextReadyPaperIds: string[] = []
+    const fullTextUpgradeCandidates: string[] = []
+
+    for (const paperId of paperIds) {
+      const status = statusMap.get(paperId)
+      if (!status) continue
+
+      if (isChunkReadyStatus(status)) {
+        readyPaperIds.push(paperId)
+      }
+      if (isFullTextReadyStatus(status)) {
+        fullTextReadyPaperIds.push(paperId)
+      }
+      const paper = paperById.get(paperId)
+      const hasPdfUrl = !!(paper?.pdf_url && paper.pdf_url.trim().length > 0)
+      if (!isFullTextReadyStatus(status) && hasPdfUrl) {
+        fullTextUpgradeCandidates.push(paperId)
+      }
+    }
+
+    return {
+      readyPaperIds,
+      fullTextReadyPaperIds,
+      fullTextUpgradeCandidates,
+    }
+  }
+
+  let { readyPaperIds, fullTextReadyPaperIds, fullTextUpgradeCandidates } = classify()
+
+  const rechunked = 0
+
+  const fullTextBeforeUpgrade = fullTextReadyPaperIds.length
+
+  if (fullTextReadyPaperIds.length < targetFullTextReady && fullTextUpgradeCandidates.length > 0) {
+    const sortedCandidates = [...fullTextUpgradeCandidates].sort((a, b) => {
+      const aPaper = paperById.get(a)
+      const bPaper = paperById.get(b)
+      return scoreExtractionPriority(bPaper) - scoreExtractionPriority(aPaper)
+    })
+
+    let cursor = 0
+    while (fullTextReadyPaperIds.length < targetFullTextReady && cursor < sortedCandidates.length) {
+      const remainingNeeded = targetFullTextReady - fullTextReadyPaperIds.length
+      const batchSize = Math.min(3, remainingNeeded, sortedCandidates.length - cursor)
+      const batchIds = sortedCandidates.slice(cursor, cursor + batchSize)
+      cursor += batchSize
+
+      onProgress?.(
+        'planning',
+        24,
+        `Reading full papers (${fullTextReadyPaperIds.length} of ${targetFullTextReady} ready)...`
+      )
+
+      await Promise.allSettled(
+        batchIds.map(async paperId => {
+          try {
+            await ensurePaperContentReadyById(paperId, {
+              searchQuery: topic,
+              // Keep extraction ownership in the dedicated extraction phase.
+              skipStructuredExtraction: true,
+            })
+          } catch (err) {
+            warn({ paperId, error: err }, 'Full-text upgrade failed')
+          }
+        })
+      )
+
+      statusMap = await getPaperProcessingStatusMap(paperIds)
+      const afterUpgrade = classify()
+      readyPaperIds = afterUpgrade.readyPaperIds
+      fullTextReadyPaperIds = afterUpgrade.fullTextReadyPaperIds
+    }
+  }
+
+  if (readyPaperIds.length === 0) {
+    throw new Error('Content readiness failed: no chunk-ready papers available')
+  }
+
+  const upgradedToFullText = Math.max(0, fullTextReadyPaperIds.length - fullTextBeforeUpgrade)
+
+  info(
+    {
+      papers: paperIds.length,
+      readyWithChunks: readyPaperIds.length,
+      fullTextReady: fullTextReadyPaperIds.length,
+      targetFullTextReady,
+      upgradedToFullText,
+      rechunked,
+    },
+    'Content readiness complete'
+  )
+
+  onProgress?.(
+    'planning',
+    25,
+    `${readyPaperIds.length} sources prepared for analysis`
+  )
+
+  return {
+    readyPaperIds,
+    fullTextReadyPaperIds,
+    targetFullTextReady,
+    upgradedToFullText,
+    rechunked,
+  }
+}
 
 function scoreExtractionPriority(paper: PaperWithAuthors | undefined): number {
   if (!paper) return 0
@@ -195,17 +333,17 @@ export async function runExtractionCheckPhase(
   pendingPaperIds: string[]
   totalBatches: number
 }> {
-  onProgress?.('planning', 25, 'Checking for existing analysis...')
+  onProgress?.('planning', 25, 'Reviewing what we already know...')
   
   // Check which papers need extraction
   const needsExtraction = await getPapersNeedingExtractionService(paperIds)
   const cachedPaperIds = paperIds.filter(id => !needsExtraction.includes(id))
   
-  // Filter to papers with usable full text
+  // Filter to papers that are explicitly full-text ready in DB.
+  // Do not infer from in-memory `papers[].pdf_content`, which can be metadata-only.
+  const processingStatusMap = await getPaperProcessingStatusMap(needsExtraction)
   const usableFullTextIds = new Set(
-    papers
-      .filter(p => ((p as any).pdf_content as string || '').length >= MIN_FULL_TEXT_LENGTH)
-      .map(p => p.id)
+    needsExtraction.filter(id => isFullTextReadyStatus(processingStatusMap.get(id) || 'pending'))
   )
   const papersById = new Map(papers.map(p => [p.id, p]))
   
@@ -225,7 +363,7 @@ export async function runExtractionCheckPhase(
     totalBatches
   }, 'Extraction check complete')
   
-  onProgress?.('planning', 27, `${cachedPaperIds.length} papers cached, ${extractablePaperIds.length} need analysis`)
+  onProgress?.('planning', 27, `${cachedPaperIds.length} sources already reviewed, analyzing ${extractablePaperIds.length} more...`)
   
   return {
     cachedPaperIds,
@@ -241,7 +379,6 @@ export async function runExtractionCheckPhase(
 export async function runExtractionBatchPhase(
   batchIndex: number,
   pendingPaperIds: string[],
-  papers: PaperWithAuthors[],
   onProgress?: StepProgressCallback
 ): Promise<number> {
   const startIdx = batchIndex * EXTRACTION_BATCH_SIZE
@@ -252,7 +389,7 @@ export async function runExtractionBatchPhase(
     return 0
   }
   
-  onProgress?.('planning', 28, `Analyzing papers ${startIdx + 1}-${endIdx} of ${pendingPaperIds.length}...`)
+  onProgress?.('planning', 28, `Reading through sources ${startIdx + 1}–${endIdx} of ${pendingPaperIds.length}...`)
   
   // Keep idempotency guarantees with a batched freshness check, then run extraction
   // at higher controlled concurrency for better throughput.
@@ -272,18 +409,13 @@ export async function runExtractionBatchPhase(
     batchPaperIds.map(paperId =>
       limit(async () => {
         if (!extractableNow.has(paperId)) return
-        const paper = papers.find(p => p.id === paperId)
-        if (!paper) return
-        
-        const pdfContent = (paper as any).pdf_content as string || ''
-        if (pdfContent.length < MIN_FULL_TEXT_LENGTH) return
-        
+
         try {
-          const result = await extractPaper({ paperId, text: pdfContent })
-          if (result.success && result.extraction) {
-            await saveExtractionService(result.extraction)
-            extracted++
-          }
+          await ensurePaperContentReadyById(paperId, {
+            skipStructuredExtraction: false,
+            waitForStructuredExtraction: true,
+          })
+          extracted++
         } catch (error) {
           warn({ paperId, error }, 'Paper extraction failed')
         }
@@ -294,81 +426,6 @@ export async function runExtractionBatchPhase(
   info({ batchIndex, extracted, total: batchPaperIds.length }, 'Extraction batch complete')
   
   return extracted
-}
-
-/**
- * Preflight gate before analysis/writing:
- * ensure chunk rows exist for papers that already have stored content.
- * This avoids expensive late ingestion fallback during section retrieval.
- */
-export async function runPreflightContentPhase(
-  paperIds: string[],
-  papers: PaperWithAuthors[],
-  onProgress?: StepProgressCallback
-): Promise<{
-  readyPaperIds: string[]
-  rebuiltChunks: number
-  missingContentIds: string[]
-}> {
-  onProgress?.('planning', 29, 'Running content preflight gate...')
-
-  const statusMap = await getContentStatus(paperIds)
-  const needsChunkRebuild = paperIds.filter(id => {
-    const status = statusMap.get(id)
-    return !!status?.hasContent && status.chunkCount === 0
-  })
-
-  const missingContentIds = paperIds.filter(id => {
-    const status = statusMap.get(id)
-    return !status?.hasContent
-  })
-
-  let rebuiltChunks = 0
-  if (needsChunkRebuild.length > 0) {
-    const limit = pLimit(4)
-    await Promise.all(
-      needsChunkRebuild.map(paperId =>
-        limit(async () => {
-          const paper = papers.find(p => p.id === paperId)
-          if (!paper) return
-
-          const pdfContent = ((paper as any).pdf_content as string | undefined) || ''
-          const abstractContent = (paper.abstract || '').trim()
-          const content = pdfContent.length > 0 ? pdfContent : abstractContent
-          if (!content) return
-
-          try {
-            const chunkCount = await createChunksForPaper(paperId, content)
-            if (chunkCount > 0) rebuiltChunks += 1
-          } catch (err) {
-            warn({ paperId, error: err }, 'Preflight chunk rebuild failed')
-          }
-        })
-      )
-    )
-  }
-
-  const postStatusMap = await getContentStatus(paperIds)
-  const readyPaperIds = paperIds.filter(id => (postStatusMap.get(id)?.chunkCount || 0) > 0)
-
-  info({
-    papers: paperIds.length,
-    ready: readyPaperIds.length,
-    rebuilt: rebuiltChunks,
-    missingContent: missingContentIds.length
-  }, 'Content preflight complete')
-
-  if (readyPaperIds.length === 0) {
-    throw new Error('Content preflight failed: no chunked papers available for generation')
-  }
-
-  onProgress?.('planning', 30, `Content preflight ready: ${readyPaperIds.length}/${paperIds.length} papers chunked`)
-
-  return {
-    readyPaperIds,
-    rebuiltChunks,
-    missingContentIds
-  }
 }
 
 /**
@@ -445,7 +502,7 @@ export async function runAnalysisPhase(
   profile: PaperProfile,
   onProgress?: StepProgressCallback
 ): Promise<HybridThemeExtractionResult> {
-  onProgress?.('planning', 30, 'Synthesizing findings across papers...')
+  onProgress?.('planning', 30, 'Connecting ideas across your sources...')
   
   // Get all extractions (cached + newly extracted)
   const extractions = await getExtractionsService(paperIds)
@@ -473,7 +530,7 @@ export async function runAnalysisPhase(
   }, 'Analyzing findings')
 
   if (analysisFindings.length < allFindings.length) {
-    onProgress?.('planning', 31, `Prioritizing ${analysisFindings.length} core findings for synthesis (from ${allFindings.length})`)
+    onProgress?.('planning', 31, `Identified ${analysisFindings.length} key findings to work with`)
   }
   
   // Run cross-document analysis
@@ -483,7 +540,7 @@ export async function runAnalysisPhase(
     topic
   })
   
-  onProgress?.('planning', 35, `Identified ${analysisResult.patterns.length} patterns, ${analysisResult.contradictions.length} debates`)
+  onProgress?.('planning', 35, `Found ${analysisResult.patterns.length} research patterns and ${analysisResult.contradictions.length} open debates`)
   
   return {
     analysisResult,
@@ -547,7 +604,7 @@ export async function runBuildContextsPhase(
     localRegion: undefined
   }
   
-  onProgress?.('writing', 40, 'Gathering evidence for each section...')
+  onProgress?.('writing', 40, 'Matching the best evidence to each section...')
   
   let sectionContexts: SectionContext[]
   
@@ -570,7 +627,7 @@ export async function runBuildContextsPhase(
       ).length
       
       info({ enrichedSections: enrichedCount, totalSections: sectionContexts.length }, 'Hybrid contexts built')
-      onProgress?.('writing', 45, `${enrichedCount} sections enriched with cross-paper insights`)
+      onProgress?.('writing', 45, `${enrichedCount} sections enriched with connected insights`)
     } catch (error) {
       warn({ error }, 'Hybrid enrichment failed, using RAG-only')
       sectionContexts = await GenerationContextService.buildContexts(typedOutline, sanitizedTopic, papers)
@@ -579,7 +636,7 @@ export async function runBuildContextsPhase(
     sectionContexts = await GenerationContextService.buildContexts(typedOutline, sanitizedTopic, papers)
   }
   
-  onProgress?.('writing', 48, `Ready to write ${sectionContexts.length} sections`)
+  onProgress?.('writing', 48, `Evidence gathered — ready to write`)
   
   return sectionContexts
 }
@@ -693,7 +750,7 @@ export async function runSectionGenerationPhase(
   const wordCount = content.split(/\s+/).filter(w => w.length > 0).length
   
   onProgress?.('writing', 50 + Math.round(((sectionIndex + 1) / totalSections) * 35),
-    `Completed "${sectionTitle}" (${wordCount} words)`, {
+    `Finished "${sectionTitle}"`, {
       sectionComplete: true,
       sectionTitle,
       sectionContent: content,
@@ -713,8 +770,6 @@ export async function runSectionGenerationPhase(
 // =============================================================================
 // Phase 6: Quality Check
 // =============================================================================
-
-const OVERLAP_THRESHOLD = 0.22
 
 function isLikelyCompleteMarkdownLine(line: string): boolean {
   if (!line) return false
@@ -759,36 +814,13 @@ export async function runQualityCheckPhase(
   contexts: SectionContext[],
   onProgress?: StepProgressCallback
 ): Promise<QualityIssue[]> {
-  onProgress?.('finishing', 88, 'Checking for consistency and quality...')
+  onProgress?.('finishing', 88, 'Running completion gate...')
   
   const issues: QualityIssue[] = []
-  let fullContent = ''
   
   for (let i = 0; i < sections.length; i++) {
     const section = sections[i]
-    const context = contexts[i]
-    
-    // Check overlap with previous content
-    if (fullContent) {
-      const overlap = fourGramOverlapRatio(section.content, fullContent)
-      if (overlap > OVERLAP_THRESHOLD) {
-        issues.push({
-          sectionIndex: i,
-          issue: 'overlap',
-          details: `${(overlap * 100).toFixed(0)}% overlap with previous sections`
-        })
-      }
-    }
-    
-    // Check length
-    const targetWords = context.expectedWords || 300
-    if (targetWords >= 400 && section.wordCount < targetWords * 0.5) {
-      issues.push({
-        sectionIndex: i,
-        issue: 'length',
-        details: `${section.wordCount} words vs ${targetWords} target`
-      })
-    }
+    void contexts[i]
 
     // Detect likely hard cutoff (mid-sentence / incomplete ending).
     if (section.wordCount >= 180 && hasLikelyTruncatedEnding(section.content)) {
@@ -798,14 +830,10 @@ export async function runQualityCheckPhase(
         details: 'Section appears to end abruptly'
       })
     }
-    
-    fullContent += section.content + '\n\n'
   }
   
   info({ issueCount: issues.length, sections: sections.length }, 'Quality check complete')
-  onProgress?.('finishing', 90, issues.length > 0 
-    ? `Found ${issues.length} sections that could be improved`
-    : 'All sections passed quality checks')
+  onProgress?.('finishing', 90, issues.length > 0 ? `Repairing ${issues.length} truncated sections...` : 'No truncation issues found')
   
   return issues
 }
@@ -824,10 +852,11 @@ export async function runSectionRewritePhase(
   totalSections: number,
   onProgress?: StepProgressCallback
 ): Promise<SectionResult> {
+  void previousContent
   const sanitizedTopic = sanitizeTopic(config.topic)
   const sectionTitle = context.title || context.sectionKey
   
-  onProgress?.('finishing', 91, `Improving "${sectionTitle}"...`)
+  onProgress?.('finishing', 91, `Refining "${sectionTitle}"...`)
   
   // Token budget from this section's own word target (generous 3× so rewrites can expand)
   const sectionTargetWords = context.expectedWords || Math.round((profile.outline?.totalEstimatedWords || 10000) / totalSections)
@@ -839,16 +868,7 @@ export async function runSectionRewritePhase(
   
   const profileGuidance = buildProfileGuidanceForPrompt(profile)
   
-  // Build rewrite instructions based on issue type
-  let rewriteInstructions = ''
-  if (issue.issue === 'overlap') {
-    rewriteInstructions = `IMPORTANT: Avoid repeating content from earlier sections. Focus only on new, unique insights for "${sectionTitle}".`
-  } else if (issue.issue === 'length') {
-    const targetWords = context.expectedWords || 300
-    rewriteInstructions = `IMPORTANT: This section needs to be longer. Write at least ${Math.round(targetWords * 0.8)} words with thorough coverage of all key points.`
-  } else if (issue.issue === 'truncation') {
-    rewriteInstructions = `IMPORTANT: The previous attempt ended abruptly. Rewrite this section from scratch with complete sentences, complete tables if used, and a clear ending.`
-  }
+  const rewriteInstructions = `IMPORTANT: The previous attempt ended abruptly. Rewrite this section from scratch with complete sentences, complete tables if used, and a clear ending.`
 
   const baseOptions = {
     temperature: config.temperature || 0.2,

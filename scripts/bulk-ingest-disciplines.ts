@@ -368,7 +368,7 @@ async function processPdf(
       .from('papers')
       .update({
         pdf_content: extraction.fullText.slice(0, 500000),
-        processing_status: 'processed',
+        processing_status: 'full_text_ready',
         content_source: 'pdf',
       })
       .eq('id', paperId)
