@@ -330,7 +330,7 @@ export function LibraryPage() {
   const [paperToDelete, setPaperToDelete] = useState<UnifiedPaper | null>(null)
 
   // Fetch all papers with keepPreviousData for smooth filter transitions
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, isFetching } = useQuery({
     queryKey: ['library', 'all-papers'],
     queryFn: () => fetchAllPapers(),
     staleTime: 2 * 60 * 1000,
@@ -497,10 +497,11 @@ export function LibraryPage() {
           There was an error loading your papers.
         </p>
         <button
-          className="h-8 px-4 text-xs font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors"
+          className="h-8 px-4 text-xs font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
+          disabled={isFetching}
           onClick={() => queryClient.invalidateQueries({ queryKey: ['library'] })}
         >
-          Try Again
+          {isFetching ? <><Loader2 className="h-3 w-3 animate-spin" />Retrying…</> : "Try Again"}
         </button>
       </div>
     )
