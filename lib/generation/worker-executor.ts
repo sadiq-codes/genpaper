@@ -20,6 +20,7 @@ export interface WorkerExecutionOptions {
   workerId: string;
   leaseSeconds: number;
   heartbeatIntervalMs: number;
+  hardStopOnCancel?: boolean;
 }
 
 class WorkerLeaseLostError extends Error {
@@ -38,9 +39,11 @@ export async function processGenerationJob(
   job: GenerationJob,
   options: WorkerExecutionOptions
 ): Promise<void> {
-  const { workerId, leaseSeconds, heartbeatIntervalMs } = options;
+  const { workerId, leaseSeconds, heartbeatIntervalMs, hardStopOnCancel = false } = options;
   let leaseLost = false;
   let leaseLostLogged = false;
+  let hardStopScheduled = false;
+  const cancellationController = new AbortController();
 
   console.log(
     `[generation-worker] Claimed job ${job.id} (run=${job.run_id}, attempt=${job.attempts}/${job.max_attempts})`
@@ -51,6 +54,7 @@ export async function processGenerationJob(
       const ok = await heartbeatGenerationJob(job.id, workerId, leaseSeconds);
       if (!ok) {
         leaseLost = true;
+        cancellationController.abort();
         if (!leaseLostLogged) {
           leaseLostLogged = true;
           console.warn(
@@ -66,13 +70,31 @@ export async function processGenerationJob(
     }
   }, heartbeatIntervalMs);
 
+  const cancellationWatch = setInterval(async () => {
+    try {
+      const run = await getRun(job.run_id);
+      if (!run || run.status === "cancelled") {
+        cancellationController.abort();
+        if (hardStopOnCancel && !hardStopScheduled) {
+          hardStopScheduled = true;
+          console.log(
+            `[generation-worker] Hard-stopping worker process for cancelled run ${job.run_id}`
+          );
+          setTimeout(() => process.exit(0), 0);
+        }
+      }
+    } catch {
+      // Ignore cancellation watch lookup failures and retry next tick.
+    }
+  }, 2000);
+
   try {
     await runGenerationPipeline(job.payload, async (_stepName, fn) => {
       if (leaseLost) {
         throw new WorkerLeaseLostError(job.id);
       }
       return fn();
-    });
+    }, cancellationController.signal);
 
     if (leaseLost) {
       throw new WorkerLeaseLostError(job.id);
@@ -120,5 +142,6 @@ export async function processGenerationJob(
     console.error(`[generation-worker] Failed job ${job.id}: ${errorMessage}`);
   } finally {
     clearInterval(heartbeat);
+    clearInterval(cancellationWatch);
   }
 }

@@ -47,6 +47,7 @@ async function main(): Promise<void> {
     workerId,
     leaseSeconds: LEASE_SECONDS,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+    hardStopOnCancel: true,
   });
 }
 
