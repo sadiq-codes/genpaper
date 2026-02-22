@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-import { AlertTriangle, RotateCcw } from "lucide-react"
+import { AlertTriangle, Loader2, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 import type {
   ProjectPaper,
@@ -181,6 +181,7 @@ export function ResearchEditor({
     confirmRemovePaper,
     removePaperDialog,
     closeRemovePaperDialog,
+    isLoading: isPaperActionLoading,
   } = usePaperManagement({
     projectId,
     initialPapers,
@@ -669,7 +670,7 @@ export function ResearchEditor({
             <p className="text-sm text-muted-foreground">
               Generation failed. You can try again or start writing manually.
             </p>
-            <Button size="sm" variant="outline" className="shrink-0 gap-1.5" onClick={handleRegenerate}>
+            <Button size="sm" variant="outline" className="shrink-0 gap-1.5" disabled={isGenerating} onClick={handleRegenerate}>
               <RotateCcw className="h-3.5 w-3.5" />
               Regenerate
             </Button>
@@ -802,8 +803,8 @@ export function ResearchEditor({
               <Button variant="outline" onClick={closeRemovePaperDialog}>
                 Cancel
               </Button>
-              <Button variant="destructive" onClick={() => confirmRemovePaper(true)}>
-                Remove Paper
+              <Button variant="destructive" disabled={isPaperActionLoading} onClick={() => confirmRemovePaper(true)}>
+                {isPaperActionLoading ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Removing…</> : "Remove Paper"}
               </Button>
             </DialogFooter>
           </DialogContent>
