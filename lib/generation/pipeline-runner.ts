@@ -145,7 +145,7 @@ export async function runGenerationPipeline(
       runId,
       "initialization",
       0,
-      "Starting paper generation..."
+      "Preparing to write your paper…"
     );
 
     // Normalize original research findings if present

@@ -227,11 +227,11 @@ export async function generateWithUnifiedTemplate(
   let fullContent = ''
   let tokensUsed = 0
 
-  progress('context', 10, 'Preparing evidence for this section...')
+  progress('context', 10, 'Preparing evidence...')
   
   const promptData = await buildPromptData(context, options)
   
-  progress('generation', 20, 'Writing section content...')
+  progress('generation', 20, 'Writing...')
   
   const resolvedOptions = resolveGenOptions(options)
 

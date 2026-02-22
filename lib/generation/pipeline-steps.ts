@@ -29,7 +29,12 @@ import {
   isChunkReadyStatus,
   isFullTextReadyStatus,
 } from '@/lib/content'
-import { analyzeFindings, type FindingWithPaper } from '@/lib/analysis/cross-document'
+import {
+  analyzeFindings,
+  getAnalysisReadinessIssue,
+  isAnalysisReadyForSynthesis,
+  type FindingWithPaper,
+} from '@/lib/analysis/cross-document'
 import { updateProjectContent, updateResearchProjectStatus } from '@/lib/db/research'
 import { getServiceClient } from '@/lib/supabase/service'
 import { info, warn } from '@/lib/utils/logger'
@@ -121,7 +126,7 @@ export async function runDiscoveryPhase(
 ): Promise<PaperWithAuthors[]> {
   const sanitizedTopic = sanitizeTopic(config.topic)
   
-  onProgress?.('search', 15, 'Searching academic databases for relevant studies...')
+  onProgress?.('search', 15, 'Searching academic databases...')
   
   const discoveryOptions: EnhancedGenerationOptions = {
     projectId,
@@ -161,7 +166,7 @@ export async function runDiscoveryPhase(
     throw new Error('No papers found for the given topic')
   }
   
-  onProgress?.('search', 22, `Found ${papers.length} relevant sources`)
+  onProgress?.('search', 22, `${papers.length} sources collected`)
   
   return papers
 }
@@ -199,7 +204,7 @@ export async function runContentReadinessPhase(
   const minimumUniqueSources = Math.max(1, profile.sourceExpectations?.minimumUniqueSources || 8)
   const targetFullTextReady = Math.min(paperIds.length, minimumUniqueSources)
 
-  onProgress?.('planning', 23, `Preparing ${paperIds.length} sources for deep reading...`)
+  onProgress?.('planning', 23, 'Preparing sources for deep reading...')
 
   let statusMap = await getPaperProcessingStatusMap(paperIds)
 
@@ -255,7 +260,7 @@ export async function runContentReadinessPhase(
       onProgress?.(
         'planning',
         24,
-        `Reading full papers (${fullTextReadyPaperIds.length} of ${targetFullTextReady} ready)...`
+        'Reading full-text papers...'
       )
 
       await Promise.allSettled(
@@ -300,7 +305,7 @@ export async function runContentReadinessPhase(
   onProgress?.(
     'planning',
     25,
-    `${readyPaperIds.length} sources prepared for analysis`
+    'Sources prepared'
   )
 
   return {
@@ -363,7 +368,7 @@ export async function runExtractionCheckPhase(
     totalBatches
   }, 'Extraction check complete')
   
-  onProgress?.('planning', 27, `${cachedPaperIds.length} sources already reviewed, analyzing ${extractablePaperIds.length} more...`)
+  onProgress?.('planning', 27, 'Reviewing sources...')
   
   return {
     cachedPaperIds,
@@ -389,7 +394,7 @@ export async function runExtractionBatchPhase(
     return 0
   }
   
-  onProgress?.('planning', 28, `Reading through sources ${startIdx + 1}–${endIdx} of ${pendingPaperIds.length}...`)
+  onProgress?.('planning', 28, 'Extracting key findings...')
   
   // Keep idempotency guarantees with a batched freshness check, then run extraction
   // at higher controlled concurrency for better throughput.
@@ -502,7 +507,7 @@ export async function runAnalysisPhase(
   profile: PaperProfile,
   onProgress?: StepProgressCallback
 ): Promise<HybridThemeExtractionResult> {
-  onProgress?.('planning', 30, 'Connecting ideas across your sources...')
+  onProgress?.('planning', 30, 'Connecting ideas across sources...')
   
   // Get all extractions (cached + newly extracted)
   const extractions = await getExtractionsService(paperIds)
@@ -530,7 +535,7 @@ export async function runAnalysisPhase(
   }, 'Analyzing findings')
 
   if (analysisFindings.length < allFindings.length) {
-    onProgress?.('planning', 31, `Identified ${analysisFindings.length} key findings to work with`)
+    onProgress?.('planning', 31, 'Key findings identified')
   }
   
   // Run cross-document analysis
@@ -539,8 +544,12 @@ export async function runAnalysisPhase(
     findings: analysisFindings,
     topic
   })
+  const readinessIssue = getAnalysisReadinessIssue(analysisResult)
+  if (readinessIssue) {
+    warn({ readinessIssue }, 'Analysis incomplete; falling back to RAG-only context building')
+  }
   
-  onProgress?.('planning', 35, `Found ${analysisResult.patterns.length} research patterns and ${analysisResult.contradictions.length} open debates`)
+  onProgress?.('planning', 35, 'Research patterns mapped')
   
   return {
     analysisResult,
@@ -570,9 +579,16 @@ export async function runBuildContextsPhase(
   onProgress?: StepProgressCallback
 ): Promise<SectionContext[]> {
   const sanitizedTopic = sanitizeTopic(config.topic)
+  const FINDINGS_THRESHOLD = 5
+  const totalFindings = themeResult?.extractionStats.totalFindings || 0
+  const canUseSynthesisSignals = Boolean(
+    themeResult &&
+    totalFindings >= FINDINGS_THRESHOLD &&
+    isAnalysisReadyForSynthesis(themeResult.analysisResult)
+  )
   
   // Merge analysis into profile if available
-  const enhancedProfile = themeResult 
+  const enhancedProfile = canUseSynthesisSignals
     ? mergeAnalysisResultIntoProfile(profile, themeResult.analysisResult)
     : profile
   
@@ -604,15 +620,12 @@ export async function runBuildContextsPhase(
     localRegion: undefined
   }
   
-  onProgress?.('writing', 40, 'Matching the best evidence to each section...')
+  onProgress?.('writing', 40, 'Matching evidence to sections...')
   
   let sectionContexts: SectionContext[]
   
   // Try hybrid enrichment if we have enough findings
-  const FINDINGS_THRESHOLD = 5
-  const totalFindings = themeResult?.extractionStats.totalFindings || 0
-  
-  if (themeResult && totalFindings >= FINDINGS_THRESHOLD) {
+  if (canUseSynthesisSignals && themeResult) {
     try {
       sectionContexts = await enrichAndBuildContexts(
         typedOutline,
@@ -627,7 +640,7 @@ export async function runBuildContextsPhase(
       ).length
       
       info({ enrichedSections: enrichedCount, totalSections: sectionContexts.length }, 'Hybrid contexts built')
-      onProgress?.('writing', 45, `${enrichedCount} sections enriched with connected insights`)
+      onProgress?.('writing', 45, 'Sections enriched with insights')
     } catch (error) {
       warn({ error }, 'Hybrid enrichment failed, using RAG-only')
       sectionContexts = await GenerationContextService.buildContexts(typedOutline, sanitizedTopic, papers)
@@ -636,7 +649,7 @@ export async function runBuildContextsPhase(
     sectionContexts = await GenerationContextService.buildContexts(typedOutline, sanitizedTopic, papers)
   }
   
-  onProgress?.('writing', 48, `Evidence gathered — ready to write`)
+  onProgress?.('writing', 48, 'Evidence gathered — writing soon')
   
   return sectionContexts
 }
@@ -662,7 +675,7 @@ export async function runSectionGenerationPhase(
   const sectionTitle = context.title || context.sectionKey
   
   onProgress?.('writing', 50 + Math.round((sectionIndex / totalSections) * 35), 
-    `Writing "${sectionTitle}" (${sectionIndex + 1} of ${totalSections})...`)
+    `Writing: ${sectionTitle}`)
   
   // Build rolling summary of previous sections
   const previousSummary = previousSections.length > 0
@@ -750,7 +763,7 @@ export async function runSectionGenerationPhase(
   const wordCount = content.split(/\s+/).filter(w => w.length > 0).length
   
   onProgress?.('writing', 50 + Math.round(((sectionIndex + 1) / totalSections) * 35),
-    `Finished "${sectionTitle}"`, {
+    `Finished: ${sectionTitle}`, {
       sectionComplete: true,
       sectionTitle,
       sectionContent: content,
@@ -814,7 +827,7 @@ export async function runQualityCheckPhase(
   contexts: SectionContext[],
   onProgress?: StepProgressCallback
 ): Promise<QualityIssue[]> {
-  onProgress?.('finishing', 88, 'Running completion gate...')
+  onProgress?.('finishing', 88, 'Reviewing for completeness...')
   
   const issues: QualityIssue[] = []
   
@@ -833,7 +846,7 @@ export async function runQualityCheckPhase(
   }
   
   info({ issueCount: issues.length, sections: sections.length }, 'Quality check complete')
-  onProgress?.('finishing', 90, issues.length > 0 ? `Repairing ${issues.length} truncated sections...` : 'No truncation issues found')
+  onProgress?.('finishing', 90, issues.length > 0 ? 'Polishing sections...' : 'Looking good so far')
   
   return issues
 }
@@ -856,7 +869,7 @@ export async function runSectionRewritePhase(
   const sanitizedTopic = sanitizeTopic(config.topic)
   const sectionTitle = context.title || context.sectionKey
   
-  onProgress?.('finishing', 91, `Refining "${sectionTitle}"...`)
+  onProgress?.('finishing', 91, `Refining: ${sectionTitle}`)
   
   // Token budget from this section's own word target (generous 3× so rewrites can expand)
   const sectionTargetWords = context.expectedWords || Math.round((profile.outline?.totalEstimatedWords || 10000) / totalSections)

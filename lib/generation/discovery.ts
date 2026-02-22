@@ -17,10 +17,48 @@ function isLikelyDirectPdfUrl(url: string): boolean {
   // Check if it's a direct PDF (using central config)
   return isDirectPdfUrl(url)
 }
+
+function hasPdfUrl(paper: { pdf_url?: string | null }): boolean {
+  return typeof paper.pdf_url === 'string' && paper.pdf_url.trim().length > 0
+}
+
+function countPapersWithPdf<T extends { pdf_url?: string | null }>(papers: T[]): number {
+  return papers.reduce((count, paper) => count + (hasPdfUrl(paper) ? 1 : 0), 0)
+}
 import type { PaperWithAuthors, PaperSource, OriginalResearchConfig } from '@/types/simplified'
 import type { UnifiedSearchOptions } from '@/lib/services/search-orchestrator'
 import { unifiedSearch } from '@/lib/search'
 import { buildEnhancedSearchQueries } from '@/lib/search/query-rewrite'
+
+function getPaperRelevanceScore(paper: PaperWithAuthors): number {
+  const metadata = (paper.metadata || {}) as Record<string, unknown>
+  const combined = typeof metadata.combined_score === 'number' ? metadata.combined_score : undefined
+  const relevance = typeof metadata.relevance_score === 'number' ? metadata.relevance_score : undefined
+  return combined ?? relevance ?? 0
+}
+
+function getPaperSelectionScore(paper: PaperWithAuthors): number {
+  const relevanceScore = getPaperRelevanceScore(paper)
+  const citationScore = Math.min(paper.citation_count || 0, 1000) / 1000
+  const influentialRaw = typeof paper.metadata?.influential_citation_count === 'number'
+    ? paper.metadata.influential_citation_count
+    : 0
+  const influentialScore = Math.min(influentialRaw, 300) / 300
+  const parsedYear = paper.publication_date ? new Date(paper.publication_date).getFullYear() : 2000
+  const publicationYear = Number.isFinite(parsedYear) ? parsedYear : 2000
+  const recencyScore = Math.max(0, Math.min(1, (publicationYear - 2000) / 26))
+  const metadataCompletenessScore =
+    (paper.doi ? 0.05 : 0) +
+    (paper.venue ? 0.03 : 0)
+
+  return (
+    (relevanceScore * 0.45) +
+    (citationScore * 0.25) +
+    (influentialScore * 0.1) +
+    (recencyScore * 0.1) +
+    metadataCompletenessScore
+  )
+}
 
 // Removed policy dependency - simplified ingestion logic
 
@@ -28,6 +66,8 @@ import { buildEnhancedSearchQueries } from '@/lib/search/query-rewrite'
 export async function collectPapers(
   options: EnhancedGenerationOptions
 ): Promise<PaperWithAuthors[]> {
+  const RECOMMENDED_MIN_PDF_PAPERS = 16
+  const SEARCH_OVERFETCH_FACTOR = 2
 
   const { topic, libraryPaperIds = [], useLibraryOnly, config, userId: _userId, discipline } = options
   
@@ -55,18 +95,22 @@ export async function collectPapers(
     throw new Error('No papers found in library. Cannot proceed with library-only mode when no papers are pinned.')
   }
 
+  const pinnedPaperObjects = pinnedPapers.map(lp => lp.paper as PaperWithAuthors)
   const pinnedIds = pinnedPapers.map(lp => lp.paper.id)
+  const pinnedPdfCount = countPapersWithPdf(pinnedPaperObjects)
   const targetTotal = config?.limit || 90
   const remainingSlots = Math.max(0, targetTotal - pinnedPapers.length)
+  const remainingPdfSlots = Math.max(0, targetTotal - pinnedPdfCount)
   
   console.log(`🔍 Search Parameters:`)
   console.log(`   📊 Target Total Papers: ${targetTotal}`)
   console.log(`   🎯 Remaining Search Slots: ${remainingSlots}`)
+  console.log(`   📄 Remaining PDF-backed Slots: ${remainingPdfSlots}`)
 
   // Search for papers using external APIs
   let discoveredPapers: PaperWithAuthors[] = []
   
-  if (!useLibraryOnly && remainingSlots > 0) {
+  if (!useLibraryOnly && remainingPdfSlots > 0) {
     console.log(`🔍 Searching for papers via external APIs...`)
     
     // Get original research context if available
@@ -132,8 +176,8 @@ export async function collectPapers(
       }
       
       const searchOptions: UnifiedSearchOptions = {
-        maxResults: remainingSlots,
-        minResults: Math.min(5, remainingSlots),
+        maxResults: Math.max(remainingSlots, remainingPdfSlots * SEARCH_OVERFETCH_FACTOR),
+        minResults: Math.min(5, Math.max(1, remainingPdfSlots)),
         excludePaperIds: pinnedIds,
         fromYear,  // Now dynamic based on AI-determined year range or recency profile
         toYear,    // End year (usually current year, but AI can specify otherwise)
@@ -159,14 +203,16 @@ export async function collectPapers(
       let queryCursor = 0
 
       for (let phaseIndex = 0; phaseIndex < QUERY_PHASE_SIZES.length; phaseIndex++) {
-        if (allPapers.length >= remainingSlots || queryCursor >= searchQueries.length) break
+        const pdfBackedCount = countPapersWithPdf(allPapers)
+        if (pdfBackedCount >= remainingPdfSlots || queryCursor >= searchQueries.length) break
 
         const take = QUERY_PHASE_SIZES[phaseIndex]
         const phaseQueries = searchQueries.slice(queryCursor, queryCursor + take)
         queryCursor += phaseQueries.length
         if (phaseQueries.length === 0) continue
 
-        const slotsLeft = Math.max(0, remainingSlots - allPapers.length)
+        const pdfSlotsLeft = Math.max(0, remainingPdfSlots - pdfBackedCount)
+        const slotsLeft = Math.max(0, pdfSlotsLeft * SEARCH_OVERFETCH_FACTOR)
         const perQueryMax = Math.max(5, Math.ceil(slotsLeft / phaseQueries.length) + 4)
         console.log(`🔍 Discovery phase ${phaseIndex + 1}: ${phaseQueries.length} query(ies), per-query cap ${perQueryMax}`)
 
@@ -201,15 +247,49 @@ export async function collectPapers(
           }
         }
 
-        console.log(`   📚 Discovery phase ${phaseIndex + 1} yielded ${allPapers.length} unique papers so far`)
+        const phasePdfCount = countPapersWithPdf(allPapers)
+        console.log(`   📚 Discovery phase ${phaseIndex + 1} yielded ${allPapers.length} unique papers (${phasePdfCount} with PDF links)`)
       }
 
-      if (allPapers.length >= remainingSlots) {
-        console.log(`   ✅ Reached target paper count (${allPapers.length})`)
+      while (queryCursor < searchQueries.length && countPapersWithPdf(allPapers) < remainingPdfSlots) {
+        const query = searchQueries[queryCursor++]!
+        const missingPdf = Math.max(0, remainingPdfSlots - countPapersWithPdf(allPapers))
+        const perQueryMax = Math.max(10, Math.min(80, missingPdf * SEARCH_OVERFETCH_FACTOR + 10))
+        console.log(`🔁 Catch-up discovery query (${queryCursor}/${searchQueries.length}), per-query cap ${perQueryMax}`)
+
+        try {
+          const queryOptions = {
+            ...searchOptions,
+            maxResults: perQueryMax,
+          }
+          console.log(`🔎 Searching: "${query.slice(0, 60)}${query.length > 60 ? '...' : ''}"`)
+          const searchResult = await unifiedSearch(query, queryOptions)
+
+          if (searchResult.metadata.errors.length > 0) {
+            console.warn(`   ⚠️ Query warnings for "${query.slice(0, 40)}${query.length > 40 ? '...' : ''}": ${searchResult.metadata.errors.join(', ')}`)
+          }
+
+          for (const paper of searchResult.papers as PaperWithAuthors[]) {
+            if (!allPaperIds.has(paper.id)) {
+              allPaperIds.add(paper.id)
+              allPapers.push(paper)
+            }
+          }
+        } catch (error) {
+          console.warn(`   ⚠️ Catch-up query failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
       }
-      
-      discoveredPapers = allPapers.slice(0, remainingSlots)
-      console.log(`🎯 External search results: ${discoveredPapers.length} unique papers found`)
+
+      const finalPdfCount = countPapersWithPdf(allPapers)
+      if (finalPdfCount >= remainingPdfSlots) {
+        console.log(`   ✅ Reached target PDF-backed paper count (${finalPdfCount})`)
+      }
+
+      const rankedPdfCandidates = allPapers
+        .filter(hasPdfUrl)
+        .sort((a, b) => getPaperSelectionScore(b) - getPaperSelectionScore(a))
+      discoveredPapers = rankedPdfCandidates.slice(0, remainingPdfSlots)
+      console.log(`🎯 External search results: ${discoveredPapers.length} PDF-backed papers selected`)
 
     } catch (err) {
       console.error('External search failed:', err)
@@ -221,8 +301,7 @@ export async function collectPapers(
   }
 
   // Combine pinned and discovered papers
-  const pinnedPaperObjects = pinnedPapers.map(lp => lp.paper as PaperWithAuthors)
-  
+
   // discoveredPapers now contains metadata-registered papers from database
   // (canonical IDs exist, but full-text may still be pending).
   const allPapers = [...pinnedPaperObjects, ...discoveredPapers]
@@ -242,14 +321,24 @@ export async function collectPapers(
     })
   }
 
-  // Filter papers and log results
-  const finalPapers = allPapers
+  // Enforce PDF-only generation inputs.
+  const finalPapers = allPapers.filter(hasPdfUrl)
+  const papersWithoutPdf = allPapers.length - finalPapers.length
 
   console.log(`📊 Quality Filtering Results:`)
-  console.log(`   ✅ Acceptable Papers: ${finalPapers.length}`)
+  console.log(`   ✅ PDF-backed Papers: ${finalPapers.length}`)
+  if (papersWithoutPdf > 0) {
+    console.log(`   🚫 Excluded (no pdf_url): ${papersWithoutPdf}`)
+  }
 
-  if (!finalPapers.length) {
-    throw new Error(`No papers found for topic "${topic}". Please add relevant papers to your library.`)
+  const recommendedMinimum = Math.min(targetTotal, RECOMMENDED_MIN_PDF_PAPERS)
+  if (finalPapers.length === 0) {
+    throw new Error(`No papers with PDF URLs were found for topic "${topic}". Refine the topic or add PDF-backed papers to your library.`)
+  }
+  if (finalPapers.length < recommendedMinimum) {
+    console.warn(
+      `⚠️ Only ${finalPapers.length} PDF-backed papers were found (recommended: ${recommendedMinimum}). Proceeding with available papers.`
+    )
   }
 
   // 3. final coverage check ─────────────────────────────── 
