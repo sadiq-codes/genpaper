@@ -727,11 +727,15 @@ export function GenerationProgress({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Use refs for lastEventId, connectToEvents is stable
   }, [connectionState.runId, connectionState.wasDisconnectedWhileHidden, connectionState.isConnected, onComplete, onError])
 
+  const [isCancelling, setIsCancelling] = useState(false)
+
   const handleCancel = useCallback(async () => {
     if (!connectionState.runId) {
       onCancel?.()
       return
     }
+
+    setIsCancelling(true)
 
     try {
       const response = await fetch(`/api/generate/${connectionState.runId}/cancel`, {
@@ -751,6 +755,7 @@ export function GenerationProgress({
       localStorage.removeItem(`generation-progress-${connectionState.runId}`)
       onCancel?.()
     } catch (err) {
+      setIsCancelling(false)
       console.warn('[Generation] Failed to cancel on server:', err)
       toast.error(
         err instanceof Error
@@ -793,6 +798,7 @@ export function GenerationProgress({
         timeEstimate={getTimeEstimate()}
         onCancel={handleCancel}
         onRetry={handleRetry}
+        isCancelling={isCancelling}
       />
       
       {/* Limit reached modal */}

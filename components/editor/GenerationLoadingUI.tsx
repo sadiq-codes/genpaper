@@ -50,6 +50,7 @@ interface GenerationLoadingUIProps {
   completedSections?: CompletedSection[]
   onCancel?: () => void
   onRetry?: () => void
+  isCancelling?: boolean
 }
 
 // =============================================================================
@@ -348,6 +349,7 @@ function StatusPanel({
   timeEstimate,
   onCancel,
   onRetry,
+  isCancelling,
 }: Omit<GenerationLoadingUIProps, 'currentStage' | 'currentSectionContent' | 'generatedContent' | 'completedSections'>) {
   return (
     <div className="flex flex-col h-full p-4 md:p-6 space-y-3 md:space-y-5">
@@ -462,10 +464,20 @@ function StatusPanel({
           onCancel && progress < 100 && (
             <button 
               onClick={onCancel} 
-              className="w-full h-9 rounded-full text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              disabled={isCancelling}
+              className="w-full h-9 rounded-full text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50 disabled:pointer-events-none"
             >
-              <X className="h-3 w-3" />
-              Cancel
+              {isCancelling ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Cancelling…
+                </>
+              ) : (
+                <>
+                  <X className="h-3 w-3" />
+                  Cancel
+                </>
+              )}
             </button>
           )
         )}
