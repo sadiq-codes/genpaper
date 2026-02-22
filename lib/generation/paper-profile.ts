@@ -103,7 +103,7 @@ function getRetryDelayMs(attempt: number): number {
 export async function generatePaperProfile(
   input: ProfileGenerationInput
 ): Promise<PaperProfile> {
-  const { topic, paperType, hasOriginalResearch, userContext, length } = input
+  const { topic, paperType, hasOriginalResearch, userContext, length, signal } = input
   
   info({ topic: topic.slice(0, 100), paperType, hasOriginalResearch, length }, 'Generating paper profile')
   
@@ -120,11 +120,17 @@ export async function generatePaperProfile(
   let lastError: Error | undefined
   
   for (let attempt = 0; attempt <= MAX_PROFILE_RETRIES; attempt++) {
+    if (signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
     try {
       if (attempt > 0) {
         const retryDelayMs = getRetryDelayMs(attempt)
         warn({ attempt, maxRetries: MAX_PROFILE_RETRIES, retryDelayMs }, 'Retrying paper profile generation')
         await new Promise(resolve => setTimeout(resolve, retryDelayMs))
+      }
+      if (signal?.aborted) {
+        throw new Error('Run was cancelled')
       }
 
       // If we're retrying, tell the model what failed so it can correct it.
