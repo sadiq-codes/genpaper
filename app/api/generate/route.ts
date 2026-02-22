@@ -1,413 +1,342 @@
-import { NextRequest } from 'next/server'
-import { authenticateUser, createProject } from '@/lib/services/project-service'
-import { getResearchProject, getProjectWithContent } from '@/lib/db/research'
-import { generatePaper, type PipelineConfig } from '@/lib/generation/pipeline'
-import { acquireGenerationLock, releaseGenerationLock } from '@/lib/locks/generation-lock'
-import { warn, error as logError } from '@/lib/utils/logger'
-import { createServiceClient } from '@/lib/supabase/service'
-import { checkCanStartGeneration, recordPaperGenerated } from '@/lib/billing/gates'
-import type { PaperTypeKey } from '@/types/simplified'
+import { NextRequest } from "next/server";
+import { authenticateUser } from "@/lib/services/project-service";
+import {
+  getRun,
+  getEventsAfter,
+  isRunTerminal,
+  type GenerationEvent,
+} from "@/lib/generation/run-manager";
+import { reconcileRunHealth } from "@/lib/generation/run-recovery";
+import { startGenerationRun } from "@/lib/generation/start-generation";
+import { warn, error as logError } from "@/lib/utils/logger";
 
-// Use Node.js runtime for better DNS resolution and OpenAI SDK compatibility
-export const runtime = 'nodejs'
+export const runtime = "nodejs";
+export const maxDuration = 300;
 
-// Fail fast on missing environment variables
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error('OPENAI_API_KEY environment variable is required')
-}
-
-const isDev = process.env.NODE_ENV !== 'production'
-
-// Get allowed origins from environment or default to same-origin only
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || []
+const isDev = process.env.NODE_ENV !== "production";
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",") || [];
+const MAX_CONSECUTIVE_POLL_ERRORS = Number(
+  process.env.GENERATION_EVENTS_MAX_POLL_ERRORS || 20
+);
+const DEFAULT_SOURCES = [
+  "europe_pmc",
+  "pubmed_central",
+  "openalex",
+  "core",
+  "arxiv",
+  "crossref",
+  "semantic_scholar",
+];
 
 function getCorsHeaders(request: NextRequest): Record<string, string> {
-  const origin = request.headers.get('origin')
-  
-  // In development, allow localhost origins
-  if (isDev && origin?.includes('localhost')) {
+  const origin = request.headers.get("origin");
+
+  if (isDev && origin?.includes("localhost")) {
     return {
-      'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Credentials': 'true'
-    }
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
+    };
   }
-  
-  // In production, only allow configured origins
+
   if (origin && ALLOWED_ORIGINS.includes(origin)) {
     return {
-      'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Credentials': 'true'
-    }
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
+    };
   }
-  
-  // Same-origin requests (no Origin header) are always allowed
-  return {}
+
+  return {};
 }
 
 function getStreamHeaders(request: NextRequest): Record<string, string> {
   return {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-store, must-revalidate',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-    ...getCorsHeaders(request)
-  }
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+    ...getCorsHeaders(request),
+  };
 }
 
-/**
- * Helper function to create error stream for streaming endpoints
- */
 function createErrorStream(error: string, request: NextRequest): Response {
-  const encoder = new TextEncoder()
+  const encoder = new TextEncoder();
   const errorStream = new ReadableStream({
     start(controller) {
       const errorData = JSON.stringify({
-        type: 'error',
+        type: "error",
+        message: error,
         error,
-        timestamp: new Date().toISOString()
-      })
-      controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
-      controller.close()
-    }
-  })
-  
+        timestamp: new Date().toISOString(),
+      });
+      controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
+      controller.close();
+    },
+  });
+
   return new Response(errorStream, {
-    status: 200, // Return 200 for EventSource to receive the error message
-    headers: getStreamHeaders(request)
-  })
+    status: 200,
+    headers: getStreamHeaders(request),
+  });
+}
+
+function formatLegacySSEEvent(event: GenerationEvent, projectId: string): string {
+  const payload: Record<string, unknown> = {
+    type: event.event_type,
+    ...event.payload,
+    timestamp: event.created_at,
+  };
+
+  if (event.event_type === "complete") {
+    payload.projectId = projectId;
+  }
+
+  if (
+    event.event_type === "error" &&
+    typeof payload.message === "string" &&
+    !("error" in payload)
+  ) {
+    payload.error = payload.message;
+  }
+
+  return `id: ${event.id}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
 export async function OPTIONS(request: NextRequest) {
-  const corsHeaders = getCorsHeaders(request)
+  const corsHeaders = getCorsHeaders(request);
   return new Response(null, {
     status: 200,
     headers: {
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Accept, Cache-Control',
-      'Access-Control-Max-Age': '86400',
-      ...corsHeaders
-    }
-  })
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Accept, Last-Event-ID, Cache-Control",
+      "Access-Control-Max-Age": "86400",
+      ...corsHeaders,
+    },
+  });
 }
 
-// GET - EventSource endpoint for streaming (thin wrapper around pipeline)
+/**
+ * Legacy SSE compatibility route.
+ *
+ * This now uses the same orchestration path as /api/generate/start:
+ * run creation -> queued job -> worker -> generation events.
+ */
 export async function GET(request: NextRequest) {
-  if (isDev) {
-    console.log('Starting paper generation via pipeline')
-  }
-  
-  let lockId: string | undefined
-  let projectId: string | undefined
-  
   try {
-    // Authenticate user
-    const user = await authenticateUser()
+    const user = await authenticateUser();
     if (!user) {
-      warn('Authentication failed for EventSource request')
-      return createErrorStream('Authentication required. Please refresh the page and try again.', request)
+      warn("Authentication failed for legacy generate stream request");
+      return createErrorStream(
+        "Authentication required. Please refresh the page and try again.",
+        request
+      );
     }
 
-    // Parse query parameters
-    const url = new URL(request.url)
-    const topic = url.searchParams.get('topic')
-    let useLibraryOnly = url.searchParams.get('useLibraryOnly') === 'true'
-    const length = parseInt(url.searchParams.get('length') || '5500', 10) || 5500
-    const paperTypeParam = url.searchParams.get('paperType')
-    let paperType = paperTypeParam || 'literatureReview'
-    let libraryPaperIds = url.searchParams.get('libraryPaperIds')?.split(',').filter(Boolean) || []
-    const existingProjectId = url.searchParams.get('projectId') || undefined
-    const temperature = parseFloat(url.searchParams.get('temperature') || '0.2')
-    const maxTokens = parseInt(url.searchParams.get('maxTokens') || '16000')
-    
-    // If existing project, read config from database (source of truth)
-    // This ensures uploaded_paper_ids, useLibraryOnly, etc. are properly used
-    if (existingProjectId) {
-      const supabase = createServiceClient()
-      const { data: projectConfig } = await supabase
-        .from('research_projects')
-        .select('generation_config, paper_type')
-        .eq('id', existingProjectId)
-        .eq('user_id', user.id)
-        .single()
-      
-      if (projectConfig?.generation_config) {
-        const config = projectConfig.generation_config as Record<string, unknown>
-        
-        // Extract useLibraryOnly from stored config
-        if (typeof config.useLibraryOnly === 'boolean') {
-          useLibraryOnly = config.useLibraryOnly
-        }
-        
-        // Extract paper IDs - check both uploaded_paper_ids and library_papers_used
-        const uploadedPaperIds = (config.uploaded_paper_ids as string[]) || []
-        const libraryPapersUsed = (config.library_papers_used as string[]) || []
-        libraryPaperIds = [...new Set([...uploadedPaperIds, ...libraryPapersUsed])]
-        
-        // Use paper type from project if available
-        if (projectConfig.paper_type) {
-          paperType = projectConfig.paper_type
-        } else if (config.paper_settings && typeof config.paper_settings === 'object') {
-          const paperSettings = config.paper_settings as Record<string, unknown>
-          if (paperSettings.paperType) {
-            paperType = paperSettings.paperType as string
-          }
-        }
-        
-        console.log('📋 Loaded config from existing project:', {
-          useLibraryOnly,
-          libraryPaperIds: libraryPaperIds.length,
-          paperType,
-          hasUploadedPapers: uploadedPaperIds.length > 0,
-          hasLibraryPapers: libraryPapersUsed.length > 0
-        })
-      }
-    }
-    
-    if (!paperTypeParam && !existingProjectId) {
-      console.warn('⚠️ paperType URL param missing! Defaulting to literatureReview')
-    }
-    
-    console.log('🔍 Generate API config:', { 
-      paperType, 
-      useLibraryOnly,
-      libraryPaperIds: libraryPaperIds.length,
-      existingProjectId: !!existingProjectId
-    })
+    const url = new URL(request.url);
+    const topic = url.searchParams.get("topic") || "";
+    const paperType = url.searchParams.get("paperType") || "literatureReview";
+    const existingProjectId = url.searchParams.get("projectId") || undefined;
+    const useLibraryOnly = url.searchParams.get("useLibraryOnly") === "true";
+    const length = parseInt(url.searchParams.get("length") || "5500", 10) || 5500;
+    const temperature = parseFloat(url.searchParams.get("temperature") || "0.2");
+    const maxTokens = parseInt(url.searchParams.get("maxTokens") || "16000", 10);
+    const citationStyle = url.searchParams.get("citationStyle") || "apa";
+    const hasOriginalResearch = url.searchParams.get("hasOriginalResearch") === "true";
+    const customInstructions = url.searchParams.get("customInstructions") || undefined;
+    const libraryPaperIds =
+      url.searchParams.get("libraryPaperIds")?.split(",").filter(Boolean) || [];
+    const sources =
+      url.searchParams.get("sources")?.split(",").filter(Boolean) || DEFAULT_SOURCES;
 
-    if (!topic) {
-      return new Response(
-        JSON.stringify({ error: 'Topic parameter is required' }), 
-        { 
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-            ...getCorsHeaders(request)
-          }
-        }
-      )
-    }
-
-    // Check subscription limits before starting generation
-    // Skip check if regenerating an existing project (already counted)
-    if (!existingProjectId) {
-      const gateCheck = await checkCanStartGeneration(
-        user.id,
-        paperType as PaperTypeKey,
-      )
-      
-      if (!gateCheck.allowed) {
-        return createErrorStream(
-          gateCheck.reason || 'You have reached your generation limit. Please upgrade your plan.',
-          request
-        )
-      }
-    }
-
-    // Use existing project or create new one
-    let project: { id: string }
-    if (existingProjectId) {
-      const existing = await getResearchProject(existingProjectId, user.id)
-      if (!existing) {
-        return createErrorStream('Project not found or access denied', request)
-      }
-
-      // Return cached content if project is already complete
-      if (existing.status === 'complete') {
-        const existingWithContent = await getProjectWithContent(existing.id)
-        if (existingWithContent?.content) {
-          const encoder = new TextEncoder()
-          const stream = new ReadableStream({
-            start(controller) {
-              const completionData = JSON.stringify({
-                type: 'complete',
-                projectId: existing.id,
-                content: existingWithContent.content,
-                timestamp: new Date().toISOString()
-              })
-              controller.enqueue(encoder.encode(`data: ${completionData}\n\n`))
-              controller.close()
-            }
-          })
-
-          return new Response(stream, {
-            status: 200,
-            headers: getStreamHeaders(request)
-          })
-        }
-      }
-
-      project = { id: existing.id }
-    } else {
-      // Create new project
-      const config = {
-        temperature,
-        max_tokens: maxTokens,
-        sources: ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
-        limit: 25,
-        library_papers_used: libraryPaperIds,
-        length,
-        paperType: paperType as 'researchArticle' | 'literatureReview' | 'capstoneProject' | 'mastersThesis' | 'phdDissertation',
-        useLibraryOnly,
-        localRegion: undefined
-      }
-      project = await createProject(user.id, topic, config)
-    }
-    
-    projectId = project.id
-
-    // Acquire distributed lock to prevent duplicate concurrent runs
-    const lockResult = await acquireGenerationLock(project.id)
-    if (!lockResult.acquired) {
-      warn({ projectId: project.id }, 'Generation already in progress')
-      const encoder = new TextEncoder()
-      const stream = new ReadableStream({
-        start(controller) {
-          const msg = JSON.stringify({ type: 'error', error: 'GENERATION_IN_PROGRESS' })
-          controller.enqueue(encoder.encode(`data: ${msg}\n\n`))
-          controller.close()
-        }
-      })
-      return new Response(stream, {
-        status: 200,
-        headers: getStreamHeaders(request)
-      })
-    }
-    
-    lockId = lockResult.lockId
-
-    // Build pipeline config
-    const pipelineConfig: PipelineConfig = {
+    const startResult = await startGenerationRun({
+      userId: user.id,
       topic,
-      paperType: paperType as PipelineConfig['paperType'],
+      paperType,
       length,
       useLibraryOnly,
       libraryPaperIds,
-      sources: ['openalex', 'core', 'crossref', 'semantic_scholar', 'arxiv'],
+      existingProjectId,
       temperature,
-      maxTokens
+      maxTokens,
+      sources,
+      citationStyle,
+      hasOriginalResearch,
+      customInstructions,
+      baseUrl: url.origin,
+    });
+
+    if (!startResult.success) {
+      return createErrorStream(startResult.error, request);
     }
 
-    // Capture lockId and projectId for cleanup in closure
-    const capturedLockId = lockId
-    const capturedProjectId = project.id
+    if (startResult.status === "already_complete") {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          const completionData = JSON.stringify({
+            type: "complete",
+            projectId: startResult.projectId,
+            content: startResult.content,
+            timestamp: new Date().toISOString(),
+          });
+          controller.enqueue(encoder.encode(`data: ${completionData}\n\n`));
+          controller.close();
+        },
+      });
 
-    // Create streaming response
-    const encoder = new TextEncoder()
+      return new Response(stream, {
+        status: 200,
+        headers: getStreamHeaders(request),
+      });
+    }
+
+    const runId = startResult.runId;
+    const projectId = startResult.projectId;
+    const lastEventIdHeader = request.headers.get("Last-Event-ID");
+    const parsedLastEventId = lastEventIdHeader ? parseInt(lastEventIdHeader, 10) : 0;
+    const lastEventId = Number.isFinite(parsedLastEventId) ? parsedLastEventId : 0;
+
+    const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        let isControllerClosed = false
-        let heartbeatInterval: ReturnType<typeof setInterval> | null = null
-        
-        // Heartbeat to keep proxies from buffering the stream
+        let isControllerClosed = false;
+        let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+        let pollTimer: ReturnType<typeof setTimeout> | null = null;
+        let currentLastEventId = lastEventId;
+        let consecutivePollErrors = 0;
+
+        const cleanup = () => {
+          if (heartbeatInterval) clearInterval(heartbeatInterval);
+          if (pollTimer) clearTimeout(pollTimer);
+          if (!isControllerClosed) {
+            isControllerClosed = true;
+            try {
+              controller.close();
+            } catch {
+              // Stream is already closed.
+            }
+          }
+        };
+
+        const sendEvents = async (events: GenerationEvent[]) => {
+          for (const event of events) {
+            if (isControllerClosed) return;
+            try {
+              controller.enqueue(
+                encoder.encode(formatLegacySSEEvent(event, projectId))
+              );
+              currentLastEventId = event.id;
+            } catch {
+              cleanup();
+              return;
+            }
+          }
+        };
+
         heartbeatInterval = setInterval(() => {
           if (isControllerClosed) {
-            if (heartbeatInterval) clearInterval(heartbeatInterval)
-            return
+            cleanup();
+            return;
           }
           try {
-            controller.enqueue(encoder.encode(`: keep-alive\n\n`))
+            controller.enqueue(encoder.encode(`: keep-alive\n\n`));
           } catch {
-            isControllerClosed = true
-            if (heartbeatInterval) clearInterval(heartbeatInterval)
+            cleanup();
           }
-        }, 15000)
+        }, 15000);
 
-        // Send immediate start event so client sees streaming instantly
         try {
-          const startData = JSON.stringify({
-            type: 'progress',
-            stage: 'start',
-            progress: 0,
-            message: 'Starting generation...'
-          })
-          controller.enqueue(encoder.encode(`data: ${startData}\n\n`))
-        } catch (err) {
-          warn({ error: err }, 'Failed to send start event')
+          const existingEvents = await getEventsAfter(runId, currentLastEventId);
+          if (existingEvents.length > 0) {
+            await sendEvents(existingEvents);
+          }
+        } catch (error) {
+          logError({ error, runId }, "Failed to load initial generation events");
         }
-        
-        // Progress callback for pipeline
-        const onProgress = (stage: string, progress: number, message: string, data?: Record<string, unknown>) => {
-          if (isControllerClosed) return
-          
+
+        const currentRun = await getRun(runId);
+        if (currentRun && isRunTerminal(currentRun)) {
+          cleanup();
+          return;
+        }
+
+        const poll = async () => {
+          if (isControllerClosed) {
+            cleanup();
+            return;
+          }
+
           try {
-            const progressData = JSON.stringify({
-              type: 'progress',
-              stage,
-              progress,
-              message,
-              data,
-              timestamp: new Date().toISOString()
-            })
-            controller.enqueue(encoder.encode(`data: ${progressData}\n\n`))
-          } catch (err) {
-            warn({ error: err }, 'Failed to send progress')
-            isControllerClosed = true
-          }
-        }
-
-        try {
-          // Call the pipeline orchestrator
-          const result = await generatePaper(
-            pipelineConfig,
-            capturedProjectId,
-            user.id,
-            onProgress,
-            url.origin
-          )
-
-          // Send completion
-          if (!isControllerClosed) {
-            // Record paper generation for billing (only for new projects)
-            if (!existingProjectId) {
-              await recordPaperGenerated(user.id)
+            const latestRun = (await reconcileRunHealth(runId)) || (await getRun(runId));
+            if (!latestRun) {
+              cleanup();
+              return;
             }
-            
-            const completionData = JSON.stringify({
-              type: 'complete',
-              projectId: capturedProjectId,
-              content: result.content,
-              citations: result.citations,
-              metrics: result.metrics,
-              timestamp: new Date().toISOString()
-            })
-            controller.enqueue(encoder.encode(`data: ${completionData}\n\n`))
+
+            const newEvents = await getEventsAfter(runId, currentLastEventId);
+            if (newEvents.length > 0) {
+              await sendEvents(newEvents);
+            }
+            consecutivePollErrors = 0;
+
+            if (isRunTerminal(latestRun)) {
+              setTimeout(cleanup, 500);
+              return;
+            }
+          } catch (error) {
+            consecutivePollErrors += 1;
+            logError(
+              { error, runId, consecutivePollErrors },
+              "Legacy generate stream polling failed"
+            );
+
+            if (consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+              try {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "error",
+                      message:
+                        "Generation connection was interrupted for too long. Please refresh to resume.",
+                      error:
+                        "Generation connection was interrupted for too long. Please refresh to resume.",
+                      timestamp: new Date().toISOString(),
+                    })}\n\n`
+                  )
+                );
+              } catch {
+                // Ignore send failure while closing.
+              }
+              cleanup();
+              return;
+            }
+          } finally {
+            if (!isControllerClosed) {
+              const backoffMs = Math.min(
+                8000,
+                2000 * Math.max(1, consecutivePollErrors)
+              );
+              pollTimer = setTimeout(poll, backoffMs);
+            }
           }
-        } catch (err) {
-          logError({ error: err, projectId: capturedProjectId }, 'Pipeline error')
-          if (!isControllerClosed) {
-            const errorData = JSON.stringify({
-              type: 'error',
-              error: err instanceof Error ? err.message : 'Generation failed',
-              timestamp: new Date().toISOString()
-            })
-            controller.enqueue(encoder.encode(`data: ${errorData}\n\n`))
-          }
-        } finally {
-          // Always release the lock and clean up
-          if (capturedLockId) {
-            await releaseGenerationLock(capturedProjectId, capturedLockId)
-          }
-          if (heartbeatInterval) {
-            clearInterval(heartbeatInterval)
-          }
-          if (!isControllerClosed) {
-            controller.close()
-          }
-        }
-      }
-    })
-    
+        };
+
+        pollTimer = setTimeout(poll, 2000);
+
+        request.signal.addEventListener("abort", () => {
+          cleanup();
+        });
+      },
+    });
+
     return new Response(stream, {
       status: 200,
-      headers: getStreamHeaders(request)
-    })
-
+      headers: getStreamHeaders(request),
+    });
   } catch (err) {
-    logError({ error: err }, 'Route error')
-    // Clean up lock if we acquired it but failed before streaming started
-    if (lockId && projectId) {
-      await releaseGenerationLock(projectId, lockId)
-    }
-    return createErrorStream(err instanceof Error ? err.message : 'Internal server error', request)
+    logError({ error: err }, "Legacy generate route error");
+    return createErrorStream(
+      err instanceof Error ? err.message : "Internal server error",
+      request
+    );
   }
 }
