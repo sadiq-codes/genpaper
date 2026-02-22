@@ -58,6 +58,8 @@ export interface EnsurePaperContentOptions {
    * Use this for pipeline steps that require extraction to be present before continuing.
    */
   waitForStructuredExtraction?: boolean
+  /** Optional cancellation signal from generation pipeline */
+  signal?: AbortSignal
 }
 
 export interface BulkPaperProcessingOptions extends EnsurePaperContentOptions {
@@ -391,6 +393,9 @@ export async function ensurePaperContentReady(
   resolvedPaperId?: string
 ): Promise<PaperProcessResult> {
   return processWithLock(paper, 'full', async () => {
+    if (options.signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
     const metadataResult = resolvedPaperId
       ? { paperId: resolvedPaperId, paper: withCanonicalId(paper, resolvedPaperId) }
       : await ensurePaperMetadataInternal(paper, searchQuery)
@@ -532,6 +537,10 @@ export async function ensurePaperContentReady(
     let acquiredFullText = false
     let fullTextReadyContent: string | null = null
     let fullTextReadySource: 'pdf' | 'html' | null = null
+
+    if (options.signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
 
     if (paperDTO.pdf_url) {
       const pdfStartTime = Date.now()
