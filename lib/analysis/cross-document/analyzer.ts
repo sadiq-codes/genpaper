@@ -146,7 +146,8 @@ Rules:
 
 Specificity requirements:
 - Use provided paper IDs and finding IDs.
-- Prefer quantified wording ("6 of 8 (75%)") over vague claims.
+- Use quantified wording only when denominator scope is explicit and claim-specific.
+- Do not merge or compare aggregates from different denominators without labeling scope differences.
 - Include concrete values/context when available.
 - Avoid generic statements like "more research is needed."
 
@@ -157,17 +158,13 @@ Output compactness requirements:
 
 type AnalysisObject = z.infer<typeof _AnalysisSchema>
 
-const ANALYSIS_PART_MAX_OUTPUT_TOKENS = 2200
-const ANALYSIS_PART_RETRY_MAX_OUTPUT_TOKENS = 3200
-const ANALYSIS_PART_FINAL_RETRY_MAX_OUTPUT_TOKENS = 4200
-const ANALYSIS_PART_HEAVY_MAX_OUTPUT_TOKENS = 3200
-const ANALYSIS_PART_HEAVY_RETRY_MAX_OUTPUT_TOKENS = 4200
-const ANALYSIS_PART_HEAVY_FINAL_RETRY_MAX_OUTPUT_TOKENS = 5200
+const PART_OUTPUT_TOKEN_BUDGETS = [2200, 3600]
+const FULL_OUTPUT_TOKEN_BUDGETS = [3600, 5200]
 const ANALYSIS_PART_TIMEOUT_MS = Number(process.env.ANALYSIS_PART_TIMEOUT_MS || 120000)
-const MAX_CLAIM_CHARS = 220
-const MAX_EVIDENCE_CHARS = 160
-const MAX_CONTEXT_CHARS = 110
-const MAX_TITLE_CHARS = 80
+const PROMPT_INPUT_TOKEN_BUDGET = Number(process.env.ANALYSIS_PROMPT_INPUT_TOKEN_BUDGET || 12000)
+const PROMPT_TOKEN_CHAR_RATIO = 4
+const STRICT_BATCH_MODE = process.env.ANALYSIS_STRICT_BATCH_MODE !== 'false'
+const STRICT_INTEGRITY_MODE = process.env.ANALYSIS_STRICT_INTEGRITY_MODE !== 'false'
 
 const PatternsOnlySchema = z.object({
   patterns: z.array(PatternSchema).max(8),
@@ -204,6 +201,22 @@ Base all statements on the provided findings.`,
 } as const
 
 type AnalysisPartName = keyof typeof PART_INSTRUCTIONS
+
+type PromptPackingMetadata = {
+  packedFindings: number
+  droppedFindings: number
+  truncatedFields: number
+}
+
+type PromptBuildResult = {
+  prompt: string
+  packing: PromptPackingMetadata
+}
+
+type AnalysisGenerationResult = {
+  object: AnalysisObject
+  packing: PromptPackingMetadata
+}
 
 function getErrorText(error: unknown): string {
   if (error instanceof Error) {
@@ -282,41 +295,132 @@ async function generateObjectWithRateLimitRetry<T>(
   throw lastError || new Error(`${scope} (${partName}) failed after rate limit retries`)
 }
 
-function getTokenBudgetsForPart(
-  partName: AnalysisPartName,
-  findingsCount: number
-): number[] {
-  const isHeavyPart = partName === 'patterns' || partName === 'meta'
-  const isLargeBatch = findingsCount >= 70
-  if (isHeavyPart && isLargeBatch) {
-    return [
-      ANALYSIS_PART_HEAVY_MAX_OUTPUT_TOKENS,
-      ANALYSIS_PART_HEAVY_RETRY_MAX_OUTPUT_TOKENS,
-      ANALYSIS_PART_HEAVY_FINAL_RETRY_MAX_OUTPUT_TOKENS,
-    ]
-  }
-  return [
-    ANALYSIS_PART_MAX_OUTPUT_TOKENS,
-    ANALYSIS_PART_RETRY_MAX_OUTPUT_TOKENS,
-    ANALYSIS_PART_FINAL_RETRY_MAX_OUTPUT_TOKENS,
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / PROMPT_TOKEN_CHAR_RATIO)
+}
+
+function normalizePromptText(value: string | undefined): string {
+  if (!value) return ''
+  return value.replace(/\s+/g, ' ').trim()
+}
+
+function scoreFindingForPacking(finding: FindingWithPaper): number {
+  return (
+    finding.confidence * 4 +
+    (finding.value ? 1 : 0) +
+    (finding.valueType ? 0.5 : 0) +
+    (finding.context ? 0.5 : 0) +
+    (finding.evidence ? 0.5 : 0)
+  )
+}
+
+function formatFindingForPrompt(finding: FindingWithPaper): string {
+  const pieces = [
+    `paperId=${finding.paperId}`,
+    `findingId=${finding.id}`,
+    `claim="${normalizePromptText(finding.claim)}"`,
+    `evidence="${normalizePromptText(finding.evidence)}"`,
   ]
+
+  const value = normalizePromptText(finding.value)
+  const valueType = normalizePromptText(finding.valueType)
+  const direction = normalizePromptText(finding.direction)
+  const context = normalizePromptText(finding.context)
+  const evidenceType = normalizePromptText((finding as { evidenceType?: string }).evidenceType)
+
+  if (value) {
+    pieces.push(`value="${value}"`)
+    if (valueType) pieces.push(`valueType=${valueType}`)
+  }
+  if (direction) pieces.push(`direction=${direction}`)
+  if (context) pieces.push(`context="${context}"`)
+  if (evidenceType) pieces.push(`evidenceType=${evidenceType}`)
+
+  return `- ${pieces.join(' | ')}`
+}
+
+function formatCompactFindingForPrompt(finding: FindingWithPaper): string {
+  const compact = (value: string | undefined, maxChars: number) => {
+    const text = normalizePromptText(value)
+    return text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
+  }
+
+  return [
+    `- paperId=${finding.paperId}`,
+    `findingId=${finding.id}`,
+    `claim="${compact(finding.claim, 420)}"`,
+    `evidence="${compact(finding.evidence, 420)}"`,
+  ].join(' | ')
+}
+
+function packFindingsForPrompt(findings: FindingWithPaper[]): {
+  lines: string[]
+  findingIds: string[]
+  packed: number
+  dropped: number
+  truncatedFields: number
+} {
+  const ranked = findings
+    .map((finding, index) => ({ finding, index, score: scoreFindingForPacking(finding) }))
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index))
+
+  const packed: Array<{ index: number; line: string; findingId: string }> = []
+  let dropped = 0
+  let usedTokens = 0
+
+  for (const candidate of ranked) {
+    const line = formatFindingForPrompt(candidate.finding)
+    const tokens = estimateTokens(line) + 2
+    if (usedTokens + tokens <= PROMPT_INPUT_TOKEN_BUDGET) {
+      packed.push({ index: candidate.index, line, findingId: candidate.finding.id })
+      usedTokens += tokens
+      continue
+    }
+    if (packed.length === 0) {
+      const compactLine = formatCompactFindingForPrompt(candidate.finding)
+      const compactTokens = estimateTokens(compactLine) + 2
+      if (usedTokens + compactTokens <= PROMPT_INPUT_TOKEN_BUDGET) {
+        packed.push({ index: candidate.index, line: compactLine, findingId: candidate.finding.id })
+        usedTokens += compactTokens
+        continue
+      }
+    }
+    dropped += 1
+  }
+
+  packed.sort((a, b) => a.index - b.index)
+
+  return {
+    lines: packed.map(item => item.line),
+    findingIds: packed.map(item => item.findingId),
+    packed: packed.length,
+    dropped,
+    truncatedFields: 0,
+  }
+}
+
+function getTokenBudgetsForPart(): number[] {
+  return PART_OUTPUT_TOKEN_BUDGETS
+}
+
+function getTokenBudgetsForFull(): number[] {
+  return FULL_OUTPUT_TOKEN_BUDGETS
 }
 
 async function generateAnalysisPartWithRetry<T>(
   schema: z.ZodType<T>,
-  findings: FindingWithPaper[],
-  topic: string | undefined,
+  basePrompt: string,
+  _findingsCount: number,
   scope: string,
   partName: AnalysisPartName
 ): Promise<T> {
-  const basePrompt = buildPrompt(findings, topic)
   const prompt = `${basePrompt}
 
 Part-specific output requirement:
 ${PART_INSTRUCTIONS[partName]}
 
 Only return JSON matching the provided schema.`
-  const tokenBudgets = getTokenBudgetsForPart(partName, findings.length)
+  const tokenBudgets = getTokenBudgetsForPart()
   let lastError: unknown = null
 
   for (let attempt = 0; attempt < tokenBudgets.length; attempt++) {
@@ -369,92 +473,413 @@ Only return JSON matching the provided schema.`
   throw lastError || new Error(`${scope} (${partName}) failed: unknown error`)
 }
 
+function pickHighestPriority(
+  left: 'high' | 'medium' | 'low',
+  right: 'high' | 'medium' | 'low'
+): 'high' | 'medium' | 'low' {
+  const rank: Record<'high' | 'medium' | 'low', number> = { high: 3, medium: 2, low: 1 }
+  return rank[right] > rank[left] ? right : left
+}
+
+function pickHighestSeverity(
+  left: 'major' | 'moderate' | 'minor',
+  right: 'major' | 'moderate' | 'minor'
+): 'major' | 'moderate' | 'minor' {
+  const rank: Record<'major' | 'moderate' | 'minor', number> = { major: 3, moderate: 2, minor: 1 }
+  return rank[right] > rank[left] ? right : left
+}
+
+function pickStrongerEvidenceStrength(
+  left: 'strong' | 'moderate' | 'weak',
+  right: 'strong' | 'moderate' | 'weak'
+): 'strong' | 'moderate' | 'weak' {
+  const rank: Record<'strong' | 'moderate' | 'weak', number> = { strong: 3, moderate: 2, weak: 1 }
+  return rank[right] > rank[left] ? right : left
+}
+
+function mergeEvidenceStrength(
+  left: 'strong' | 'moderate' | 'weak' | undefined,
+  right: 'strong' | 'moderate' | 'weak' | undefined
+): 'strong' | 'moderate' | 'weak' | undefined {
+  if (!left) return right
+  if (!right) return left
+  return pickStrongerEvidenceStrength(left, right)
+}
+
+function mergeGapPriority(
+  left: 'high' | 'medium' | 'low' | undefined,
+  right: 'high' | 'medium' | 'low' | undefined
+): 'high' | 'medium' | 'low' | undefined {
+  if (!left) return right
+  if (!right) return left
+  return pickHighestPriority(left, right)
+}
+
+function normalizeKey(value: string | undefined): string {
+  return (value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))]
+}
+
+function reconcileAnalysisParts(object: AnalysisObject): AnalysisObject {
+  const patterns = object.patterns.map((pattern) => ({
+    ...pattern,
+    supportingPaperIds: dedupeStrings(pattern.supportingPaperIds),
+    supportingFindingIds: dedupeStrings(pattern.supportingFindingIds),
+  }))
+
+  const contradictionMap = new Map<string, AnalysisObject['contradictions'][number]>()
+  for (const contradiction of object.contradictions) {
+    const sidesKey = contradiction.sides
+      .map(side => dedupeStrings(side.paperIds).sort().join(','))
+      .sort()
+      .join('|')
+    const key = `${contradiction.contradictionType}|${normalizeKey(contradiction.description)}|${sidesKey}`
+    const existing = contradictionMap.get(key)
+    if (!existing) {
+      contradictionMap.set(key, {
+        ...contradiction,
+        sides: contradiction.sides.map(side => ({
+          ...side,
+          paperIds: dedupeStrings(side.paperIds),
+          findingIds: dedupeStrings(side.findingIds),
+        })),
+      })
+      continue
+    }
+
+    const mergedSides = [...existing.sides]
+    for (const side of contradiction.sides) {
+      const normalizedPosition = normalizeKey(side.position)
+      const sideIndex = mergedSides.findIndex(s => normalizeKey(s.position) === normalizedPosition)
+      if (sideIndex === -1) {
+        mergedSides.push({
+          ...side,
+          paperIds: dedupeStrings(side.paperIds),
+          findingIds: dedupeStrings(side.findingIds),
+        })
+        continue
+      }
+      const prior = mergedSides[sideIndex]
+      mergedSides[sideIndex] = {
+        ...prior,
+        paperIds: dedupeStrings([...prior.paperIds, ...side.paperIds]),
+        findingIds: dedupeStrings([...prior.findingIds, ...side.findingIds]),
+        evidenceStrength: pickStrongerEvidenceStrength(prior.evidenceStrength, side.evidenceStrength),
+      }
+    }
+
+    contradictionMap.set(key, {
+      ...existing,
+      sides: mergedSides,
+      confidence: Math.max(existing.confidence, contradiction.confidence),
+      severity: pickHighestSeverity(existing.severity, contradiction.severity),
+      possibleExplanation:
+        (contradiction.possibleExplanation || '').length > (existing.possibleExplanation || '').length
+          ? contradiction.possibleExplanation
+          : existing.possibleExplanation,
+      resolutionSuggestion:
+        (contradiction.resolutionSuggestion || '').length > (existing.resolutionSuggestion || '').length
+          ? contradiction.resolutionSuggestion
+          : existing.resolutionSuggestion,
+    })
+  }
+
+  const gapMap = new Map<string, AnalysisObject['gaps'][number]>()
+  for (const gap of object.gaps) {
+    const key = `${gap.type}|${normalizeKey(gap.description)}`
+    const existing = gapMap.get(key)
+    if (!existing) {
+      gapMap.set(key, {
+        ...gap,
+        suggestedByPaperIds: dedupeStrings(gap.suggestedByPaperIds),
+      })
+      continue
+    }
+    gapMap.set(key, {
+      ...existing,
+      suggestedByPaperIds: dedupeStrings([...existing.suggestedByPaperIds, ...gap.suggestedByPaperIds]),
+      confidence: Math.max(existing.confidence, gap.confidence),
+      priority: pickHighestPriority(existing.priority, gap.priority),
+      relevance: gap.relevance.length > existing.relevance.length ? gap.relevance : existing.relevance,
+      suggestedResearchQuestion:
+        gap.suggestedResearchQuestion.length > existing.suggestedResearchQuestion.length
+          ? gap.suggestedResearchQuestion
+          : existing.suggestedResearchQuestion,
+    })
+  }
+
+  return {
+    ...object,
+    patterns,
+    contradictions: [...contradictionMap.values()],
+    gaps: [...gapMap.values()],
+    keyInsights: dedupeStrings(object.keyInsights).slice(0, 5),
+    summary: normalizePromptText(object.summary),
+  }
+}
+
+async function generateAnalysisFullWithRetry(
+  basePrompt: string,
+  _findingsCount: number,
+  scope: string
+): Promise<AnalysisObject> {
+  const prompt = `${basePrompt}
+
+Return ONLY JSON matching the full schema with keys:
+patterns, contradictions, gaps, summary, keyInsights, synthesisStrength, fieldMaturity.`
+  const tokenBudgets = getTokenBudgetsForFull()
+  let lastError: unknown = null
+
+  for (let attempt = 0; attempt < tokenBudgets.length; attempt++) {
+    const maxOutputTokens = tokenBudgets[attempt]
+    try {
+      const { object } = await generateObjectWithRateLimitRetry(
+        async () => {
+          const controller = new AbortController()
+          const timeout = setTimeout(() => controller.abort(), ANALYSIS_PART_TIMEOUT_MS)
+          try {
+            return await generateObject({
+              model: getLanguageModel(),
+              schema: _AnalysisSchema,
+              system: SYSTEM_PROMPT,
+              prompt,
+              temperature: 0.2,
+              maxOutputTokens,
+              abortSignal: controller.signal,
+            })
+          } finally {
+            clearTimeout(timeout)
+          }
+        },
+        scope,
+        'meta'
+      )
+      return object
+    } catch (error) {
+      lastError = error
+      const canRetry =
+        attempt < tokenBudgets.length - 1 &&
+        (isLikelyLengthOrParseTruncation(error) || isLikelyTimeoutOrAbort(error))
+      if (canRetry) {
+        console.warn(
+          `⚠️ ${scope} (full) failed at ${maxOutputTokens} tokens; retrying with ${tokenBudgets[attempt + 1]} tokens`
+        )
+        continue
+      }
+      throw error
+    }
+  }
+
+  throw lastError || new Error(`${scope} (full) failed: unknown error`)
+}
+
 async function generateAnalysisObjectWithRetry(
   findings: FindingWithPaper[],
   topic: string | undefined,
   scope: string
-): Promise<AnalysisObject> {
+): Promise<AnalysisGenerationResult> {
+  const builtPrompt = buildPrompt(findings, topic)
+
+  try {
+    const object = await generateAnalysisFullWithRetry(
+      builtPrompt.prompt,
+      findings.length,
+      scope
+    )
+    return {
+      object: reconcileAnalysisParts(object),
+      packing: builtPrompt.packing,
+    }
+  } catch (error) {
+    const fallbackAllowed =
+      isLikelyLengthOrParseTruncation(error) ||
+      isLikelyTimeoutOrAbort(error)
+    if (!fallbackAllowed) {
+      throw error
+    }
+    console.warn(`⚠️ ${scope} full-schema generation failed; falling back to split generation`)
+  }
+
   const [patternsPart, contradictionsPart, gapsPart, metaPart] = await Promise.all([
-    generateAnalysisPartWithRetry(PatternsOnlySchema, findings, topic, scope, 'patterns'),
-    generateAnalysisPartWithRetry(ContradictionsOnlySchema, findings, topic, scope, 'contradictions'),
-    generateAnalysisPartWithRetry(GapsOnlySchema, findings, topic, scope, 'gaps'),
-    generateAnalysisPartWithRetry(AnalysisMetaSchema, findings, topic, scope, 'meta'),
+    generateAnalysisPartWithRetry(PatternsOnlySchema, builtPrompt.prompt, findings.length, scope, 'patterns'),
+    generateAnalysisPartWithRetry(ContradictionsOnlySchema, builtPrompt.prompt, findings.length, scope, 'contradictions'),
+    generateAnalysisPartWithRetry(GapsOnlySchema, builtPrompt.prompt, findings.length, scope, 'gaps'),
+    generateAnalysisPartWithRetry(AnalysisMetaSchema, builtPrompt.prompt, findings.length, scope, 'meta'),
   ])
 
   return {
-    patterns: patternsPart.patterns,
-    contradictions: contradictionsPart.contradictions,
-    gaps: gapsPart.gaps,
-    summary: metaPart.summary,
-    keyInsights: metaPart.keyInsights,
-    synthesisStrength: metaPart.synthesisStrength,
-    fieldMaturity: metaPart.fieldMaturity,
+    object: reconcileAnalysisParts({
+      patterns: patternsPart.patterns,
+      contradictions: contradictionsPart.contradictions,
+      gaps: gapsPart.gaps,
+      summary: metaPart.summary,
+      keyInsights: metaPart.keyInsights,
+      synthesisStrength: metaPart.synthesisStrength,
+      fieldMaturity: metaPart.fieldMaturity,
+    }),
+    packing: builtPrompt.packing,
   }
 }
 
-function truncateForPrompt(value: string | undefined, maxChars: number): string {
-  if (!value) return ''
-  const normalized = value.replace(/\s+/g, ' ').trim()
-  if (normalized.length <= maxChars) return normalized
-  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
-}
-
-function buildPrompt(findings: FindingWithPaper[], topic?: string): string {
+function buildPrompt(findings: FindingWithPaper[], topic?: string): PromptBuildResult {
   const uniquePapers = new Set(findings.map(f => f.paperId)).size
+  const packed = packFindingsForPrompt(findings)
+  const packedFindingIds = new Set(packed.findingIds)
 
-  const paperRegistry = Array.from(
-    new Map(findings.map(f => [f.paperId, truncateForPrompt(f.paperTitle, MAX_TITLE_CHARS)])).entries()
+  const packedPaperRegistry = Array.from(
+    new Map(
+      findings
+        .filter(f => packedFindingIds.has(f.id))
+        .map(f => [f.paperId, normalizePromptText(f.paperTitle)])
+    ).entries()
   )
     .map(([paperId, paperTitle]) => `- ${paperId}: ${paperTitle}`)
     .join('\n')
 
-  const findingsText = findings.map((f) => {
-    const pieces = [
-      `paperId=${f.paperId}`,
-      `findingId=${f.id}`,
-      `claim="${truncateForPrompt(f.claim, MAX_CLAIM_CHARS)}"`,
-      `evidence="${truncateForPrompt(f.evidence, MAX_EVIDENCE_CHARS)}"`,
-    ]
+  const topicLine = topic ? `Topic: ${normalizePromptText(topic)}\n` : ''
+  const paperRegistry = packedPaperRegistry || '- none'
+  const findingsText = packed.lines.join('\n') || '- none'
 
-    if (f.value) {
-      pieces.push(`value="${truncateForPrompt(f.value, 64)}"`)
-      if (f.valueType) {
-        pieces.push(`valueType=${truncateForPrompt(f.valueType, 48)}`)
-      }
-    }
+  return {
+    prompt: `Analyze findings across papers.
+${topicLine}Corpus stats:
+- totalFindings=${findings.length}
+- totalPapers=${uniquePapers}
+- packedFindings=${packed.packed}
+- droppedFindings=${packed.dropped}
+- truncatedFields=${packed.truncatedFields}
 
-    if (f.direction) {
-      pieces.push(`direction=${truncateForPrompt(f.direction, 32)}`)
-    }
-
-    if (f.context) {
-      pieces.push(`context="${truncateForPrompt(f.context, MAX_CONTEXT_CHARS)}"`)
-    }
-
-    if ((f as { evidenceType?: string }).evidenceType) {
-      pieces.push(`evidenceType=${truncateForPrompt((f as { evidenceType?: string }).evidenceType, 48)}`)
-    }
-
-    return `- ${pieces.join(' | ')}`
-  }).join('\n')
-
-  const topicLine = topic ? `Topic: ${truncateForPrompt(topic, 180)}\n` : ''
-
-  return `Analyze ${findings.length} findings across ${uniquePapers} papers.
-${topicLine}Paper registry:
+Paper registry (for packed findings):
 ${paperRegistry}
 
 Findings:
 ${findingsText}
 
 Tasks:
-1) Identify patterns with support counts/percentages and value ranges when available.
+1) Identify patterns with support counts/percentages when denominator scope is explicit, and include value ranges when available.
 2) Identify contradictions and classify each as direct, magnitude, conditional, or methodological.
 3) Identify concrete gaps and include a concrete research question per gap.
-4) Write overall summary + 5-7 key insights.
+4) Write overall summary + up to 5 key insights.
 5) Assess synthesis quality and field maturity.
 
-Use paperId/findingId values exactly as provided in input.`
+Use paperId/findingId values exactly as provided in input.`,
+    packing: {
+      packedFindings: packed.packed,
+      droppedFindings: packed.dropped,
+      truncatedFields: packed.truncatedFields,
+    },
+  }
+}
+
+function toPaperSupport(finding: FindingWithPaper): PaperSupport {
+  return {
+    paperId: finding.paperId,
+    paperTitle: finding.paperTitle,
+    findingId: finding.id,
+    claim: finding.claim,
+    value: finding.value,
+    valueType: finding.valueType,
+    evidence: finding.evidence,
+    confidence: finding.confidence,
+  }
+}
+
+function dedupePaperSupports(papers: PaperSupport[]): PaperSupport[] {
+  const seen = new Set<string>()
+  const deduped: PaperSupport[] = []
+  for (const paper of papers) {
+    const key = `${paper.paperId}::${paper.findingId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(paper)
+  }
+  return deduped
+}
+
+function countUniqueSupportPapers(papers: PaperSupport[]): number {
+  return new Set(papers.map(p => p.paperId)).size
+}
+
+function mergeLimitations(
+  original: string | null | undefined,
+  appended: string | undefined
+): string | undefined {
+  const parts = [original || '', appended || '']
+    .map(part => part.trim())
+    .filter(Boolean)
+  if (parts.length === 0) return undefined
+  return dedupeStrings(parts).join(' ')
+}
+
+function buildPatternFromAnalysisPattern(
+  pattern: AnalysisObject['patterns'][number],
+  findingsMap: Map<string, FindingWithPaper>,
+  totalPapers: number
+): Pattern {
+  const mappedSupports = dedupePaperSupports(
+    dedupeStrings(pattern.supportingFindingIds)
+      .map(fid => findingsMap.get(fid))
+      .filter((finding): finding is FindingWithPaper => finding !== undefined)
+      .map(toPaperSupport)
+  )
+  const mappedPaperIds = new Set(mappedSupports.map(support => support.paperId))
+  const unresolvedPaperIds = dedupeStrings(pattern.supportingPaperIds)
+    .filter(paperId => !mappedPaperIds.has(paperId))
+  const supportCount = countUniqueSupportPapers(mappedSupports)
+
+  const unresolvedLimitation =
+    unresolvedPaperIds.length > 0
+      ? `Dropped ${unresolvedPaperIds.length} unresolved supporting paper reference(s): ${unresolvedPaperIds.join(', ')}.`
+      : undefined
+
+  return {
+    id: uuidv4(),
+    claim: pattern.claim,
+    summary: pattern.summary,
+    support: {
+      papers: mappedSupports,
+      count: supportCount,
+      total: totalPapers,
+    },
+    direction: pattern.direction || undefined,
+    consistency: pattern.consistency,
+    strength: pattern.strength,
+    values: pattern.valuesSummary ? {
+      summary: pattern.valuesSummary,
+      individual: dedupeStrings(
+        mappedSupports
+          .map(paper => paper.value)
+          .filter((value): value is string => Boolean(value))
+      ),
+      range: pattern.valueRange ? {
+        min: pattern.valueRange.min || undefined,
+        max: pattern.valueRange.max || undefined,
+        median: pattern.valueRange.median || undefined,
+        heterogeneity: pattern.valueRange.heterogeneity || undefined,
+      } : undefined,
+    } : undefined,
+    confidence: pattern.confidence,
+    limitations: mergeLimitations(pattern.limitations, unresolvedLimitation),
+  }
+}
+
+function mapFindingIdsToPaperSupport(
+  findingIds: string[],
+  findingsMap: Map<string, FindingWithPaper>
+): PaperSupport[] {
+  return dedupePaperSupports(
+    dedupeStrings(findingIds)
+      .map(fid => findingsMap.get(fid))
+      .filter((finding): finding is FindingWithPaper => finding !== undefined)
+      .map(toPaperSupport)
+  )
 }
 
 // =============================================================================
@@ -486,7 +911,18 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
       analyzedAt: new Date(),
       analysisTimeMs: Date.now() - startTime,
       modelUsed: 'gpt-4o',
-      findingsHash: hashFindings(findings)
+      findingsHash: hashFindings(findings),
+      completeness: {
+        status: 'complete',
+        totalBatches: 0,
+        failedBatches: 0,
+      },
+      diagnostics: {
+        packedFindings: 0,
+        droppedFindings: 0,
+        truncatedFields: 0,
+        integrityRepairApplied: false,
+      },
     }
   }
   
@@ -501,73 +937,22 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
   console.log(`\n🔍 Analyzing ${findings.length} findings from ${uniquePapers} papers...`)
   
   try {
-    const object = await generateAnalysisObjectWithRetry(findings, topic, 'Cross-document analysis')
+    const generated = await generateAnalysisObjectWithRetry(findings, topic, 'Cross-document analysis')
+    const object = generated.object
+    if (generated.packing.droppedFindings > 0) {
+      console.warn(
+        `⚠️ Cross-document prompt packing dropped ${generated.packing.droppedFindings} finding(s) ` +
+        `(${generated.packing.packedFindings} packed, truncatedFields=${generated.packing.truncatedFields})`
+      )
+    }
     
     // Build lookup maps for enriching results
     const findingsMap = new Map(findings.map(f => [f.id, f]))
-    const paperTitles = new Map(findings.map(f => [f.paperId, f.paperTitle]))
     
     // Transform patterns with full paper support details
-    const patterns: Pattern[] = object.patterns.map(p => {
-      const papers: PaperSupport[] = p.supportingFindingIds
-        .map(fid => findingsMap.get(fid))
-        .filter((f): f is FindingWithPaper => f !== undefined)
-        .map(f => ({
-          paperId: f.paperId,
-          paperTitle: f.paperTitle,
-          findingId: f.id,
-          claim: f.claim,
-          value: f.value,
-          valueType: f.valueType,
-          evidence: f.evidence,
-          confidence: f.confidence
-        }))
-      
-      // Also add papers by ID if findings weren't found
-      for (const pid of p.supportingPaperIds) {
-        if (!papers.some(ps => ps.paperId === pid)) {
-          const paperFinding = findings.find(f => f.paperId === pid)
-          if (paperFinding) {
-            papers.push({
-              paperId: pid,
-              paperTitle: paperTitles.get(pid) || 'Unknown',
-              findingId: paperFinding.id,
-              claim: paperFinding.claim,
-              value: paperFinding.value,
-              valueType: paperFinding.valueType,
-              evidence: paperFinding.evidence,
-              confidence: paperFinding.confidence
-            })
-          }
-        }
-      }
-      
-      return {
-        id: uuidv4(),
-        claim: p.claim,
-        summary: p.summary,
-        support: {
-          papers,
-          count: papers.length,
-          total: uniquePapers
-        },
-        direction: p.direction || undefined,
-        consistency: p.consistency,
-        strength: p.strength,
-        values: p.valuesSummary ? {
-          summary: p.valuesSummary,
-          individual: papers.map(ps => ps.value).filter((v): v is string => v !== undefined),
-          range: p.valueRange ? {
-            min: p.valueRange.min || undefined,
-            max: p.valueRange.max || undefined,
-            median: p.valueRange.median || undefined,
-            heterogeneity: p.valueRange.heterogeneity || undefined
-          } : undefined
-        } : undefined,
-        confidence: p.confidence,
-        limitations: p.limitations || undefined
-      }
-    })
+    const patterns: Pattern[] = object.patterns.map(pattern =>
+      buildPatternFromAnalysisPattern(pattern, findingsMap, uniquePapers)
+    )
     
     // Transform contradictions
     const contradictions: Contradiction[] = object.contradictions.map(c => ({
@@ -576,19 +961,7 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
       contradictionType: c.contradictionType,
       sides: c.sides.map(s => ({
         position: s.position,
-        papers: s.findingIds
-          .map(fid => findingsMap.get(fid))
-          .filter((f): f is FindingWithPaper => f !== undefined)
-          .map(f => ({
-            paperId: f.paperId,
-            paperTitle: f.paperTitle,
-            findingId: f.id,
-            claim: f.claim,
-            value: f.value,
-            valueType: f.valueType,
-            evidence: f.evidence,
-            confidence: f.confidence
-          })),
+        papers: mapFindingIdsToPaperSupport(s.findingIds, findingsMap),
         evidenceStrength: s.evidenceStrength
       })),
       possibleExplanation: c.possibleExplanation || undefined,
@@ -615,8 +988,8 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
     console.log(`   📊 Found ${patterns.length} patterns`)
     console.log(`   ⚡ Found ${contradictions.length} contradictions`)
     console.log(`   🔎 Found ${gaps.length} gaps`)
-    
-    return {
+
+    let result: AnalysisResult = {
       id: uuidv4(),
       projectId,
       analyzedPapers: uniquePapers,
@@ -637,8 +1010,21 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
       analyzedAt: new Date(),
       analysisTimeMs,
       modelUsed: 'gpt-4o',
-      findingsHash: hashFindings(findings)
+      findingsHash: hashFindings(findings),
+      completeness: {
+        status: 'complete',
+        totalBatches: 1,
+        failedBatches: 0,
+      },
+      diagnostics: {
+        packedFindings: generated.packing.packedFindings,
+        droppedFindings: generated.packing.droppedFindings,
+        truncatedFields: generated.packing.truncatedFields,
+      },
     }
+
+    result = enforceAnalysisIntegrity(result, findings)
+    return result
     
   } catch (error) {
     console.error('❌ Analysis failed:', error)
@@ -660,9 +1046,6 @@ const MAX_FINDINGS_PER_BATCH = 70
  * Threshold above which we use batched analysis
  */
 const BATCH_THRESHOLD = 120
-const MIN_FINDINGS_TO_SPLIT = 30
-const MAX_BATCH_SPLIT_DEPTH = 3
-const BATCH_ANALYSIS_CONCURRENCY = 1
 
 type TransformedBatchResult = {
   patterns: Pattern[]
@@ -670,9 +1053,10 @@ type TransformedBatchResult = {
   gaps: Gap[]
   summary: string
   keyInsights: string[]
+  diagnostics?: PromptPackingMetadata
 }
 
-function splitBatchByPaper(findings: FindingWithPaper[]): [FindingWithPaper[], FindingWithPaper[]] {
+function buildBatchesByPaper(findings: FindingWithPaper[]): FindingWithPaper[][] {
   const byPaper = new Map<string, FindingWithPaper[]>()
   for (const finding of findings) {
     const paperFindings = byPaper.get(finding.paperId) || []
@@ -680,96 +1064,33 @@ function splitBatchByPaper(findings: FindingWithPaper[]): [FindingWithPaper[], F
     byPaper.set(finding.paperId, paperFindings)
   }
 
-  const left: FindingWithPaper[] = []
-  const right: FindingWithPaper[] = []
-  let leftCount = 0
-  let rightCount = 0
+  const batches: FindingWithPaper[][] = []
+  let currentBatch: FindingWithPaper[] = []
 
   for (const paperFindings of byPaper.values()) {
-    if (leftCount <= rightCount) {
-      left.push(...paperFindings)
-      leftCount += paperFindings.length
-    } else {
-      right.push(...paperFindings)
-      rightCount += paperFindings.length
+    if (currentBatch.length + paperFindings.length > MAX_FINDINGS_PER_BATCH && currentBatch.length > 0) {
+      batches.push(currentBatch)
+      currentBatch = []
     }
+    currentBatch.push(...paperFindings)
   }
 
-  return [left, right]
-}
-
-function splitBatchByIndex(findings: FindingWithPaper[]): [FindingWithPaper[], FindingWithPaper[]] {
-  const midpoint = Math.floor(findings.length / 2)
-  return [findings.slice(0, midpoint), findings.slice(midpoint)]
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch)
+  }
+  return batches
 }
 
 function transformBatchObject(
   object: AnalysisObject,
   batch: FindingWithPaper[],
-  batchPapers: number
+  batchPapers: number,
+  diagnostics?: PromptPackingMetadata
 ): TransformedBatchResult {
   const findingsMap = new Map(batch.map(f => [f.id, f]))
-  const paperTitles = new Map(batch.map(f => [f.paperId, f.paperTitle]))
-
-  const patterns: Pattern[] = object.patterns.map(p => {
-    const papers: PaperSupport[] = p.supportingFindingIds
-      .map(fid => findingsMap.get(fid))
-      .filter((f): f is FindingWithPaper => f !== undefined)
-      .map(f => ({
-        paperId: f.paperId,
-        paperTitle: f.paperTitle,
-        findingId: f.id,
-        claim: f.claim,
-        value: f.value,
-        valueType: f.valueType,
-        evidence: f.evidence,
-        confidence: f.confidence
-      }))
-
-    for (const pid of p.supportingPaperIds) {
-      if (!papers.some(ps => ps.paperId === pid)) {
-        const paperFinding = batch.find(f => f.paperId === pid)
-        if (paperFinding) {
-          papers.push({
-            paperId: pid,
-            paperTitle: paperTitles.get(pid) || 'Unknown',
-            findingId: paperFinding.id,
-            claim: paperFinding.claim,
-            value: paperFinding.value,
-            valueType: paperFinding.valueType,
-            evidence: paperFinding.evidence,
-            confidence: paperFinding.confidence
-          })
-        }
-      }
-    }
-
-    return {
-      id: uuidv4(),
-      claim: p.claim,
-      summary: p.summary,
-      support: {
-        papers,
-        count: papers.length,
-        total: batchPapers // Will be corrected during merge
-      },
-      direction: p.direction || undefined,
-      consistency: p.consistency,
-      strength: p.strength,
-      values: p.valuesSummary ? {
-        summary: p.valuesSummary,
-        individual: papers.map(ps => ps.value).filter((v): v is string => v !== undefined),
-        range: p.valueRange ? {
-          min: p.valueRange.min || undefined,
-          max: p.valueRange.max || undefined,
-          median: p.valueRange.median || undefined,
-          heterogeneity: p.valueRange.heterogeneity || undefined
-        } : undefined
-      } : undefined,
-      confidence: p.confidence,
-      limitations: p.limitations || undefined
-    }
-  })
+  const patterns: Pattern[] = object.patterns.map(pattern =>
+    buildPatternFromAnalysisPattern(pattern, findingsMap, batchPapers)
+  )
 
   const contradictions: Contradiction[] = object.contradictions.map(c => ({
     id: uuidv4(),
@@ -777,19 +1098,7 @@ function transformBatchObject(
     contradictionType: c.contradictionType,
     sides: c.sides.map(s => ({
       position: s.position,
-      papers: s.findingIds
-        .map(fid => findingsMap.get(fid))
-        .filter((f): f is FindingWithPaper => f !== undefined)
-        .map(f => ({
-          paperId: f.paperId,
-          paperTitle: f.paperTitle,
-          findingId: f.id,
-          claim: f.claim,
-          value: f.value,
-          valueType: f.valueType,
-          evidence: f.evidence,
-          confidence: f.confidence
-        })),
+      papers: mapFindingIdsToPaperSupport(s.findingIds, findingsMap),
       evidenceStrength: s.evidenceStrength
     })),
     possibleExplanation: c.possibleExplanation || undefined,
@@ -814,44 +1123,8 @@ function transformBatchObject(
     contradictions,
     gaps,
     summary: object.summary,
-    keyInsights: object.keyInsights
-  }
-}
-
-async function analyzeBatchAdaptive(
-  batch: FindingWithPaper[],
-  topic: string | undefined,
-  scope: string,
-  depth = 0
-): Promise<TransformedBatchResult[]> {
-  const batchPapers = new Set(batch.map(f => f.paperId)).size
-
-  try {
-    const object = await generateAnalysisObjectWithRetry(batch, topic, scope)
-    return [transformBatchObject(object, batch, batchPapers)]
-  } catch (error) {
-    const canSplit =
-      isLikelyLengthOrParseTruncation(error) &&
-      batch.length >= MIN_FINDINGS_TO_SPLIT &&
-      depth < MAX_BATCH_SPLIT_DEPTH
-
-    if (!canSplit) {
-      throw error
-    }
-
-    let [left, right] = splitBatchByPaper(batch)
-    if (left.length === 0 || right.length === 0) {
-      ;[left, right] = splitBatchByIndex(batch)
-    }
-
-    if (left.length === 0 || right.length === 0) {
-      throw error
-    }
-
-    console.warn(`⚠️ ${scope} still overflowed; splitting into ${left.length} and ${right.length} findings`)
-    const leftResults = await analyzeBatchAdaptive(left, topic, `${scope}a`, depth + 1)
-    const rightResults = await analyzeBatchAdaptive(right, topic, `${scope}b`, depth + 1)
-    return [...leftResults, ...rightResults]
+    keyInsights: object.keyInsights,
+    diagnostics,
   }
 }
 
@@ -867,65 +1140,47 @@ async function analyzeFindingsBatched(
   const startTime = Date.now()
   const uniquePapers = new Set(findings.map(f => f.paperId)).size
   
-  // Group findings by paper to ensure we don't split a paper's findings across batches
-  const findingsByPaper = new Map<string, FindingWithPaper[]>()
-  for (const finding of findings) {
-    const paperFindings = findingsByPaper.get(finding.paperId) || []
-    paperFindings.push(finding)
-    findingsByPaper.set(finding.paperId, paperFindings)
-  }
-  
-  // Build batches trying to keep papers together
-  const batches: FindingWithPaper[][] = []
-  let currentBatch: FindingWithPaper[] = []
-  
-  for (const [_paperId, paperFindings] of findingsByPaper) {
-    // If adding this paper would exceed batch size, start new batch
-    if (currentBatch.length + paperFindings.length > MAX_FINDINGS_PER_BATCH && currentBatch.length > 0) {
-      batches.push(currentBatch)
-      currentBatch = []
-    }
-    currentBatch.push(...paperFindings)
-  }
-  if (currentBatch.length > 0) {
-    batches.push(currentBatch)
-  }
+  const batches = buildBatchesByPaper(findings)
   
   console.log(`\n🔍 Analyzing ${findings.length} findings in ${batches.length} batches...`)
   
-  // Analyze each batch (bounded parallelism to reduce wall time on large analyses)
+  // Analyze each batch sequentially. Simpler flow, predictable failure semantics.
   const batchResults: TransformedBatchResult[] = []
-  const resultsByIndex: TransformedBatchResult[][] = Array.from({ length: batches.length }, () => [])
-  let nextBatchIndex = 0
+  const failedBatchIndexes: number[] = []
 
-  const workerCount = Math.min(BATCH_ANALYSIS_CONCURRENCY, batches.length)
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (true) {
-      const i = nextBatchIndex++
-      if (i >= batches.length) return
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i]
+    const batchPapers = new Set(batch.map(f => f.paperId)).size
+    console.log(`   📦 Batch ${i + 1}/${batches.length}: ${batch.length} findings from ${batchPapers} papers`)
 
-      const batch = batches[i]
-      const batchPapers = new Set(batch.map(f => f.paperId)).size
-      console.log(`   📦 Batch ${i + 1}/${batches.length}: ${batch.length} findings from ${batchPapers} papers`)
-
-      try {
-        const scopedResults = await analyzeBatchAdaptive(batch, topic, `Batch ${i + 1}/${batches.length}`)
-        resultsByIndex[i] = scopedResults
-
-        const scopedPatterns = scopedResults.reduce((sum, r) => sum + r.patterns.length, 0)
-        const scopedContradictions = scopedResults.reduce((sum, r) => sum + r.contradictions.length, 0)
-        const scopedGaps = scopedResults.reduce((sum, r) => sum + r.gaps.length, 0)
-        console.log(`   ✅ Batch ${i + 1}: ${scopedPatterns} patterns, ${scopedContradictions} contradictions, ${scopedGaps} gaps`)
-      } catch (error) {
-        console.error(`   ❌ Batch ${i + 1} failed:`, error)
-        // Continue with other batches
+    try {
+      const generated = await generateAnalysisObjectWithRetry(batch, topic, `Batch ${i + 1}/${batches.length}`)
+      const transformed = transformBatchObject(generated.object, batch, batchPapers, generated.packing)
+      batchResults.push(transformed)
+      console.log(
+        `   ✅ Batch ${i + 1}: ${transformed.patterns.length} patterns, ` +
+        `${transformed.contradictions.length} contradictions, ${transformed.gaps.length} gaps`
+      )
+    } catch (error) {
+      failedBatchIndexes.push(i)
+      console.error(`   ❌ Batch ${i + 1} failed:`, error)
+      if (STRICT_BATCH_MODE) {
+        throw new Error(
+          `Batched analysis failed in strict mode at batch ${i + 1}: ${error instanceof Error ? error.message : String(error)}`
+        )
       }
     }
-  })
+  }
 
-  await Promise.all(workers)
-  for (const scopedResults of resultsByIndex) {
-    batchResults.push(...scopedResults)
+  if (batchResults.length === 0) {
+    throw new Error('Batched analysis failed: no successful batch outputs were produced')
+  }
+
+  const failedBatchList = [...failedBatchIndexes].sort((a, b) => a - b)
+  if (failedBatchList.length > 0 && !STRICT_BATCH_MODE) {
+    console.warn(
+      `⚠️ Batched analysis returned partial output: ${failedBatchList.length}/${batches.length} batch(es) failed`
+    )
   }
   
   // Merge results from all batches
@@ -937,8 +1192,18 @@ async function analyzeFindingsBatched(
   console.log(`   📊 Found ${mergedResult.patterns.length} patterns (merged)`)
   console.log(`   ⚡ Found ${mergedResult.contradictions.length} contradictions`)
   console.log(`   🔎 Found ${mergedResult.gaps.length} gaps`)
-  
-  return {
+
+  const aggregatedPacking = batchResults.reduce(
+    (acc, result) => {
+      acc.packedFindings += result.diagnostics?.packedFindings || 0
+      acc.droppedFindings += result.diagnostics?.droppedFindings || 0
+      acc.truncatedFields += result.diagnostics?.truncatedFields || 0
+      return acc
+    },
+    { packedFindings: 0, droppedFindings: 0, truncatedFields: 0 }
+  )
+
+  let result: AnalysisResult = {
     id: uuidv4(),
     projectId,
     analyzedPapers: uniquePapers,
@@ -951,16 +1216,175 @@ async function analyzeFindingsBatched(
     analyzedAt: new Date(),
     analysisTimeMs,
     modelUsed: 'gpt-4o',
-    findingsHash: hashFindings(findings)
+    findingsHash: hashFindings(findings),
+    completeness: {
+      status: failedBatchList.length > 0 ? 'partial' : 'complete',
+      totalBatches: batches.length,
+      failedBatches: failedBatchList.length,
+      failedBatchIndexes: failedBatchList,
+    },
+    diagnostics: {
+      packedFindings: aggregatedPacking.packedFindings,
+      droppedFindings: aggregatedPacking.droppedFindings,
+      truncatedFields: aggregatedPacking.truncatedFields,
+    },
   }
+
+  result = enforceAnalysisIntegrity(result, findings)
+  return result
 }
 
 /**
  * Merge results from multiple batch analyses
- * - Deduplicates similar patterns by merging their support
- * - Keeps all unique contradictions and gaps
- * - Combines key insights
+ * - Groups patterns using paper overlap + normalized claim features
+ * - Reconciles contradictions and gaps globally with deterministic dedupe keys
+ * - Combines summaries/insights with deterministic de-duplication
  */
+function getPatternGroupKey(pattern: Pattern): string {
+  const claim = normalizeKey(pattern.claim)
+  const direction = normalizeKey(pattern.direction || '')
+  return `${claim}|${direction}`
+}
+
+function deriveStrengthFromSupport(count: number, total: number): 'strong' | 'moderate' | 'emerging' {
+  const ratio = total > 0 ? count / total : 0
+  if (count >= 4 || ratio >= 0.5) return 'strong'
+  if (count >= 3 || ratio >= 0.3) return 'moderate'
+  return 'emerging'
+}
+
+function mergePatternGroup(group: Pattern[], totalPapers: number): Pattern {
+  const sorted = [...group].sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence
+    return b.support.count - a.support.count
+  })
+  const representative = sorted[0]
+  const mergedSupports = dedupePaperSupports(
+    group.flatMap(pattern => pattern.support.papers)
+  )
+  const supportCount = countUniqueSupportPapers(mergedSupports)
+  const mergedValues = dedupeStrings(
+    group.flatMap(pattern => pattern.values?.individual || [])
+  )
+  const mergedLimitations = dedupeStrings(
+    group
+      .map(pattern => pattern.limitations || '')
+      .filter(Boolean)
+  )
+
+  return {
+    ...representative,
+    id: uuidv4(),
+    support: {
+      papers: mergedSupports,
+      count: supportCount,
+      total: totalPapers,
+    },
+    strength: deriveStrengthFromSupport(supportCount, totalPapers),
+    confidence: Math.max(...group.map(pattern => pattern.confidence)),
+    values: representative.values ? {
+      ...representative.values,
+      individual: mergedValues,
+      summary:
+        group
+          .map(pattern => pattern.values?.summary || '')
+          .sort((a, b) => b.length - a.length)[0] || representative.values.summary,
+    } : (mergedValues.length > 0 ? {
+      summary: representative.summary,
+      individual: mergedValues,
+    } : undefined),
+    limitations: mergedLimitations.length > 0 ? mergedLimitations.join(' ') : representative.limitations,
+  }
+}
+
+function mergeContradictionsDeterministically(contradictions: Contradiction[]): Contradiction[] {
+  const merged = new Map<string, Contradiction>()
+  for (const contradiction of contradictions) {
+    const sidePaperSets = contradiction.sides
+      .map(side => dedupeStrings(side.papers.map(paper => paper.paperId)).sort().join(','))
+      .sort()
+      .join('|')
+    const key = `${contradiction.contradictionType}|${normalizeKey(contradiction.description)}|${sidePaperSets}`
+    const existing = merged.get(key)
+
+    if (!existing) {
+      merged.set(key, {
+        ...contradiction,
+        id: uuidv4(),
+        sides: contradiction.sides.map(side => ({
+          ...side,
+          papers: dedupePaperSupports(side.papers),
+        })),
+      })
+      continue
+    }
+
+    const sides = [...existing.sides]
+    for (const side of contradiction.sides) {
+      const sideKey = normalizeKey(side.position)
+      const idx = sides.findIndex(existingSide => normalizeKey(existingSide.position) === sideKey)
+      if (idx < 0) {
+        sides.push({
+          ...side,
+          papers: dedupePaperSupports(side.papers),
+        })
+        continue
+      }
+
+      const prior = sides[idx]
+      sides[idx] = {
+        ...prior,
+        papers: dedupePaperSupports([...prior.papers, ...side.papers]),
+        evidenceStrength: mergeEvidenceStrength(prior.evidenceStrength, side.evidenceStrength),
+      }
+    }
+
+    merged.set(key, {
+      ...existing,
+      sides,
+      confidence: Math.max(existing.confidence, contradiction.confidence),
+      severity: pickHighestSeverity(existing.severity, contradiction.severity),
+      possibleExplanation:
+        (contradiction.possibleExplanation || '').length > (existing.possibleExplanation || '').length
+          ? contradiction.possibleExplanation
+          : existing.possibleExplanation,
+      resolutionSuggestion:
+        (contradiction.resolutionSuggestion || '').length > (existing.resolutionSuggestion || '').length
+          ? contradiction.resolutionSuggestion
+          : existing.resolutionSuggestion,
+    })
+  }
+  return [...merged.values()]
+}
+
+function mergeGapsDeterministically(gaps: Gap[]): Gap[] {
+  const merged = new Map<string, Gap>()
+  for (const gap of gaps) {
+    const key = `${gap.type}|${normalizeKey(gap.description)}`
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, {
+        ...gap,
+        id: uuidv4(),
+        suggestedBy: dedupeStrings(gap.suggestedBy),
+      })
+      continue
+    }
+    merged.set(key, {
+      ...existing,
+      suggestedBy: dedupeStrings([...existing.suggestedBy, ...gap.suggestedBy]),
+      confidence: Math.max(existing.confidence, gap.confidence),
+      priority: mergeGapPriority(existing.priority, gap.priority),
+      relevance: gap.relevance.length > existing.relevance.length ? gap.relevance : existing.relevance,
+      suggestedResearchQuestion:
+        (gap.suggestedResearchQuestion || '').length > (existing.suggestedResearchQuestion || '').length
+          ? gap.suggestedResearchQuestion
+          : existing.suggestedResearchQuestion,
+    })
+  }
+  return [...merged.values()]
+}
+
 function mergeBatchResults(
   results: Array<{
     patterns: Pattern[]
@@ -992,88 +1416,198 @@ function mergeBatchResults(
     const result = results[0]
     result.patterns.forEach(p => {
       p.support.total = totalPapers
+      p.support.papers = dedupePaperSupports(p.support.papers)
+      p.support.count = countUniqueSupportPapers(p.support.papers)
+      p.strength = deriveStrengthFromSupport(p.support.count, totalPapers)
     })
-    return result
-  }
-  
-  // Merge patterns - group similar claims and combine support
-  const mergedPatterns: Pattern[] = []
-  const patternClaims = new Map<string, Pattern>()
-  
-  for (const result of results) {
-    for (const pattern of result.patterns) {
-      // Normalize claim for comparison (lowercase, remove punctuation)
-      const normalizedClaim = pattern.claim.toLowerCase().replace(/[^\w\s]/g, '').trim()
-      
-      // Check if we have a similar pattern already
-      let merged = false
-      for (const [existingClaim, existingPattern] of patternClaims) {
-        // Simple similarity check - if claims share >50% of words
-        const existingWords = new Set(existingClaim.split(/\s+/))
-        const newWords = normalizedClaim.split(/\s+/)
-        const overlap = newWords.filter(w => existingWords.has(w)).length
-        const similarity = overlap / Math.max(existingWords.size, newWords.length)
-        
-        if (similarity > 0.5) {
-          // Merge into existing pattern
-          const seenPaperIds = new Set(existingPattern.support.papers.map(p => p.paperId))
-          for (const paper of pattern.support.papers) {
-            if (!seenPaperIds.has(paper.paperId)) {
-              existingPattern.support.papers.push(paper)
-              seenPaperIds.add(paper.paperId)
-            }
-          }
-          existingPattern.support.count = existingPattern.support.papers.length
-          existingPattern.support.total = totalPapers
-          
-          // Take higher confidence
-          existingPattern.confidence = Math.max(existingPattern.confidence, pattern.confidence)
-          
-          // Merge values if present
-          if (pattern.values && existingPattern.values) {
-            const seenValues = new Set(existingPattern.values.individual)
-            for (const val of pattern.values.individual) {
-              if (!seenValues.has(val)) {
-                existingPattern.values.individual.push(val)
-              }
-            }
-          }
-          
-          merged = true
-          break
-        }
-      }
-      
-      if (!merged) {
-        pattern.support.total = totalPapers
-        patternClaims.set(normalizedClaim, pattern)
-        mergedPatterns.push(pattern)
-      }
+    return {
+      ...result,
+      contradictions: mergeContradictionsDeterministically(result.contradictions),
+      gaps: mergeGapsDeterministically(result.gaps),
+      keyInsights: dedupeStrings(result.keyInsights).slice(0, 5),
     }
   }
-  
-  // Sort patterns by support count
-  mergedPatterns.sort((a, b) => b.support.count - a.support.count)
-  
-  // Collect all contradictions (simple concat, could dedupe if needed)
-  const allContradictions = results.flatMap(r => r.contradictions)
-  
-  // Collect all gaps (simple concat, could dedupe if needed)
-  const allGaps = results.flatMap(r => r.gaps)
-  
-  // Combine summaries
-  const combinedSummary = results.map(r => r.summary).join(' ')
-  
-  // Dedupe and limit key insights
-  const allInsights = results.flatMap(r => r.keyInsights)
-  const uniqueInsights = [...new Set(allInsights)].slice(0, 7)
-  
+
+  const patternGroups = new Map<string, Pattern[]>()
+  for (const pattern of results.flatMap(result => result.patterns)) {
+    const key = getPatternGroupKey(pattern)
+    const existing = patternGroups.get(key)
+    if (existing) {
+      existing.push(pattern)
+    } else {
+      patternGroups.set(key, [pattern])
+    }
+  }
+
+  const mergedPatterns = [...patternGroups.values()]
+    .map(group => mergePatternGroup(group, totalPapers))
+    .sort((left, right) => right.support.count - left.support.count)
+
+  const allContradictions = results.flatMap(result => result.contradictions)
+  const allGaps = results.flatMap(result => result.gaps)
+
+  const combinedSummary = dedupeStrings(
+    results
+      .map(result => result.summary.trim())
+      .filter(Boolean)
+  ).join(' ')
+
+  const uniqueInsights = dedupeStrings(results.flatMap(result => result.keyInsights)).slice(0, 5)
+
   return {
     patterns: mergedPatterns,
-    contradictions: allContradictions,
-    gaps: allGaps,
+    contradictions: mergeContradictionsDeterministically(allContradictions),
+    gaps: mergeGapsDeterministically(allGaps),
     summary: combinedSummary,
     keyInsights: uniqueInsights
+  }
+}
+
+function extractXofYClaims(text: string): Array<{ x: number; y: number }> {
+  const matches = text.matchAll(/(\d+)\s+of\s+(\d+)/gi)
+  const parsed: Array<{ x: number; y: number }> = []
+  for (const match of matches) {
+    const x = Number.parseInt(match[1] || '', 10)
+    const y = Number.parseInt(match[2] || '', 10)
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      parsed.push({ x, y })
+    }
+  }
+  return parsed
+}
+
+function validateAnalysisIntegrity(result: AnalysisResult, findings: FindingWithPaper[]): string[] {
+  const findingMap = new Map(findings.map(finding => [finding.id, finding]))
+  const paperIds = new Set(findings.map(finding => finding.paperId))
+  const errors: string[] = []
+
+  result.patterns.forEach((pattern, patternIndex) => {
+    const uniqueSupportPaperIds = new Set(pattern.support.papers.map(paper => paper.paperId))
+
+    if (pattern.support.count > pattern.support.total) {
+      errors.push(
+        `Pattern ${patternIndex + 1}: support.count (${pattern.support.count}) exceeds support.total (${pattern.support.total})`
+      )
+    }
+    if (pattern.support.count !== uniqueSupportPaperIds.size) {
+      errors.push(
+        `Pattern ${patternIndex + 1}: support.count (${pattern.support.count}) does not match unique support papers (${uniqueSupportPaperIds.size})`
+      )
+    }
+
+    pattern.support.papers.forEach((paperSupport, supportIndex) => {
+      if (!paperIds.has(paperSupport.paperId)) {
+        errors.push(
+          `Pattern ${patternIndex + 1}, support ${supportIndex + 1}: unknown paperId ${paperSupport.paperId}`
+        )
+      }
+      const finding = findingMap.get(paperSupport.findingId)
+      if (!finding) {
+        errors.push(
+          `Pattern ${patternIndex + 1}, support ${supportIndex + 1}: unknown findingId ${paperSupport.findingId}`
+        )
+        return
+      }
+      if (finding.paperId !== paperSupport.paperId) {
+        errors.push(
+          `Pattern ${patternIndex + 1}, support ${supportIndex + 1}: findingId ${paperSupport.findingId} belongs to ${finding.paperId}, not ${paperSupport.paperId}`
+        )
+      }
+    })
+
+    const denominatorChecks = [
+      ...extractXofYClaims(pattern.claim),
+      ...extractXofYClaims(pattern.summary),
+      ...extractXofYClaims(pattern.values?.summary || ''),
+    ]
+    for (const { x, y } of denominatorChecks) {
+      if (x > y) {
+        errors.push(`Pattern ${patternIndex + 1}: invalid denominator claim "${x} of ${y}"`)
+      }
+      if (y > pattern.support.total) {
+        errors.push(
+          `Pattern ${patternIndex + 1}: denominator "${x} of ${y}" exceeds support.total (${pattern.support.total})`
+        )
+      }
+      if (x > pattern.support.count) {
+        errors.push(
+          `Pattern ${patternIndex + 1}: numerator "${x} of ${y}" exceeds support.count (${pattern.support.count})`
+        )
+      }
+    }
+  })
+
+  result.contradictions.forEach((contradiction, contradictionIndex) => {
+    if (contradiction.sides.length < 2) {
+      errors.push(`Contradiction ${contradictionIndex + 1}: has fewer than 2 sides`)
+    }
+    contradiction.sides.forEach((side, sideIndex) => {
+      if (side.papers.length === 0) {
+        errors.push(
+          `Contradiction ${contradictionIndex + 1}, side ${sideIndex + 1}: contains no supporting papers`
+        )
+      }
+      side.papers.forEach((paperSupport, supportIndex) => {
+        if (!paperIds.has(paperSupport.paperId)) {
+          errors.push(
+            `Contradiction ${contradictionIndex + 1}, side ${sideIndex + 1}, support ${supportIndex + 1}: unknown paperId ${paperSupport.paperId}`
+          )
+        }
+        const finding = findingMap.get(paperSupport.findingId)
+        if (!finding) {
+          errors.push(
+            `Contradiction ${contradictionIndex + 1}, side ${sideIndex + 1}, support ${supportIndex + 1}: unknown findingId ${paperSupport.findingId}`
+          )
+          return
+        }
+        if (finding.paperId !== paperSupport.paperId) {
+          errors.push(
+            `Contradiction ${contradictionIndex + 1}, side ${sideIndex + 1}, support ${supportIndex + 1}: findingId ${paperSupport.findingId} belongs to ${finding.paperId}, not ${paperSupport.paperId}`
+          )
+        }
+      })
+    })
+  })
+
+  result.gaps.forEach((gap, gapIndex) => {
+    for (const paperId of gap.suggestedBy) {
+      if (!paperIds.has(paperId)) {
+        errors.push(`Gap ${gapIndex + 1}: unknown suggestedBy paperId ${paperId}`)
+      }
+    }
+  })
+
+  return dedupeStrings(errors)
+}
+
+function enforceAnalysisIntegrity(result: AnalysisResult, findings: FindingWithPaper[]): AnalysisResult {
+  const errors = validateAnalysisIntegrity(result, findings)
+  if (errors.length === 0) {
+    return {
+      ...result,
+      diagnostics: {
+        ...(result.diagnostics || {}),
+        integrityRepairApplied: false,
+      },
+    }
+  }
+
+  const failureMessage =
+    `Analysis integrity validation failed (${errors.length} issue(s)):\n` +
+    errors.slice(0, 10).join('\n')
+
+  if (STRICT_INTEGRITY_MODE) {
+    throw new Error(failureMessage)
+  }
+  console.error(`❌ ${failureMessage}`)
+
+  return {
+    ...result,
+    diagnostics: {
+      ...(result.diagnostics || {}),
+      integrityRepairApplied: false,
+      integrityErrors: errors,
+    },
   }
 }
 

@@ -26,6 +26,10 @@
 
 // Main analysis function
 export { analyzeFindings } from './analyzer'
+export {
+  isAnalysisReadyForSynthesis,
+  getAnalysisReadinessIssue,
+} from './contract'
 
 // Database functions
 export {

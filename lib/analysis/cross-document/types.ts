@@ -180,6 +180,30 @@ export type FieldMaturity =
   | 'contested'    // Many studies but fundamental disagreements persist
 
 /**
+ * Analysis completeness contract.
+ * - complete: all analysis batches/calls succeeded
+ * - partial: some batches failed but analyzer returned usable output
+ * - failed: no usable analysis output could be produced
+ */
+export interface AnalysisCompleteness {
+  status: 'complete' | 'partial' | 'failed'
+  totalBatches?: number
+  failedBatches?: number
+  failedBatchIndexes?: number[]
+}
+
+/**
+ * Analyzer diagnostics for observability and integrity tracing.
+ */
+export interface AnalysisDiagnostics {
+  packedFindings?: number
+  droppedFindings?: number
+  truncatedFields?: number
+  integrityRepairApplied?: boolean
+  integrityErrors?: string[]
+}
+
+/**
  * Complete cross-document analysis result
  */
 export interface AnalysisResult {
@@ -202,6 +226,10 @@ export interface AnalysisResult {
   // NEW: Synthesis quality assessment
   synthesisStrength?: SynthesisStrength
   fieldMaturity?: FieldMaturity
+
+  // NEW: Completeness and diagnostics metadata
+  completeness?: AnalysisCompleteness
+  diagnostics?: AnalysisDiagnostics
   
   // Metadata
   analyzedAt: Date
