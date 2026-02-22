@@ -48,3 +48,4 @@ next-env.d.ts
 
 *.pdf
 .bulk-ingest-progress.json
+paper.md
