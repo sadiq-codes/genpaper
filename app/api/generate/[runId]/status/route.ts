@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateUser } from "@/lib/services/project-service";
 import { getRun, getLatestRun } from "@/lib/generation/run-manager";
+import { reconcileRunHealth } from "@/lib/generation/run-recovery";
 import { getProjectWithContent } from "@/lib/db/research";
 import { warn, error as logError } from "@/lib/utils/logger";
 
@@ -68,7 +69,7 @@ export async function GET(
       );
     }
 
-    let run;
+    let run: Awaited<ReturnType<typeof getRun>> = null;
 
     // Special case: get latest run for a project
     if (runId === "latest-for-project") {
@@ -112,6 +113,14 @@ export async function GET(
         { error: "Access denied" },
         { status: 403, headers: getCorsHeaders(request) }
       );
+    }
+
+    if (run.status === "pending" || run.status === "running") {
+      try {
+        run = (await reconcileRunHealth(run.id)) || run;
+      } catch (reconcileError) {
+        warn({ error: reconcileError, runId: run.id }, "Run reconciliation failed");
+      }
     }
 
     // Build response

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateUser } from "@/lib/services/project-service";
 import { getRunningRun, getLatestRun } from "@/lib/generation/run-manager";
+import { reconcileRunHealth } from "@/lib/generation/run-recovery";
 import { getServiceClient } from "@/lib/supabase/service";
+
+export const runtime = "nodejs";
 
 /**
  * GET /api/generate/status/[projectId]
@@ -25,21 +28,34 @@ export async function GET(
 
     // Check for active (pending/running) generation
     const activeRun = await getRunningRun(projectId);
-    
+    let reconciledRun: Awaited<ReturnType<typeof getRunningRun>> = null;
+
     if (activeRun) {
       // Verify ownership
       if (activeRun.user_id !== user.id) {
         return NextResponse.json({ error: "Access denied" }, { status: 403 });
       }
 
-      return NextResponse.json({
-        hasActiveRun: true,
-        runId: activeRun.id,
-        status: activeRun.status,
-        progress: activeRun.progress,
-        currentStage: activeRun.current_stage,
-        currentSection: activeRun.current_section,
-      });
+      try {
+        reconciledRun = await reconcileRunHealth(activeRun.id);
+      } catch (reconcileError) {
+        console.warn(
+          "[generate/status] Run reconciliation failed:",
+          reconcileError
+        );
+      }
+
+      const effectiveRun = reconciledRun || activeRun;
+      if (effectiveRun.status === "pending" || effectiveRun.status === "running") {
+        return NextResponse.json({
+          hasActiveRun: true,
+          runId: effectiveRun.id,
+          status: effectiveRun.status,
+          progress: effectiveRun.progress,
+          currentStage: effectiveRun.current_stage,
+          currentSection: effectiveRun.current_section,
+        });
+      }
     }
 
     // No active run - check if project is already complete
@@ -69,7 +85,7 @@ export async function GET(
     }
 
     // Check latest run for failed/cancelled status
-    const latestRun = await getLatestRun(projectId);
+    const latestRun = reconciledRun || (await getLatestRun(projectId));
     if (latestRun) {
       if (latestRun.status === "failed") {
         return NextResponse.json({
