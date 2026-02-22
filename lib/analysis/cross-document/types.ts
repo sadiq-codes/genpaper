@@ -251,6 +251,7 @@ export interface AnalysisInput {
   projectId: string
   findings: FindingWithPaper[]     // All findings with paper context
   topic?: string                   // Optional topic/focus for analysis
+  signal?: AbortSignal             // Cancellation signal checked between batches
 }
 
 /**

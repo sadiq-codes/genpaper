@@ -34,6 +34,8 @@ export interface EnhancedGenerationOptions {
   searchYearRange?: SearchYearRange
   /** Academic discipline from paper profile - affects source filtering */
   discipline?: string
+  /** Optional cancellation signal for long-running generation jobs */
+  signal?: AbortSignal
 }
 
 

@@ -275,6 +275,7 @@ export interface ProfileGenerationInput {
   paperType: string
   hasOriginalResearch?: boolean
   userContext?: string
+  signal?: AbortSignal
   /** Target total word count for the paper */
   length?: number
   /** User's research question (if original research) */
