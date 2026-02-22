@@ -71,6 +71,12 @@ export interface QualityIssue {
   details?: string
 }
 
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error('Run was cancelled')
+  }
+}
+
 // =============================================================================
 // Phase 1: Profile Generation
 // =============================================================================
@@ -81,8 +87,10 @@ export interface QualityIssue {
  */
 export async function runProfilePhase(
   config: PipelineConfig,
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<PaperProfile> {
+  throwIfCancelled(signal)
   const sanitizedTopic = sanitizeTopic(config.topic)
   
   onProgress?.('profiling', 5, 'Understanding your research area...')
@@ -95,7 +103,9 @@ export async function runProfilePhase(
     length: config.length,
     researchQuestion: config.originalResearch?.research_question,
     keyFindings: config.originalResearch?.key_findings,
+    signal,
   })
+  throwIfCancelled(signal)
   const profile = scaleProfileOutlineForLength(rawProfile, config.length)
   
   info({
@@ -122,8 +132,10 @@ export async function runDiscoveryPhase(
   profile: PaperProfile,
   projectId: string,
   userId: string,
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<PaperWithAuthors[]> {
+  throwIfCancelled(signal)
   const sanitizedTopic = sanitizeTopic(config.topic)
   
   onProgress?.('search', 15, 'Searching academic databases...')
@@ -157,10 +169,12 @@ export async function runDiscoveryPhase(
     },
     recencyProfile: profile.sourceExpectations.recencyProfile,
     searchYearRange: profile.sourceExpectations.searchYearRange,
-    discipline: profile.discipline.primary
+    discipline: profile.discipline.primary,
+    signal,
   }
 
   const papers = await collectPapers(discoveryOptions)
+  throwIfCancelled(signal)
   
   if (papers.length === 0) {
     throw new Error('No papers found for the given topic')
@@ -187,7 +201,8 @@ export async function runContentReadinessPhase(
   topic: string,
   profile: PaperProfile,
   papers: PaperWithAuthors[],
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<{
   readyPaperIds: string[]
   fullTextReadyPaperIds: string[]
@@ -195,6 +210,7 @@ export async function runContentReadinessPhase(
   upgradedToFullText: number
   rechunked: number
 }> {
+  throwIfCancelled(signal)
   const paperIds = papers.map(p => p.id)
   if (paperIds.length === 0) {
     throw new Error('No papers available for content readiness checks')
@@ -207,6 +223,7 @@ export async function runContentReadinessPhase(
   onProgress?.('planning', 23, 'Preparing sources for deep reading...')
 
   let statusMap = await getPaperProcessingStatusMap(paperIds)
+  throwIfCancelled(signal)
 
   const classify = () => {
     const readyPaperIds: string[] = []
@@ -252,6 +269,7 @@ export async function runContentReadinessPhase(
 
     let cursor = 0
     while (fullTextReadyPaperIds.length < targetFullTextReady && cursor < sortedCandidates.length) {
+      throwIfCancelled(signal)
       const remainingNeeded = targetFullTextReady - fullTextReadyPaperIds.length
       const batchSize = Math.min(3, remainingNeeded, sortedCandidates.length - cursor)
       const batchIds = sortedCandidates.slice(cursor, cursor + batchSize)
@@ -265,11 +283,13 @@ export async function runContentReadinessPhase(
 
       await Promise.allSettled(
         batchIds.map(async paperId => {
+          throwIfCancelled(signal)
           try {
             await ensurePaperContentReadyById(paperId, {
               searchQuery: topic,
               // Keep extraction ownership in the dedicated extraction phase.
               skipStructuredExtraction: true,
+              signal,
             })
           } catch (err) {
             warn({ paperId, error: err }, 'Full-text upgrade failed')
@@ -278,6 +298,7 @@ export async function runContentReadinessPhase(
       )
 
       statusMap = await getPaperProcessingStatusMap(paperIds)
+      throwIfCancelled(signal)
       const afterUpgrade = classify()
       readyPaperIds = afterUpgrade.readyPaperIds
       fullTextReadyPaperIds = afterUpgrade.fullTextReadyPaperIds
@@ -332,21 +353,25 @@ function scoreExtractionPriority(paper: PaperWithAuthors | undefined): number {
 export async function runExtractionCheckPhase(
   paperIds: string[],
   papers: PaperWithAuthors[],
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<{
   cachedPaperIds: string[]
   pendingPaperIds: string[]
   totalBatches: number
 }> {
+  throwIfCancelled(signal)
   onProgress?.('planning', 25, 'Reviewing what we already know...')
   
   // Check which papers need extraction
   const needsExtraction = await getPapersNeedingExtractionService(paperIds)
+  throwIfCancelled(signal)
   const cachedPaperIds = paperIds.filter(id => !needsExtraction.includes(id))
   
   // Filter to papers that are explicitly full-text ready in DB.
   // Do not infer from in-memory `papers[].pdf_content`, which can be metadata-only.
   const processingStatusMap = await getPaperProcessingStatusMap(needsExtraction)
+  throwIfCancelled(signal)
   const usableFullTextIds = new Set(
     needsExtraction.filter(id => isFullTextReadyStatus(processingStatusMap.get(id) || 'pending'))
   )
@@ -384,8 +409,10 @@ export async function runExtractionCheckPhase(
 export async function runExtractionBatchPhase(
   batchIndex: number,
   pendingPaperIds: string[],
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<number> {
+  throwIfCancelled(signal)
   const startIdx = batchIndex * EXTRACTION_BATCH_SIZE
   const endIdx = Math.min(startIdx + EXTRACTION_BATCH_SIZE, pendingPaperIds.length)
   const batchPaperIds = pendingPaperIds.slice(startIdx, endIdx)
@@ -405,6 +432,7 @@ export async function runExtractionBatchPhase(
   try {
     const stillPending = await getPapersNeedingExtractionService(batchPaperIds)
     extractableNow = new Set(stillPending)
+    throwIfCancelled(signal)
   } catch (err) {
     warn({ batchIndex, error: err }, 'Failed to refresh extraction status for batch; using original batch IDs')
     extractableNow = new Set(batchPaperIds)
@@ -413,12 +441,14 @@ export async function runExtractionBatchPhase(
   await Promise.all(
     batchPaperIds.map(paperId =>
       limit(async () => {
+        if (signal?.aborted) return
         if (!extractableNow.has(paperId)) return
 
         try {
           await ensurePaperContentReadyById(paperId, {
             skipStructuredExtraction: false,
             waitForStructuredExtraction: true,
+            signal,
           })
           extracted++
         } catch (error) {
@@ -427,6 +457,7 @@ export async function runExtractionBatchPhase(
       })
     )
   )
+  throwIfCancelled(signal)
   
   info({ batchIndex, extracted, total: batchPaperIds.length }, 'Extraction batch complete')
   
@@ -505,12 +536,15 @@ export async function runAnalysisPhase(
   papers: PaperWithAuthors[],
   topic: string,
   profile: PaperProfile,
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<HybridThemeExtractionResult> {
+  throwIfCancelled(signal)
   onProgress?.('planning', 30, 'Connecting ideas across sources...')
   
   // Get all extractions (cached + newly extracted)
   const extractions = await getExtractionsService(paperIds)
+  throwIfCancelled(signal)
   
   // Build findings list
   const allFindings: FindingWithPaper[] = []
@@ -542,8 +576,10 @@ export async function runAnalysisPhase(
   const analysisResult = await analyzeFindings({
     projectId,
     findings: analysisFindings,
-    topic
+    topic,
+    signal
   })
+  throwIfCancelled(signal)
   const readinessIssue = getAnalysisReadinessIssue(analysisResult)
   if (readinessIssue) {
     warn({ readinessIssue }, 'Analysis incomplete; falling back to RAG-only context building')
@@ -576,8 +612,10 @@ export async function runBuildContextsPhase(
   papers: PaperWithAuthors[],
   themeResult: HybridThemeExtractionResult | null,
   config: PipelineConfig,
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<SectionContext[]> {
+  throwIfCancelled(signal)
   const sanitizedTopic = sanitizeTopic(config.topic)
   const FINDINGS_THRESHOLD = 5
   const totalFindings = themeResult?.extractionStats.totalFindings || 0
@@ -586,10 +624,13 @@ export async function runBuildContextsPhase(
     totalFindings >= FINDINGS_THRESHOLD &&
     isAnalysisReadyForSynthesis(themeResult.analysisResult)
   )
+  const synthesisAnalysis = canUseSynthesisSignals && themeResult
+    ? themeResult.analysisResult
+    : null
   
   // Merge analysis into profile if available
-  const enhancedProfile = canUseSynthesisSignals
-    ? mergeAnalysisResultIntoProfile(profile, themeResult.analysisResult)
+  const enhancedProfile = synthesisAnalysis
+    ? mergeAnalysisResultIntoProfile(profile, synthesisAnalysis)
     : profile
   
   // Build outline from profile
@@ -627,6 +668,7 @@ export async function runBuildContextsPhase(
   // Try hybrid enrichment if we have enough findings
   if (canUseSynthesisSignals && themeResult) {
     try {
+      throwIfCancelled(signal)
       sectionContexts = await enrichAndBuildContexts(
         typedOutline,
         themeResult,
@@ -643,11 +685,14 @@ export async function runBuildContextsPhase(
       onProgress?.('writing', 45, 'Sections enriched with insights')
     } catch (error) {
       warn({ error }, 'Hybrid enrichment failed, using RAG-only')
+      throwIfCancelled(signal)
       sectionContexts = await GenerationContextService.buildContexts(typedOutline, sanitizedTopic, papers)
     }
   } else {
+    throwIfCancelled(signal)
     sectionContexts = await GenerationContextService.buildContexts(typedOutline, sanitizedTopic, papers)
   }
+  throwIfCancelled(signal)
   
   onProgress?.('writing', 48, 'Evidence gathered — writing soon')
   
@@ -669,8 +714,10 @@ export async function runSectionGenerationPhase(
   profile: PaperProfile,
   config: PipelineConfig,
   totalSections: number,
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<SectionResult> {
+  throwIfCancelled(signal)
   const sanitizedTopic = sanitizeTopic(config.topic)
   const sectionTitle = context.title || context.sectionKey
   
@@ -743,13 +790,15 @@ export async function runSectionGenerationPhase(
   if (shouldSplit && contextForGeneration.subsections && contextForGeneration.subsections.length > 0) {
     info({ sectionIndex, title: sectionTitle, subsections: contextForGeneration.subsections.length, targetWords: sectionTargetWords },
       'Using subsection splitting for section')
-    result = await generateSectionBySubsections(contextForGeneration, baseOptions)
+    result = await generateSectionBySubsections(contextForGeneration, baseOptions, undefined, signal)
   } else {
     result = await generateWithUnifiedTemplate({
       context: contextForGeneration,
-      options: baseOptions
+      options: baseOptions,
+      signal,
     })
   }
+  throwIfCancelled(signal)
   
   // Ensure section has heading
   let content = result.content.trim()
@@ -825,13 +874,16 @@ function hasLikelyTruncatedEnding(content: string): boolean {
 export async function runQualityCheckPhase(
   sections: SectionResult[],
   contexts: SectionContext[],
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<QualityIssue[]> {
+  throwIfCancelled(signal)
   onProgress?.('finishing', 88, 'Reviewing for completeness...')
   
   const issues: QualityIssue[] = []
   
   for (let i = 0; i < sections.length; i++) {
+    throwIfCancelled(signal)
     const section = sections[i]
     void contexts[i]
 
@@ -863,8 +915,10 @@ export async function runSectionRewritePhase(
   profile: PaperProfile,
   config: PipelineConfig,
   totalSections: number,
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<SectionResult> {
+  throwIfCancelled(signal)
   void previousContent
   const sanitizedTopic = sanitizeTopic(config.topic)
   const sectionTitle = context.title || context.sectionKey
@@ -930,13 +984,15 @@ export async function runSectionRewritePhase(
   if (shouldSplit && contextForRewrite.subsections && contextForRewrite.subsections.length > 0) {
     info({ sectionIndex, title: sectionTitle, subsections: contextForRewrite.subsections.length, targetWords: sectionTargetWords },
       'Using subsection splitting for rewrite')
-    result = await generateSectionBySubsections(contextForRewrite, baseOptions)
+    result = await generateSectionBySubsections(contextForRewrite, baseOptions, undefined, signal)
   } else {
     result = await generateWithUnifiedTemplate({
       context: contextForRewrite,
-      options: baseOptions
+      options: baseOptions,
+      signal,
     })
   }
+  throwIfCancelled(signal)
   
   let content = result.content.trim()
   const startsWithHeading = /^##?\s+\w/.test(content)
@@ -1038,8 +1094,10 @@ export async function runFinalizePhase(
   projectId: string,
   sections: SectionResult[],
   papers: PaperWithAuthors[],
-  onProgress?: StepProgressCallback
+  onProgress?: StepProgressCallback,
+  signal?: AbortSignal
 ): Promise<{ content: string; citationCount: number }> {
+  throwIfCancelled(signal)
   onProgress?.('finishing', 95, 'Saving your paper...')
   
   // Combine all section content
@@ -1070,6 +1128,7 @@ export async function runFinalizePhase(
   
   // Save content
   await updateProjectContent(projectId, fullContent.trim(), citationsMap)
+  throwIfCancelled(signal)
   
   // Save citation instances
   if (citationInstances.length > 0) {
@@ -1129,12 +1188,15 @@ export async function runFinalizePhase(
         }
       }
     } catch (err) {
+      throwIfCancelled(signal)
       warn({ error: err }, 'Failed to save citation instances')
     }
   }
   
   // Update project status
+  throwIfCancelled(signal)
   await updateResearchProjectStatus(projectId, 'complete' as PaperStatus)
+  throwIfCancelled(signal)
   
   info({
     wordCount: fullContent.split(/\s+/).length,
