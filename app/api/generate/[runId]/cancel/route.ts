@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateUser } from "@/lib/services/project-service";
 import { getRun, emitCancelled } from "@/lib/generation/run-manager";
 import { cancelGenerationJobForRun } from "@/lib/generation/job-queue";
-import { updateResearchProjectStatus } from "@/lib/db/research";
+import { deleteResearchProject } from "@/lib/db/research";
 import { warn, error as logError } from "@/lib/utils/logger";
-import type { PaperStatus } from "@/types/simplified";
 
 export const runtime = "nodejs";
 
@@ -83,8 +82,8 @@ export async function POST(
       );
     }
 
-    // Check if already terminal
-    if (run.status === "completed" || run.status === "failed" || run.status === "cancelled") {
+    // Completed runs are not cancelable (use explicit delete action instead).
+    if (run.status === "completed") {
       return NextResponse.json(
         { 
           runId,
@@ -95,11 +94,12 @@ export async function POST(
       );
     }
 
-    // Cancel the run
-    await emitCancelled(runId);
-
+    // Cancel the run if it is still active.
+    if (run.status !== "cancelled" && run.status !== "failed") {
+      await emitCancelled(runId);
+    }
     await cancelGenerationJobForRun(runId);
-    await updateResearchProjectStatus(run.project_id, "failed" as PaperStatus);
+    await deleteResearchProject(run.project_id);
 
     if (isDev) {
       console.log("Cancelled generation run:", runId);
@@ -109,7 +109,8 @@ export async function POST(
       {
         runId,
         status: "cancelled",
-        message: "Generation cancelled",
+        projectDeleted: true,
+        message: "Generation cancelled and project deleted",
       },
       { headers: getCorsHeaders(request) }
     );
