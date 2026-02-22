@@ -66,10 +66,16 @@ function getPaperSelectionScore(paper: PaperWithAuthors): number {
 export async function collectPapers(
   options: EnhancedGenerationOptions
 ): Promise<PaperWithAuthors[]> {
+  const throwIfCancelled = () => {
+    if (options.signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
+  }
+
   const RECOMMENDED_MIN_PDF_PAPERS = 16
   const SEARCH_OVERFETCH_FACTOR = 2
 
-  const { topic, libraryPaperIds = [], useLibraryOnly, config, userId: _userId, discipline } = options
+  const { topic, libraryPaperIds = [], useLibraryOnly, config, userId: _userId, discipline, signal } = options
   
   console.log(`📋 Generation Request:`)
   console.log(`   🎯 Topic: "${topic}"`)
@@ -78,6 +84,7 @@ export async function collectPapers(
   console.log(`   ⚙️ Target Limit: ${config?.limit || 10}`)
   
   // 1. pinned papers
+  throwIfCancelled()
   const pinnedPapers = libraryPaperIds.length
     ? await getLibraryPapersByIds(libraryPaperIds)
     : []
@@ -111,6 +118,7 @@ export async function collectPapers(
   let discoveredPapers: PaperWithAuthors[] = []
   
   if (!useLibraryOnly && remainingPdfSlots > 0) {
+    throwIfCancelled()
     console.log(`🔍 Searching for papers via external APIs...`)
     
     // Get original research context if available
@@ -203,6 +211,7 @@ export async function collectPapers(
       let queryCursor = 0
 
       for (let phaseIndex = 0; phaseIndex < QUERY_PHASE_SIZES.length; phaseIndex++) {
+        throwIfCancelled()
         const pdfBackedCount = countPapersWithPdf(allPapers)
         if (pdfBackedCount >= remainingPdfSlots || queryCursor >= searchQueries.length) break
 
@@ -218,6 +227,9 @@ export async function collectPapers(
 
         const phaseResults = await Promise.allSettled(
           phaseQueries.map(query => limit(async () => {
+            if (signal?.aborted) {
+              throw new Error('Run was cancelled')
+            }
             const queryOptions = {
               ...searchOptions,
               maxResults: perQueryMax,
@@ -229,6 +241,7 @@ export async function collectPapers(
         )
 
         for (const result of phaseResults) {
+          throwIfCancelled()
           if (result.status === 'rejected') {
             console.warn(`   ⚠️ Query failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`)
             continue
@@ -252,12 +265,14 @@ export async function collectPapers(
       }
 
       while (queryCursor < searchQueries.length && countPapersWithPdf(allPapers) < remainingPdfSlots) {
+        throwIfCancelled()
         const query = searchQueries[queryCursor++]!
         const missingPdf = Math.max(0, remainingPdfSlots - countPapersWithPdf(allPapers))
         const perQueryMax = Math.max(10, Math.min(80, missingPdf * SEARCH_OVERFETCH_FACTOR + 10))
         console.log(`🔁 Catch-up discovery query (${queryCursor}/${searchQueries.length}), per-query cap ${perQueryMax}`)
 
         try {
+          throwIfCancelled()
           const queryOptions = {
             ...searchOptions,
             maxResults: perQueryMax,
@@ -276,6 +291,9 @@ export async function collectPapers(
             }
           }
         } catch (error) {
+          if (signal?.aborted || (error instanceof Error && error.message === 'Run was cancelled')) {
+            throw error
+          }
           console.warn(`   ⚠️ Catch-up query failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       }
@@ -292,6 +310,9 @@ export async function collectPapers(
       console.log(`🎯 External search results: ${discoveredPapers.length} PDF-backed papers selected`)
 
     } catch (err) {
+      if (signal?.aborted || (err instanceof Error && err.message === 'Run was cancelled')) {
+        throw err
+      }
       console.error('External search failed:', err)
       discoveredPapers = []
     }
@@ -343,6 +364,7 @@ export async function collectPapers(
 
   // 3. final coverage check ─────────────────────────────── 
   if (finalPapers.length > 0) {
+      throwIfCancelled()
       console.log(`🚪 Checking if we should wait for better chunk coverage...`)
       
       const initialCoverage = await getCoverage(finalPapers.map(p => p.id))
@@ -367,6 +389,7 @@ export async function collectPapers(
       }
     }
 
+  throwIfCancelled()
   return finalPapers
 }
 
