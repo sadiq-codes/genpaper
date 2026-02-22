@@ -118,7 +118,8 @@ export async function handleGenerationPipelineFailure(
 
 export async function runGenerationPipeline(
   input: GenerationPipelineInput,
-  runStep: GenerationStepRunner
+  runStep: GenerationStepRunner,
+  signal?: AbortSignal
 ): Promise<{
   status: "completed";
   success: boolean;
@@ -133,7 +134,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   await runStep("init", async () => {
     const run = await getRun(runId);
-    if (!run || run.status === "cancelled") {
+    if (!run || run.status === "cancelled" || signal?.aborted) {
       throw new Error("Run was cancelled");
     }
 
@@ -194,7 +195,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   await runStep("profile", async () => {
     const run = await getRun(runId);
-    if (run?.status === "cancelled") throw new Error("Run was cancelled");
+    if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
     const pipelineConfig: PipelineConfig = {
       topic: config.topic,
@@ -209,7 +210,7 @@ export async function runGenerationPipeline(
       originalResearch: config.originalResearch,
     };
 
-    const profile = await runProfilePhase(pipelineConfig, onProgress);
+    const profile = await runProfilePhase(pipelineConfig, onProgress, signal);
 
     // Store profile in state
     await updatePipelineState(runId, { profile });
@@ -250,7 +251,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   await runStep("discover", async () => {
     const run = await getRun(runId);
-    if (run?.status === "cancelled") throw new Error("Run was cancelled");
+    if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
     const state = await getPipelineState(runId);
     if (!state.profile) throw new Error("Profile not found in state");
@@ -273,7 +274,8 @@ export async function runGenerationPipeline(
       state.profile,
       projectId,
       userId,
-      onProgress
+      onProgress,
+      signal
     );
 
     // Store paper IDs in state
@@ -288,7 +290,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   await runStep("content-readiness", async () => {
     const run = await getRun(runId);
-    if (run?.status === "cancelled") throw new Error("Run was cancelled");
+    if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
     const state = await getPipelineState(runId);
     if (!state.paperIds || !state.profile) {
@@ -300,7 +302,8 @@ export async function runGenerationPipeline(
       config.topic,
       state.profile,
       papers,
-      onProgress
+      onProgress,
+      signal
     );
 
     // Narrow downstream pipeline to chunk-ready papers only.
@@ -314,13 +317,13 @@ export async function runGenerationPipeline(
   // =========================================================================
   const extractionCheck = await runStep("extract-check", async () => {
     const run = await getRun(runId);
-    if (run?.status === "cancelled") throw new Error("Run was cancelled");
+    if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
     const state = await getPipelineState(runId);
     if (!state.paperIds) throw new Error("Paper IDs not found in state");
 
     const papers = await getPapersByIds(state.paperIds);
-    const result = await runExtractionCheckPhase(state.paperIds, papers, onProgress);
+    const result = await runExtractionCheckPhase(state.paperIds, papers, onProgress, signal);
 
     // Store extraction progress
     await updatePipelineState(runId, {
@@ -343,7 +346,7 @@ export async function runGenerationPipeline(
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
     await runStep(`extract-batch-${batchIndex}`, async () => {
       const run = await getRun(runId);
-      if (run?.status === "cancelled") throw new Error("Run was cancelled");
+      if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
       const state = await getPipelineState(runId);
       if (!state.paperIds || !state.extractionProgress) {
@@ -353,7 +356,8 @@ export async function runGenerationPipeline(
       const extracted = await runExtractionBatchPhase(
         batchIndex,
         state.extractionProgress.pendingPaperIds,
-        onProgress
+        onProgress,
+        signal
       );
 
       await markExtractionBatchComplete(runId, batchIndex);
@@ -374,7 +378,7 @@ export async function runGenerationPipeline(
       totalFindings: number;
     }> => {
       const run = await getRun(runId);
-      if (run?.status === "cancelled") throw new Error("Run was cancelled");
+      if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
       const state = await getPipelineState(runId);
       if (!state.paperIds || !state.profile) {
@@ -383,14 +387,14 @@ export async function runGenerationPipeline(
 
       const papers = await getPapersByIds(state.paperIds);
 
-      // Run analysis phase
       const analysisResult = await runAnalysisPhase(
         projectId,
         state.paperIds,
         papers,
         config.topic,
         state.profile,
-        onProgress
+        onProgress,
+        signal
       );
 
       // Store analysis result
@@ -420,7 +424,8 @@ export async function runGenerationPipeline(
         papers,
         themeResult,
         pipelineConfig,
-        onProgress
+        onProgress,
+        signal
       );
 
       // Store context summaries in pipeline state
@@ -455,6 +460,7 @@ export async function runGenerationPipeline(
   // If this is missing, section-0 can spend most of its budget rebuilding contexts
   // and then time out before writing starts.
   await runStep("verify-context-cache", async () => {
+    if (signal?.aborted) throw new Error("Run was cancelled");
     let cachedContexts = await loadContextCache<SectionContext>(runId);
 
     // Bounded recovery path: rebuild contexts once in this dedicated step.
@@ -488,7 +494,8 @@ export async function runGenerationPipeline(
         papers,
         null,
         pipelineConfig,
-        onProgress
+        onProgress,
+        signal
       );
 
       if (!rebuiltContexts || rebuiltContexts.length === 0) {
@@ -521,7 +528,7 @@ export async function runGenerationPipeline(
   for (let sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
     await runStep(`section-${sectionIndex}`, async () => {
       const run = await getRun(runId);
-      if (run?.status === "cancelled") throw new Error("Run was cancelled");
+      if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
       const state = await getPipelineState(runId);
       if (!state.profile) {
@@ -563,7 +570,8 @@ export async function runGenerationPipeline(
         state.profile,
         pipelineConfig,
         sectionCount,
-        onProgress
+        onProgress,
+        signal
       );
 
       // Store result and save partial content
@@ -589,7 +597,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   await runStep("completion-gate", async () => {
     const run = await getRun(runId);
-    if (run?.status === "cancelled") throw new Error("Run was cancelled");
+    if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
     const state = await getPipelineState(runId);
     if (!state.sectionResults || !state.profile) {
@@ -601,7 +609,7 @@ export async function runGenerationPipeline(
       return { checked: state.sectionResults.length, truncationIssues: 0, rewritten: 0 };
     }
 
-    const issues = await runQualityCheckPhase(state.sectionResults, contexts, onProgress);
+    const issues = await runQualityCheckPhase(state.sectionResults, contexts, onProgress, signal);
     const truncationIssues = issues
       .filter((i: QualityIssue) => i.issue === "truncation")
       // Avoid duplicate rewrites for the same section
@@ -630,6 +638,7 @@ export async function runGenerationPipeline(
 
     let rewritten = 0;
     for (const issue of toRepair) {
+      if (signal?.aborted) throw new Error("Run was cancelled");
       const latestState = await getPipelineState(runId);
       if (!latestState.profile || !latestState.sectionResults) break;
 
@@ -649,7 +658,8 @@ export async function runGenerationPipeline(
         latestState.profile,
         pipelineConfig,
         contexts.length,
-        onProgress
+        onProgress,
+        signal
       );
 
       await appendSectionResult(runId, issue.sectionIndex, repaired);
@@ -676,7 +686,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   const finalResult = await runStep("finalize", async () => {
     const run = await getRun(runId);
-    if (run?.status === "cancelled") throw new Error("Run was cancelled");
+    if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
     const state = await getPipelineState(runId);
     if (!state.sectionResults || !state.paperIds) {
@@ -689,7 +699,8 @@ export async function runGenerationPipeline(
       projectId,
       state.sectionResults,
       papers,
-      onProgress
+      onProgress,
+      signal
     );
 
     // Record billing
