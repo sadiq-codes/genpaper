@@ -412,7 +412,8 @@ async function generateAnalysisPartWithRetry<T>(
   basePrompt: string,
   _findingsCount: number,
   scope: string,
-  partName: AnalysisPartName
+  partName: AnalysisPartName,
+  signal?: AbortSignal
 ): Promise<T> {
   const prompt = `${basePrompt}
 
@@ -424,12 +425,23 @@ Only return JSON matching the provided schema.`
   let lastError: unknown = null
 
   for (let attempt = 0; attempt < tokenBudgets.length; attempt++) {
+    if (signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
     const maxOutputTokens = tokenBudgets[attempt]
     try {
       const { object } = await generateObjectWithRateLimitRetry(
         async () => {
           const controller = new AbortController()
           const timeout = setTimeout(() => controller.abort(), ANALYSIS_PART_TIMEOUT_MS)
+          const onAbort = () => controller.abort()
+          if (signal) {
+            if (signal.aborted) {
+              controller.abort()
+            } else {
+              signal.addEventListener('abort', onAbort, { once: true })
+            }
+          }
           try {
             return await generateObject({
               model: getLanguageModel(),
@@ -442,6 +454,9 @@ Only return JSON matching the provided schema.`
             })
           } finally {
             clearTimeout(timeout)
+            if (signal) {
+              signal.removeEventListener('abort', onAbort)
+            }
           }
         },
         scope,
@@ -449,6 +464,9 @@ Only return JSON matching the provided schema.`
       )
       return object
     } catch (error) {
+      if (signal?.aborted) {
+        throw new Error('Run was cancelled')
+      }
       lastError = error
       const canRetryReason =
         isLikelyLengthOrParseTruncation(error) ||
@@ -628,7 +646,8 @@ function reconcileAnalysisParts(object: AnalysisObject): AnalysisObject {
 async function generateAnalysisFullWithRetry(
   basePrompt: string,
   _findingsCount: number,
-  scope: string
+  scope: string,
+  signal?: AbortSignal
 ): Promise<AnalysisObject> {
   const prompt = `${basePrompt}
 
@@ -638,12 +657,23 @@ patterns, contradictions, gaps, summary, keyInsights, synthesisStrength, fieldMa
   let lastError: unknown = null
 
   for (let attempt = 0; attempt < tokenBudgets.length; attempt++) {
+    if (signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
     const maxOutputTokens = tokenBudgets[attempt]
     try {
       const { object } = await generateObjectWithRateLimitRetry(
         async () => {
           const controller = new AbortController()
           const timeout = setTimeout(() => controller.abort(), ANALYSIS_PART_TIMEOUT_MS)
+          const onAbort = () => controller.abort()
+          if (signal) {
+            if (signal.aborted) {
+              controller.abort()
+            } else {
+              signal.addEventListener('abort', onAbort, { once: true })
+            }
+          }
           try {
             return await generateObject({
               model: getLanguageModel(),
@@ -656,6 +686,9 @@ patterns, contradictions, gaps, summary, keyInsights, synthesisStrength, fieldMa
             })
           } finally {
             clearTimeout(timeout)
+            if (signal) {
+              signal.removeEventListener('abort', onAbort)
+            }
           }
         },
         scope,
@@ -663,6 +696,9 @@ patterns, contradictions, gaps, summary, keyInsights, synthesisStrength, fieldMa
       )
       return object
     } catch (error) {
+      if (signal?.aborted) {
+        throw new Error('Run was cancelled')
+      }
       lastError = error
       const canRetry =
         attempt < tokenBudgets.length - 1 &&
@@ -683,21 +719,29 @@ patterns, contradictions, gaps, summary, keyInsights, synthesisStrength, fieldMa
 async function generateAnalysisObjectWithRetry(
   findings: FindingWithPaper[],
   topic: string | undefined,
-  scope: string
+  scope: string,
+  signal?: AbortSignal
 ): Promise<AnalysisGenerationResult> {
+  if (signal?.aborted) {
+    throw new Error('Run was cancelled')
+  }
   const builtPrompt = buildPrompt(findings, topic)
 
   try {
     const object = await generateAnalysisFullWithRetry(
       builtPrompt.prompt,
       findings.length,
-      scope
+      scope,
+      signal
     )
     return {
       object: reconcileAnalysisParts(object),
       packing: builtPrompt.packing,
     }
   } catch (error) {
+    if (signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
     const fallbackAllowed =
       isLikelyLengthOrParseTruncation(error) ||
       isLikelyTimeoutOrAbort(error)
@@ -708,10 +752,10 @@ async function generateAnalysisObjectWithRetry(
   }
 
   const [patternsPart, contradictionsPart, gapsPart, metaPart] = await Promise.all([
-    generateAnalysisPartWithRetry(PatternsOnlySchema, builtPrompt.prompt, findings.length, scope, 'patterns'),
-    generateAnalysisPartWithRetry(ContradictionsOnlySchema, builtPrompt.prompt, findings.length, scope, 'contradictions'),
-    generateAnalysisPartWithRetry(GapsOnlySchema, builtPrompt.prompt, findings.length, scope, 'gaps'),
-    generateAnalysisPartWithRetry(AnalysisMetaSchema, builtPrompt.prompt, findings.length, scope, 'meta'),
+    generateAnalysisPartWithRetry(PatternsOnlySchema, builtPrompt.prompt, findings.length, scope, 'patterns', signal),
+    generateAnalysisPartWithRetry(ContradictionsOnlySchema, builtPrompt.prompt, findings.length, scope, 'contradictions', signal),
+    generateAnalysisPartWithRetry(GapsOnlySchema, builtPrompt.prompt, findings.length, scope, 'gaps', signal),
+    generateAnalysisPartWithRetry(AnalysisMetaSchema, builtPrompt.prompt, findings.length, scope, 'meta', signal),
   ])
 
   return {
@@ -895,7 +939,10 @@ function mapFindingIdsToPaperSupport(
 export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisResult> {
   const startTime = Date.now()
   
-  const { projectId, findings, topic } = input
+  const { projectId, findings, topic, signal } = input
+  if (signal?.aborted) {
+    throw new Error('Run was cancelled')
+  }
   
   if (findings.length === 0) {
     return {
@@ -931,13 +978,13 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
   // Use batched analysis for large finding sets to prevent token overflow
   if (findings.length > BATCH_THRESHOLD) {
     console.log(`\n📊 Finding count (${findings.length}) exceeds threshold (${BATCH_THRESHOLD}), using batched analysis...`)
-    return analyzeFindingsBatched(projectId, findings, topic)
+    return analyzeFindingsBatched(projectId, findings, topic, signal)
   }
   
   console.log(`\n🔍 Analyzing ${findings.length} findings from ${uniquePapers} papers...`)
   
   try {
-    const generated = await generateAnalysisObjectWithRetry(findings, topic, 'Cross-document analysis')
+    const generated = await generateAnalysisObjectWithRetry(findings, topic, 'Cross-document analysis', signal)
     const object = generated.object
     if (generated.packing.droppedFindings > 0) {
       console.warn(
@@ -1135,7 +1182,8 @@ function transformBatchObject(
 async function analyzeFindingsBatched(
   projectId: string,
   findings: FindingWithPaper[],
-  topic?: string
+  topic?: string,
+  signal?: AbortSignal
 ): Promise<AnalysisResult> {
   const startTime = Date.now()
   const uniquePapers = new Set(findings.map(f => f.paperId)).size
@@ -1149,12 +1197,17 @@ async function analyzeFindingsBatched(
   const failedBatchIndexes: number[] = []
 
   for (let i = 0; i < batches.length; i++) {
+    if (signal?.aborted) {
+      console.log(`   🛑 Analysis cancelled before batch ${i + 1}/${batches.length}`)
+      throw new Error('Run was cancelled')
+    }
+
     const batch = batches[i]
     const batchPapers = new Set(batch.map(f => f.paperId)).size
     console.log(`   📦 Batch ${i + 1}/${batches.length}: ${batch.length} findings from ${batchPapers} papers`)
 
     try {
-      const generated = await generateAnalysisObjectWithRetry(batch, topic, `Batch ${i + 1}/${batches.length}`)
+      const generated = await generateAnalysisObjectWithRetry(batch, topic, `Batch ${i + 1}/${batches.length}`, signal)
       const transformed = transformBatchObject(generated.object, batch, batchPapers, generated.packing)
       batchResults.push(transformed)
       console.log(
