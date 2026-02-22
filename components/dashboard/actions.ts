@@ -176,19 +176,25 @@ export async function createProjectAction(
     // Link all papers (uploaded + selected from library) to the project via CitationService
     if (allPaperIds.length > 0) {
       console.log(`📎 Linking ${allPaperIds.length} papers to project ${project.id}`)
-      
-      for (const paperId of allPaperIds) {
-        const isUploaded = uploadedPaperIds.includes(paperId)
-        try {
+
+      const linkResults = await Promise.allSettled(
+        allPaperIds.map(async (paperId) => {
+          const isUploaded = uploadedPaperIds.includes(paperId)
           await CitationService.add({
             projectId: project.id,
             sourceRef: { paperId },
             reason: isUploaded ? 'Uploaded PDF' : 'Selected from library'
           })
-          console.log(`  ✓ Linked paper ${paperId}`)
-        } catch (linkError) {
+          return paperId
+        })
+      )
+
+      for (const result of linkResults) {
+        if (result.status === 'fulfilled') {
+          console.log(`  ✓ Linked paper ${result.value}`)
+        } else {
           // Log but don't fail - the paper is already in the library
-          console.error(`  ✗ Failed to link paper ${paperId}:`, linkError)
+          console.error('  ✗ Failed to link paper:', result.reason)
         }
       }
     }
