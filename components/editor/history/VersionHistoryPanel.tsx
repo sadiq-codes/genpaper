@@ -183,10 +183,14 @@ export function VersionHistoryPanel({
     }
   }, [getVersionContent])
 
+  const [isRestoring, setIsRestoring] = useState(false)
+
   const handleRestoreConfirm = useCallback(async () => {
     if (!restoreConfirmVersion) return
 
+    setIsRestoring(true)
     const restoredContent = await restoreVersion(restoreConfirmVersion.id)
+    setIsRestoring(false)
     setRestoreConfirmVersion(null)
 
     if (restoredContent) {
@@ -410,8 +414,8 @@ export function VersionHistoryPanel({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="rounded-full">Cancel</AlertDialogCancel>
-            <AlertDialogAction className="rounded-full" onClick={handleRestoreConfirm}>
-              Restore Version
+            <AlertDialogAction className="rounded-full" disabled={isRestoring} onClick={handleRestoreConfirm}>
+              {isRestoring ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Restoring…</> : "Restore Version"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
