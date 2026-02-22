@@ -29,8 +29,12 @@ export interface GenerationJob {
 
 function normalizeJobRow(data: unknown): GenerationJob | null {
   if (!data) return null;
-  if (Array.isArray(data)) return (data[0] as GenerationJob) || null;
-  return data as GenerationJob;
+  if (Array.isArray(data)) {
+    const row = data[0] as GenerationJob | undefined;
+    return row?.id ? row : null;
+  }
+  const row = data as GenerationJob;
+  return row.id ? row : null;
 }
 
 export async function enqueueGenerationJob(
@@ -221,4 +225,50 @@ export async function cancelGenerationJobsForRunIds(
 
 export async function cancelGenerationJobForRun(runId: string): Promise<void> {
   await cancelGenerationJobsForRunIds([runId]);
+}
+
+export async function getGenerationJobForRun(
+  runId: string
+): Promise<GenerationJob | null> {
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from("generation_jobs")
+    .select()
+    .eq("run_id", runId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get generation job for run: ${error.message}`);
+  }
+
+  return (data as GenerationJob) || null;
+}
+
+/**
+ * Recovery-only path: force-fail a stuck job when no worker can claim it
+ * anymore (e.g. stale running row with attempts exhausted).
+ */
+export async function failGenerationJobForRecovery(
+  jobId: string,
+  errorMessage: string
+): Promise<void> {
+  const supabase = createServiceClient();
+
+  const { error } = await supabase
+    .from("generation_jobs")
+    .update({
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      worker_id: null,
+      lease_until: null,
+      error_message: errorMessage,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .in("status", ["pending", "running"]);
+
+  if (error) {
+    throw new Error(`Failed to force-fail generation job: ${error.message}`);
+  }
 }
