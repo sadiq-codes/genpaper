@@ -6,6 +6,7 @@ import {
   isRunTerminal,
   type GenerationEvent,
 } from "@/lib/generation/run-manager";
+import { reconcileRunHealth } from "@/lib/generation/run-recovery";
 import { warn, error as logError } from "@/lib/utils/logger";
 
 export const runtime = "nodejs";
@@ -15,6 +16,9 @@ export const maxDuration = 300; // 5 minutes
 
 const isDev = process.env.NODE_ENV !== "production";
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",") || [];
+const MAX_CONSECUTIVE_POLL_ERRORS = Number(
+  process.env.GENERATION_EVENTS_MAX_POLL_ERRORS || 20
+);
 
 function getCorsHeaders(request: NextRequest): Record<string, string> {
   const origin = request.headers.get("origin");
@@ -96,7 +100,7 @@ export async function GET(
     }
 
     // Get the run
-    const run = await getRun(runId);
+    let run = await getRun(runId);
     if (!run) {
       return new Response(
         JSON.stringify({ error: "Generation run not found" }),
@@ -116,6 +120,14 @@ export async function GET(
           headers: { "Content-Type": "application/json", ...getCorsHeaders(request) },
         }
       );
+    }
+
+    if (run.status === "pending" || run.status === "running") {
+      try {
+        run = (await reconcileRunHealth(run.id)) || run;
+      } catch (reconcileError) {
+        warn({ error: reconcileError, runId: run.id }, "Run reconciliation failed");
+      }
     }
 
     // Parse Last-Event-ID header for resume support
@@ -216,7 +228,7 @@ export async function GET(
 
           try {
             // Check run status
-            const latestRun = await getRun(runId);
+            const latestRun = (await reconcileRunHealth(runId)) || (await getRun(runId));
             if (!latestRun) {
               cleanup();
               return;
@@ -241,7 +253,25 @@ export async function GET(
               { error: err, runId, consecutivePollErrors },
               "Error polling for events"
             );
-            // Keep stream alive, but back off on repeated failures.
+            if (consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+              const message =
+                "Generation connection was interrupted for too long. Please refresh to resume.";
+              try {
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "error",
+                      message,
+                      timestamp: new Date().toISOString(),
+                    })}\n\n`
+                  )
+                );
+              } catch {
+                // Ignore send failure; stream is closing anyway.
+              }
+              cleanup();
+              return;
+            }
           } finally {
             if (!isControllerClosed) {
               const backoffMs = Math.min(8000, 2000 * Math.max(1, consecutivePollErrors));
