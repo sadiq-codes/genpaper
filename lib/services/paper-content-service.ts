@@ -30,6 +30,7 @@ type PdfFailureType =
   | 'unknown'
 
 type ProcessingMode = 'metadata' | 'full'
+type PersistentPdfFetchStatus = 'ok' | 'permanent_fail' | 'transient_fail'
 
 interface PaperLock {
   mode: ProcessingMode
@@ -90,6 +91,61 @@ interface PaperRecordForIngestion {
 }
 
 const paperProcessingLocks = new Map<string, PaperLock>()
+const TRANSIENT_PDF_RETRY_COOLDOWN_MS = 24 * 60 * 60 * 1000
+
+function getMetadataObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  return { ...(value as Record<string, unknown>) }
+}
+
+function parseTimestampMs(value: unknown): number | null {
+  if (typeof value !== 'string') return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function normalizePersistentPdfFetchStatus(value: unknown): PersistentPdfFetchStatus | null {
+  if (value === 'ok' || value === 'permanent_fail' || value === 'transient_fail') {
+    return value
+  }
+  return null
+}
+
+function classifyPersistentPdfFailure(failureType: PdfFailureType): Exclude<PersistentPdfFetchStatus, 'ok'> {
+  if (
+    failureType === 'paywall-or-landing' ||
+    failureType === 'http-4xx' ||
+    failureType === 'invalid-pdf' ||
+    failureType === 'too-large'
+  ) {
+    return 'permanent_fail'
+  }
+  return 'transient_fail'
+}
+
+function getPdfAttemptSkipReason(metadata: Record<string, unknown>): string | null {
+  const status = normalizePersistentPdfFetchStatus(metadata.pdf_fetch_status)
+  if (status === 'permanent_fail') {
+    return 'previous permanent PDF failure'
+  }
+  if (status !== 'transient_fail') {
+    return null
+  }
+
+  const lastAttemptMs = parseTimestampMs(metadata.pdf_last_attempt_at)
+  if (!lastAttemptMs) {
+    return null
+  }
+
+  const elapsedMs = Date.now() - lastAttemptMs
+  if (elapsedMs < TRANSIENT_PDF_RETRY_COOLDOWN_MS) {
+    const remainingHours = Math.ceil((TRANSIENT_PDF_RETRY_COOLDOWN_MS - elapsedMs) / (60 * 60 * 1000))
+    return `transient PDF failure cooldown (${remainingHours}h remaining)`
+  }
+  return null
+}
 
 function classifyPdfFailure(message: string): PdfFailureType {
   const msg = message.toLowerCase()
@@ -346,7 +402,7 @@ export async function ensurePaperContentReady(
     const serviceClient = getServiceClient()
     const { data: paperRecord, error: paperRecordError } = await serviceClient
       .from('papers')
-      .select('processing_status, pdf_content, content_source')
+      .select('processing_status, pdf_content, content_source, metadata')
       .eq('id', paperId)
       .single()
 
@@ -355,6 +411,75 @@ export async function ensurePaperContentReady(
     }
 
     const processingStatus = normalizePaperProcessingStatus(paperRecord?.processing_status)
+    const paperMetadata = getMetadataObject(paperRecord?.metadata)
+    let metadataPatch: Record<string, unknown> = {}
+
+    const markPdfFetchSuccess = () => {
+      const nowIso = new Date().toISOString()
+      metadataPatch = {
+        ...metadataPatch,
+        pdf_fetch_status: 'ok',
+        pdf_fail_reason: null,
+        pdf_last_attempt_at: nowIso,
+        pdf_last_success_at: nowIso,
+      }
+    }
+
+    const markPdfFetchFailure = (
+      status: Exclude<PersistentPdfFetchStatus, 'ok'>,
+      reason: string
+    ) => {
+      const existingFailCountRaw =
+        typeof metadataPatch.pdf_fail_count === 'number'
+          ? metadataPatch.pdf_fail_count
+          : paperMetadata.pdf_fail_count
+      const existingFailCount = typeof existingFailCountRaw === 'number' ? existingFailCountRaw : 0
+      metadataPatch = {
+        ...metadataPatch,
+        pdf_fetch_status: status,
+        pdf_fail_reason: reason.slice(0, 300),
+        pdf_last_attempt_at: new Date().toISOString(),
+        pdf_fail_count: existingFailCount + 1,
+      }
+    }
+
+    const persistMetadataPatch = async () => {
+      if (Object.keys(metadataPatch).length === 0) return
+      const mergedMetadata = { ...paperMetadata, ...metadataPatch }
+      const { error: metadataUpdateError } = await serviceClient
+        .from('papers')
+        .update({ metadata: mergedMetadata })
+        .eq('id', paperId)
+      if (metadataUpdateError) {
+        console.warn(`Failed to persist PDF metadata for ${paperId}:`, metadataUpdateError.message)
+        return
+      }
+      Object.assign(paperMetadata, mergedMetadata)
+      metadataPatch = {}
+    }
+
+    const returnAsAbstractReady = async (logMessage: string): Promise<PaperProcessResult> => {
+      await persistMetadataPatch()
+
+      if (paperRecord?.processing_status !== 'abstract_ready') {
+        await setPaperProcessingStatus(paperId, 'abstract_ready', { serviceClient })
+      }
+
+      if (!options.skipStructuredExtraction) {
+        const extractionText = [paperDTO.title, paperDTO.abstract].filter(Boolean).join('\n\n')
+        const extractionPromise = runStructuredExtraction(paperId, paperDTO, extractionText)
+        if (options.waitForStructuredExtraction) {
+          await extractionPromise
+        } else {
+          extractionPromise.catch(err => {
+            console.warn(`⚠️ Structured extraction failed for ${paperId}:`, err instanceof Error ? err.message : err)
+          })
+        }
+      }
+
+      console.log(logMessage)
+      return metadataResult
+    }
 
     if (isFullTextReadyStatus(processingStatus)) {
       if (paperRecord?.processing_status !== 'full_text_ready') {
@@ -382,24 +507,17 @@ export async function ensurePaperContentReady(
     }
 
     if (processingStatus === 'abstract_ready') {
-      if (paperRecord?.processing_status !== 'abstract_ready') {
-        await setPaperProcessingStatus(paperId, 'abstract_ready', { serviceClient })
+      const canUpgrade = paperDTO.pdf_url || normalizedDoi
+      if (!canUpgrade) {
+        return returnAsAbstractReady(`📚 Abstract-ready paper, skipping PDF ingestion: ${paperDTO.title}`)
       }
 
-      if (!options.skipStructuredExtraction) {
-        const extractionText = [paperDTO.title, paperDTO.abstract].filter(Boolean).join('\n\n')
-        const extractionPromise = runStructuredExtraction(paperId, paperDTO, extractionText)
-        if (options.waitForStructuredExtraction) {
-          await extractionPromise
-        } else {
-          extractionPromise.catch(err => {
-            console.warn(`⚠️ Structured extraction failed for ${paperId}:`, err instanceof Error ? err.message : err)
-          })
-        }
+      const skipReason = getPdfAttemptSkipReason(paperMetadata)
+      if (skipReason) {
+        return returnAsAbstractReady(`📚 Abstract-ready paper, skipping PDF ingestion (${skipReason}): ${paperDTO.title}`)
       }
 
-      console.log(`📚 Abstract-ready paper, skipping PDF ingestion: ${paperDTO.title}`)
-      return metadataResult
+      console.log(`📄 Abstract-ready but PDF/DOI available — attempting full-text upgrade: ${paperDTO.title}`)
     }
 
     console.log(`📄 No content — attempting PDF extraction: ${paperDTO.title}`)
@@ -426,8 +544,10 @@ export async function ensurePaperContentReady(
           acquiredFullText = true
           fullTextReadyContent = text
           fullTextReadySource = 'pdf'
+          markPdfFetchSuccess()
           console.log(`✅ PDF success: ${text.length} chars from ${paperDTO.pdf_url} [${pdfProcessingMs}ms]`)
         } else {
+          markPdfFetchFailure('permanent_fail', `empty_pdf_text:${text?.length || 0}`)
           console.warn(`⚠️ PDF empty: ${paperDTO.pdf_url} returned ${text?.length || 0} chars [${pdfProcessingMs}ms]`)
         }
       } catch (pdfErr) {
@@ -449,6 +569,7 @@ export async function ensurePaperContentReady(
               acquiredFullText = true
               fullTextReadyContent = htmlResult.content
               fullTextReadySource = 'html'
+              markPdfFetchSuccess()
               console.log(`✅ HTML-from-DOI recovery: ${htmlResult.content.length} chars after PDF failure`)
               recovered = true
               try {
@@ -473,6 +594,7 @@ export async function ensurePaperContentReady(
                 acquiredFullText = true
                 fullTextReadyContent = epmcResult.content
                 fullTextReadySource = 'html'
+                markPdfFetchSuccess()
                 console.log(`✅ Europe PMC XML recovery: ${epmcResult.content.length} chars after PDF failure`)
                 try {
                   const serviceClient = getServiceClient()
@@ -491,6 +613,11 @@ export async function ensurePaperContentReady(
         } else if (normalizedDoi) {
           console.log(`📄 Skipping DOI fallback for failure class "${failureType}"`)
         }
+
+        if (!acquiredFullText) {
+          const persistentFailureStatus = classifyPersistentPdfFailure(failureType)
+          markPdfFetchFailure(persistentFailureStatus, `${failureType}:${errorMessage.slice(0, 180)}`)
+        }
       }
     } else if (normalizedDoi) {
       console.log(`📄 No PDF URL, trying content fallbacks via DOI for: "${paperDTO.title.slice(0, 50)}..."`)
@@ -503,6 +630,7 @@ export async function ensurePaperContentReady(
           acquiredFullText = true
           fullTextReadyContent = htmlResult.content
           fullTextReadySource = 'html'
+          markPdfFetchSuccess()
           console.log(`✅ HTML-from-DOI success: ${htmlResult.content.length} chars for "${paperDTO.title.slice(0, 50)}..."`)
           recovered = true
           try {
@@ -527,6 +655,7 @@ export async function ensurePaperContentReady(
             acquiredFullText = true
             fullTextReadyContent = epmcResult.content
             fullTextReadySource = 'html'
+            markPdfFetchSuccess()
             console.log(`✅ Europe PMC XML success: ${epmcResult.content.length} chars for "${paperDTO.title.slice(0, 50)}..."`)
             try {
               const serviceClient = getServiceClient()
@@ -541,6 +670,9 @@ export async function ensurePaperContentReady(
         } catch (epmcErr) {
           console.warn(`❌ Europe PMC XML failed for ${normalizedDoi}:`, epmcErr instanceof Error ? epmcErr.message : String(epmcErr))
         }
+      }
+      if (!recovered) {
+        markPdfFetchFailure('transient_fail', 'doi_fulltext_unavailable')
       }
     } else {
       console.log(`📄 No PDF URL and no DOI for: "${paperDTO.title.slice(0, 50)}..."`)
@@ -566,16 +698,33 @@ export async function ensurePaperContentReady(
         if (acquiredFullText) {
           const persistedFullText = (fullTextReadyContent || fullText).slice(0, 1_000_000)
           const persistedSource = fullTextReadySource || 'pdf'
+          const mergedMetadata = Object.keys(metadataPatch).length > 0
+            ? { ...paperMetadata, ...metadataPatch }
+            : undefined
+          const updatePayload: {
+            pdf_content: string
+            content_source: 'pdf' | 'html'
+            metadata?: Record<string, unknown>
+          } = {
+            pdf_content: persistedFullText,
+            content_source: persistedSource,
+          }
+          if (mergedMetadata) {
+            updatePayload.metadata = mergedMetadata
+          }
+
           const { error: persistError } = await serviceClient
             .from('papers')
-            .update({
-              pdf_content: persistedFullText,
-              content_source: persistedSource,
-            })
+            .update(updatePayload)
             .eq('id', paperId)
 
           if (persistError) {
             throw new Error(`Failed to persist full-text content for ${paperId}: ${persistError.message}`)
+          }
+
+          if (mergedMetadata) {
+            Object.assign(paperMetadata, mergedMetadata)
+            metadataPatch = {}
           }
 
           await setPaperProcessingStatus(paperId, 'full_text_ready', {
@@ -584,6 +733,7 @@ export async function ensurePaperContentReady(
             contentSource: persistedSource,
           })
         } else {
+          await persistMetadataPatch()
           await setPaperProcessingStatus(paperId, 'abstract_ready', { serviceClient })
         }
       } catch (statusErr) {
@@ -591,6 +741,7 @@ export async function ensurePaperContentReady(
       }
     } else {
       try {
+        await persistMetadataPatch()
         await setPaperProcessingStatus(paperId, 'failed', { serviceClient })
         console.warn(`⚠️ No chunks created for paper ${paperId}, marked as failed`)
       } catch (statusErr) {
