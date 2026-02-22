@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { 
   FolderOpen,
   Library,
+  Loader2,
   LogOut,
   Settings
 } from 'lucide-react'
@@ -75,7 +76,10 @@ export function AppSidebar() {
     }
   }, [router, prefetchedRoutes])
 
+  const [isSigningOut, setIsSigningOut] = useState(false)
+
   const handleSignOut = async () => {
+    setIsSigningOut(true)
     await supabase.auth.signOut()
     router.push('/')
   }
@@ -138,9 +142,9 @@ export function AppSidebar() {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={handleSignOut} tooltip="Sign Out">
-              <LogOut />
-              <span>Sign Out</span>
+            <SidebarMenuButton onClick={handleSignOut} disabled={isSigningOut} tooltip="Sign Out">
+              {isSigningOut ? <Loader2 className="animate-spin" /> : <LogOut />}
+              <span>{isSigningOut ? "Signing out…" : "Sign Out"}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
