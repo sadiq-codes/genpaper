@@ -16,6 +16,8 @@ interface GenerationProgressProps {
   onCancel?: () => void
   /** Optional: Pass existing runId to resume watching */
   runId?: string
+  /** Skip status probe and start immediately (newly created project path) */
+  startImmediately?: boolean
 }
 
 // =============================================================================
@@ -246,6 +248,7 @@ export function GenerationProgress({
   onError,
   onCancel,
   runId: initialRunId,
+  startImmediately = false,
 }: GenerationProgressProps) {
   // Use reducer for batched state updates - prevents multiple re-renders per SSE event
   const [state, dispatch] = useReducer(generationReducer, null, createInitialState)
@@ -615,11 +618,14 @@ export function GenerationProgress({
     if (initialRunId) {
       // Already have a runId - just connect to events
       setConnectionState(prev => ({ ...prev, runId: initialRunId }))
+    } else if (startImmediately) {
+      // Newly created project path: skip status probe and start right away
+      startGeneration()
     } else {
       // Check for existing run first, then start if needed
       checkExistingRunAndStart()
     }
-  }, [initialRunId, checkExistingRunAndStart])
+  }, [initialRunId, startImmediately, startGeneration, checkExistingRunAndStart])
 
   // Connect to events when we have a runId
   useEffect(() => {

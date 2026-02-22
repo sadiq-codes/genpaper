@@ -69,6 +69,10 @@ interface ResearchEditorProps {
   isWriteMode?: boolean
   /** Server-fetched autocomplete preferences (DB-backed) */
   initialAutocompletePrefs?: AutocompletePrefs
+  /** Existing active generation run ID for immediate resume */
+  generationRunId?: string
+  /** New project path: skip status probe and start generation immediately */
+  startGenerationImmediately?: boolean
 }
 
 export function ResearchEditor({
@@ -84,6 +88,8 @@ export function ResearchEditor({
   isFailed = false,
   isWriteMode = false,
   initialAutocompletePrefs = DEFAULT_PREFS,
+  generationRunId,
+  startGenerationImmediately = false,
 }: ResearchEditorProps) {
   // ============================================================================
   // Core State
@@ -651,6 +657,8 @@ export function ResearchEditor({
             onComplete={handleGenerationComplete}
             onError={handleGenerationError}
             onCancel={handleGenerationCancel}
+            runId={generationRunId}
+            startImmediately={startGenerationImmediately && !generationRunId}
           />
         )}
 

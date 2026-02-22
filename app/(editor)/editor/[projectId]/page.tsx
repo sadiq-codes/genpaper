@@ -188,6 +188,8 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         isFailed={isFailed}
         isWriteMode={isWriteMode}
         initialAutocompletePrefs={autocompletePrefs}
+        generationRunId={activeRun?.id}
+        startGenerationImmediately={isNewlyCreated}
       />
     </div>
   )
