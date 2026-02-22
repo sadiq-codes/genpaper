@@ -30,11 +30,11 @@ export function formatInlineCitation(
   }
   
   // Author-date format
-  const authors = paper.authors || []
+  const authors = getKnownAuthors(paper.authors)
   const year = paper.year || 'n.d.'
   
   if (authors.length === 0) {
-    return `(${year})`
+    return `(Anonymous, ${year})`
   }
   
   const firstAuthor = getLastName(authors[0])
@@ -104,7 +104,7 @@ export function formatBibliographyEntry(
   style: string,
   isNumeric: boolean = false
 ): string {
-  const authors = formatAuthors(paper.authors || ['Unknown'], style)
+  const authors = formatAuthors(getKnownAuthors(paper.authors), style)
   const year = paper.year || 'n.d.'
   const title = paper.title || 'Untitled'
   const journal = paper.journal || paper.venue || ''
@@ -283,11 +283,21 @@ function getLastName(name: string): string {
   return parts[parts.length - 1]
 }
 
+function getKnownAuthors(authors: string[] | undefined): string[] {
+  if (!Array.isArray(authors)) return []
+  return authors
+    .map(author => author.trim())
+    .filter(author => {
+      const lower = author.toLowerCase()
+      return lower.length > 0 && lower !== 'unknown' && lower !== 'anonymous' && lower !== 'n/a'
+    })
+}
+
 /**
  * Format authors list for bibliography
  */
 function formatAuthors(authors: string[], style: string): string {
-  if (authors.length === 0) return 'Unknown'
+  if (authors.length === 0) return 'Anonymous'
   
   const formatted = authors.map(a => formatAuthorName(a, style))
   
@@ -330,7 +340,7 @@ function formatAuthorName(name: string, _style: string): string {
  * Format authors for IEEE style (F. Last)
  */
 function formatAuthorsIEEE(authors: string[]): string {
-  if (authors.length === 0) return 'Unknown'
+  if (authors.length === 0) return 'Anonymous'
   
   const formatted = authors.map(a => {
     if (a.includes(',')) {

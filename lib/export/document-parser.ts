@@ -83,6 +83,7 @@ export function parseDocument(
 // =============================================================================
 
 type CitationTracker = (paperId: string, instanceId?: string) => number
+const CITATION_MARKER_TEST = /\[@([^\]#\s]+)(?:#([^\]]+))?\]|\[CITE:\s*([^\]\s]+)\]/i
 
 function parseNode(
   node: TipTapNode,
@@ -278,7 +279,7 @@ function parseInlineContent(
   for (const node of nodes) {
     switch (node.type) {
       case 'text':
-        content.push(parseTextNode(node))
+        content.push(...parseTextNodeWithCitationMarkers(node, trackCitation))
         break
       
       case 'citation':
@@ -292,13 +293,71 @@ function parseInlineContent(
       default:
         // Try to extract text from unknown inline nodes
         if (node.text) {
-          content.push(parseTextNode(node))
+          content.push(...parseTextNodeWithCitationMarkers(node, trackCitation))
         }
         break
     }
   }
   
   return content
+}
+
+function parseTextNodeWithCitationMarkers(
+  node: TipTapNode,
+  trackCitation: CitationTracker
+): DocumentContent[] {
+  const rawText = node.text || ''
+  if (!rawText) {
+    return [parseTextNode(node)]
+  }
+
+  const hasLinkOrCodeMark = (node.marks || []).some(
+    mark => mark.type === 'link' || mark.type === 'code'
+  )
+
+  // Keep link/code-marked text intact; marker parsing is for plain phrasing text.
+  if (hasLinkOrCodeMark || !CITATION_MARKER_TEST.test(rawText)) {
+    return [parseTextNode(node)]
+  }
+
+  const markerPattern = /\[@([^\]#\s]+)(?:#([^\]]+))?\]|\[CITE:\s*([^\]\s]+)\]/gi
+  const parsed: DocumentContent[] = []
+  let lastIndex = 0
+
+  for (const match of rawText.matchAll(markerPattern)) {
+    const start = typeof match.index === 'number' ? match.index : -1
+    if (start < 0) continue
+
+    const end = start + match[0].length
+    const paperId = match[1] || match[3]
+    const instanceId = match[2] || undefined
+
+    if (start > lastIndex) {
+      const textBefore = rawText.slice(lastIndex, start)
+      if (textBefore.length > 0) {
+        parsed.push(parseTextNode({ ...node, text: textBefore }))
+      }
+    }
+
+    if (paperId) {
+      parsed.push({
+        type: 'citation',
+        paperId,
+        instanceId,
+        citationNumber: trackCitation(paperId, instanceId),
+      })
+    } else {
+      parsed.push(parseTextNode({ ...node, text: match[0] }))
+    }
+
+    lastIndex = end
+  }
+
+  if (lastIndex < rawText.length) {
+    parsed.push(parseTextNode({ ...node, text: rawText.slice(lastIndex) }))
+  }
+
+  return parsed.length > 0 ? parsed : [parseTextNode(node)]
 }
 
 function parseTextNode(node: TipTapNode): TextChunk {
