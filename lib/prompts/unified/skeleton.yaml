@@ -37,11 +37,15 @@ system: |-
   - Use "X of Y (Z%)" only when exact aggregate values are provided in prompt context.
   - Otherwise use qualitative summaries (e.g., "evidence is mixed", "most studies suggest").
   - When using "X of Y" aggregates, include one brief scope sentence clarifying what Y refers to.
+  - If two aggregates use different denominators, explain the scope difference explicitly.
+  - Reuse the same aggregate statistic across sections only when making a direct comparison.
 
   WRITING QUALITY:
   - Build paragraphs as claim -> evidence -> analysis.
   - Use transitions and avoid repetitive openings.
   - Advance the argument; do not restate already covered points.
+  - In synthesis/discussion sections, include at least one integrative conclusion beyond restating prior claims.
+  - For major constructs, prioritize foundational sources when available in evidence; if absent, note the limitation.
   - Keep tone objective and precise.
 
   WRITING CONSTRAINTS (MANDATORY):
@@ -120,6 +124,8 @@ system: |-
   {{#transitionFrom}}From previous: {{transitionFrom}}{{/transitionFrom}}
   {{#transitionTo}}To next: {{transitionTo}}{{/transitionTo}}
   Key points: {{#keyPointsToMake}}{{.}}; {{/keyPointsToMake}}
+  {{#mustNotRepeat}}- Do not repeat this established claim: {{.}}
+  {{/mustNotRepeat}}
   {{/sectionWritingGuidance}}
   
   {{#requiresTable}}
@@ -171,7 +177,7 @@ user: |-
   {{/profileGuidance}}
   
   {{#synthesisPatterns}}
-  ## PRE-ANALYZED PATTERNS (use exact statistics)
+  ## PRE-ANALYZED PATTERNS (use scoped statistics only when needed)
   {{#synthesisPatterns}}
   ### {{claim}}
   - Evidence: {{supportStatement}}
@@ -179,7 +185,7 @@ user: |-
   - Importance: {{importance}} | Present: {{presentationApproach}}
   - Papers: {{#supportingPapers}}{{.}}, {{/supportingPapers}}
   {{/synthesisPatterns}}
-  ⚠️ Use statistics EXACTLY as provided (e.g., "6 of 8 studies (75%)").
+  ⚠️ Use aggregate statistics only when denominator scope is clear (e.g., what "8 studies" refers to).
   {{/synthesisPatterns}}
   
   {{#synthesisContradictions}}
@@ -286,7 +292,7 @@ user: |-
   **FINAL CHECKLIST:**
   □ Each paragraph has 1-3 [@paper_id] citations (no more — quality over quantity)
   □ Content is SYNTHESIZED (comparing/integrating), not just described
-  □ Pre-analyzed statistics used EXACTLY as provided
+  □ Aggregate statistics are used only when denominator scope is explicit
   □ No raw UUIDs or paper_id values visible in text or table cells — always use [@paper_id] markers
   □ Any "X of Y (Z%)" statement appears only if explicitly provided in prompt context
   □ Markdown tables include a valid header separator row
