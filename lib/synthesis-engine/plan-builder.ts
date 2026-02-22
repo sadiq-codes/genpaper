@@ -390,9 +390,9 @@ CONTENT ALLOCATION
 
 PATTERN PRESENTATION:
 - Decide which patterns are central vs supporting
-- Include support statements: "X of Y studies (Z%) found..."
+- Include support statements only when denominator scope is explicit
 - Only assign patterns to literature-focused sections
-- Use EXACT statistics from analysis
+- Do not fabricate or merge denominators across different pattern scopes
 
 CONTRADICTIONS:
 - Present both sides fairly
@@ -804,7 +804,7 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
 
         const formatSupportStatement = (count: number, total: number) => {
           const pct = total > 0 ? Math.round((count / total) * 100) : 0
-          return `${count} of ${total} papers (${pct}%) supported this pattern`
+          return `Within the analyzed corpus for this pattern, ${count} of ${total} papers (${pct}%) provide support`
         }
 
         // Distribute missing patterns

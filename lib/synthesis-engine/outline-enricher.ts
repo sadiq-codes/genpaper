@@ -501,13 +501,19 @@ function distributeAnalysisToSection(
  * Convert Pattern to PatternPlan
  */
 function patternToPatternPlan(pattern: AnalysisResult['patterns'][0]): PatternPlan {
+  const supportCount = pattern.support.count
+  const supportTotal = pattern.support.total
+  const supportPct = supportTotal > 0
+    ? Math.round((supportCount / supportTotal) * 100)
+    : 0
+
   return {
     patternId: pattern.id,
     claim: pattern.claim,
     importance: pattern.confidence > 0.8 ? 'central' : pattern.confidence > 0.6 ? 'supporting' : 'minor',
-    presentationApproach: `Present with ${pattern.support.count} of ${pattern.support.total} studies supporting`,
+    presentationApproach: 'State denominator scope before reporting this aggregate, then interpret the implication.',
     data: {
-      supportStatement: `${pattern.support.count} of ${pattern.support.total} studies (${Math.round(pattern.support.count / pattern.support.total * 100)}%) found ${pattern.claim.toLowerCase()}`,
+      supportStatement: `Within the analyzed corpus for this pattern, ${supportCount} of ${supportTotal} papers (${supportPct}%) provide support.`,
       valuesSummary: pattern.values?.summary || undefined,
       contextNotes: pattern.limitations || undefined
     },

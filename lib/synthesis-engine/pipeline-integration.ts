@@ -64,13 +64,13 @@ export async function extractThemesHybrid(
   const startTime = Date.now()
   const paperIds = papers.map(p => p.id)
   
-  onProgress?.('Checking for existing extractions...', { paperCount: papers.length })
+  onProgress?.('Reviewing sources...', { paperCount: papers.length })
   
   // Step 1: Check which papers need extraction
   const needsExtraction = await getPapersNeedingExtractionService(paperIds)
   const cachedPaperIds = paperIds.filter(id => !needsExtraction.includes(id))
   
-  onProgress?.(`Found ${cachedPaperIds.length} cached extractions, ${needsExtraction.length} need processing`, {
+  onProgress?.('Reviewing sources...', {
     cached: cachedPaperIds.length,
     needsExtraction: needsExtraction.length
   })
@@ -345,7 +345,7 @@ export async function extractThemesHybrid(
 
       const runExtractionBatch = async (batchPaperIds: string[], roundLabel: string) => {
         let completed = 0
-        onProgress?.(`Extracting findings (${roundLabel}): ${batchPaperIds.length} papers...`, {
+        onProgress?.('Extracting key findings...', {
           round: roundLabel,
           batchSize: batchPaperIds.length,
           coverageRatio,
@@ -361,7 +361,7 @@ export async function extractThemesHybrid(
                   waitForStructuredExtraction: true,
                 })
                 completed++
-                onProgress?.(`Extracted ${completed}/${batchPaperIds.length} papers...`, { round: roundLabel })
+                onProgress?.('Extracting key findings...', { round: roundLabel })
               } catch (error) {
                 console.warn(`Extraction failed for ${paperId}:`, error)
                 completed++
@@ -393,7 +393,7 @@ export async function extractThemesHybrid(
         await runExtractionBatch(allIds, 'fail-open')
 
         const allFindings = buildAllFindings()
-        onProgress?.(`Analyzing ${allFindings.length} findings across papers...`, {
+        onProgress?.('Connecting ideas across sources...', {
           mode: 'fail-open',
           totalFindings: allFindings.length
         })
@@ -420,7 +420,7 @@ export async function extractThemesHybrid(
           await runExtractionBatch(batch, `round-${round}`)
 
           const allFindings = buildAllFindings()
-          onProgress?.(`Analyzing ${allFindings.length} findings across papers...`, {
+          onProgress?.('Connecting ideas across sources...', {
             round,
             totalFindings: allFindings.length
           })
@@ -460,7 +460,7 @@ export async function extractThemesHybrid(
           )
 
           if (decision.stop) {
-            onProgress?.(`Stopping early: ${decision.reason}`, { round, extractedFullTextCount })
+            onProgress?.('Analysis complete', { round, extractedFullTextCount })
             break
           }
 
@@ -480,7 +480,7 @@ export async function extractThemesHybrid(
 
         const extractionTimeMs = Date.now() - startTime
 
-        onProgress?.('Cross-document analysis complete', {
+        onProgress?.('Research patterns mapped', {
           patterns: analysisResult.patterns.length,
           contradictions: analysisResult.contradictions.length,
           gaps: analysisResult.gaps.length,
@@ -500,9 +500,7 @@ export async function extractThemesHybrid(
         }
       }
     } else {
-      // No usable full-text papers need extraction; keep going with cached extractions only.
-      // (Abstract-only papers are intentionally skipped to reduce LLM calls.)
-      onProgress?.('No usable full-text papers require extraction; using cached extractions only.', {
+      onProgress?.('Using existing analysis...', {
         needsExtraction: needsExtraction.length,
         usableFullTextAvailable: totalFullTextAvailable,
         coverageRatio
@@ -513,7 +511,7 @@ export async function extractThemesHybrid(
   // Step 4: Combine all extractions and build findings
   const allFindings: FindingWithPaper[] = buildAllFindings()
   
-  onProgress?.(`Analyzing ${allFindings.length} findings across papers...`)
+  onProgress?.('Connecting ideas across sources...')
   
   // Step 5: Run cross-document analysis
   const analysisResult = await analyzeFindings({
@@ -527,7 +525,7 @@ export async function extractThemesHybrid(
   
   const extractionTimeMs = Date.now() - startTime
   
-  onProgress?.('Cross-document analysis complete', {
+  onProgress?.('Research patterns mapped', {
     patterns: analysisResult.patterns.length,
     contradictions: analysisResult.contradictions.length,
     gaps: analysisResult.gaps.length,
