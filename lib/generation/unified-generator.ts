@@ -37,6 +37,7 @@ export interface UnifiedGenerationConfig {
   
   // Stream tracking
   onStreamEvent?: (event: StreamEvent) => void
+  signal?: AbortSignal
 }
 
 /**
@@ -125,9 +126,25 @@ function looksTruncated(text: string): boolean {
   return !/[.!?;:|)\]"'`]/.test(lastChar)
 }
 
-async function generateTextWithTimeout(input: Parameters<typeof generateText>[0]) {
+async function generateTextWithTimeout(
+  input: Parameters<typeof generateText>[0],
+  signal?: AbortSignal
+) {
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), SECTION_LLM_TIMEOUT_MS)
+  let timedOut = false
+  const timeoutId = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, SECTION_LLM_TIMEOUT_MS)
+  const onAbort = () => controller.abort()
+
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort()
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+  }
 
   try {
     return await generateText({
@@ -135,12 +152,18 @@ async function generateTextWithTimeout(input: Parameters<typeof generateText>[0]
       abortSignal: controller.signal,
     })
   } catch (err) {
-    if (controller.signal.aborted) {
+    if (signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
+    if (timedOut || controller.signal.aborted) {
       throw new Error(`Section generation timed out after ${Math.round(SECTION_LLM_TIMEOUT_MS / 1000)}s`)
     }
     throw err
   } finally {
     clearTimeout(timeoutId)
+    if (signal) {
+      signal.removeEventListener('abort', onAbort)
+    }
   }
 }
 
@@ -217,7 +240,8 @@ export async function generateWithUnifiedTemplate(
   const {
     context,
     options = {},
-    onStreamEvent
+    onStreamEvent,
+    signal,
   } = config
 
   const progress = (stage: string, pct: number, msg: string, data?: Record<string, unknown>) => {
@@ -243,7 +267,7 @@ export async function generateWithUnifiedTemplate(
     prompt: boundedPrompt.user,
     temperature: resolvedOptions.temperature,
     maxOutputTokens: resolvedOptions.maxTokens
-  })
+  }, signal)
 
   let finalResponse = initialResponse
   const initialFinishReason = String((initialResponse as { finishReason?: unknown }).finishReason || '')
@@ -265,7 +289,7 @@ export async function generateWithUnifiedTemplate(
       prompt: boundedPrompt.user,
       temperature: resolvedOptions.temperature,
       maxOutputTokens: expandedMaxTokens
-    })
+    }, signal)
 
     // Prefer retry if it is more complete or materially longer.
     const retryLooksBetter =
@@ -404,7 +428,8 @@ function buildCitationHistoryDirective(
 export async function generateSectionBySubsections(
   parentContext: SectionContext,
   options: BuildPromptOptions,
-  onStreamEvent?: (event: StreamEvent) => void
+  onStreamEvent?: (event: StreamEvent) => void,
+  signal?: AbortSignal
 ): Promise<UnifiedGenerationResult> {
   const subsections = parentContext.subsections!
   const startTime = Date.now()
@@ -414,6 +439,9 @@ export async function generateSectionBySubsections(
   const subsectionSummaries: string[] = []
 
   for (let i = 0; i < subsections.length; i++) {
+    if (signal?.aborted) {
+      throw new Error('Run was cancelled')
+    }
     const sub = subsections[i]
 
     // Per-subsection word target
@@ -455,6 +483,7 @@ export async function generateSectionBySubsections(
       context: subContext,
       options: subOptions,
       onStreamEvent,
+      signal,
     })
 
     let subContent = result.content.trim()
