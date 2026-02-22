@@ -56,6 +56,14 @@ function sanitizeUnicode(text: string): string {
     .replace(/\u0000/g, '')
 }
 
+function isStatementTimeoutMessage(message: string): boolean {
+  return message.toLowerCase().includes('statement timeout')
+}
+
+async function waitMs(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms))
+}
+
 async function updateQdrantSyncStatus(
   serviceClient: ReturnType<typeof getServiceClient>,
   paperId: string,
@@ -405,8 +413,10 @@ export async function createChunksForPaper(
     // Insert to Supabase WITHOUT embeddings (Qdrant only for embeddings)
     const chunkDataWithoutEmbeddings = chunkDataWithEmbeddings.map(({ embedding, ...rest }) => rest)
     
-    // Insert chunks in batches to reduce statement timeout risk on large payloads.
-    const DB_BATCH_SIZE = 50
+    // Insert chunks in smaller batches to reduce statement-timeout risk.
+    const DB_BATCH_SIZE = 20
+    const DB_TIMEOUT_MAX_RETRIES = 3
+    const DB_TIMEOUT_BACKOFF_MS = 250
     let error: { message: string } | null = null
     const dedupedById = new Map<string, (typeof chunkDataWithoutEmbeddings)[number]>()
     for (const chunk of chunkDataWithoutEmbeddings) {
@@ -423,36 +433,74 @@ export async function createChunksForPaper(
 
     for (let i = 0; i < dedupedChunks.length; i += DB_BATCH_SIZE) {
       const batch = dedupedChunks.slice(i, i + DB_BATCH_SIZE)
-      const { error: batchError } = await serviceClient
-        .from('paper_chunks')
-        .upsert(batch, {
-          // `paper_chunks` primary key is `id` (deterministic UUID). Conflict on id
-          // makes retries/idempotency safe without duplicate-key crashes.
-          onConflict: 'id',
-          ignoreDuplicates: false
-        })
+      let batchErrorMessage: string | null = null
 
-      if (batchError) {
+      for (let attempt = 1; attempt <= DB_TIMEOUT_MAX_RETRIES; attempt++) {
+        const { error: batchError } = await serviceClient
+          .from('paper_chunks')
+          .upsert(batch, {
+            // `paper_chunks` primary key is `id` (deterministic UUID). Conflict on id
+            // makes retries/idempotency safe without duplicate-key crashes.
+            onConflict: 'id',
+            ignoreDuplicates: false
+          })
+
+        if (!batchError) {
+          batchErrorMessage = null
+          break
+        }
+
+        batchErrorMessage = batchError.message
+        if (isStatementTimeoutMessage(batchErrorMessage) && attempt < DB_TIMEOUT_MAX_RETRIES) {
+          const backoffMs = DB_TIMEOUT_BACKOFF_MS * attempt
+          console.warn(
+            `⚠️ Batch upsert timeout for paper ${paperId} (attempt ${attempt}/${DB_TIMEOUT_MAX_RETRIES}), retrying in ${backoffMs}ms`
+          )
+          await waitMs(backoffMs)
+          continue
+        }
+        break
+      }
+
+      if (batchErrorMessage) {
         // Fallback for transient/duplicate-sensitive failures: retry rows one-by-one.
-        if (batchError.message.includes('ON CONFLICT DO UPDATE command cannot affect row a second time') ||
-            batchError.message.toLowerCase().includes('statement timeout')) {
-          console.warn(`⚠️ Batch upsert failed for paper ${paperId}, retrying row-by-row: ${batchError.message}`)
+        if (batchErrorMessage.includes('ON CONFLICT DO UPDATE command cannot affect row a second time') ||
+            isStatementTimeoutMessage(batchErrorMessage)) {
+          console.warn(`⚠️ Batch upsert failed for paper ${paperId}, retrying row-by-row: ${batchErrorMessage}`)
           for (const row of batch) {
-            const { error: singleError } = await serviceClient
-              .from('paper_chunks')
-              .upsert(row, {
-                onConflict: 'id',
-                ignoreDuplicates: false
-              })
-            if (singleError) {
-              error = { message: singleError.message }
+            let singleErrorMessage: string | null = null
+
+            for (let attempt = 1; attempt <= DB_TIMEOUT_MAX_RETRIES; attempt++) {
+              const { error: singleError } = await serviceClient
+                .from('paper_chunks')
+                .upsert(row, {
+                  onConflict: 'id',
+                  ignoreDuplicates: false
+                })
+
+              if (!singleError) {
+                singleErrorMessage = null
+                break
+              }
+
+              singleErrorMessage = singleError.message
+              if (isStatementTimeoutMessage(singleErrorMessage) && attempt < DB_TIMEOUT_MAX_RETRIES) {
+                const backoffMs = DB_TIMEOUT_BACKOFF_MS * attempt
+                await waitMs(backoffMs)
+                continue
+              }
+              break
+            }
+
+            if (singleErrorMessage) {
+              error = { message: singleErrorMessage }
               break
             }
           }
           if (error) break
           continue
         }
-        error = { message: batchError.message }
+        error = { message: batchErrorMessage }
         break
       }
     }
