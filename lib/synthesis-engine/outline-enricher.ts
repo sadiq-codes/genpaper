@@ -24,6 +24,7 @@ import { buildSynthesisPlan } from './plan-builder'
 import { buildConstraintsFromProfile, annotateOutlineSections } from './constraint-builder'
 import { GenerationContextService } from '@/lib/rag/generation-context'
 import { info, warn } from '@/lib/utils/logger'
+import { type SectionType, resolveSectionType } from '@/lib/generation/paper-type-config'
 
 // =============================================================================
 // Types
@@ -246,10 +247,10 @@ export async function enrichOutlineSections(
         fallbackSynthesisContent
       )
       const mustNotRepeat = index > 0 ? uniqueStrings(establishedClaims, 12) : []
-      const sectionType = classifySectionType(outlineSection.sectionKey, outlineSection.title)
+      const secType = resolveSectionType({ key: outlineSection.sectionKey, title: outlineSection.title })
 
       enriched.writingGuidance = {
-        approach: getFallbackApproach(sectionType, isLitFocused),
+        approach: getFallbackApproach(secType, isLitFocused),
         tone: isLitFocused ? 'analytical' : 'objective',
         keyPointsToMake,
         transitionFrom: index > 0 ? `Build directly on the prior section's claims without restating them.` : undefined,
@@ -382,27 +383,22 @@ function deriveFallbackKeyPoints(
   return uniqueStrings(fallback, 3)
 }
 
-function classifySectionType(sectionKey: string, sectionTitle: string): 'introduction' | 'discussion' | 'conclusion' | 'other' {
-  const normalized = `${sectionKey} ${sectionTitle}`.toLowerCase()
-  if (normalized.includes('intro')) return 'introduction'
-  if (normalized.includes('discussion') || normalized.includes('debate')) return 'discussion'
-  if (normalized.includes('conclusion') || normalized.includes('future')) return 'conclusion'
-  return 'other'
+const FALLBACK_APPROACHES: Record<SectionType, string> = {
+  introduction: 'Frame scope and objectives, define boundaries, and set up the evidence narrative.',
+  literature: 'Integrate cross-paper evidence, quantify agreement where possible, and note caveats.',
+  methodology: 'Present a focused argument with concise transitions and explicit links to the paper objective.',
+  results: 'Present a focused argument with concise transitions and explicit links to the paper objective.',
+  discussion: 'Compare converging and conflicting evidence, then interpret implications and limitations.',
+  conclusion: 'Synthesize the strongest findings and end with concrete future directions.',
+  'non-content': 'Present a focused argument with concise transitions and explicit links to the paper objective.',
 }
 
 function getFallbackApproach(
-  sectionType: 'introduction' | 'discussion' | 'conclusion' | 'other',
+  type: SectionType,
   isLiteratureFocused: boolean
 ): string {
-  if (sectionType === 'introduction') {
-    return 'Frame scope and objectives, define boundaries, and set up the evidence narrative.'
-  }
-  if (sectionType === 'discussion') {
-    return 'Compare converging and conflicting evidence, then interpret implications and limitations.'
-  }
-  if (sectionType === 'conclusion') {
-    return 'Synthesize the strongest findings and end with concrete future directions.'
-  }
+  const specific = FALLBACK_APPROACHES[type]
+  if (specific && type !== 'methodology' && type !== 'results' && type !== 'non-content') return specific
   return isLiteratureFocused
     ? 'Integrate cross-paper evidence, quantify agreement where possible, and note caveats.'
     : 'Present a focused argument with concise transitions and explicit links to the paper objective.'
@@ -432,68 +428,47 @@ function buildFallbackPaperPriority(
 }
 
 /**
- * Distribute raw analysis data to a section based on section type
- * Used when synthesis plan building fails
+ * Distribute raw analysis data to a section based on its semantic type.
+ * Used when synthesis plan building fails.
  */
 function distributeAnalysisToSection(
   sectionKey: string,
   sectionTitle: string,
   analysis: AnalysisResult
 ): SynthesisContent {
-  const normalizedKey = sectionKey.toString().toLowerCase()
-  const normalizedTitle = sectionTitle.toLowerCase()
-  
-  // Introduction: Brief overview, maybe 1-2 key patterns
-  if (normalizedKey === 'introduction' || normalizedTitle.includes('introduction')) {
-    return {
-      patterns: analysis.patterns.slice(0, 2).map(patternToPatternPlan),
-      contradictions: [],
-      gaps: []
-    }
-  }
-  
-  // Literature Review: Main patterns and contradictions
-  if (
-    normalizedKey.includes('literature') || 
-    normalizedKey.includes('review') ||
-    normalizedTitle.includes('literature') ||
-    normalizedTitle.includes('review')
-  ) {
-    return {
-      patterns: analysis.patterns.map(patternToPatternPlan),
-      contradictions: analysis.contradictions.map(contradictionToContradictionPlan),
-      gaps: [] // Save gaps for discussion
-    }
-  }
-  
-  // Discussion: Contradictions, gaps, and key insights
-  if (normalizedKey === 'discussion' || normalizedTitle.includes('discussion')) {
-    return {
-      patterns: analysis.patterns.filter(p => p.confidence > 0.7).slice(0, 3).map(patternToPatternPlan),
-      contradictions: analysis.contradictions.map(contradictionToContradictionPlan),
-      gaps: analysis.gaps.map(gapToGapPlan)
-    }
-  }
-  
-  // Conclusion: High-level summary, gaps as future work
-  if (
-    normalizedKey === 'conclusion' || 
-    normalizedKey === 'conclusions' ||
-    normalizedTitle.includes('conclusion')
-  ) {
-    return {
-      patterns: [], // Don't repeat patterns
-      contradictions: [],
-      gaps: analysis.gaps.slice(0, 3).map(gapToGapPlan)
-    }
-  }
-  
-  // Thematic sections: Distribute patterns based on topic overlap
-  // For now, just include top patterns
-  return {
-    patterns: analysis.patterns.slice(0, 3).map(patternToPatternPlan),
-    contradictions: analysis.contradictions.slice(0, 1).map(contradictionToContradictionPlan),
-    gaps: []
+  const type = resolveSectionType({ key: sectionKey, title: sectionTitle })
+
+  switch (type) {
+    case 'introduction':
+      return {
+        patterns: analysis.patterns.slice(0, 2).map(patternToPatternPlan),
+        contradictions: [],
+        gaps: [],
+      }
+    case 'literature':
+      return {
+        patterns: analysis.patterns.map(patternToPatternPlan),
+        contradictions: analysis.contradictions.map(contradictionToContradictionPlan),
+        gaps: [],
+      }
+    case 'discussion':
+      return {
+        patterns: analysis.patterns.filter(p => p.confidence > 0.7).slice(0, 3).map(patternToPatternPlan),
+        contradictions: analysis.contradictions.map(contradictionToContradictionPlan),
+        gaps: analysis.gaps.map(gapToGapPlan),
+      }
+    case 'conclusion':
+      return {
+        patterns: [],
+        contradictions: [],
+        gaps: analysis.gaps.slice(0, 3).map(gapToGapPlan),
+      }
+    default:
+      return {
+        patterns: analysis.patterns.slice(0, 3).map(patternToPatternPlan),
+        contradictions: analysis.contradictions.slice(0, 1).map(contradictionToContradictionPlan),
+        gaps: [],
+      }
   }
 }
 

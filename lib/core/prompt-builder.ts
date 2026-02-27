@@ -150,6 +150,12 @@ export interface PromptData {
     transitionFrom?: string          // How to connect from previous
     transitionTo?: string            // How to lead into next
   }
+
+  // Explicit citation density for this section (from paper profile)
+  sectionCitationDensity?: 'none' | 'light' | 'moderate' | 'heavy'
+
+  // Dynamic, section-specific table schema guidance (when tables are useful)
+  tableSchemaGuidance?: string
   
   // Summary stats for the synthesis
   synthesisSummary?: {

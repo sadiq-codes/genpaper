@@ -20,6 +20,7 @@ import {
   getVoiceProfile,
   type VoiceProfileId 
 } from './voice-profiles'
+import { getPaperTypeConfig, getPaperTypeGuardrails, resolveSectionType } from './paper-type-config'
 
 /** Maximum retry attempts for profile generation */
 const MAX_PROFILE_RETRIES = 3
@@ -272,22 +273,8 @@ export function scaleProfileOutlineForLength(
  * Validate the generated profile and apply sensible defaults where needed
  */
 function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
-  // Ensure minimum source requirements are reasonable
-  // Safety floor: if LLM returned unreasonably low values, use sensible minimums
-  // These are NOT targets - the LLM should set appropriate values based on discipline
-  // This just catches edge cases where LLM might return unreasonably low values
-  
-  // Different paper types have different minimum requirements
-  // Literature reviews are all about sources - they need MANY more than other types
-  const SAFETY_MIN_BY_TYPE: Record<string, number> = {
-    'literatureReview': 25,    // Literature reviews require comprehensive source coverage
-    'mastersThesis': 20,       // Theses need substantial source base
-    'phdDissertation': 30,     // Dissertations need extensive coverage
-    'capstoneProject': 15,     // Capstones are practical but need sources
-    'researchArticle': 10      // Research articles focus on original data
-  }
-  
-  const SAFETY_MIN_SOURCES = SAFETY_MIN_BY_TYPE[profile.paperType] || 10
+  const typeConfig = getPaperTypeConfig(profile.paperType)
+  const SAFETY_MIN_SOURCES = typeConfig.safetyMinSources
   
   if (!profile.sourceExpectations.minimumUniqueSources || profile.sourceExpectations.minimumUniqueSources < SAFETY_MIN_SOURCES) {
     warn({ 
@@ -298,9 +285,7 @@ function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
     profile.sourceExpectations.minimumUniqueSources = SAFETY_MIN_SOURCES
   }
   
-  // Ideal should always be higher than minimum
-  // For literature reviews, ideal should be significantly higher
-  const idealMultiplier = profile.paperType === 'literatureReview' ? 2.0 : 1.5
+  const idealMultiplier = typeConfig.idealSourceMultiplier
   const minimumIdeal = Math.round(profile.sourceExpectations.minimumUniqueSources * idealMultiplier)
   
   if (!profile.sourceExpectations.idealSourceCount || profile.sourceExpectations.idealSourceCount < minimumIdeal) {
@@ -374,10 +359,7 @@ function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
       }
     }
 
-    const requiresSubsectionsForLongSections =
-      profile.paperType === 'mastersThesis' ||
-      profile.paperType === 'phdDissertation' ||
-      profile.paperType === 'capstoneProject'
+    const requiresSubsectionsForLongSections = typeConfig.requiresSubsections
 
     // Ensure all sections have required fields
     const subsectionViolations: string[] = []
@@ -469,23 +451,8 @@ function validateAndEnrichProfile(profile: PaperProfile): PaperProfile {
   return profile
 }
 
-/**
- * Infer academic level from paper type for voice selection
- */
 function inferAcademicLevel(paperType: string): 'undergraduate' | 'masters' | 'doctoral' | 'faculty' {
-  const paperTypeLower = paperType.toLowerCase()
-  
-  if (paperTypeLower.includes('phd') || paperTypeLower.includes('dissertation') || paperTypeLower.includes('doctoral')) {
-    return 'doctoral'
-  }
-  if (paperTypeLower.includes('master') || paperTypeLower.includes('thesis')) {
-    return 'masters'
-  }
-  if (paperTypeLower.includes('capstone') || paperTypeLower.includes('undergraduate')) {
-    return 'undergraduate'
-  }
-  // Default: treat research articles and literature reviews as masters-level
-  return 'masters'
+  return getPaperTypeConfig(paperType).academicLevel
 }
 
 
@@ -537,10 +504,9 @@ export function buildProfileGuidanceForPrompt(
   
   // For outline mode, use a more structured format emphasizing constraints
   if (mode === 'outline') {
-    // Determine if this paper type needs literature review organizational guidance
     const needsLitReviewGuidance = profile.paperType === 'literatureReview' || 
       profile.structure.appropriateSections.some(s => 
-        s.key.toLowerCase().includes('literature') || s.key.toLowerCase().includes('review')
+        resolveSectionType(s) === 'literature'
       )
     
     const litReviewOrgGuidance = needsLitReviewGuidance ? `
@@ -694,62 +660,8 @@ ${pitfalls}`
 }
 
 function getPaperTypeWarning(paperType: string, hasOriginalResearch?: boolean): string {
-  if (paperType === 'literatureReview') {
-    return `
-### Paper-Type Guardrails: Literature Review
-- Do not present original data collection or experimental/statistical results.
-- "Methodology" should describe literature search/selection, not primary empirical procedures.
-- Organize around synthesis, debate, and gaps across existing scholarship.
-- Most substantive claims should be evidence-cited.
-`
-  }
-
-  if (paperType === 'researchArticle') {
-    if (hasOriginalResearch) {
-      return `
-### Paper-Type Guardrails: Research Article (Primary Empirical)
-- Include a clear Methodology and Results based on your own data/analysis.
-- Report specific findings (metrics, themes, or interpretive evidence as appropriate to discipline).
-- Use citations heavily in introduction/background, lightly in primary-results reporting.
-`
-    }
-
-    return `
-### Paper-Type Guardrails: Research Article (Secondary Analysis)
-- Do not invent primary data or empirical statistics.
-- Methodology should define source selection and analytical procedure for secondary evidence.
-- Results/analysis should present your argument using cited sources.
-`
-  }
-
-  if (paperType === 'mastersThesis') {
-    return `
-### Paper-Type Guardrails: Master's Thesis
-- Demonstrate both literature command and a clear scholarly contribution.
-- Maintain structured chapters with explicit links from findings to prior scholarship.
-- Include a concrete contribution statement and acknowledge key methodological trade-offs.
-`
-  }
-
-  if (paperType === 'phdDissertation') {
-    return `
-### Paper-Type Guardrails: PhD Dissertation
-- Prioritize original contribution to knowledge with strong theoretical/methodological grounding.
-- Maintain high rigor in argument structure, evidence handling, and limitations.
-- State contributions explicitly and defend scope boundaries with reflexive clarity.
-`
-  }
-
-  if (paperType === 'capstoneProject') {
-    return `
-### Paper-Type Guardrails: Capstone Project
-- Connect scholarship to practical or applied outcomes.
-- Keep methods and findings appropriate to the chosen capstone subtype.
-- End with explicit contribution and realistic implementation/implication framing.
-`
-  }
-
-  return ''
+  const text = getPaperTypeGuardrails(paperType, hasOriginalResearch)
+  return text ? `\n${text}\n` : ''
 }
 
 /**

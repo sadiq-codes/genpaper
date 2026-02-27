@@ -37,6 +37,11 @@ import {
 } from '@/lib/analysis/cross-document'
 import { updateProjectContent, updateResearchProjectStatus } from '@/lib/db/research'
 import { getServiceClient } from '@/lib/supabase/service'
+import {
+  SYNTHESIS_FINDINGS_THRESHOLD,
+  SUBSECTION_SPLIT_THRESHOLD_GENERATE,
+  SUBSECTION_SPLIT_THRESHOLD_REWRITE,
+} from '@/lib/generation/paper-type-config'
 import { info, warn } from '@/lib/utils/logger'
 import pLimit from 'p-limit'
 import { ensurePaperContentReadyById } from '@/lib/services/paper-content-service'
@@ -617,11 +622,10 @@ export async function runBuildContextsPhase(
 ): Promise<SectionContext[]> {
   throwIfCancelled(signal)
   const sanitizedTopic = sanitizeTopic(config.topic)
-  const FINDINGS_THRESHOLD = 5
   const totalFindings = themeResult?.extractionStats.totalFindings || 0
   const canUseSynthesisSignals = Boolean(
     themeResult &&
-    totalFindings >= FINDINGS_THRESHOLD &&
+    totalFindings >= SYNTHESIS_FINDINGS_THRESHOLD &&
     isAnalysisReadyForSynthesis(themeResult.analysisResult)
   )
   const synthesisAnalysis = canUseSynthesisSignals && themeResult
@@ -741,6 +745,10 @@ export async function runSectionGenerationPhase(
   
   const profileGuidance = buildProfileGuidanceForPrompt(profile)
 
+  const profileSection = profile.structure.appropriateSections.find(
+    s => s.key === context.sectionKey
+  )
+
   const baseOptions = {
     temperature: config.temperature || 0.2,
     maxTokens: perSectionTokens,
@@ -753,6 +761,7 @@ export async function runSectionGenerationPhase(
     voiceConfig: profile.voice,
     profileCriteria: profile.qualityCriteria,
     customInstructions: config.customInstructions,
+    sectionCitationDensity: profileSection?.citationExpectation,
     originalResearch: config.originalResearch?.has_original_research ? {
       hasOriginalResearch: true,
       researchQuestion: config.originalResearch.research_question,
@@ -760,10 +769,7 @@ export async function runSectionGenerationPhase(
     } : undefined
   }
 
-  // With generateText (no JSON overhead, no early stopping), subsection splitting
-  // is only needed for very long sections (thesis/dissertation chapters).
-  const SUBSECTION_WORD_THRESHOLD = 1800
-  const shouldSplit = sectionTargetWords >= SUBSECTION_WORD_THRESHOLD
+  const shouldSplit = sectionTargetWords >= SUBSECTION_SPLIT_THRESHOLD_GENERATE
 
   let contextForGeneration = context
 
@@ -937,6 +943,10 @@ export async function runSectionRewritePhase(
   
   const rewriteInstructions = `IMPORTANT: The previous attempt ended abruptly. Rewrite this section from scratch with complete sentences, complete tables if used, and a clear ending.`
 
+  const rewriteProfileSection = profile.structure.appropriateSections.find(
+    s => s.key === context.sectionKey
+  )
+
   const baseOptions = {
     temperature: config.temperature || 0.2,
     maxTokens: perSectionTokens,
@@ -949,6 +959,7 @@ export async function runSectionRewritePhase(
     voiceConfig: profile.voice,
     profileCriteria: profile.qualityCriteria,
     customInstructions: config.customInstructions,
+    sectionCitationDensity: rewriteProfileSection?.citationExpectation,
     originalResearch: config.originalResearch?.has_original_research ? {
       hasOriginalResearch: true,
       researchQuestion: config.originalResearch.research_question,
@@ -956,9 +967,7 @@ export async function runSectionRewritePhase(
     } : undefined
   }
 
-  // Subsection splitting for rewrites — same 2500-word threshold as generation
-  const SUBSECTION_WORD_THRESHOLD = 2500
-  const shouldSplit = sectionTargetWords >= SUBSECTION_WORD_THRESHOLD
+  const shouldSplit = sectionTargetWords >= SUBSECTION_SPLIT_THRESHOLD_REWRITE
 
   let contextForRewrite = context
 

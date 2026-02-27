@@ -36,10 +36,12 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
   const [isOpen, setIsOpen] = useState(false)
   const [position, setPosition] = useState({ top: 0, left: 0 })
   const [citationId, setCitationId] = useState<string | null>(null)
+  const [groupPaperIds, setGroupPaperIds] = useState<string[]>([])
   const [citedContent, setCitedContent] = useState<string | null>(null)
   const [targetElement, setTargetElement] = useState<HTMLElement | null>(null)
   const [isMounted, setIsMounted] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [editingPaperId, setEditingPaperId] = useState<string | null>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -60,11 +62,18 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
     return map
   }, [papers])
 
-  // Get paper info from local papers (instant, no API)
+  // Get paper info — single paper for standalone citations, array for groups
   const paper = useMemo(() => {
     if (!citationId) return null
     return paperMap.get(citationId) || null
   }, [citationId, paperMap])
+
+  const groupPapers = useMemo(() => {
+    if (groupPaperIds.length <= 1) return []
+    return groupPaperIds.map(id => paperMap.get(id)).filter((p): p is PaperInfo => p != null)
+  }, [groupPaperIds, paperMap])
+
+  const isGrouped = groupPapers.length > 1
 
   // Track mount state for SSR
   useEffect(() => {
@@ -79,6 +88,23 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
     // Get cited content (quote) from the element
     const quoted = citation.getAttribute('data-cited-content')
     setCitedContent(quoted && quoted.trim().length > 0 ? quoted : null)
+
+    // Check if this is a grouped citation and collect all paper IDs
+    const groupId = citation.getAttribute('data-citation-group-id')
+    if (groupId && editor) {
+      const ids: string[] = []
+      editor.state.doc.descendants((node) => {
+        if (node.type.name === 'citation' && node.attrs.citationGroupId === groupId) {
+          const paperId = node.attrs.id as string
+          if (paperId && !ids.includes(paperId)) {
+            ids.push(paperId)
+          }
+        }
+      })
+      setGroupPaperIds(ids.length > 1 ? ids : [])
+    } else {
+      setGroupPaperIds([])
+    }
 
     // Position popover below the citation
     const rect = citation.getBoundingClientRect()
@@ -97,7 +123,7 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
     setCitationId(id)
     setTargetElement(citation)
     setIsOpen(true)
-  }, [])
+  }, [editor])
 
   // Handle click on citation
   const handleClick = useCallback((e: MouseEvent) => {
@@ -219,15 +245,17 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
     }
   }, [isMounted, handleClick, handleClickOutside, handleKeyDown, handleMouseEnter, handleMouseLeave])
 
-  // Delete citation from editor
-  const handleDelete = useCallback(() => {
-    if (!editor || !citationId) return
+  // Delete citation from editor — supports deleting a specific paper by ID
+  const handleDelete = useCallback((paperId?: string) => {
+    if (!editor) return
+    const targetId = paperId || citationId
+    if (!targetId) return
     
     const { doc } = editor.state
     let pos: number | null = null
     
     doc.descendants((node, nodePos) => {
-      if (node.type.name === 'citation' && node.attrs.id === citationId) {
+      if (node.type.name === 'citation' && node.attrs.id === targetId) {
         pos = nodePos
         return false
       }
@@ -236,15 +264,25 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
     
     if (pos !== null) {
       editor.chain().focus().deleteRange({ from: pos, to: pos + 1 }).run()
-      setIsOpen(false)
+      // If we deleted from a group, update group paper IDs
+      if (paperId && groupPaperIds.length > 1) {
+        const remaining = groupPaperIds.filter(id => id !== paperId)
+        setGroupPaperIds(remaining)
+        if (remaining.length <= 1) {
+          setIsOpen(false)
+        }
+      } else {
+        setIsOpen(false)
+      }
     }
-  }, [editor, citationId])
+  }, [editor, citationId, groupPaperIds])
 
-  // Copy BibTeX
-  const handleCopyBibtex = useCallback(() => {
-    if (!paper) return
-    const { title, year, journal, doi, authors } = paper
-    const bibtex = `@article{${citationId},
+  // Copy BibTeX — supports a specific paper for grouped citations
+  const handleCopyBibtex = useCallback((targetPaper?: PaperInfo) => {
+    const p = targetPaper || paper
+    if (!p) return
+    const { id, title, year, journal, doi, authors } = p
+    const bibtex = `@article{${id},
   author = {${(authors || []).join(' and ') || 'Unknown'}},
   title = {${title || ''}},
   year = {${year || 'n.d.'}},
@@ -252,14 +290,16 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
 }`
     navigator.clipboard.writeText(bibtex)
     toast.success('BibTeX copied')
-  }, [paper, citationId])
+  }, [paper])
 
-  // Handle edit click
-  const handleEdit = useCallback(() => {
-    if (!citationId || !projectId) {
+  // Handle edit click — supports both single and grouped citations
+  const handleEdit = useCallback((paperId?: string) => {
+    const targetId = paperId || citationId
+    if (!targetId || !projectId) {
       toast.error('Cannot edit: missing citation or project information')
       return
     }
+    setEditingPaperId(targetId)
     setIsEditModalOpen(true)
   }, [citationId, projectId])
 
@@ -278,12 +318,13 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
     page?: string
     publisher?: string
   }) => {
-    if (!citationId || !projectId) {
+    const targetPaperId = editingPaperId || citationId
+    if (!targetPaperId || !projectId) {
       throw new Error('No citation selected')
     }
 
     // Save to database via API
-    const response = await fetch(`/api/citations/${citationId}`, {
+    const response = await fetch(`/api/citations/${targetPaperId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -316,29 +357,25 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
     }
 
     // Update editor storage FIRST (before clearing cache)
-    // This ensures when CitationNodeView re-renders, it has fresh data
     if (editor) {
       const citationExt = editor.extensionManager.extensions.find(e => e.name === 'citation')
       if (citationExt?.storage?.papers) {
         const currentPapers = citationExt.storage.papers as typeof papers
         const updatedPapers = currentPapers.map(p => 
-          p.id === citationId ? { ...p, ...updatedPaperData } : p
+          p.id === targetPaperId ? { ...p, ...updatedPaperData } : p
         )
         
-        // Clear cache AFTER storage is updated with new data
-        clearPaperCache(citationId)
-        
-        // Now dispatch the update - CitationNodeView will re-render with new data
+        clearPaperCache(targetPaperId)
         editor.commands.setPapers(updatedPapers)
       }
     }
 
-    // Also notify parent to keep React state in sync
-    onPaperUpdated?.(citationId, updatedPaperData)
+    onPaperUpdated?.(targetPaperId, updatedPaperData)
 
     toast.success('Citation updated')
     setIsEditModalOpen(false)
-  }, [citationId, projectId, onPaperUpdated, editor, papers])
+    setEditingPaperId(null)
+  }, [editingPaperId, citationId, projectId, onPaperUpdated, editor, papers])
 
   if (!isOpen) return null
 
@@ -346,6 +383,8 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
   const renderedText = citationId 
     ? document.querySelector(`[data-citation="${citationId}"]`)?.textContent || `[${citationId.slice(0, 8)}...]`
     : ''
+
+  const editModalPaper = editingPaperId ? paperMap.get(editingPaperId) : paper
 
   return (
     <>
@@ -356,9 +395,54 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
           className={cn(
             'fixed z-50 w-80 rounded-xl border border-border/40 bg-popover shadow-lg animate-in fade-in-0 zoom-in-95'
           )}
-          style={{ top: position.top, left: position.left }}
+          style={{ top: position.top, left: position.left, maxHeight: '80vh', overflowY: 'auto' }}
         >
-          {paper ? (
+          {isGrouped ? (
+            // Grouped citation — show all papers
+            <div className="divide-y divide-border/30">
+              {groupPapers.map((gp) => (
+                <div key={gp.id}>
+                  <div className="p-3 space-y-1.5">
+                    <h4 className="font-instrument text-sm tracking-tight line-clamp-2">{gp.title}</h4>
+                    <p className="text-xs text-muted-foreground">
+                      {(gp.authors || []).slice(0, 3).join(', ')}
+                      {(gp.authors || []).length > 3 && ' et al.'}
+                    </p>
+                    <div className="text-xs text-muted-foreground">
+                      {gp.journal && <span className="italic">{gp.journal}</span>}
+                      {gp.journal && gp.year && ' · '}
+                      {gp.year}
+                    </div>
+                  </div>
+                  <div className="px-2 py-1.5 flex gap-1">
+                    {projectId && (
+                      <button onClick={() => handleEdit(gp.id)} className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                        <Pencil className="h-3 w-3" /> Edit
+                      </button>
+                    )}
+                    <button onClick={() => handleCopyBibtex(gp)} className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                      <Copy className="h-3 w-3" /> BibTeX
+                    </button>
+                    {gp.doi && (
+                      <button
+                        onClick={() => window.open(`https://doi.org/${gp.doi}`, '_blank')}
+                        className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                      >
+                        <ExternalLink className="h-3 w-3" /> DOI
+                      </button>
+                    )}
+                    <div className="flex-1" />
+                    <button
+                      onClick={() => handleDelete(gp.id)}
+                      className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : paper ? (
             <>
               <div className="p-4 space-y-2">
                 <h4 className="font-instrument text-sm tracking-tight line-clamp-2">{paper.title}</h4>
@@ -380,11 +464,11 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
               </div>
               <div className="border-t border-border/30 px-2 py-2 flex gap-1">
                 {projectId && (
-                  <button onClick={handleEdit} className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                  <button onClick={() => handleEdit()} className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
                     <Pencil className="h-3 w-3" /> Edit
                   </button>
                 )}
-                <button onClick={handleCopyBibtex} className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                <button onClick={() => handleCopyBibtex()} className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
                   <Copy className="h-3 w-3" /> BibTeX
                 </button>
                 {paper.doi && (
@@ -405,7 +489,7 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
                 )}
                 <div className="flex-1" />
                 <button
-                  onClick={handleDelete}
+                  onClick={() => handleDelete()}
                   className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-destructive hover:bg-destructive/10 transition-colors"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -430,7 +514,7 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
               <div className="border-t border-border/30 pt-2 mt-2 flex gap-1">
                 {projectId && citationId && (
                   <button
-                    onClick={handleEdit}
+                    onClick={() => handleEdit()}
                     className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                   >
                     <Pencil className="h-3 w-3" /> Edit
@@ -438,7 +522,7 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
                 )}
                 <div className="flex-1" />
                 <button
-                  onClick={handleDelete}
+                  onClick={() => handleDelete()}
                   className="inline-flex items-center gap-1 h-7 px-2 rounded-full text-[11px] text-destructive hover:bg-destructive/10 transition-colors"
                 >
                   <Trash2 className="h-3 w-3" /> Delete
@@ -451,18 +535,20 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
       )}
 
       {/* Edit Modal */}
-      {citationId && projectId && (
+      {(editingPaperId || citationId) && projectId && (
         <CitationEditModal
           open={isEditModalOpen}
-          onOpenChange={setIsEditModalOpen}
-          paperId={citationId}
+          onOpenChange={(open) => {
+            setIsEditModalOpen(open)
+            if (!open) setEditingPaperId(null)
+          }}
+          paperId={editingPaperId || citationId!}
           projectId={projectId}
-          initialData={paper ? {
-            id: paper.id,
+          initialData={editModalPaper ? {
+            id: editModalPaper.id,
             type: 'article-journal',
-            title: paper.title || '',
-            author: (paper.authors || []).map(name => {
-              // Parse author name into family/given
+            title: editModalPaper.title || '',
+            author: (editModalPaper.authors || []).map(name => {
               if (name.includes(',')) {
                 const [family, given] = name.split(',').map(s => s.trim())
                 return { family, given: given || '' }
@@ -476,9 +562,9 @@ export function CitationPopover({ editor, projectId, papers = [], onPaperUpdated
                 given: parts.slice(0, -1).join(' ') 
               }
             }),
-            'container-title': paper.journal,
-            issued: paper.year ? { 'date-parts': [[paper.year]] } : undefined,
-            DOI: paper.doi,
+            'container-title': editModalPaper.journal,
+            issued: editModalPaper.year ? { 'date-parts': [[editModalPaper.year]] } : undefined,
+            DOI: editModalPaper.doi,
           } : undefined}
           onSave={handleSaveEdit}
         />

@@ -26,6 +26,7 @@ import type { PaperProfile } from '@/lib/generation/paper-profile-types'
 import type { PaperWithAuthors } from '@/types/simplified'
 import type { GeneratedOutline } from '@/lib/prompts/types'
 import { info, warn } from '@/lib/utils/logger'
+import { MIN_FULL_TEXT_CHARS } from '@/lib/generation/paper-type-config'
 
 // =============================================================================
 // Types
@@ -94,7 +95,7 @@ export async function extractThemesHybrid(
     failOpenCoverageThreshold: 0.4
   } as const
 
-  const MIN_FULL_TEXT_LENGTH = 5000 // ~1200 words - real full text only
+  const MIN_FULL_TEXT_LENGTH = MIN_FULL_TEXT_CHARS
 
   const stopwords = new Set([
     'the','and','or','of','to','in','for','on','with','by','at','from','as','an','a','is','are','was','were',

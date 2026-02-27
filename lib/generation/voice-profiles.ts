@@ -1,3 +1,5 @@
+import { inferSectionType } from './paper-type-config'
+
 /**
  * Voice Profiles System
  * 
@@ -762,31 +764,22 @@ export function getVoiceProfileSummaries(): Array<{
 }
 
 /**
- * Normalize section title to section key for modulation lookup
+ * Normalize section title to section key for modulation lookup.
+ * Uses centralized sectionType inference, then maps to SectionKey.
  */
 export function normalizeSectionKey(sectionTitle: string): SectionKey | null {
-  const normalized = sectionTitle.toLowerCase().trim()
-  
-  if (normalized.includes('introduction') || normalized.includes('background')) {
-    return 'introduction'
+  const type = inferSectionType(sectionTitle) as string
+
+  const TYPE_TO_KEY: Record<string, SectionKey> = {
+    introduction: 'introduction',
+    literature: 'literature-review',
+    methodology: 'methods',
+    results: 'results',
+    discussion: 'discussion',
+    conclusion: 'conclusion',
   }
-  if (normalized.includes('method') || normalized.includes('approach') || normalized.includes('design')) {
-    return 'methods'
-  }
-  if (normalized.includes('result') || normalized.includes('finding')) {
-    return 'results'
-  }
-  if (normalized.includes('discussion') || normalized.includes('interpretation') || normalized.includes('implication')) {
-    return 'discussion'
-  }
-  if (normalized.includes('conclusion') || normalized.includes('summary')) {
-    return 'conclusion'
-  }
-  if (normalized.includes('literature') || normalized.includes('review') || normalized.includes('related work')) {
-    return 'literature-review'
-  }
-  
-  return null
+
+  return TYPE_TO_KEY[type] ?? null
 }
 
 /**
@@ -955,15 +948,12 @@ export function suggestVoiceProfile(params: {
   alternatives: VoiceProfileId[]
 } {
   const { paperType, discipline, academicLevel } = params
-  const paperTypeLower = paperType.toLowerCase()
   const disciplineLower = discipline?.toLowerCase() || ''
   
-  // PhD dissertations and senior work → Senior Scholar
   if (
     academicLevel === 'doctoral' ||
     academicLevel === 'faculty' ||
-    paperTypeLower.includes('dissertation') ||
-    paperTypeLower.includes('doctoral')
+    paperType === 'phdDissertation'
   ) {
     return {
       suggestedProfile: 'senior-scholar',
@@ -973,12 +963,10 @@ challenges assumptions, and advances the field through rigorous argumentation.`,
     }
   }
   
-  // Master's theses and research articles → Confident Researcher
   if (
     academicLevel === 'masters' ||
-    paperTypeLower.includes('master') ||
-    paperTypeLower.includes('thesis') ||
-    paperTypeLower.includes('research article')
+    paperType === 'mastersThesis' ||
+    paperType === 'researchArticle'
   ) {
     return {
       suggestedProfile: 'confident-researcher',
@@ -988,8 +976,7 @@ literature critically, identifies gaps, and takes measured positions while ackno
     }
   }
   
-  // Literature reviews → depends on level
-  if (paperTypeLower.includes('literature review') || paperTypeLower.includes('review')) {
+  if (paperType === 'literatureReview') {
     if (academicLevel === 'undergraduate') {
       return {
         suggestedProfile: 'conservative-reviewer',

@@ -25,6 +25,7 @@ import type {
   SynthesisPlanResult,
   SectionPlan
 } from './types'
+import { type SectionType, inferSectionType } from '@/lib/generation/paper-type-config'
 
 const PLAN_BUILDER_TIMEOUT_MS = 90_000
 
@@ -792,14 +793,19 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
           'Plan under-assigned synthesis items; distributing deterministically'
         )
 
+        const SECTION_TYPE_ORDER: Record<SectionType, number> = {
+          literature: 0,
+          discussion: 1,
+          introduction: 2,
+          conclusion: 3,
+          methodology: 4,
+          results: 4,
+          'non-content': 5,
+        }
         const sectionOrder = [...litSections].sort((a, b) => {
-          const score = (k: string) =>
-            k.toLowerCase().includes('literature') || k.toLowerCase().includes('review') ? 0
-              : k.toLowerCase().includes('discussion') ? 1
-              : k.toLowerCase().includes('introduction') ? 2
-              : k.toLowerCase().includes('conclusion') ? 3
-              : 4
-          return score(a.outlineSectionKey) - score(b.outlineSectionKey)
+          const typeA = inferSectionType(a.outlineSectionKey, a.title)
+          const typeB = inferSectionType(b.outlineSectionKey, b.title)
+          return (SECTION_TYPE_ORDER[typeA] ?? 4) - (SECTION_TYPE_ORDER[typeB] ?? 4)
         })
 
         const formatSupportStatement = (count: number, total: number) => {
@@ -826,9 +832,8 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
           })
         }
 
-        // Distribute missing contradictions (prefer Discussion, then Literature Review)
         const discussionSection =
-          sectionOrder.find(s => s.outlineSectionKey.toLowerCase().includes('discussion')) || sectionOrder[0]
+          sectionOrder.find(s => inferSectionType(s.outlineSectionKey, s.title) === 'discussion') || sectionOrder[0]
         const missingContradictions = input.analysis.contradictions.filter(c => !plannedContradictionIds.has(c.id))
         for (const c of missingContradictions) {
           discussionSection.content.contradictions.push({
@@ -843,9 +848,8 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
           })
         }
 
-        // Distribute missing gaps (prefer Conclusion, then Discussion)
         const conclusionSection =
-          sectionOrder.find(s => s.outlineSectionKey.toLowerCase().includes('conclusion')) || discussionSection
+          sectionOrder.find(s => inferSectionType(s.outlineSectionKey, s.title) === 'conclusion') || discussionSection
         const missingGaps = input.analysis.gaps.filter(g => !plannedGapIds.has(g.id))
         for (let i = 0; i < missingGaps.length; i++) {
           const g = missingGaps[i]

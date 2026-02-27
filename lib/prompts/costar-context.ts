@@ -17,6 +17,7 @@ import {
   buildCondensedVoiceContext,
   type VoiceProfileId
 } from '@/lib/generation/voice-profiles'
+import { getPaperTypeConfig, type SectionType, inferSectionType } from '@/lib/generation/paper-type-config'
 
 // Re-export shared paper formatting utilities
 // These are the canonical implementations - use these for all paper formatting
@@ -28,27 +29,10 @@ export {
   type RAGChunk,
 } from './format-papers'
 
-// Paper type to style guidance mapping
-// Simplified from full paper profiles for chat/complete use
-const PAPER_TYPE_STYLES: Record<string, string> = {
-  'research-article': 
-    'Formal academic prose with empirical focus. Present findings objectively with appropriate statistical hedging. Use passive voice for methods, active voice for interpretations.',
-  
-  'literature-review': 
-    'Synthesizing voice that compares and contrasts sources. Emphasize connections, themes, and gaps across studies. Organize thematically rather than chronologically when possible.',
-  
-  'masters-thesis': 
-    'Thorough academic style demonstrating mastery of the field. Balance depth with accessibility. Show clear progression of argument and methodology.',
-  
-  'phd-dissertation': 
-    'Authoritative scholarly voice with original contribution emphasis. Rigorous argumentation with comprehensive literature engagement. Appropriate theoretical framing.',
-  
-  'capstone-project': 
-    'Professional academic style demonstrating applied knowledge. Balance theoretical foundation with practical application. Clear methodology and actionable conclusions.',
-  
+// Fallback styles for non-standard paper types not in the config
+const EXTRA_STYLE_FALLBACKS: Record<string, string> = {
   'essay': 
     'Argumentative academic prose with clear thesis. Structured paragraphs with topic sentences. Evidence-based reasoning with proper attribution.',
-  
   'report': 
     'Clear, structured prose focused on conveying information. Use headings and sections effectively. Balance detail with readability.',
 }
@@ -175,6 +159,8 @@ export interface CompleteCOStarContext extends COStarBaseContext {
   
   // Section guidance
   sectionGuidance: string
+  currentSectionGoals?: string
+  sectionSummariesContext?: string
   
   // Document outline
   outlineContext: string
@@ -200,30 +186,34 @@ export interface CompleteCOStarContext extends COStarBaseContext {
   keyFindings?: string
 }
 
-/**
- * Get style guidance for a paper type
- */
 export function getStyleGuidance(paperType: string): string {
-  // Normalize paper type key
-  const normalizedType = paperType
-    .toLowerCase()
-    .replace(/[-_\s]+/g, '-')
-  
-  return PAPER_TYPE_STYLES[normalizedType] || PAPER_TYPE_STYLES['research-article']
+  const config = getPaperTypeConfig(paperType)
+  if (config.styleGuidance) return config.styleGuidance
+
+  const normalizedType = paperType.toLowerCase().replace(/[-_\s]+/g, '-')
+  return EXTRA_STYLE_FALLBACKS[normalizedType] || getPaperTypeConfig('researchArticle').styleGuidance
+}
+
+// SectionType-keyed fallback for sections with non-standard names
+const SECTION_TYPE_FALLBACK: Record<SectionType, { purpose: string; opening: string }> = {
+  introduction: SECTION_GUIDANCE['introduction'],
+  literature: SECTION_GUIDANCE['literature review'],
+  methodology: SECTION_GUIDANCE['methodology'],
+  results: SECTION_GUIDANCE['results'],
+  discussion: SECTION_GUIDANCE['discussion'],
+  conclusion: SECTION_GUIDANCE['conclusion'],
+  'non-content': { purpose: 'Provide supplementary material as appropriate.', opening: '' },
 }
 
 /**
- * Get section-specific writing guidance
- * @param section - Section name
- * @param isSectionOpening - Whether this is the start of a new section (empty paragraph after heading)
+ * Get section-specific writing guidance.
+ * Tries exact name match, partial match, then falls back to sectionType inference.
  */
 export function getSectionGuidance(section: string, isSectionOpening: boolean = false): string {
   const sectionLower = section.toLowerCase()
   
-  // Find matching guidance
   let guidance = SECTION_GUIDANCE[sectionLower]
   
-  // Check for partial matches if no exact match
   if (!guidance) {
     for (const [key, value] of Object.entries(SECTION_GUIDANCE)) {
       if (sectionLower.includes(key) || key.includes(sectionLower)) {
@@ -232,14 +222,16 @@ export function getSectionGuidance(section: string, isSectionOpening: boolean = 
       }
     }
   }
+
+  if (!guidance) {
+    const type = inferSectionType(section)
+    guidance = SECTION_TYPE_FALLBACK[type]
+  }
   
-  // Return appropriate guidance based on context
   if (guidance) {
     if (isSectionOpening) {
-      // When starting a new section, include both purpose and opening guidance
       return `${guidance.purpose}\n\n**Opening this section:** ${guidance.opening}`
     }
-    // When continuing within a section, just the purpose
     return guidance.purpose
   }
   
@@ -369,6 +361,8 @@ export function buildCompleteContext(params: {
   precedingText: string
   followingText?: string
   outlineContext: string
+  currentSectionGoals?: string
+  sectionSummariesContext?: string
   chunksText: string
   claimsText: string
   papersContext: string
@@ -393,6 +387,8 @@ export function buildCompleteContext(params: {
     precedingText,
     followingText,
     outlineContext,
+    currentSectionGoals = '',
+    sectionSummariesContext = '',
     chunksText,
     claimsText,
     papersContext,
@@ -415,6 +411,8 @@ export function buildCompleteContext(params: {
     precedingText: precedingText.slice(-800), // Enough context to detect repetition
     followingText,
     sectionGuidance: getSectionGuidance(currentSection, isSectionOpening),
+    currentSectionGoals,
+    sectionSummariesContext,
     outlineContext,
     chunksText,
     claimsText,

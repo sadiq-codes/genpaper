@@ -37,6 +37,8 @@ interface EditorContext {
   currentParagraph: string
   currentSection: string
   documentOutline: string[]
+  currentSectionText: string
+  currentSectionWordCount: number
   isInParagraph: boolean
   isEmptyParagraph: boolean
   hasHeadingAbove: boolean
@@ -267,6 +269,7 @@ function extractEditorContext(editor: Editor): EditorContext | null {
   // Single pass: find heading above cursor AND build outline
   let currentSection = ''
   let hasHeadingAbove = false
+  let currentSectionStartPos = 0
   const documentOutline: string[] = []
 
   doc.descendants((node, pos) => {
@@ -277,10 +280,25 @@ function extractEditorContext(editor: Editor): EditorContext | null {
       if (pos < cursorPos) {
         currentSection = headingText
         hasHeadingAbove = true
+        // Capture content only after the latest heading before cursor.
+        currentSectionStartPos = pos + node.nodeSize
       }
     }
     return true
   })
+
+  // Build current section content (bounded) for section-completion decisions.
+  const sectionParagraphs: string[] = []
+  doc.nodesBetween(currentSectionStartPos, cursorPos, (node) => {
+    if (node.type.name === 'paragraph' && node.textContent.trim()) {
+      sectionParagraphs.push(node.textContent.trim())
+    }
+    return true
+  })
+  const currentSectionText = sectionParagraphs.join('\n\n').slice(-3200)
+  const currentSectionWordCount = currentSectionText.trim()
+    ? currentSectionText.trim().split(/\s+/).length
+    : 0
 
   // Build followingText: collect text after cursor in current paragraph + next paragraphs
   // Limited to ~500 chars for reasonable context without bloating prompt
@@ -319,6 +337,8 @@ function extractEditorContext(editor: Editor): EditorContext | null {
     currentParagraph,
     currentSection: currentSection || 'Untitled Section',
     documentOutline,
+    currentSectionText,
+    currentSectionWordCount,
     isInParagraph,
     isEmptyParagraph,
     hasHeadingAbove,
@@ -741,6 +761,8 @@ export function useSmartCompletion({
               currentSection: context.currentSection,
               documentOutline: context.documentOutline,
               isSectionOpening: context.isSectionOpening,  // Signal for section-appropriate opening
+              currentSectionText: context.currentSectionText,
+              currentSectionWordCount: context.currentSectionWordCount,
             },
             paperIds: prefs?.includeCitations ? currentPapers.map(p => p.id) : [],
             // Skip RAG entirely when citations are disabled - makes autocomplete much faster

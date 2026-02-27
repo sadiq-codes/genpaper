@@ -18,9 +18,24 @@ import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 import { PromptService } from '@/lib/prompts/prompt-service'
 import { buildCompleteContext, formatPapersForContext } from '@/lib/prompts/costar-context'
 import { checkAutocompleteUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
-
-// Note: SuggestionType removed - the unified prompt now handles all cases
-// by having the LLM analyze writing intent semantically
+import {
+  type OutlinePlanBlueprint,
+  buildCurrentSectionGoalsContext,
+  buildOutlineBlueprintFromSections,
+  buildSectionGoalMap,
+  buildSectionSummariesContext,
+  countWords,
+  dedupePlannedOutline,
+  extractiveSectionSummary,
+  findNextMissingOutlineHeading,
+  generateOutlineBlueprint,
+  getSectionTransitionThreshold,
+  headingsRoughlyMatch,
+  limitSectionSummaries,
+  normalizeOutlineHeading,
+} from '@/lib/generation/outline-planner'
+import { BANNED_PHRASES } from '@/lib/prompts/banned-phrases'
+import { getAvailableVoiceProfileIds, type VoiceProfileId } from '@/lib/generation/voice-profiles'
 
 /**
  * Extract paper IDs from citation markers in the preceding text.
@@ -53,6 +68,10 @@ interface CompletionRequest {
     documentOutline: string[]
     /** True when cursor is in empty paragraph after a heading - signals section opening */
     isSectionOpening?: boolean
+    /** Plain-text content currently written in this section (up to a bounded size) */
+    currentSectionText?: string
+    /** Approximate word count for content already written in current section */
+    currentSectionWordCount?: number
   }
   paperIds: string[]
   topic: string
@@ -61,6 +80,22 @@ interface CompletionRequest {
   // When true, allow global corpus search and library boosting beyond project papers
   useExternalSources?: boolean
 }
+
+interface AutocompleteGenerationConfig {
+  voiceProfileId?: string
+  plannedOutline?: string[]
+  original_research?: {
+    has_original_research: boolean
+    research_question?: string
+    key_findings?: string
+  }
+  outlineBlueprint?: OutlinePlanBlueprint
+  // Backward compatibility for already persisted data
+  autocompleteBlueprint?: OutlinePlanBlueprint
+  sectionSummaries?: Record<string, string>
+}
+
+const MIN_WORDS_BEFORE_NEXT_HEADING = 140
 
 // Citation info returned to client
 interface CitationInSuggestion {
@@ -139,13 +174,13 @@ async function buildSystemPromptFromTemplate(
   ragFormatted: { chunksText: string; claimsText: string },
   papersContext: string,
   outlineContext: string,
+  currentSectionGoals: string,
+  sectionSummariesContext: string,
   voiceProfileId?: string | null,
   noPapersAvailable?: boolean,
   originalResearch?: { has_original_research: boolean; research_question?: string; key_findings?: string } | null
 ): Promise<string> {
-  // Validate voice profile ID
-  type VoiceProfileId = 'conservative-reviewer' | 'confident-researcher' | 'senior-scholar' | 'balanced-academic'
-  const validVoiceIds: VoiceProfileId[] = ['conservative-reviewer', 'confident-researcher', 'senior-scholar', 'balanced-academic']
+  const validVoiceIds = getAvailableVoiceProfileIds()
   const validatedVoiceId = voiceProfileId && validVoiceIds.includes(voiceProfileId as VoiceProfileId)
     ? voiceProfileId as VoiceProfileId
     : undefined
@@ -157,6 +192,8 @@ async function buildSystemPromptFromTemplate(
     precedingText: context.precedingText,
     followingText: context.followingText,  // FIM: pass suffix for better context
     outlineContext,
+    currentSectionGoals,
+    sectionSummariesContext,
     chunksText: ragFormatted.chunksText,
     claimsText: ragFormatted.claimsText,
     papersContext,
@@ -527,46 +564,152 @@ export async function POST(request: NextRequest) {
       ? (libraryRows?.map((r: { paper_id: string }) => r.paper_id) || [])
       : []
     
-    // Extract voice profile, planned outline, and original research from generation config
-    const generationConfig = (project as { generation_config?: { 
-      voiceProfileId?: string
-      plannedOutline?: string[]
-      original_research?: { has_original_research: boolean; research_question?: string; key_findings?: string }
-    } | null }).generation_config
-    const voiceProfileId = generationConfig?.voiceProfileId || null
-    const plannedOutline: string[] = generationConfig?.plannedOutline || []
-    const originalResearch = generationConfig?.original_research || null
-    
+    // Extract voice profile, outline plan, and optional section memory from generation config.
+    // These fields are persisted on the project to keep autocomplete stateful across sessions.
+    const generationConfig = (
+      project as { generation_config?: AutocompleteGenerationConfig | null }
+    ).generation_config || null
+
+    let mutableGenerationConfig: AutocompleteGenerationConfig = generationConfig
+      ? { ...generationConfig }
+      : {}
+
+    const voiceProfileId = mutableGenerationConfig.voiceProfileId || null
+    let plannedOutline = dedupePlannedOutline(mutableGenerationConfig.plannedOutline || [])
+    let outlineBlueprint =
+      mutableGenerationConfig.outlineBlueprint ||
+      mutableGenerationConfig.autocompleteBlueprint
+    let sectionSummaries: Record<string, string> = mutableGenerationConfig.sectionSummaries || {}
+    const originalResearch = mutableGenerationConfig.original_research || null
+
     if (voiceProfileId) {
       console.log('[Autocomplete] Using project voice profile:', voiceProfileId)
     }
 
+    // One-time bootstrap: if no stored outline exists, generate a blueprint from the title/topic.
+    if (plannedOutline.length === 0) {
+      const inferredTopic = (topic || project.topic || context.documentOutline?.[0] || '').trim()
+      if (inferredTopic) {
+        outlineBlueprint = await generateOutlineBlueprint({
+          topic: inferredTopic,
+          paperType: project.paper_type || 'literatureReview',
+          titleHeading: context.documentOutline?.[0],
+        })
+
+        plannedOutline = dedupePlannedOutline(
+          outlineBlueprint.sections.map(section => section.heading)
+        )
+
+        mutableGenerationConfig = {
+          ...mutableGenerationConfig,
+          outlineBlueprint,
+          autocompleteBlueprint: outlineBlueprint,
+          plannedOutline,
+        }
+
+        const { error: configUpdateError } = await supabase
+          .from('research_projects')
+          .update({ generation_config: mutableGenerationConfig })
+          .eq('id', projectId)
+          .eq('user_id', user.id)
+
+        if (configUpdateError) {
+          console.warn('[Autocomplete] Failed to persist generated outline:', configUpdateError)
+        } else {
+          console.log(`[Autocomplete] Generated blueprint with ${plannedOutline.length} sections`)
+        }
+      }
+    }
+
+    if (!outlineBlueprint && plannedOutline.length > 0) {
+      outlineBlueprint = buildOutlineBlueprintFromSections(
+        plannedOutline.map(heading => ({
+          heading,
+          goal: '',
+        })),
+        'autocomplete'
+      )
+    }
+
+    const sectionGoalMap = buildSectionGoalMap(outlineBlueprint?.sections || [])
+
     // -----------------------------------------------------------------------
     // OUTLINE-AWARE HEADING SUGGESTION
-    // If there's a planned outline and the next section heading is missing from
-    // the document, return it instantly — no LLM call needed.
+    // Suggest the next heading only when:
+    // - title bootstrap (first heading insertion after title), OR
+    // - current section has enough content and cursor is at an empty boundary.
     // -----------------------------------------------------------------------
     if (plannedOutline.length > 0) {
-      const docHeadingsLower = (context.documentOutline || []).map(h => h.toLowerCase().trim())
-      // Find the first planned heading not yet present in the document
-      const nextHeading = plannedOutline.find(
-        planned => !docHeadingsLower.some(
-          existing => existing === planned.toLowerCase().trim() || 
-                      existing.includes(planned.toLowerCase().trim()) ||
-                      planned.toLowerCase().trim().includes(existing)
+      const nextHeading = findNextMissingOutlineHeading(plannedOutline, context.documentOutline || [])
+      const isEmptyParagraph = !context.currentParagraph?.trim()
+      const currentSectionWordCount = context.currentSectionWordCount
+        ?? countWords(context.currentSectionText || context.precedingText)
+      const sectionTransitionThreshold = getSectionTransitionThreshold({
+        currentSection: context.currentSection,
+        plannedOutline,
+        blueprintSections: outlineBlueprint?.sections || [],
+        fallbackWords: MIN_WORDS_BEFORE_NEXT_HEADING,
+      })
+      const endsAtSentenceBoundary = /[.!?]["')\]]*$/.test(context.precedingText.trim())
+      const isTitleBootstrap = (context.documentOutline?.length || 0) <= 1 && currentSectionWordCount < 40
+
+      const shouldSuggestHeading = Boolean(nextHeading) && isEmptyParagraph && (
+        isTitleBootstrap ||
+        (
+          !context.isSectionOpening &&
+          currentSectionWordCount >= sectionTransitionThreshold &&
+          endsAtSentenceBoundary
         )
       )
 
-      // Suggest a heading when:
-      // - There's a next heading to suggest
-      // - The cursor is in an empty paragraph (currentParagraph is empty/whitespace)
-      // - Either the document has no headings at all, or we're at the end of a section
-      const isEmptyParagraph = !context.currentParagraph?.trim()
-      if (nextHeading && isEmptyParagraph) {
-        console.log(`[Autocomplete] Suggesting next heading: "${nextHeading}"`)
+      if (nextHeading && shouldSuggestHeading) {
+        // When advancing sections, store a compact summary of the completed section.
+        const currentSectionKey = normalizeOutlineHeading(context.currentSection || '')
+        const canSummarizeCurrentSection =
+          !isTitleBootstrap &&
+          currentSectionKey.length > 0 &&
+          currentSectionWordCount >= sectionTransitionThreshold &&
+          Boolean(context.currentSectionText?.trim())
+
+        if (canSummarizeCurrentSection && !sectionSummaries[currentSectionKey]) {
+          const summary = extractiveSectionSummary(context.currentSectionText || '')
+          if (summary) {
+            sectionSummaries = limitSectionSummaries(
+              {
+                ...sectionSummaries,
+                [currentSectionKey]: summary,
+              },
+              plannedOutline
+            )
+
+            mutableGenerationConfig = {
+              ...mutableGenerationConfig,
+              plannedOutline,
+              sectionSummaries,
+              ...(outlineBlueprint
+                ? { outlineBlueprint, autocompleteBlueprint: outlineBlueprint }
+                : {}),
+            }
+
+            const { error: summaryUpdateError } = await supabase
+              .from('research_projects')
+              .update({ generation_config: mutableGenerationConfig })
+              .eq('id', projectId)
+              .eq('user_id', user.id)
+
+            if (summaryUpdateError) {
+              console.warn('[Autocomplete] Failed to persist section summary:', summaryUpdateError)
+            } else {
+              console.log(`[Autocomplete] Stored section summary for "${context.currentSection}"`)
+            }
+          }
+        }
+
+        console.log(
+          `[Autocomplete] Suggesting next heading: "${nextHeading}" (sectionWords=${currentSectionWordCount}, threshold=${sectionTransitionThreshold})`
+        )
         timings.total = Date.now() - requestStartTime
 
-        // Return heading as a markdown-formatted suggestion (## Heading)
         const headingText = `## ${nextHeading}\n`
         const encoder = new TextEncoder()
         const stream = new ReadableStream({
@@ -575,8 +718,8 @@ export async function POST(request: NextRequest) {
               type: 'done',
               sentences: [{
                 text: headingText,
-                displayText: nextHeading,
-                citations: []
+                displayText: headingText.trim(),
+                citations: [],
               }],
               contextHint: 'Next section',
               ragInfo: { chunksUsed: 0, claimsUsed: 0, papersReferenced: 0 },
@@ -584,7 +727,7 @@ export async function POST(request: NextRequest) {
               isHeadingSuggestion: true,
             })}\n\n`))
             controller.close()
-          }
+          },
         })
 
         return new Response(stream, {
@@ -677,26 +820,39 @@ export async function POST(request: NextRequest) {
       }))
     )
 
-    // Build outline context: show current document headings + planned outline awareness
+    // Build outline context: current headings + remaining planned sections (+ goals when available)
     let outlineContext: string
     if (context.documentOutline.length > 0) {
       outlineContext = 'Current document sections:\n' + context.documentOutline.map(h => `- ${h}`).join('\n')
       if (plannedOutline.length > 0) {
-        const docHeadingsLower = context.documentOutline.map(h => h.toLowerCase().trim())
-        const remaining = plannedOutline.filter(planned => !docHeadingsLower.some(
-          existing => existing === planned.toLowerCase().trim() || 
-                      existing.includes(planned.toLowerCase().trim()) ||
-                      planned.toLowerCase().trim().includes(existing)
-        ))
+        const remaining = plannedOutline.filter(
+          planned => !context.documentOutline.some(existing => headingsRoughlyMatch(existing, planned))
+        )
         if (remaining.length > 0) {
-          outlineContext += '\n\nUpcoming planned sections:\n' + remaining.map(h => `- ${h}`).join('\n')
+          outlineContext += '\n\nUpcoming planned sections:\n' + remaining.map(heading => {
+            const goal = sectionGoalMap.get(normalizeOutlineHeading(heading))
+            return goal ? `- ${heading}: ${goal}` : `- ${heading}`
+          }).join('\n')
         }
       }
     } else if (plannedOutline.length > 0) {
-      outlineContext = 'Planned paper outline:\n' + plannedOutline.map(h => `- ${h}`).join('\n')
+      outlineContext = 'Planned paper outline:\n' + plannedOutline.map(heading => {
+        const goal = sectionGoalMap.get(normalizeOutlineHeading(heading))
+        return goal ? `- ${heading}: ${goal}` : `- ${heading}`
+      }).join('\n')
     } else {
       outlineContext = 'No outline.'
     }
+
+    const currentSectionGoals = buildCurrentSectionGoalsContext(
+      context.currentSection,
+      plannedOutline,
+      sectionGoalMap
+    )
+    const sectionSummariesContext = buildSectionSummariesContext(
+      sectionSummaries,
+      plannedOutline
+    )
 
     const paperType = project.paper_type || 'literatureReview'
 
@@ -715,6 +871,8 @@ export async function POST(request: NextRequest) {
       ragFormatted,
       papersContext,
       outlineContext,
+      currentSectionGoals,
+      sectionSummariesContext,
       voiceProfileId,  // Pass voice profile for consistent completions
       noPapersAvailable,  // Suppress citation instructions when no papers available
       originalResearch   // Pass original research for findings-anchored completions
@@ -792,20 +950,6 @@ export async function POST(request: NextRequest) {
             }
 
             const CONFIDENCE_THRESHOLD = 0.5
-            const BANNED_PHRASES = [
-              'encompasses a diverse array',
-              'plays a crucial role',
-              'a wide range of',
-              'various aspects of',
-              'it is important to note',
-              'it should be noted',
-              'in recent years',
-              'has gained significant attention',
-              'has been widely studied',
-              'is of paramount importance',
-              'a plethora of',
-              'myriad of',
-            ]
 
             let finalProcessedSentences: ProcessedSentence[] | null = null
             let finalContextHint = 'Continuing...'

@@ -11,6 +11,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import type { ProfileGenerationInput } from './paper-profile-types'
 import { getVoiceProfileSummaries } from './voice-profiles'
+import { getPaperTypeConfig } from './paper-type-config'
 
 // Cache for loaded markdown content
 const profileGuidanceCache: Map<string, string> = new Map()
@@ -124,7 +125,8 @@ Requirements:
    - Appropriate sections for this topic and paper type.
    - Inappropriate sections with reasons.
    - Required elements that must appear.
-   - Each section needs: key (camelCase), title, purpose, minWords, maxWords, citationExpectation, keyElements, isLiteratureFocused.
+   - Each section needs: key (camelCase), title, purpose, minWords, maxWords, citationExpectation, keyElements, isLiteratureFocused, sectionType.
+   - sectionType must be one of: "introduction", "literature", "methodology", "results", "discussion", "conclusion", "non-content".
 4) Source expectations:
    - minimumUniqueSources, idealSourceCount, recencyProfile, recencyGuidance.
    - searchYearRange with fromYear/toYear/rationale (current year: ${new Date().getFullYear()}).
@@ -186,18 +188,8 @@ This paper presents ORIGINAL RESEARCH with data collection. The profile should r
   return ''
 }
 
-/**
- * Format paper type for display in prompts
- */
 function formatPaperType(paperType: string): string {
-  const formatMap: Record<string, string> = {
-    'literatureReview': 'Literature Review',
-    'researchArticle': 'Research Article',
-    'mastersThesis': "Master's Thesis",
-    'phdDissertation': 'PhD Dissertation',
-    'capstoneProject': 'Capstone Project'
-  }
-  return formatMap[paperType] || paperType
+  return getPaperTypeConfig(paperType).label
 }
 
 /**
@@ -206,21 +198,14 @@ function formatPaperType(paperType: string): string {
  * Otherwise fall back to the paper type's default range.
  */
 function getWordCountTarget(paperType: string, length?: number): string {
-  // Fallback ranges when no explicit target is given
-  const defaults: Record<string, string> = {
-    'literatureReview': 'Literature Review: 3,000-8,000 words total',
-    'researchArticle': 'Research Article: 4,000-8,000 words total',
-    'capstoneProject': 'Capstone Project: 5,000-10,000 words total',
-    'mastersThesis': "Master's Thesis: 15,000-25,000 words total",
-    'phdDissertation': 'PhD Dissertation: 40,000-80,000 words total',
-  }
+  const config = getPaperTypeConfig(paperType)
 
   if (length && length > 0) {
     const fmt = (n: number) => n.toLocaleString('en-US')
-    return `${formatPaperType(paperType)}: Target exactly ${fmt(length)} words total. Distribute sections to sum to this target.`
+    return `${config.label}: Target exactly ${fmt(length)} words total. Distribute sections to sum to this target.`
   }
 
-  return defaults[paperType] || `${formatPaperType(paperType)}: Follow standard academic expectations`
+  return `${config.label}: ${config.defaultWordRange}`
 }
 
 /**
@@ -321,9 +306,10 @@ export const PAPER_PROFILE_JSON_SCHEMA = {
               maxWords: { type: 'number' as const },
               citationExpectation: { type: 'string' as const, enum: ['none', 'light', 'moderate', 'heavy'] },
               keyElements: { type: 'array' as const, items: { type: 'string' as const } },
-              isLiteratureFocused: { type: 'boolean' as const }
+              isLiteratureFocused: { type: 'boolean' as const },
+              sectionType: { type: 'string' as const, enum: ['introduction', 'literature', 'methodology', 'results', 'discussion', 'conclusion', 'non-content'] }
             },
-            required: ['key', 'title', 'purpose', 'minWords', 'maxWords', 'citationExpectation', 'keyElements', 'isLiteratureFocused'],
+            required: ['key', 'title', 'purpose', 'minWords', 'maxWords', 'citationExpectation', 'keyElements', 'isLiteratureFocused', 'sectionType'],
             additionalProperties: false
           }
         },

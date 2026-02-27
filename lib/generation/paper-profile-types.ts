@@ -7,6 +7,7 @@
  */
 
 import type { VoiceProfileId, VoiceProfileCore } from './voice-profiles'
+import type { SectionType } from './paper-type-config'
 
 /**
  * Discipline context describes the academic field and its characteristics
@@ -52,6 +53,11 @@ export interface SectionProfile {
    * For literature reviews, most sections are literature-focused.
    */
   isLiteratureFocused?: boolean
+  /**
+   * Semantic classification of this section's role in the paper.
+   * Set by the LLM during profile generation; inferred from key/title as fallback.
+   */
+  sectionType?: SectionType
   /** Optional subsections within this section */
   subsections?: SectionProfile[]
 }

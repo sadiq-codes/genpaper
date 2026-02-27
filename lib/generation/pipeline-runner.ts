@@ -37,6 +37,10 @@ import type { PaperTypeKey } from "@/lib/prompts/types";
 import type { PaperStatus } from "@/types/simplified";
 import type { SectionContext } from "@/lib/prompts/types";
 import type { HybridThemeExtractionResult } from "@/lib/synthesis-engine/pipeline-integration";
+import {
+  buildOutlineBlueprintFromProfileSections,
+  dedupePlannedOutline,
+} from "@/lib/generation/outline-planner";
 
 export interface GenerationPipelineInput {
   runId: string;
@@ -218,6 +222,19 @@ export async function runGenerationPipeline(
     // Persist planned outline in generation_config so autocomplete can suggest headings
     if (profile.outline?.sections?.length) {
       try {
+        const plannedOutline = dedupePlannedOutline(
+          profile.outline.sections.map((s: { title: string }) => s.title)
+        );
+        const outlineBlueprint = buildOutlineBlueprintFromProfileSections(
+          profile.outline.sections.map(
+            (s: { title: string; keyPoints?: string[]; expectedWords?: number }) => ({
+              title: s.title,
+              keyPoints: s.keyPoints,
+              expectedWords: s.expectedWords,
+            })
+          )
+        );
+
         const { createServiceClient } = await import("@/lib/supabase/service");
         const svc = createServiceClient();
         const { data: proj } = await svc
@@ -231,7 +248,8 @@ export async function runGenerationPipeline(
           .update({
             generation_config: {
               ...existing,
-              plannedOutline: profile.outline.sections.map((s: { title: string }) => s.title),
+              plannedOutline,
+              outlineBlueprint,
             },
           })
           .eq("id", projectId);

@@ -16,6 +16,16 @@ system: |-
   
   ## Section Purpose
   {{sectionGuidance}}
+
+  {{#currentSectionGoals}}
+  ## Current Section Goals
+  {{{currentSectionGoals}}}
+  {{/currentSectionGoals}}
+
+  {{#sectionSummariesContext}}
+  ## Completed Section Summaries
+  {{{sectionSummariesContext}}}
+  {{/sectionSummariesContext}}
   
   ## Cursor Position
   {{#precedingText}}

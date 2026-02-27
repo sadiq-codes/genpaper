@@ -10,6 +10,7 @@ import {
 } from '@/lib/generation/voice-profiles'
 import type { PaperVoiceConfig, QualityCriterion } from '@/lib/generation/paper-profile-types'
 import type { EnrichedSectionContext } from '@/lib/synthesis-engine/outline-enricher'
+import { getPaperTypeConfig } from '@/lib/generation/paper-type-config'
 
 /**
  * Unified prompt builder that assembles contextual PromptData and delegates
@@ -52,6 +53,9 @@ export interface BuildPromptOptions extends TemplateOptions {
   // Quality criteria from paper profile - used directly instead of LLM calls
   // This eliminates per-section generateQualityCriteria() calls
   profileCriteria?: QualityCriterion[]
+
+  // Explicit citation density for this section (from paper profile)
+  sectionCitationDensity?: 'none' | 'light' | 'moderate' | 'heavy'
 }
 
 /**
@@ -274,6 +278,8 @@ async function generatePromptData(
     voice: voiceWithFlags,
     // Quantification context for accurate claims about the literature base
     literatureStats: quantificationContext,
+    // Explicit citation density for this section
+    sectionCitationDensity: options.sectionCitationDensity,
     
     // Synthesis enrichment (from EnrichedSectionContext if available)
     ...synthesisData
@@ -328,16 +334,42 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
     result.synthesisPatterns = synthesisPatterns
   }
   
-  // Determine if this section requires a table
-  // Tables are required for all content sections EXCEPT Introduction and Conclusion
-  const sectionKey = (context.sectionKey || '').toLowerCase()
-  const sectionTitle = (context.title || '').toLowerCase()
-  const isIntroOrConclusion = 
-    sectionKey.includes('intro') || sectionTitle.includes('intro') ||
-    sectionKey.includes('conclusion') || sectionTitle.includes('conclusion') ||
-    sectionKey.includes('abstract') || sectionTitle.includes('abstract')
-  
-  ;(result as Record<string, unknown>).requiresTable = !isIntroOrConclusion
+  // Determine if this section should require a table.
+  // Data-driven rule: require a table only when synthesis signals are rich enough
+  // to support non-template, evidence-backed rows.
+  const synthesisSignalCount =
+    synthesisPatterns.length + synthesisContradictions.length + synthesisGaps.length
+  const hasSufficientTabularSignal = synthesisSignalCount >= 3
+
+  const supportingPaperIds = new Set<string>()
+  for (const pattern of synthesisPatterns) {
+    for (const paper of pattern.supportingPapers || []) {
+      if (paper) supportingPaperIds.add(paper)
+    }
+  }
+  for (const contradiction of synthesisContradictions) {
+    for (const side of contradiction.sides || []) {
+      for (const paper of side.papers || []) {
+        if (paper) supportingPaperIds.add(paper)
+      }
+    }
+  }
+  const hasCrossSourceComparability = supportingPaperIds.size >= 3
+
+  const requiresTable =
+    hasSufficientTabularSignal &&
+    hasCrossSourceComparability
+
+  ;(result as Record<string, unknown>).requiresTable = requiresTable
+  if (requiresTable) {
+    ;(result as Record<string, unknown>).tableSchemaGuidance =
+      buildDynamicTableSchemaGuidance({
+        patterns: synthesisPatterns,
+        contradictions: synthesisContradictions,
+        gaps: synthesisGaps,
+        keyPointsToMake: enriched.writingGuidance?.keyPointsToMake || [],
+      })
+  }
   
   if (synthesisContradictions.length > 0) {
     result.synthesisContradictions = synthesisContradictions
@@ -382,6 +414,49 @@ function buildSynthesisData(context: SectionContext | EnrichedSectionContext): P
   }, `Prompt data built for: ${sectionName}`)
   
   return result
+}
+
+function buildDynamicTableSchemaGuidance(params: {
+  patterns: Array<{ claim: string; valuesSummary?: string }>
+  contradictions: Array<{ description: string }>
+  gaps: Array<{ description: string }>
+  keyPointsToMake: string[]
+}): string {
+  const dimensions = new Set<string>()
+
+  const addDimension = (value?: string) => {
+    if (!value) return
+    const cleaned = value.replace(/\s+/g, ' ').trim()
+    if (!cleaned) return
+    // Keep dimensions concise so the model can actually use them as headers.
+    const words = cleaned.split(' ').slice(0, 6).join(' ')
+    dimensions.add(words)
+  }
+
+  for (const keyPoint of params.keyPointsToMake.slice(0, 5)) addDimension(keyPoint)
+  for (const pattern of params.patterns.slice(0, 4)) addDimension(pattern.claim)
+  for (const contradiction of params.contradictions.slice(0, 3)) addDimension(contradiction.description)
+  for (const gap of params.gaps.slice(0, 3)) addDimension(gap.description)
+
+  const candidates = Array.from(dimensions).slice(0, 8)
+
+  const quantifiedPatternCount = params.patterns.filter(p => Boolean(p.valuesSummary)).length
+  const quantitativeHint =
+    quantifiedPatternCount > 0
+      ? `At least one column should capture quantitative contrast (rates, ranges, or effect summaries), because ${quantifiedPatternCount} pattern(s) include value summaries.`
+      : 'Prefer comparative/qualitative columns grounded in source evidence.'
+
+  const candidateText = candidates.length > 0
+    ? candidates.map(d => `- ${d}`).join('\n')
+    : '- Build columns directly from the strongest claims and contrasts in this section'
+
+  return [
+    'Derive a section-specific table schema (4-6 columns) from this section\'s evidence.',
+    'Do NOT reuse a generic template schema across sections.',
+    quantitativeHint,
+    'Candidate dimensions to shape column headers:',
+    candidateText,
+  ].join('\n')
 }
 
 /**
@@ -565,29 +640,9 @@ async function buildPreviousSectionsSummary(currentSectionKey?: string): Promise
 // - _generateSectionSummary: unused
 // - buildAlreadyCoveredList: was returning empty string, now inlined
 
-/**
- * Calculate source diversity target based on paper type
- * Different paper types have different expectations for source breadth
- */
 function calculateSourceDiversityTarget(paperType: string, availablePapers: number): { percentage: number; minPapers: number } {
-  // Paper type to minimum citation percentage mapping (across entire paper, not per section)
-  const diversityTargets: Record<string, number> = {
-    'literatureReview': 60,      // Lit reviews: cite most sources but don't force-cite
-    'literature-review': 60,
-    'phdDissertation': 70,       // PhD: comprehensive but natural coverage
-    'phd-dissertation': 70,
-    'mastersThesis': 55,         // Master's: thorough coverage
-    'masters-thesis': 55,
-    'capstoneProject': 50,       // Capstone: solid coverage
-    'capstone-project': 50,
-    'researchArticle': 40,       // Research articles: focused on relevant prior work
-    'research-article': 40,
-  }
-  
-  // Default to 50% if paper type not found
-  const percentage = diversityTargets[paperType] || 50
+  const percentage = getPaperTypeConfig(paperType).diversityTargetPct
   const minPapers = Math.ceil(availablePapers * (percentage / 100))
-  
   return { percentage, minPapers }
 }
 

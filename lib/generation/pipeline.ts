@@ -23,6 +23,7 @@ import { PAPER_TYPE_SEARCH_MULTIPLIERS, PAPER_TYPE_MIN_SEARCH } from '@/types/si
 import type { GeneratedOutline, SectionContext, PaperTypeKey } from '@/lib/prompts/types'
 import type { EnhancedGenerationOptions } from '@/lib/generation/types'
 import { getAnalysisReadinessIssue, type AnalysisResult } from '@/lib/analysis/cross-document'
+import { SYNTHESIS_FINDINGS_THRESHOLD } from '@/lib/generation/paper-type-config'
 
 /**
  * Citation instance to be saved to the database
@@ -562,26 +563,32 @@ export async function generatePaper(
         enhancedProfile = mergeAnalysisResultIntoProfile(paperProfile, analysisResult)
       }
       
-      info({
-        patterns: analysisResult.patterns.length,
-        contradictions: analysisResult.contradictions.length,
-        gaps: analysisResult.gaps.length,
-        // Hybrid-specific stats
-        papersExtracted: hybridResult.extractionStats.papersExtracted,
-        papersFromCache: hybridResult.extractionStats.papersFromCache,
-        totalFindings: hybridResult.extractionStats.totalFindings
-      }, 'Hybrid theme extraction completed')
-      
       metrics.themeExtractionDuration = Date.now() - themeStartTime
-      
-      onProgress?.('planning', 30, 'Research patterns mapped', {
-        patternsFound: analysisResult.patterns.length,
-        contradictionsFound: analysisResult.contradictions.length,
-        gapsFound: analysisResult.gaps.length,
-        findingsExtracted: hybridResult.extractionStats.totalFindings,
-        durationMs: metrics.themeExtractionDuration,
-        phase: 'themes_complete'
-      })
+
+      if (hybridResult) {
+        info({
+          patterns: analysisResult.patterns.length,
+          contradictions: analysisResult.contradictions.length,
+          gaps: analysisResult.gaps.length,
+          papersExtracted: hybridResult.extractionStats.papersExtracted,
+          papersFromCache: hybridResult.extractionStats.papersFromCache,
+          totalFindings: hybridResult.extractionStats.totalFindings
+        }, 'Hybrid theme extraction completed')
+        
+        onProgress?.('planning', 30, 'Research patterns mapped', {
+          patternsFound: analysisResult.patterns.length,
+          contradictionsFound: analysisResult.contradictions.length,
+          gapsFound: analysisResult.gaps.length,
+          findingsExtracted: hybridResult.extractionStats.totalFindings,
+          durationMs: metrics.themeExtractionDuration,
+          phase: 'themes_complete'
+        })
+      } else {
+        onProgress?.('planning', 30, 'Structuring your paper...', {
+          durationMs: metrics.themeExtractionDuration,
+          phase: 'themes_incomplete'
+        })
+      }
     } catch (hybridError) {
       // Hybrid extraction failed - continue without themes
       // Legacy extractThemes has been removed in favor of hybrid approach
@@ -653,10 +660,8 @@ export async function generatePaper(
     
     let sectionContexts: SectionContext[] | EnrichedSectionContext[]
     
-    // Diagnostic logging for synthesis pipeline path decision
-    const FINDINGS_THRESHOLD = 5
     const totalFindings = hybridResult?.extractionStats.totalFindings || 0
-    const usingSynthesisEnrichment = hybridResult && totalFindings >= FINDINGS_THRESHOLD
+    const usingSynthesisEnrichment = hybridResult && totalFindings >= SYNTHESIS_FINDINGS_THRESHOLD
     
     info({
       stage: 'synthesis-pipeline',
@@ -666,15 +671,15 @@ export async function generatePaper(
         totalFindings,
         papersProcessed: hybridResult?.extractionStats.papersProcessed || 0,
         papersExtracted: hybridResult?.extractionStats.papersExtracted || 0,
-        threshold: FINDINGS_THRESHOLD
+        threshold: SYNTHESIS_FINDINGS_THRESHOLD
       },
       decision: {
         usingSynthesisEnrichment,
         reason: !hybridResult 
           ? 'no hybrid extraction result' 
-          : totalFindings < FINDINGS_THRESHOLD 
-            ? `findings (${totalFindings}) below threshold (${FINDINGS_THRESHOLD})`
-            : `findings (${totalFindings}) meets threshold (${FINDINGS_THRESHOLD})`
+          : totalFindings < SYNTHESIS_FINDINGS_THRESHOLD 
+            ? `findings (${totalFindings}) below threshold (${SYNTHESIS_FINDINGS_THRESHOLD})`
+            : `findings (${totalFindings}) meets threshold (${SYNTHESIS_FINDINGS_THRESHOLD})`
       },
       analysisStats: hybridResult ? {
         patterns: hybridResult.analysisResult.patterns.length,
@@ -688,8 +693,8 @@ export async function generatePaper(
         stage: 'synthesis-pipeline',
         issue: 'below-threshold',
         totalFindings,
-        threshold: FINDINGS_THRESHOLD
-      }, `⚠️ Only ${totalFindings} findings extracted - synthesis enrichment disabled (need ${FINDINGS_THRESHOLD}+)`)
+        threshold: SYNTHESIS_FINDINGS_THRESHOLD
+      }, `⚠️ Only ${totalFindings} findings extracted - synthesis enrichment disabled (need ${SYNTHESIS_FINDINGS_THRESHOLD}+)`)
     }
     
     // Try hybrid enrichment if we have analysis results
