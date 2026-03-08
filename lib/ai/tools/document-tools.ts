@@ -33,12 +33,10 @@ export type CitationEntry = z.infer<typeof citationEntrySchema>
 // TYPES
 // =============================================================================
 
-export type ToolConfirmationLevel = 'none' | 'confirm' | 'preview'
-
 export interface ToolInstruction {
   toolName: string
   args: Record<string, unknown>
-  requiresConfirmation: boolean
+  requiresReview: boolean
   preview?: string
 }
 
@@ -60,7 +58,7 @@ Targeting (in order of preference):
 CITATIONS: If content has [1], [2], [3] markers, include citations array.
 Each marker MUST have a corresponding entry with index, paperId, and quote.
 
-Examples:
+Examples (illustrative, not exhaustive):
 - Simple insert: { content: "New text without citations" }
 - With citations: { 
     content: "Research shows X [1] and Y [2].", 
@@ -82,17 +80,17 @@ Examples:
  * Replace content - supports both block-level and text-level replacement.
  */
 export const replaceBlock = tool({
-  description: `Replace content in the document. Only replaces the FIRST match found.
+  description: `Replace content in the document.
 
 For ENTIRE BLOCK replacement: Use blockId alone
 For PARTIAL replacement (specific text): Use searchPhrase (with optional blockId to scope)
 
-⚠️ IMPORTANT: This tool replaces only ONE occurrence. Do NOT call replaceBlock multiple times for the same text. If the same text appears in multiple places and all need changing, use searchAndReplace instead.
+When searchPhrase has multiple matches, use occurrenceIndex (1-based) to select which one.
 
 CITATIONS: If newContent has [1], [2], [3] markers, include citations array.
 PRESERVE existing [@...] markers when editing - they are existing citations.
 
-Examples:
+Examples (illustrative, not exhaustive):
 - Replace whole paragraph: { blockId: "par_abc123", newContent: "New paragraph text" }
 - With citations: { 
     blockId: "par_abc123", 
@@ -104,6 +102,7 @@ Examples:
     blockId: z.string().optional().describe('Block ID - alone replaces entire block, with searchPhrase scopes the search'),
     section: z.string().optional().describe('Section name to scope the search'),
     searchPhrase: z.string().optional().describe('Specific text to find and replace'),
+    occurrenceIndex: z.number().int().min(1).optional().describe('Which match to replace when searchPhrase appears multiple times (1-based)'),
     newContent: z.string().describe('The replacement content (use [1], [2], [3] for new citations)'),
     citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker'),
   }),
@@ -129,14 +128,14 @@ If newContent has [1], [2], [3] markers, include citations array.`,
  * Delete content - supports both block-level and text-level deletion.
  */
 export const deleteContent = tool({
-  description: `Delete content from the document. Only deletes the FIRST match found.
+  description: `Delete content from the document.
 
 For ENTIRE BLOCK deletion: Use blockId alone
 For PARTIAL deletion (sentence/phrase): Use searchPhrase (with optional blockId to scope)
 
-⚠️ Do NOT call deleteContent multiple times for the same text. If the same text appears in multiple places, use searchAndReplace with an empty replaceWith string instead.
+When searchPhrase has multiple matches, use occurrenceIndex (1-based) to pick one match.
 
-Examples:
+Examples (illustrative, not exhaustive):
 - Delete whole paragraph: { blockId: "par_abc123", reason: "..." }
 - Delete one sentence: { searchPhrase: "This sentence to delete.", reason: "..." }
 - Delete text in specific block: { blockId: "par_abc123", searchPhrase: "text to delete", reason: "..." }
@@ -146,6 +145,7 @@ User will confirm deletions.`,
     blockId: z.string().optional().describe('Block ID - alone deletes entire block, with searchPhrase scopes the search'),
     section: z.string().optional().describe('Section name to scope the search'),
     searchPhrase: z.string().optional().describe('Specific text to delete (for partial deletion)'),
+    occurrenceIndex: z.number().int().min(1).optional().describe('Which match to delete when searchPhrase appears multiple times (1-based)'),
     reason: z.string().describe('Why this should be deleted'),
   }),
 })
@@ -180,8 +180,11 @@ Required parameters:
 - paperId: From INTERNAL REFERENCE section
 - afterPhrase: The exact text to insert citation after (REQUIRED for precision)
 - quote: The exact supporting quote from the source (REQUIRED for research tracking)
+Optional disambiguation:
+- blockId / section to scope where matching happens
+- occurrenceIndex to pick a specific match (1-based)
 
-Example:
+Example (illustrative, not exhaustive):
 { 
   "paperId": "abc-123", 
   "afterPhrase": "climate change impacts are significant", 
@@ -192,6 +195,8 @@ Example:
     afterPhrase: z.string().describe('Insert citation immediately after this exact text'),
     quote: z.string().describe('Exact quote from source that supports this claim'),
     blockId: z.string().optional().describe('Block ID to scope the search (optional but recommended)'),
+    section: z.string().optional().describe('Section name to scope the search'),
+    occurrenceIndex: z.number().int().min(1).optional().describe('Which match to cite when afterPhrase appears multiple times (1-based)'),
   }),
 })
 
@@ -204,7 +209,7 @@ export const highlightText = tool({
 For ENTIRE BLOCK highlight: Use blockId alone
 For PARTIAL highlight (specific text): Use searchPhrase
 
-Examples:
+Examples (illustrative, not exhaustive):
 - Highlight paragraph: { blockId: "par_abc123", comment: "Needs citation" }
 - Highlight sentence: { searchPhrase: "This claim needs support", comment: "Add evidence" }`,
   inputSchema: z.object({
@@ -237,16 +242,17 @@ Attach to specific content using blockId or nearPhrase.`,
 export const moveBlock = tool({
   description: `Move a block from one location to another. This is atomic — content won't be lost if something fails.
 
-The block is identified by blockId or searchPhrase.
+The source is identified by blockId, blockIds, or searchPhrase.
 The destination is specified by targetLocation.
 
-Examples:
+Examples (illustrative, not exhaustive):
 - Move paragraph after another: { blockId: "par_abc", targetLocation: "after:par_xyz" }
 - Move to end of section: { blockId: "par_abc", targetLocation: "endOfSection:Methods" }
 - Move to start of section: { blockId: "par_abc", targetLocation: "startOfSection:Introduction" }
 - Move to end of document: { blockId: "par_abc", targetLocation: "end" }`,
   inputSchema: z.object({
     blockId: z.string().optional().describe('Block ID of the content to move'),
+    blockIds: z.array(z.string()).optional().describe('Move multiple block IDs together (preserves provided order)'),
     searchPhrase: z.string().optional().describe('Text to find the block to move'),
     section: z.string().optional().describe('Section to scope the search'),
     targetLocation: z.string().describe('Where to move: "after:blockId", "endOfSection:Name", "startOfSection:Name", "end"'),
@@ -262,7 +268,7 @@ export const mergeBlocks = tool({
 
 Specify either two block IDs or a searchPhrase that spans the boundary.
 
-Examples:
+Examples (illustrative, not exhaustive):
 - Merge by IDs: { firstBlockId: "par_abc", secondBlockId: "par_def" }
 - Merge by text: { searchPhrase: "end of first paragraph", section: "Introduction" }`,
   inputSchema: z.object({
@@ -281,7 +287,7 @@ export const splitBlock = tool({
 
 Specify where to split using splitAfterPhrase — the text before this phrase stays in the first paragraph, the rest becomes a new paragraph.
 
-Example:
+Example (illustrative, not exhaustive):
 - { blockId: "par_abc", splitAfterPhrase: "first topic conclusion." }`,
   inputSchema: z.object({
     blockId: z.string().optional().describe('Block ID of the block to split'),
@@ -296,7 +302,7 @@ Example:
 export const formatText = tool({
   description: `Apply or remove inline formatting (bold, italic, underline, strikethrough, code) on specific text WITHOUT changing the text itself.
 
-Examples:
+Examples (illustrative, not exhaustive):
 - Bold a term: { searchPhrase: "important finding", format: "bold" }
 - Italicize: { searchPhrase: "p < 0.05", format: "italic" }
 - Remove bold: { searchPhrase: "not important", format: "bold", remove: true }`,
@@ -304,6 +310,8 @@ Examples:
     searchPhrase: z.string().describe('The exact text to format'),
     blockId: z.string().optional().describe('Block ID to scope the search'),
     section: z.string().optional().describe('Section to scope the search'),
+    occurrenceIndex: z.number().int().min(1).optional().describe('Which match to format when searchPhrase appears multiple times (1-based)'),
+    applyToAll: z.boolean().optional().describe('Apply formatting to all matches in scope (default: false)'),
     format: z.enum(['bold', 'italic', 'underline', 'strikethrough', 'code']).describe('The formatting to apply'),
     remove: z.boolean().optional().describe('If true, removes the formatting instead of applying it'),
   }),
@@ -315,22 +323,84 @@ Examples:
 export const insertTable = tool({
   description: `Insert a table into the document with specified headers and rows. More reliable than inserting markdown tables.
 
-Example:
+CITATIONS: Cell values can use [1], [2], [3] markers. Include citations array to map them.
+
+Example (illustrative, not exhaustive):
 {
-  "headers": ["Method", "Accuracy", "F1 Score"],
+  "headers": ["Theme", "Evidence", "Source"],
   "rows": [
-    ["Baseline", "0.82", "0.79"],
-    ["Our model", "0.91", "0.88"]
+    ["Safety", "Strong evidence [1]", "(Mtenga et al., 2023)"],
+    ["Misinformation", "Moderate [2]", "(Smith, 2024)"]
   ],
-  "caption": "Table 1: Model comparison results",
+  "citations": [
+    { "index": 1, "paperId": "uuid-here", "quote": "exact quote" },
+    { "index": 2, "paperId": "uuid-here", "quote": "exact quote" }
+  ],
+  "caption": "Table 1: Key findings",
   "afterBlockId": "par_abc"
 }`,
   inputSchema: z.object({
     headers: z.array(z.string()).describe('Column header labels'),
-    rows: z.array(z.array(z.string())).describe('Table rows, each an array of cell values'),
+    rows: z.array(z.array(z.string())).describe('Table rows, each an array of cell values (use [1], [2] for citations)'),
+    citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker in cell values'),
     caption: z.string().optional().describe('Optional table caption'),
     afterBlockId: z.string().optional().describe('Insert table after this block'),
     location: z.string().optional().describe('General location: "cursor", "end", "after:SectionName"'),
+  }),
+})
+
+/**
+ * Edit an existing table in-place.
+ */
+export const editTable = tool({
+  description: `Edit an existing table without recreating it.
+
+Supported actions:
+- appendRow: add a new data row
+- updateCell: update a specific data cell
+- renameColumn: rename a column header
+
+Targeting:
+- tableIndex (0-based) selects which table to edit in scope
+- section can limit scope when there are many tables`,
+  inputSchema: z.object({
+    action: z.enum(['appendRow', 'updateCell', 'renameColumn']).describe('Table edit action'),
+    tableIndex: z.number().int().min(0).optional().describe('Which table to edit in scope (0-based, default: 0)'),
+    section: z.string().optional().describe('Limit table search to this section'),
+    row: z.array(z.string()).optional().describe('Row values for appendRow'),
+    rowIndex: z.number().int().min(0).optional().describe('Data row index for updateCell (0-based, excludes header row)'),
+    colIndex: z.number().int().min(0).optional().describe('Column index for updateCell/renameColumn (0-based)'),
+    value: z.string().optional().describe('New cell value for updateCell'),
+    header: z.string().optional().describe('New header text for renameColumn'),
+    citations: z.array(citationEntrySchema).optional().describe('Citation data for [N] markers in row/value/header'),
+  }),
+})
+
+/**
+ * Search the document (read-only) and return match count + locations/snippets.
+ */
+export const searchDocument = tool({
+  description: `Search the full document for a word or phrase and return count, section breakdown, and context snippets. Read-only — does not modify the document.
+
+This is the default tool for read-only verification.
+Use it to confirm existence, count, and location before answering factual questions or before mutation tools that rely on text targeting.
+Examples include (not limited to): "how many times do I use X?", "where do I mention Y?", "find all occurrences of Z".
+
+Disambiguation rule:
+- If a planned edit depends on searchPhrase and target is ambiguous (no blockId/occurrenceIndex), call searchDocument first.
+- If target is already explicit (blockId, table coordinates, exact section-bound location), you may skip searchDocument.
+
+Examples (illustrative, not exhaustive):
+- { query: "impact", matchCase: false, wholeWord: true }
+- { query: "p < 0.05", section: "Results", maxSnippets: 5 }
+- { query: "hesitancy", contextChars: 60 }`,
+  inputSchema: z.object({
+    query: z.string().describe('The word or phrase to search for'),
+    section: z.string().optional().describe('Limit search to this section'),
+    matchCase: z.boolean().optional().describe('Case-sensitive matching (default: false)'),
+    wholeWord: z.boolean().optional().describe('Match whole words only (default: false)'),
+    maxSnippets: z.number().int().min(0).max(50).optional().describe('Max snippets to return (default: 10)'),
+    contextChars: z.number().int().min(10).max(200).optional().describe('Characters before/after each match in snippets (default: 40)'),
   }),
 })
 
@@ -341,16 +411,21 @@ export const searchAndReplace = tool({
   description: `Find and replace text across the entire document (or within a section). Replaces ALL occurrences.
 
 Use this when the user asks to rename a term, fix a typo everywhere, or change terminology consistently.
+Use wholeWord: true to avoid partial matches (e.g. "citation 1" won't match "citation 10").
+Use maxReplacements to cap the number of replacements when needed.
 
-Examples:
+Examples (illustrative, not exhaustive):
 - Global rename: { find: "machine learning", replaceWith: "ML", matchCase: false }
 - Section-scoped: { find: "Fig.", replaceWith: "Figure", section: "Results" }
-- Case-sensitive: { find: "CNN", replaceWith: "convolutional neural network", matchCase: true }`,
+- Case-sensitive: { find: "CNN", replaceWith: "convolutional neural network", matchCase: true }
+- Boundary-safe: { find: "citation 1", replaceWith: "citation 4", wholeWord: true }`,
   inputSchema: z.object({
     find: z.string().describe('The text to search for'),
     replaceWith: z.string().describe('The replacement text'),
     section: z.string().optional().describe('Limit replacement to this section'),
     matchCase: z.boolean().optional().describe('Case-sensitive matching (default: true)'),
+    wholeWord: z.boolean().optional().describe('Match whole words only — avoids partial matches like "1" matching "10" (default: false)'),
+    maxReplacements: z.number().int().min(1).max(500).optional().describe('Maximum number of matches to replace (default: all matches in scope)'),
   }),
 })
 
@@ -382,6 +457,8 @@ export const documentTools = {
   splitBlock,
   formatText,
   insertTable,
+  editTable,
+  searchDocument,
   searchAndReplace,
 }
 
@@ -389,29 +466,26 @@ export const documentTools = {
 // CONFIRMATION REQUIREMENTS
 // =============================================================================
 
-export const toolConfirmationLevels: Record<string, ToolConfirmationLevel> = {
-  insertContent: 'preview',  // Show ghost preview before inserting
-  replaceBlock: 'preview',
-  rewriteSection: 'confirm',
-  deleteContent: 'confirm',
-  addCitation: 'none',
-  highlightText: 'none',
-  addComment: 'none',
-  moveBlock: 'confirm',
-  mergeBlocks: 'preview',
-  splitBlock: 'preview',
-  formatText: 'none',
-  insertTable: 'preview',
-  searchAndReplace: 'confirm',
+export const toolReviewRequirements: Record<string, boolean> = {
+  insertContent: true,
+  replaceBlock: true,
+  rewriteSection: true,
+  deleteContent: true,
+  addCitation: true,
+  highlightText: true,
+  addComment: true,
+  moveBlock: true,
+  mergeBlocks: true,
+  splitBlock: true,
+  formatText: true,
+  insertTable: true,
+  editTable: true,
+  searchDocument: false,
+  searchAndReplace: true,
 }
 
-export function requiresConfirmation(toolName: string): boolean {
-  const level = toolConfirmationLevels[toolName as keyof typeof documentTools]
-  return level === 'confirm' || level === 'preview'
-}
-
-export function getConfirmationLevel(toolName: string): ToolConfirmationLevel {
-  return toolConfirmationLevels[toolName as keyof typeof documentTools] || 'none'
+export function requiresReview(toolName: string): boolean {
+  return toolReviewRequirements[toolName as keyof typeof documentTools] ?? false
 }
 
 // =============================================================================
@@ -481,6 +555,9 @@ export function validateToolCall(
       if (!args.newContent || typeof args.newContent !== 'string') {
         return { valid: false, error: 'replaceBlock requires newContent' }
       }
+      if (args.occurrenceIndex !== undefined && (typeof args.occurrenceIndex !== 'number' || !Number.isInteger(args.occurrenceIndex) || args.occurrenceIndex < 1)) {
+        return { valid: false, error: 'replaceBlock occurrenceIndex must be a positive integer' }
+      }
       // Need at least one targeting method
       if (!args.blockId && !args.searchPhrase && !args.section) {
         return { valid: false, error: 'replaceBlock requires blockId, searchPhrase, or section' }
@@ -507,6 +584,9 @@ export function validateToolCall(
       break
       
     case 'deleteContent':
+      if (args.occurrenceIndex !== undefined && (typeof args.occurrenceIndex !== 'number' || !Number.isInteger(args.occurrenceIndex) || args.occurrenceIndex < 1)) {
+        return { valid: false, error: 'deleteContent occurrenceIndex must be a positive integer' }
+      }
       // Need at least one targeting method
       if (!args.blockId && !args.searchPhrase && !args.section) {
         return { valid: false, error: 'deleteContent requires blockId, searchPhrase, or section' }
@@ -516,6 +596,9 @@ export function validateToolCall(
     case 'addCitation':
       if (!args.paperId || typeof args.paperId !== 'string') {
         return { valid: false, error: 'addCitation requires paperId' }
+      }
+      if (args.occurrenceIndex !== undefined && (typeof args.occurrenceIndex !== 'number' || !Number.isInteger(args.occurrenceIndex) || args.occurrenceIndex < 1)) {
+        return { valid: false, error: 'addCitation occurrenceIndex must be a positive integer' }
       }
       // afterPhrase is required to locate where to insert the citation
       if (!args.afterPhrase || typeof args.afterPhrase !== 'string') {
@@ -538,11 +621,14 @@ export function validateToolCall(
       break
 
     case 'moveBlock':
-      if (!args.blockId && !args.searchPhrase) {
-        return { valid: false, error: 'moveBlock requires blockId or searchPhrase' }
+      if (!args.blockId && !args.searchPhrase && !args.blockIds) {
+        return { valid: false, error: 'moveBlock requires blockId, blockIds, or searchPhrase' }
       }
       if (!args.targetLocation || typeof args.targetLocation !== 'string') {
         return { valid: false, error: 'moveBlock requires targetLocation' }
+      }
+      if (args.blockIds && (!Array.isArray(args.blockIds) || (args.blockIds as unknown[]).length === 0)) {
+        return { valid: false, error: 'moveBlock blockIds must be a non-empty array when provided' }
       }
       break
 
@@ -568,6 +654,9 @@ export function validateToolCall(
       if (!args.format || typeof args.format !== 'string') {
         return { valid: false, error: 'formatText requires format' }
       }
+      if (args.occurrenceIndex !== undefined && (typeof args.occurrenceIndex !== 'number' || !Number.isInteger(args.occurrenceIndex) || args.occurrenceIndex < 1)) {
+        return { valid: false, error: 'formatText occurrenceIndex must be a positive integer' }
+      }
       break
 
     case 'insertTable':
@@ -579,12 +668,67 @@ export function validateToolCall(
       }
       break
 
+    case 'editTable':
+      if (!args.action || typeof args.action !== 'string') {
+        return { valid: false, error: 'editTable requires action' }
+      }
+      if (!['appendRow', 'updateCell', 'renameColumn'].includes(args.action)) {
+        return { valid: false, error: 'editTable action must be appendRow, updateCell, or renameColumn' }
+      }
+      if (args.action === 'appendRow' && !Array.isArray(args.row)) {
+        return { valid: false, error: 'editTable appendRow requires row array' }
+      }
+      if (args.action === 'updateCell') {
+        if (typeof args.rowIndex !== 'number' || typeof args.colIndex !== 'number') {
+          return { valid: false, error: 'editTable updateCell requires rowIndex and colIndex' }
+        }
+        if (typeof args.value !== 'string') {
+          return { valid: false, error: 'editTable updateCell requires value' }
+        }
+      }
+      if (args.action === 'renameColumn') {
+        if (typeof args.colIndex !== 'number') {
+          return { valid: false, error: 'editTable renameColumn requires colIndex' }
+        }
+        if (typeof args.header !== 'string') {
+          return { valid: false, error: 'editTable renameColumn requires header' }
+        }
+      }
+      if (args.action === 'appendRow' && Array.isArray(args.row)) {
+        for (const cell of args.row) {
+          if (typeof cell === 'string') {
+            const rowCitationWarning = checkCitationFormat(cell, citations)
+            if (rowCitationWarning) return { valid: false, error: rowCitationWarning }
+          }
+        }
+      }
+      if (args.action === 'updateCell' && typeof args.value === 'string') {
+        const valueCitationWarning = checkCitationFormat(args.value, citations)
+        if (valueCitationWarning) return { valid: false, error: valueCitationWarning }
+      }
+      if (args.action === 'renameColumn' && typeof args.header === 'string') {
+        const headerCitationWarning = checkCitationFormat(args.header, citations)
+        if (headerCitationWarning) return { valid: false, error: headerCitationWarning }
+      }
+      break
+
+    case 'searchDocument':
+      if (!args.query || typeof args.query !== 'string') {
+        return { valid: false, error: 'searchDocument requires query' }
+      }
+      break
+
     case 'searchAndReplace':
       if (!args.find || typeof args.find !== 'string') {
         return { valid: false, error: 'searchAndReplace requires find text' }
       }
       if (typeof args.replaceWith !== 'string') {
         return { valid: false, error: 'searchAndReplace requires replaceWith text' }
+      }
+      if (args.maxReplacements !== undefined) {
+        if (typeof args.maxReplacements !== 'number' || !Number.isInteger(args.maxReplacements) || args.maxReplacements < 1) {
+          return { valid: false, error: 'searchAndReplace maxReplacements must be a positive integer' }
+        }
       }
       break
   }
