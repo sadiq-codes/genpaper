@@ -86,6 +86,12 @@ export function usePaperProcessingStatus({
     try {
       const response = await fetch(`/api/papers/process?projectId=${projectId}`)
       
+      // Handle auth errors silently (session may have expired)
+      if (response.status === 401) {
+        console.debug('Paper status check: session expired')
+        return
+      }
+      
       if (!response.ok) {
         throw new Error(`Status check failed: ${response.status}`)
       }
