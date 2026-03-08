@@ -609,9 +609,9 @@ export const GhostEdit = Extension.create({
               // doesn't render alongside the ghost diff widget
               if ((edit.type === 'replace' || edit.type === 'delete') && edit.from < edit.to) {
                 allDecorations.push(
-                  Decoration.replace(edit.from, edit.to, {
-                    inclusiveStart: true,
-                    inclusiveEnd: true,
+                  Decoration.inline(edit.from, edit.to, {
+                    class: 'ghost-edit-hidden',
+                    style: 'display: none;',
                   })
                 )
               }
