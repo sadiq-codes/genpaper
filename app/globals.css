@@ -874,6 +874,8 @@ kbd {
 
 .diff-block__text--old {
   @apply bg-red-500/8 text-muted-foreground;
+}
+.diff-block__text--old:not(:has(.diff-block__table)) {
   text-decoration: line-through;
   text-decoration-color: oklch(0.6 0.15 25 / 0.4);
   text-decoration-thickness: 1px;
@@ -882,6 +884,47 @@ kbd {
 .diff-block__text--new {
   @apply bg-green-500/8;
   color: var(--diff-insert, oklch(0.55 0.15 145));
+}
+
+/* Table preview inside diff blocks */
+.diff-block__table {
+  @apply w-full text-xs border-collapse my-1;
+}
+.diff-block__table th,
+.diff-block__table td {
+  @apply px-2 py-1 text-left border border-border/40;
+}
+.diff-block__table th {
+  @apply font-semibold bg-black/5;
+}
+.dark .diff-block__table th {
+  @apply bg-white/5;
+}
+.diff-block__table--old th,
+.diff-block__table--old td {
+  text-decoration: line-through;
+  text-decoration-color: oklch(0.6 0.15 25 / 0.4);
+  text-decoration-thickness: 1px;
+}
+.diff-block__table-caption {
+  @apply text-xs font-medium italic px-2 pb-1;
+}
+
+/* Batch apply+review inline highlights */
+.diff-highlight {
+  @apply rounded-sm;
+}
+
+.diff-highlight--added {
+  background-color: rgba(34, 197, 94, 0.2);
+}
+
+.diff-highlight--modified {
+  background-color: rgba(59, 130, 246, 0.2);
+}
+
+.diff-change-delete-widget {
+  @apply my-1 px-2 py-1 text-xs rounded-md border border-destructive/25 bg-destructive/10 text-muted-foreground;
 }
 
 /* Active indicator dot - hidden */
