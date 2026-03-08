@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getChatLanguageModel } from '@/lib/ai/vercel-client'
 import { streamText, convertToModelMessages, type UIMessage } from 'ai'
 import { NextRequest } from 'next/server'
-import { documentTools, getConfirmationLevel } from '@/lib/ai/tools/document-tools'
+import { documentTools, requiresReview } from '@/lib/ai/tools/document-tools'
 import { ChunkRetriever } from '@/lib/rag/chunk-retriever'
 import { PromptService } from '@/lib/prompts/prompt-service'
 import { 
@@ -295,6 +295,33 @@ function getTextFromUIMessage(message: UIMessage): string {
   return textParts.map(p => 'text' in p ? p.text : '').join('')
 }
 
+const MAX_MODEL_MESSAGES = 24
+const MAX_MODEL_TEXT_CHARS = 18_000
+
+function selectMessagesForModel(messages: UIMessage[]): UIMessage[] {
+  if (messages.length === 0) return messages
+
+  const recent = messages.slice(-MAX_MODEL_MESSAGES)
+  let totalChars = 0
+  const selectedFromEnd: UIMessage[] = []
+
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const candidate = recent[i]
+    const candidateChars = getTextFromUIMessage(candidate).length
+    const nextTotal = totalChars + candidateChars
+
+    // Keep at least a short conversational tail, then enforce budget.
+    if (selectedFromEnd.length >= 4 && nextTotal > MAX_MODEL_TEXT_CHARS) {
+      break
+    }
+
+    selectedFromEnd.push(candidate)
+    totalChars = nextTotal
+  }
+
+  return selectedFromEnd.reverse()
+}
+
 function isShortActionConfirmation(text: string): boolean {
   const normalized = text.trim().toLowerCase()
   if (!normalized) return false
@@ -311,15 +338,39 @@ function assistantProposedCitationEdit(text: string): boolean {
   return askedForConfirmation && editAction && citationContext
 }
 
-function shouldForceResearchForConfirmation(
+function assistantProposedAnyEditAction(text: string): boolean {
+  const normalized = text.toLowerCase()
+  const askedForConfirmation = /(would you like me|want me to|should i|shall i)/i.test(normalized)
+  const editAction = /(insert|add|rewrite|replace|delete|remove|move|merge|split|format|table|edit)/i.test(normalized)
+  return askedForConfirmation && editAction
+}
+
+function getIntentOverrideForShortConfirmation(
   userMessage: string,
   lastAssistantMessage: string,
   hasMentions: boolean,
   hasImages: boolean
-): boolean {
+) {
   if (hasMentions || hasImages) return false
   if (!isShortActionConfirmation(userMessage)) return false
-  return assistantProposedCitationEdit(lastAssistantMessage)
+
+  if (assistantProposedCitationEdit(lastAssistantMessage)) {
+    return {
+      intent: 'research' as const,
+      skipRAG: false,
+      reasoning: 'Short confirmation detected after citation-edit proposal; forcing retrieval',
+    }
+  }
+
+  if (assistantProposedAnyEditAction(lastAssistantMessage)) {
+    return {
+      intent: 'editing' as const,
+      skipRAG: true,
+      reasoning: 'Short confirmation detected after edit proposal; forcing editing intent',
+    }
+  }
+
+  return false
 }
 
 /**
@@ -511,22 +562,22 @@ export async function POST(request: NextRequest) {
       project = projectResult.data
       projectError = projectResult.error
 
-      const forceResearchForConfirmation = shouldForceResearchForConfirmation(
+      const intentOverrideForConfirmation = getIntentOverrideForShortConfirmation(
         ragQuery,
         lastAssistantMessageText,
         mentionedPaperIds.length > 0,
         attachedImages.length > 0
       )
 
-      if (forceResearchForConfirmation) {
-        skipRAG = false
+      if (intentOverrideForConfirmation) {
+        skipRAG = intentOverrideForConfirmation.skipRAG
         intentClassification = {
-          intent: 'research',
+          intent: intentOverrideForConfirmation.intent,
           confidence: Math.max(intentClassification.confidence, 0.85),
-          needsRetrieval: true,
-          reasoning: 'Short confirmation detected after citation-edit proposal; forcing retrieval',
+          needsRetrieval: !intentOverrideForConfirmation.skipRAG,
+          reasoning: intentOverrideForConfirmation.reasoning,
         }
-        console.log('[Chat API] Overriding short confirmation to research intent for citation-safe edits')
+        console.log(`[Chat API] Overriding short confirmation to ${intentClassification.intent} intent`)
       }
 
       // For chat/meta intents with no @mentions, skip paper fetch and paper processing.
@@ -772,7 +823,9 @@ export async function POST(request: NextRequest) {
     // Filter out tool-related parts from message history before converting
     // Our tools execute on the client side, so we don't want to send tool calls/results
     // back to OpenAI (which would expect tool results we don't have)
-    const messagesForModel = isToolResultFastPath ? messages.slice(-4) : messages
+    const messagesForModel = isToolResultFastPath
+      ? messages.slice(-4)
+      : selectMessagesForModel(messages)
     const filteredMessages = messagesForModel.map(msg => {
       if (msg.role === 'assistant' && msg.parts) {
         // Filter out tool invocation parts, keep only text parts
@@ -821,7 +874,7 @@ export async function POST(request: NextRequest) {
             toolInvocations: toolCalls?.map(tc => ({
               toolName: tc.toolName,
               args: 'input' in tc ? tc.input : {},
-              requiresConfirmation: getConfirmationLevel(tc.toolName) !== 'none',
+              requiresConfirmation: requiresReview(tc.toolName),
             })),
           })
         }

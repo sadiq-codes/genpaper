@@ -13,7 +13,16 @@ import { v4 as uuidv4 } from 'uuid'
 import { canJoin } from '@tiptap/pm/transform'
 import type { Mark as ProseMirrorMark } from '@tiptap/pm/model'
 import { findBlockById } from '../extensions/BlockId'
-import { toast } from 'sonner'
+import { toast as sonnerToast } from 'sonner'
+
+let _suppressToasts = false
+
+const toast = {
+  success: (...args: Parameters<typeof sonnerToast.success>) => !_suppressToasts && sonnerToast.success(...args),
+  error: (...args: Parameters<typeof sonnerToast.error>) => !_suppressToasts && sonnerToast.error(...args),
+  info: (...args: Parameters<typeof sonnerToast.info>) => !_suppressToasts && sonnerToast.info(...args),
+  warning: (...args: Parameters<typeof sonnerToast.warning>) => !_suppressToasts && sonnerToast.warning(...args),
+}
 import { hasMarkdownFormatting, processAIContent, hasCitationMarkers, processPlainTextWithCitations } from '../utils/content-processor'
 import { validatePositions } from '../utils/position-utils'
 import { 
@@ -92,6 +101,7 @@ interface BlockTarget {
 }
 
 const MAX_SEARCH_REPLACE_MATCHES = 500
+const MAX_SEARCH_DOCUMENT_MATCHES = 5000
 const SEARCH_REPLACE_BATCH_SIZE = 100
 
 // =============================================================================
@@ -276,28 +286,36 @@ export function executeDocumentTool(
   const papers = options.papers || _globalPapersContext
   const projectId = options.projectId || _globalProjectId
   
-  try {
-    let result: ToolExecutionResult
-
-    // If we have a ghost edit ID, wrap execution to set the meta
-    if (options.ghostEditId) {
-      result = executeWithGhostMeta(editor, toolName, args, options.ghostEditId, papers, projectId)
-    } else {
-      result = dispatchTool(editor, toolName, args, papers, projectId)
+  // Ensure all tool-originated transactions are tagged as AI edits.
+  // This keeps BlockId assignment and edit tracking behavior consistent.
+  const originalDispatch = editor.view.dispatch.bind(editor.view)
+  editor.view.dispatch = (tr) => {
+    if (tr.docChanged) {
+      tr.setMeta('aiEdit', true)
+      if (options.groupUndo) {
+        tr.setMeta('addToHistory', false)
+      }
+      if (options.ghostEditId) {
+        tr.setMeta('ghostEditAccepted', options.ghostEditId)
+      }
     }
+    return originalDispatch(tr)
+  }
 
-    return result
+  try {
+    return dispatchTool(editor, toolName, args, papers, projectId)
   } catch (error) {
     console.error(`[ToolExecutor] Error in ${toolName}:`, error)
     const message = error instanceof Error ? error.message : 'Unknown error'
     toast.error(`Edit failed: ${message}`)
     return { success: false, message }
+  } finally {
+    editor.view.dispatch = originalDispatch
   }
 }
 
 /**
- * Execute multiple tool calls as a single undo group.
- * All edits will be undone/redone together with one Cmd+Z.
+ * Execute multiple tool calls in order with shared transaction metadata.
  * 
  * @param editor - TipTap editor instance
  * @param toolCalls - Array of { toolName, args } to execute
@@ -317,22 +335,18 @@ export function executeToolsAsUndoGroup(
   const results: ToolExecutionResult[] = []
   const originalDispatch = editor.view.dispatch.bind(editor.view)
 
-  // Wrap dispatch to suppress individual undo entries for all but the last edit
-  let editIndex = 0
-  const totalEdits = toolCalls.length
-
   editor.view.dispatch = (tr) => {
-    if (tr.docChanged && editIndex < totalEdits - 1) {
-      // Suppress intermediate history entries — they'll be grouped with the final one
+    if (tr.docChanged) {
+      tr.setMeta('aiEdit', true)
       tr.setMeta('addToHistory', false)
     }
-    // Ghost edit meta if applicable
     if (tr.docChanged && options.ghostEditId) {
       tr.setMeta('ghostEditAccepted', options.ghostEditId)
     }
     return originalDispatch(tr)
   }
 
+  _suppressToasts = true
   try {
     const papers = options.papers || _globalPapersContext
     const projectId = options.projectId || _globalProjectId
@@ -340,10 +354,10 @@ export function executeToolsAsUndoGroup(
     for (const call of toolCalls) {
       const result = dispatchTool(editor, call.toolName, call.args, papers, projectId)
       results.push(result)
-      editIndex++
     }
   } finally {
     editor.view.dispatch = originalDispatch
+    _suppressToasts = false
   }
 
   return results
@@ -386,47 +400,15 @@ function dispatchTool(
       return executeFormatText(editor, args)
     case 'insertTable':
       return executeInsertTable(editor, args)
+    case 'editTable':
+      return executeEditTable(editor, args)
+    case 'searchDocument':
+      return executeSearchDocument(editor, args)
     case 'searchAndReplace':
       return executeSearchAndReplace(editor, args)
     default:
       return { success: false, message: `Unknown tool: ${toolName}` }
   }
-}
-
-/**
- * Execute a tool while setting ghostEditAccepted meta to preserve other ghost previews.
- * This wraps the normal execution to ensure the meta is set on the modifying transaction.
- */
-function executeWithGhostMeta(
-  editor: Editor,
-  toolName: string,
-  args: Record<string, unknown>,
-  ghostEditId: string,
-  papers: ProjectPaper[] = [],
-  projectId?: string
-): ToolExecutionResult {
-  // We need to intercept the transaction and add our meta
-  // Use appendTransaction-style approach via editor.view.dispatch wrapper
-  const originalDispatch = editor.view.dispatch.bind(editor.view)
-  let result: ToolExecutionResult = { success: false, message: 'Not executed' }
-  
-  // Temporarily wrap dispatch to add our meta
-  editor.view.dispatch = (tr) => {
-    if (tr.docChanged) {
-      tr.setMeta('ghostEditAccepted', ghostEditId)
-    }
-    return originalDispatch(tr)
-  }
-  
-  try {
-    // Use shared dispatch function to avoid code duplication
-    result = dispatchTool(editor, toolName, args, papers, projectId)
-  } finally {
-    // Restore original dispatch
-    editor.view.dispatch = originalDispatch
-  }
-  
-  return result
 }
 
 // =============================================================================
@@ -1021,35 +1003,39 @@ function executeReplaceBlock(
 
   // If searchPhrase is provided, do text-level replacement
   if (searchPhrase) {
-    if (!blockId) {
-      const matchCount = countSearchPhraseMatchesInScope(editor, searchPhrase, { section })
-      if (matchCount > 1) {
-        const message = `Multiple matches found for "${searchPhrase.slice(0, 50)}...". Provide blockId for precise replacement.`
-        toast.error(message)
-        return { success: false, message }
-      }
-    }
+    const occurrenceIndex = args.occurrenceIndex as number | undefined
+    const { matches, error } = collectSearchMatches(editor, searchPhrase, {
+      blockId,
+      section,
+      matchCase: true,
+      maxMatches: MAX_SEARCH_DOCUMENT_MATCHES,
+    })
 
-    // Use structure-aware search - can scope to blockId if provided
-    const match = findTextInStructure(editor, searchPhrase, { blockId, section })
-    
-    if (!match.found) {
+    if (error) {
+      toast.error(error)
+      return { success: false, message: error }
+    }
+    if (matches.length === 0) {
       const message = `Could not find text: "${searchPhrase.slice(0, 50)}..."`
       toast.error(message)
       return { success: false, message }
     }
 
-    // Log if we found it but in a different block than specified
-    if (blockId && match.blockId && match.blockId !== blockId) {
-      console.warn(`[ToolExecutor] Text found in block ${match.blockId}, not specified block ${blockId}`)
+    if (!blockId && !occurrenceIndex && matches.length > 1) {
+      const message = `Multiple matches found for "${searchPhrase.slice(0, 50)}...". Provide blockId or occurrenceIndex for precise replacement.`
+      toast.error(message)
+      return { success: false, message }
     }
 
-    const range = matchToRange(match)
-    if (!range) {
-      return { success: false, message: 'Failed to calculate edit range' }
+    if (occurrenceIndex && (occurrenceIndex < 1 || occurrenceIndex > matches.length)) {
+      const message = `occurrenceIndex ${occurrenceIndex} is out of range (1-${matches.length})`
+      toast.error(message)
+      return { success: false, message }
     }
-    const rawFrom = range.from
-    const rawTo = range.to
+
+    const selected = occurrenceIndex ? matches[occurrenceIndex - 1] : matches[0]
+    const rawFrom = selected.from
+    const rawTo = selected.to
 
     // Validate positions before edit
     const validated = validateEditRange(editor, rawFrom, rawTo)
@@ -1079,7 +1065,7 @@ function executeReplaceBlock(
     toast.success('Text replaced')
     return { 
       success: true, 
-      message: `Replaced "${searchPhrase.slice(0, 30)}..."`,
+      message: `Replaced "${searchPhrase.slice(0, 30)}..."${occurrenceIndex ? ` (occurrence ${occurrenceIndex})` : ''}`,
       affectedRange: { from, to },
     }
   }
@@ -1260,36 +1246,39 @@ function executeDeleteContent(
 
   // If searchPhrase is provided, do partial deletion (text-level)
   if (searchPhrase) {
-    if (!blockId) {
-      const matchCount = countSearchPhraseMatchesInScope(editor, searchPhrase, { section })
-      if (matchCount > 1) {
-        const message = `Multiple matches found for "${searchPhrase.slice(0, 50)}...". Provide blockId for precise deletion.`
-        toast.error(message)
-        return { success: false, message }
-      }
-    }
+    const occurrenceIndex = args.occurrenceIndex as number | undefined
+    const { matches, error } = collectSearchMatches(editor, searchPhrase, {
+      blockId,
+      section,
+      matchCase: true,
+      maxMatches: MAX_SEARCH_DOCUMENT_MATCHES,
+    })
 
-    // Use structure-aware search - can scope to blockId if provided
-    const match = findTextInStructure(editor, searchPhrase, { blockId, section })
-    
-    if (!match.found) {
+    if (error) {
+      toast.error(error)
+      return { success: false, message: error }
+    }
+    if (matches.length === 0) {
       const message = `Could not find text: "${searchPhrase.slice(0, 50)}..."`
       toast.error(message)
       return { success: false, message }
     }
 
-    // Log if we found it but in a different block than specified
-    if (blockId && match.blockId && match.blockId !== blockId) {
-      console.warn(`[ToolExecutor] Text found in block ${match.blockId}, not specified block ${blockId}`)
+    if (!blockId && !occurrenceIndex && matches.length > 1) {
+      const message = `Multiple matches found for "${searchPhrase.slice(0, 50)}...". Provide blockId or occurrenceIndex for precise deletion.`
+      toast.error(message)
+      return { success: false, message }
     }
 
-    // Calculate actual document positions
-    const range = matchToRange(match)
-    if (!range) {
-      return { success: false, message: 'Failed to calculate edit range' }
+    if (occurrenceIndex && (occurrenceIndex < 1 || occurrenceIndex > matches.length)) {
+      const message = `occurrenceIndex ${occurrenceIndex} is out of range (1-${matches.length})`
+      toast.error(message)
+      return { success: false, message }
     }
-    const rawFrom = range.from
-    const rawTo = range.to
+
+    const selected = occurrenceIndex ? matches[occurrenceIndex - 1] : matches[0]
+    const rawFrom = selected.from
+    const rawTo = selected.to
 
     // Validate positions before edit
     const validated = validateEditRange(editor, rawFrom, rawTo)
@@ -1308,7 +1297,7 @@ function executeDeleteContent(
     toast.success('Text deleted')
     return { 
       success: true, 
-      message: `Deleted "${searchPhrase.slice(0, 30)}..."`,
+      message: `Deleted "${searchPhrase.slice(0, 30)}..."${occurrenceIndex ? ` (occurrence ${occurrenceIndex})` : ''}`,
       affectedRange: { from, to },
     }
   }
@@ -1364,7 +1353,9 @@ function executeAddCitation(
 ): ToolExecutionResult {
   const paperId = args.paperId as string
   const blockId = args.blockId as string | undefined
+  const section = args.section as string | undefined
   const afterPhrase = args.afterPhrase as string | undefined
+  const occurrenceIndex = args.occurrenceIndex as number | undefined
   const quote = args.quote as string | undefined
 
   // Validation
@@ -1381,45 +1372,34 @@ function executeAddCitation(
   }
 
   // Find the target location
-  let insertPos: number
-  
-  if (blockId) {
-    // If blockId provided, search within that specific block
-    const block = findBlockById(editor, blockId)
-    if (!block) {
-      toast.error(`Block not found: ${blockId}`)
-      return { success: false, message: `Block not found: ${blockId}` }
-    }
-    
-    // Use structure-aware search scoped to the block (handles citation atoms correctly)
-    const match = findTextInStructure(editor, afterPhrase, { blockId })
-    if (!match.found) {
-      const preview = afterPhrase.slice(0, 50)
-      toast.error(`Could not find text in block: "${preview}..."`)
-      return { success: false, message: `Could not find text in block: "${preview}..."` }
-    }
-    
-    const range = matchToRange(match)
-    if (!range) {
-      return { success: false, message: 'Failed to calculate citation position' }
-    }
-    insertPos = range.to
-  } else {
-    // No blockId, search entire document using structure-aware search
-    const match = findTextInStructure(editor, afterPhrase)
-    
-    if (!match.found) {
-      const preview = afterPhrase.slice(0, 50)
-      toast.error(`Could not find text: "${preview}..."`)
-      return { success: false, message: `Could not find text: "${preview}..."` }
-    }
-    
-    const range = matchToRange(match)
-    if (!range) {
-      return { success: false, message: 'Failed to calculate citation position' }
-    }
-    insertPos = range.to
+  const { matches, error } = collectSearchMatches(editor, afterPhrase, {
+    blockId,
+    section,
+    matchCase: true,
+    maxMatches: MAX_SEARCH_DOCUMENT_MATCHES,
+  })
+  if (error) {
+    toast.error(error)
+    return { success: false, message: error }
   }
+  if (matches.length === 0) {
+    const preview = afterPhrase.slice(0, 50)
+    const scopedMsg = blockId ? ` in block ${blockId}` : section ? ` in section "${section}"` : ''
+    toast.error(`Could not find text${scopedMsg}: "${preview}..."`)
+    return { success: false, message: `Could not find text${scopedMsg}: "${preview}..."` }
+  }
+  if (occurrenceIndex && (occurrenceIndex < 1 || occurrenceIndex > matches.length)) {
+    const message = `occurrenceIndex ${occurrenceIndex} is out of range (1-${matches.length})`
+    toast.error(message)
+    return { success: false, message }
+  }
+  if (!blockId && !section && !occurrenceIndex && matches.length > 1) {
+    const message = `Multiple matches found for "${afterPhrase.slice(0, 50)}...". Provide blockId, section, or occurrenceIndex.`
+    toast.error(message)
+    return { success: false, message }
+  }
+  const selected = occurrenceIndex ? matches[occurrenceIndex - 1] : matches[0]
+  const insertPos = selected.to
   
   // Check if there's already a citation near this position
   // Scan a short range (up to 5 nodes) after the insertion point
@@ -1678,6 +1658,7 @@ function executeMoveBlock(
   args: Record<string, unknown>
 ): ToolExecutionResult {
   const blockId = args.blockId as string | undefined
+  const blockIds = args.blockIds as string[] | undefined
   const searchPhrase = args.searchPhrase as string | undefined
   const section = args.section as string | undefined
   const targetLocation = args.targetLocation as string
@@ -1686,9 +1667,29 @@ function executeMoveBlock(
     return { success: false, message: 'No target location specified' }
   }
 
-  // Resolve source as a full block (never a partial text range).
+  // Resolve source as one or more full blocks (never a partial text range).
+  const multiSourceSlices: Array<{ pos: number; endPos: number; content: any }> = []
+
+  if (Array.isArray(blockIds) && blockIds.length > 0) {
+    for (const id of blockIds) {
+      const block = findBlockById(editor, id)
+      if (!block) {
+        const message = `Block not found: ${id}`
+        toast.error(message)
+        return { success: false, message }
+      }
+      const start = block.pos
+      const end = block.pos + block.node.nodeSize
+      multiSourceSlices.push({
+        pos: start,
+        endPos: end,
+        content: editor.state.doc.slice(start, end).content,
+      })
+    }
+  }
+
   let source: { pos: number; endPos: number } | null = null
-  if (blockId) {
+  if (multiSourceSlices.length === 0 && blockId) {
     const block = findBlockById(editor, blockId)
     if (!block) {
       const message = `Block not found: ${blockId}`
@@ -1696,7 +1697,7 @@ function executeMoveBlock(
       return { success: false, message }
     }
     source = { pos: block.pos, endPos: block.pos + block.node.nodeSize }
-  } else if (searchPhrase) {
+  } else if (multiSourceSlices.length === 0 && searchPhrase) {
     const match = findTextInStructure(editor, searchPhrase, { section })
     if (!match.found) {
       const message = `Could not find text: "${searchPhrase.slice(0, 50)}..."`
@@ -1732,12 +1733,9 @@ function executeMoveBlock(
       }
       source = { pos: sourcePos, endPos: sourcePos + sourceNode.nodeSize }
     }
-  } else {
-    return { success: false, message: 'moveBlock requires blockId or searchPhrase' }
+  } else if (multiSourceSlices.length === 0) {
+    return { success: false, message: 'moveBlock requires blockId, blockIds, or searchPhrase' }
   }
-
-  // Extract the content before deleting
-  const sourceSlice = editor.state.doc.slice(source.pos, source.endPos)
 
   // Determine target insertion position
   let insertPos: number | null = null
@@ -1780,24 +1778,49 @@ function executeMoveBlock(
     return { success: false, message: `Invalid target location: ${targetLocation}` }
   }
 
-  // Atomic move: delete source, then insert at target
-  // If target is after source, adjust position for the deletion
-  const adjustedInsertPos = insertPos > source.endPos
-    ? insertPos - (source.endPos - source.pos)
-    : insertPos
-
   const { state, view } = editor
   const tr = state.tr
 
-  // Delete the source block first
-  tr.delete(source.pos, source.endPos)
-  // Insert the content at the adjusted position
-  tr.insert(adjustedInsertPos, sourceSlice.content)
+  if (multiSourceSlices.length > 0) {
+    // Delete from bottom to top so positions remain stable.
+    const deletions = [...multiSourceSlices].sort((a, b) => b.pos - a.pos)
+    for (const range of deletions) {
+      tr.delete(range.pos, range.endPos)
+    }
+
+    // Map target position through deletions, then insert all in provided order.
+    let mappedInsertPos = Math.max(
+      0,
+      Math.min(tr.mapping.map(insertPos, -1), tr.doc.content.size)
+    )
+    for (const range of multiSourceSlices) {
+      tr.insert(mappedInsertPos, range.content)
+      mappedInsertPos += range.content.size
+    }
+  } else if (source) {
+    // Extract the content before deleting
+    const sourceSlice = editor.state.doc.slice(source.pos, source.endPos)
+    // Delete the source block first
+    tr.delete(source.pos, source.endPos)
+    // Map target position through the delete step to avoid drift.
+    const mappedInsertPos = Math.max(
+      0,
+      Math.min(tr.mapping.map(insertPos, -1), tr.doc.content.size)
+    )
+    tr.insert(mappedInsertPos, sourceSlice.content)
+  } else {
+    return { success: false, message: 'Could not resolve source block(s) for move' }
+  }
 
   view.dispatch(tr)
 
   toast.success('Content moved')
-  return { success: true, message: `Moved content to ${targetLocation}` }
+  return {
+    success: true,
+    message: multiSourceSlices.length > 0
+      ? `Moved ${multiSourceSlices.length} blocks to ${targetLocation}`
+      : `Moved content to ${targetLocation}`,
+  }
 }
 
 /**
@@ -1966,6 +1989,8 @@ function executeFormatText(
   const searchPhrase = args.searchPhrase as string
   const blockId = args.blockId as string | undefined
   const section = args.section as string | undefined
+  const occurrenceIndex = args.occurrenceIndex as number | undefined
+  const applyToAll = args.applyToAll === true
   const format = args.format as string
   const remove = args.remove as boolean | undefined
 
@@ -1973,58 +1998,66 @@ function executeFormatText(
     return { success: false, message: 'Missing searchPhrase or format' }
   }
 
-  // Find the text
-  const match = findTextInStructure(editor, searchPhrase, { blockId, section })
-  if (!match.found) {
+  const { matches, error } = collectSearchMatches(editor, searchPhrase, {
+    blockId,
+    section,
+    matchCase: true,
+    maxMatches: MAX_SEARCH_DOCUMENT_MATCHES,
+  })
+  if (error) {
+    toast.error(error)
+    return { success: false, message: error }
+  }
+  if (matches.length === 0) {
     toast.error(`Could not find text: "${searchPhrase.slice(0, 50)}..."`)
     return { success: false, message: `Could not find text: "${searchPhrase.slice(0, 50)}..."` }
   }
 
-  const range = matchToRange(match)
-  if (!range) {
-    return { success: false, message: 'Failed to calculate format range' }
+  if (occurrenceIndex && (occurrenceIndex < 1 || occurrenceIndex > matches.length)) {
+    return { success: false, message: `occurrenceIndex ${occurrenceIndex} is out of range (1-${matches.length})` }
   }
 
-  const matchCount = countSearchPhraseMatchesInScope(editor, searchPhrase, { blockId, section })
-  const firstOnlyWarning = matchCount > 1
+  const markNameByFormat: Record<string, string> = {
+    bold: 'bold',
+    italic: 'italic',
+    underline: 'underline',
+    strikethrough: 'strike',
+    code: 'code',
+  }
+  const markName = markNameByFormat[format]
+  const markType = markName ? editor.state.schema.marks[markName] : undefined
+  if (!markType) {
+    return { success: false, message: `Unknown format: ${format}` }
+  }
+  const targets = applyToAll
+    ? matches
+    : [occurrenceIndex ? matches[occurrenceIndex - 1] : matches[0]]
 
-  // Map format name to TipTap command
-  const chain = editor.chain().focus().setTextSelection({ from: range.from, to: range.to })
-
-  if (remove) {
-    switch (format) {
-      case 'bold': chain.unsetBold(); break
-      case 'italic': chain.unsetItalic(); break
-      case 'underline': chain.unsetUnderline(); break
-      case 'strikethrough': chain.unsetStrike(); break
-      case 'code': chain.unsetCode(); break
-      default:
-        return { success: false, message: `Unknown format: ${format}` }
-    }
-  } else {
-    switch (format) {
-      case 'bold': chain.setBold(); break
-      case 'italic': chain.setItalic(); break
-      case 'underline': chain.setUnderline(); break
-      case 'strikethrough': chain.setStrike(); break
-      case 'code': chain.setCode(); break
-      default:
-        return { success: false, message: `Unknown format: ${format}` }
+  const tr = editor.state.tr
+  for (const target of targets) {
+    if (remove) {
+      tr.removeMark(target.from, target.to, markType)
+    } else {
+      tr.addMark(target.from, target.to, markType.create())
     }
   }
-
-  chain.run()
+  if (!tr.docChanged) {
+    return { success: false, message: 'No formatting changes applied' }
+  }
+  editor.view.dispatch(tr)
 
   const action = remove ? 'Removed' : 'Applied'
-  const message = firstOnlyWarning
-    ? `${action} ${format} (first match only; ${matchCount} matches found)`
-    : `${action} ${format}`
-  if (firstOnlyWarning) {
+  const message = applyToAll
+    ? `${action} ${format} to ${targets.length} match${targets.length > 1 ? 'es' : ''}`
+    : `${action} ${format}${occurrenceIndex ? ` (occurrence ${occurrenceIndex})` : matches.length > 1 ? ` (first match of ${matches.length})` : ''}`
+  if (matches.length > 1 && !applyToAll && !occurrenceIndex) {
     toast.warning(message)
   } else {
     toast.success(`${action} ${format} formatting`)
   }
-  return { success: true, message, affectedRange: { from: range.from, to: range.to } }
+  const first = targets[0]
+  const last = targets[targets.length - 1]
+  return { success: true, message, affectedRange: { from: first.from, to: last.to } }
 }
 
 /**
@@ -2036,6 +2069,7 @@ function executeInsertTable(
 ): ToolExecutionResult {
   const headers = args.headers as string[]
   const rows = args.rows as string[][]
+  const citations = args.citations as CitationInput[] | undefined
   const caption = args.caption as string | undefined
   const afterBlockId = args.afterBlockId as string | undefined
   const location = args.location as string | undefined
@@ -2055,17 +2089,31 @@ function executeInsertTable(
     return { success: false, message }
   }
 
-  // Build TipTap table JSON
+  // Process citations: convert [N] markers in cell text to [@paperId#instanceId]
+  const allInstances: ExtractedCitationInstance[] = []
+  const processCellText = (text: string): string => {
+    const { content, instances } = convertNumberedCitations(text, citations)
+    allInstances.push(...instances)
+    return content
+  }
+
+  // Build TipTap table JSON with citation-aware cell content
+  const buildCellContent = (text: string): unknown[] => {
+    const processed = processCellText(text)
+    const inline = processPlainTextWithCitations(processed, _globalPapersContext)
+    return [{ type: 'paragraph', content: inline }]
+  }
+
   const headerCells = headers.map(h => ({
     type: 'tableHeader',
-    content: [{ type: 'paragraph', content: [{ type: 'text', text: h }] }]
+    content: buildCellContent(h)
   }))
 
   const bodyRows = rows.map(row => ({
     type: 'tableRow',
     content: headers.map((_, colIdx) => ({
       type: 'tableCell',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text: row[colIdx] || '' }] }]
+      content: buildCellContent(row[colIdx] || '')
     }))
   }))
 
@@ -2085,6 +2133,15 @@ function executeInsertTable(
 
   contentToInsert.push({ type: 'table', content: tableContent })
 
+  const persistCitations = () => {
+    if (allInstances.length > 0) {
+      const effectiveProjectId = _globalProjectId
+      if (effectiveProjectId) {
+        saveCitationInstancesToDatabase(effectiveProjectId, allInstances)
+      }
+    }
+  }
+
   if (afterBlockId) {
     const block = findBlockById(editor, afterBlockId)
     if (!block) {
@@ -2098,6 +2155,7 @@ function executeInsertTable(
       .setTextSelection(block.pos + block.node.nodeSize)
       .insertContent(contentToInsert)
       .run()
+    persistCitations()
     toast.success('Table inserted')
     return { success: true, message: 'Table inserted', blockId: afterBlockId }
   }
@@ -2117,6 +2175,7 @@ function executeInsertTable(
         .setTextSelection(sectionBounds.contentEndPos)
         .insertContent(contentToInsert)
         .run()
+      persistCitations()
       toast.success('Table inserted')
       return { success: true, message: `Table inserted in ${afterMatch[1]}` }
     }
@@ -2127,6 +2186,7 @@ function executeInsertTable(
         .setTextSelection(editor.state.doc.content.size)
         .insertContent(contentToInsert)
         .run()
+      persistCitations()
       toast.success('Table appended')
       return { success: true, message: 'Table appended to document' }
     }
@@ -2138,13 +2198,397 @@ function executeInsertTable(
 
   // No explicit target provided
   editor.chain().focus().insertContent(contentToInsert).run()
+  persistCitations()
   toast.success('Table inserted at cursor')
   return { success: true, message: 'Table inserted at cursor' }
 }
 
+/**
+ * Edit an existing table in-place.
+ */
+function executeEditTable(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const action = args.action as 'appendRow' | 'updateCell' | 'renameColumn'
+  const tableIndex = (args.tableIndex as number | undefined) ?? 0
+  const section = args.section as string | undefined
+  const citations = args.citations as CitationInput[] | undefined
+
+  if (!action) {
+    return { success: false, message: 'Missing table action' }
+  }
+  if (tableIndex < 0) {
+    return { success: false, message: 'tableIndex must be >= 0' }
+  }
+
+  let searchFrom = 0
+  let searchTo = editor.state.doc.content.size
+  if (section) {
+    const sectionBounds = findSectionBounds(editor, section)
+    if (!sectionBounds.found) {
+      return { success: false, message: `Section not found: ${section}` }
+    }
+    searchFrom = sectionBounds.contentStartPos
+    searchTo = sectionBounds.contentEndPos
+  }
+
+  const tablePositions: number[] = []
+  editor.state.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
+    if (node.type.name === 'table') {
+      tablePositions.push(pos)
+    }
+  })
+
+  if (tablePositions.length === 0) {
+    return { success: false, message: section ? `No tables found in section "${section}"` : 'No tables found in document' }
+  }
+  if (tableIndex >= tablePositions.length) {
+    return { success: false, message: `tableIndex ${tableIndex} is out of range (0-${tablePositions.length - 1})` }
+  }
+
+  const tablePos = tablePositions[tableIndex]
+  const tableNode = editor.state.doc.nodeAt(tablePos)
+  if (!tableNode || tableNode.type.name !== 'table') {
+    return { success: false, message: 'Could not resolve target table node' }
+  }
+
+  const tableJson = tableNode.toJSON() as Record<string, unknown>
+  const rows = JSON.parse(JSON.stringify((tableJson.content as unknown[]) || [])) as Array<Record<string, unknown>>
+  if (rows.length === 0) {
+    return { success: false, message: 'Target table has no rows' }
+  }
+
+  const headerRow = rows[0]
+  const headerCells = Array.isArray(headerRow.content) ? headerRow.content : []
+  const colCount = headerCells.length
+  if (colCount === 0) {
+    return { success: false, message: 'Target table has no columns' }
+  }
+
+  const allInstances: ExtractedCitationInstance[] = []
+  const toInlineContent = (text: string): unknown[] => {
+    const { content, instances } = convertNumberedCitations(text, citations)
+    allInstances.push(...instances)
+    return processPlainTextWithCitations(content, _globalPapersContext)
+  }
+  const makeCell = (cellType: 'tableCell' | 'tableHeader', text: string): Record<string, unknown> => ({
+    type: cellType,
+    content: [{ type: 'paragraph', content: toInlineContent(text) }],
+  })
+
+  if (action === 'appendRow') {
+    const row = args.row as string[] | undefined
+    if (!Array.isArray(row)) {
+      return { success: false, message: 'appendRow requires row array' }
+    }
+    if (row.length !== colCount) {
+      return { success: false, message: `Row has ${row.length} cells; expected ${colCount}` }
+    }
+    rows.push({
+      type: 'tableRow',
+      content: row.map(cell => makeCell('tableCell', cell || '')),
+    })
+  } else if (action === 'updateCell') {
+    const rowIndex = args.rowIndex as number | undefined
+    const colIndex = args.colIndex as number | undefined
+    const value = args.value as string | undefined
+    if (typeof rowIndex !== 'number' || typeof colIndex !== 'number' || typeof value !== 'string') {
+      return { success: false, message: 'updateCell requires rowIndex, colIndex, and value' }
+    }
+    const targetRowPos = rowIndex + 1 // data rows exclude header
+    if (targetRowPos < 1 || targetRowPos >= rows.length) {
+      return { success: false, message: `rowIndex ${rowIndex} out of range (0-${Math.max(0, rows.length - 2)})` }
+    }
+    if (colIndex < 0 || colIndex >= colCount) {
+      return { success: false, message: `colIndex ${colIndex} out of range (0-${colCount - 1})` }
+    }
+    const targetRow = rows[targetRowPos]
+    if (!Array.isArray(targetRow.content)) {
+      return { success: false, message: 'Target row has invalid structure' }
+    }
+    targetRow.content[colIndex] = makeCell('tableCell', value)
+  } else if (action === 'renameColumn') {
+    const colIndex = args.colIndex as number | undefined
+    const header = args.header as string | undefined
+    if (typeof colIndex !== 'number' || typeof header !== 'string') {
+      return { success: false, message: 'renameColumn requires colIndex and header' }
+    }
+    if (colIndex < 0 || colIndex >= colCount) {
+      return { success: false, message: `colIndex ${colIndex} out of range (0-${colCount - 1})` }
+    }
+    if (!Array.isArray(headerRow.content)) {
+      return { success: false, message: 'Header row has invalid structure' }
+    }
+    headerRow.content[colIndex] = makeCell('tableHeader', header)
+  } else {
+    return { success: false, message: `Unsupported table action: ${String(action)}` }
+  }
+
+  const updatedTableNode = editor.state.schema.nodeFromJSON({
+    ...tableJson,
+    content: rows,
+  })
+  const tr = editor.state.tr.replaceWith(tablePos, tablePos + tableNode.nodeSize, updatedTableNode)
+  editor.view.dispatch(tr)
+
+  if (allInstances.length > 0 && _globalProjectId) {
+    saveCitationInstancesToDatabase(_globalProjectId, allInstances)
+  }
+
+  const message =
+    action === 'appendRow'
+      ? 'Appended row to table'
+      : action === 'updateCell'
+        ? 'Updated table cell'
+        : 'Renamed table column'
+  toast.success(message)
+  return { success: true, message }
+}
+
+
+/**
+ * Find all matches in the document (or section scope), boundary-safe.
+ * Shared by preflight and execution paths.
+ */
+function collectSearchMatches(
+  editor: Editor,
+  findText: string,
+  options: { blockId?: string; section?: string; matchCase: boolean; wholeWord?: boolean; maxMatches?: number }
+): {
+  matches: { from: number; to: number; marks: readonly ProseMirrorMark[] }[]
+  scopeMsg: string
+  error?: string
+  truncated?: boolean
+} {
+  const { blockId, section, matchCase, wholeWord, maxMatches = MAX_SEARCH_REPLACE_MATCHES + 1 } = options
+  const scopeMsg = section ? ` in ${section}` : ''
+
+  let searchFrom = 0
+  let searchTo = editor.state.doc.content.size
+
+  if (blockId) {
+    const block = findBlockById(editor, blockId)
+    if (!block) {
+      return { matches: [], scopeMsg, error: `Block not found: ${blockId}` }
+    }
+    searchFrom = block.pos
+    searchTo = block.pos + block.node.nodeSize
+  } else if (section) {
+    const sectionBounds = findSectionBounds(editor, section)
+    if (!sectionBounds.found) {
+      return { matches: [], scopeMsg, error: `Section not found: ${section}` }
+    }
+    searchFrom = sectionBounds.contentStartPos
+    searchTo = sectionBounds.contentEndPos
+  }
+
+  const matches: { from: number; to: number; marks: readonly ProseMirrorMark[] }[] = []
+  let truncated = false
+  const wordBoundaryRe = wholeWord
+    ? new RegExp(`(?<![\\w])${findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, matchCase ? 'g' : 'gi')
+    : null
+
+  editor.state.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
+    if (truncated) return
+    if (!node.isText || !node.text) return
+    if (matches.length >= maxMatches) {
+      truncated = true
+      return
+    }
+
+    const textValue = node.text
+
+    if (wordBoundaryRe) {
+      wordBoundaryRe.lastIndex = 0
+      let m: RegExpExecArray | null
+      while ((m = wordBoundaryRe.exec(textValue)) !== null) {
+        if (matches.length >= maxMatches) {
+          truncated = true
+          break
+        }
+        const matchFrom = pos + m.index
+        const matchTo = matchFrom + m[0].length
+        if (matchFrom >= searchFrom && matchTo <= searchTo) {
+          matches.push({ from: matchFrom, to: matchTo, marks: node.marks })
+        }
+      }
+    } else {
+      const searchStr = matchCase ? findText : findText.toLowerCase()
+      const nodeText = matchCase ? textValue : textValue.toLowerCase()
+      let idx = 0
+      while (idx <= nodeText.length) {
+        if (matches.length >= maxMatches) {
+          truncated = true
+          break
+        }
+        const found = nodeText.indexOf(searchStr, idx)
+        if (found === -1) break
+        const matchFrom = pos + found
+        const matchTo = matchFrom + findText.length
+        if (matchFrom >= searchFrom && matchTo <= searchTo) {
+          matches.push({ from: matchFrom, to: matchTo, marks: node.marks })
+        }
+        idx = found + 1
+      }
+    }
+  })
+
+  return { matches, scopeMsg, truncated }
+}
+
+/**
+ * Preflight: count matches without modifying the document.
+ * Exported so the UI can show "N matches will be replaced" before confirming.
+ */
+export function preflightSearchAndReplace(
+  editor: Editor,
+  args: Record<string, unknown>
+): { matchCount: number; scopeMsg: string; error?: string } {
+  const findText = args.find as string
+  if (!findText) return { matchCount: 0, scopeMsg: '', error: 'No search text provided' }
+
+  const section = args.section as string | undefined
+  const matchCase = args.matchCase !== false
+  const wholeWord = args.wholeWord === true
+
+  const { matches, scopeMsg, error } = collectSearchMatches(editor, findText, {
+    section,
+    matchCase,
+    wholeWord,
+    maxMatches: MAX_SEARCH_REPLACE_MATCHES + 1,
+  })
+  if (error) return { matchCount: 0, scopeMsg, error }
+
+  if (matches.length > MAX_SEARCH_REPLACE_MATCHES) {
+    return { matchCount: matches.length, scopeMsg, error: `Too many matches${scopeMsg} (>${MAX_SEARCH_REPLACE_MATCHES}). Narrow the search or scope to a section.` }
+  }
+
+  return { matchCount: matches.length, scopeMsg }
+}
+
+/**
+ * Section range for grouping search results.
+ */
+interface SectionRange {
+  name: string
+  from: number
+  to: number
+}
+
+function buildSectionRanges(editor: Editor): SectionRange[] {
+  const docSize = editor.state.doc.content.size
+  const headings: Array<{ name: string; start: number }> = []
+
+  editor.state.doc.forEach((node, offset) => {
+    if (node.type.name === 'heading') {
+      const headingName = node.textContent.trim() || 'Untitled section'
+      headings.push({ name: headingName, start: offset })
+    }
+  })
+
+  if (headings.length === 0) {
+    return [{ name: 'Document', from: 0, to: docSize }]
+  }
+
+  const ranges: SectionRange[] = []
+  if (headings[0].start > 0) {
+    ranges.push({ name: 'Document', from: 0, to: headings[0].start })
+  }
+
+  for (let i = 0; i < headings.length; i++) {
+    const current = headings[i]
+    const next = headings[i + 1]
+    ranges.push({
+      name: current.name,
+      from: current.start,
+      to: next ? next.start : docSize,
+    })
+  }
+
+  return ranges
+}
+
+function getSectionNameForPos(pos: number, ranges: SectionRange[]): string {
+  for (const range of ranges) {
+    if (pos >= range.from && pos < range.to) return range.name
+  }
+  return ranges[ranges.length - 1]?.name || 'Document'
+}
+
+/**
+ * Search the document (read-only) and return count + locations/snippets.
+ */
+function executeSearchDocument(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const query = args.query as string
+  const section = args.section as string | undefined
+  const matchCase = args.matchCase === true
+  const wholeWord = args.wholeWord === true
+  const maxSnippets = Math.max(0, Math.min(50, Number(args.maxSnippets ?? 10)))
+  const contextChars = Math.max(10, Math.min(200, Number(args.contextChars ?? 40)))
+
+  if (!query) {
+    return { success: false, message: 'No query provided' }
+  }
+
+  const { matches, scopeMsg, error, truncated } = collectSearchMatches(editor, query, {
+    section,
+    matchCase,
+    wholeWord,
+    maxMatches: MAX_SEARCH_DOCUMENT_MATCHES,
+  })
+
+  if (error) {
+    return { success: false, message: error }
+  }
+
+  if (matches.length === 0) {
+    return { success: true, message: `No occurrences of "${query}" found${scopeMsg}.` }
+  }
+
+  const countLabel = truncated ? `at least ${matches.length}` : String(matches.length)
+  const sectionRanges = buildSectionRanges(editor)
+  const sectionCounts = new Map<string, number>()
+  for (const match of matches) {
+    const sectionName = getSectionNameForPos(match.from, sectionRanges)
+    sectionCounts.set(sectionName, (sectionCounts.get(sectionName) || 0) + 1)
+  }
+
+  const sortedSections = Array.from(sectionCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+  const sectionSummary = sortedSections
+    .map(([name, count]) => `${name}: ${count}`)
+    .join('; ')
+
+  const snippets = matches.slice(0, maxSnippets).map((match, idx) => {
+    const sectionName = getSectionNameForPos(match.from, sectionRanges)
+    const snippetText = editor.state.doc.textBetween(
+      Math.max(0, match.from - contextChars),
+      Math.min(editor.state.doc.content.size, match.to + contextChars),
+      ' '
+    ).replace(/\s+/g, ' ').trim()
+    return `${idx + 1}. [${sectionName} @${match.from}] ...${snippetText}...`
+  })
+
+  const snippetText = snippets.length > 0
+    ? `\nSnippets:\n${snippets.join('\n')}`
+    : ''
+  const extra = matches.length > maxSnippets ? `\n(and ${matches.length - maxSnippets} more matches not shown)` : ''
+  const truncationNote = truncated ? `\nNote: search capped at ${MAX_SEARCH_DOCUMENT_MATCHES} matches for performance.` : ''
+
+  return {
+    success: true,
+    message: `Search results for "${query}"${scopeMsg}: ${countLabel} occurrence${matches.length !== 1 ? 's' : ''}.\nBy section: ${sectionSummary || 'N/A'}${snippetText}${extra}${truncationNote}`,
+  }
+}
 
 /**
  * Search and replace across the document (or within a section).
+ * Supports boundary-safe matching via wholeWord option.
  */
 function executeSearchAndReplace(
   editor: Editor,
@@ -2153,68 +2597,44 @@ function executeSearchAndReplace(
   const findText = args.find as string
   const replaceWith = args.replaceWith as string
   const section = args.section as string | undefined
-  const matchCase = args.matchCase !== false // default true
+  const matchCase = args.matchCase !== false
+  const wholeWord = args.wholeWord === true
+  const maxReplacementsArg = args.maxReplacements as number | undefined
+  const maxReplacements = typeof maxReplacementsArg === 'number'
+    ? Math.max(1, Math.min(MAX_SEARCH_REPLACE_MATCHES, Math.floor(maxReplacementsArg)))
+    : undefined
 
   if (!findText) {
     return { success: false, message: 'No search text provided' }
   }
 
-  // Determine the search range
-  let searchFrom = 0
-  let searchTo = editor.state.doc.content.size
-
-  if (section) {
-    const sectionBounds = findSectionBounds(editor, section)
-    if (!sectionBounds.found) {
-      toast.error(`Section not found: ${section}`)
-      return { success: false, message: `Section not found: ${section}` }
-    }
-    searchFrom = sectionBounds.contentStartPos
-    searchTo = sectionBounds.contentEndPos
-  }
-
-  // Collect all matches with source marks to preserve formatting
-  const matches: { from: number; to: number; marks: readonly ProseMirrorMark[] }[] = []
-
-  editor.state.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
-    if (!node.isText || !node.text) return
-    if (matches.length > MAX_SEARCH_REPLACE_MATCHES) return
-
-    const textValue = node.text
-    const searchStr = matchCase ? findText : findText.toLowerCase()
-    const nodeText = matchCase ? textValue : textValue.toLowerCase()
-
-    let idx = 0
-    while (idx <= nodeText.length) {
-      if (matches.length > MAX_SEARCH_REPLACE_MATCHES) break
-      const found = nodeText.indexOf(searchStr, idx)
-      if (found === -1) break
-
-      const matchFrom = pos + found
-      const matchTo = matchFrom + findText.length
-
-      if (matchFrom >= searchFrom && matchTo <= searchTo) {
-        matches.push({ from: matchFrom, to: matchTo, marks: node.marks })
-      }
-
-      idx = found + 1
-    }
+  const { matches, scopeMsg, error } = collectSearchMatches(editor, findText, {
+    section,
+    matchCase,
+    wholeWord,
+    maxMatches: MAX_SEARCH_REPLACE_MATCHES + 1,
   })
 
+  if (error) {
+    toast.error(error)
+    return { success: false, message: error }
+  }
+
   if (matches.length === 0) {
-    toast.info(`No matches found for "${findText}"`)
-    return { success: false, message: `No matches found for "${findText}"` }
+    toast.info(`No matches found for "${findText}"${scopeMsg}`)
+    return { success: false, message: `No matches found for "${findText}"${scopeMsg}` }
   }
 
   if (matches.length > MAX_SEARCH_REPLACE_MATCHES) {
-    const scopeMsg = section ? ` in ${section}` : ''
-    const message = `Too many matches${scopeMsg} (>${MAX_SEARCH_REPLACE_MATCHES}). Narrow the search before replacing.`
+    const message = `Too many matches${scopeMsg} (>${MAX_SEARCH_REPLACE_MATCHES}). Narrow the search or scope to a section.`
     toast.error(message)
     return { success: false, message }
   }
 
+  const matchesToReplace = maxReplacements ? matches.slice(0, maxReplacements) : matches
+
   // Apply replacements in descending order and in bounded batches
-  const sortedMatches = [...matches].sort((a, b) => b.from - a.from)
+  const sortedMatches = [...matchesToReplace].sort((a, b) => b.from - a.from)
 
   for (let i = 0; i < sortedMatches.length; i += SEARCH_REPLACE_BATCH_SIZE) {
     const batch = sortedMatches.slice(i, i + SEARCH_REPLACE_BATCH_SIZE)
@@ -2230,15 +2650,20 @@ function executeSearchAndReplace(
     }
 
     if (tr.docChanged) {
+      const isLastBatch = i + SEARCH_REPLACE_BATCH_SIZE >= sortedMatches.length
+      if (!isLastBatch) {
+        tr.setMeta('addToHistory', false)
+      }
       editor.view.dispatch(tr)
     }
   }
 
-  const scopeMsg = section ? ` in ${section}` : ''
-  toast.success(`Replaced ${matches.length} occurrence${matches.length > 1 ? 's' : ''}${scopeMsg}`)
+  toast.success(`Replaced ${matchesToReplace.length} occurrence${matchesToReplace.length > 1 ? 's' : ''}${scopeMsg}`)
   return {
     success: true,
-    message: `Replaced ${matches.length} occurrence${matches.length > 1 ? 's' : ''} of "${findText}" with "${replaceWith}"${scopeMsg}`,
+    message: maxReplacements && matches.length > matchesToReplace.length
+      ? `Replaced ${matchesToReplace.length} of ${matches.length} occurrence${matches.length > 1 ? 's' : ''} of "${findText}" with "${replaceWith}"${scopeMsg} (limited by maxReplacements=${maxReplacements})`
+      : `Replaced ${matchesToReplace.length} occurrence${matchesToReplace.length > 1 ? 's' : ''} of "${findText}" with "${replaceWith}"${scopeMsg}`,
   }
 }
 

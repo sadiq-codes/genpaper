@@ -26,11 +26,12 @@ interface ToolInvocation {
   state?: string
   result?: unknown
 }
-import { getConfirmationLevel, validateToolCall, type ToolConfirmationLevel } from '@/lib/ai/tools/document-tools'
+import { requiresReview, validateToolCall } from '@/lib/ai/tools/document-tools'
 import { getDocumentStructure } from '../extensions/BlockId'
-import { calculateEdit, type CalculatedEdit } from '../services/edit-calculator'
 import { serializeForAIContext } from '../utils/ai-context-serializer'
-import { hasGhostEdits, getActiveEditIndex } from '../extensions/GhostEdit'
+import { truncateDocumentForAIContext } from '../utils/context-truncation'
+import { hasGhostEdits } from '../extensions/GhostEdit'
+import { computeDocumentChangeRanges } from '../services/doc-diff'
 
 // =============================================================================
 // UTILITIES
@@ -54,7 +55,7 @@ function generateSafeToolId(messageId: string, toolName: string, args: Record<st
   return `${messageId}-${toolName}-${hashHex}`
 }
 
-const MAX_TOOL_CALLS_PER_MESSAGE = 8
+const MAX_TOOL_CALLS_PER_MESSAGE = 20
 
 /**
  * Generate a brief summary of what a tool did/would do.
@@ -108,6 +109,10 @@ function getToolSummary(toolName: string, args: Record<string, unknown>, accepte
       return `${action} ${args.format} formatting`
     case 'insertTable':
       return `${action} table insertion`
+    case 'editTable':
+      return `${action} table edit (${preview(args.action)})`
+    case 'searchDocument':
+      return `${action} search for "${preview(args.query)}"`
     case 'searchAndReplace':
       return `${action} replace "${preview(args.find)}" → "${preview(args.replaceWith)}"`
     default:
@@ -147,11 +152,25 @@ export interface PendingToolCall {
   id: string
   toolName: string
   args: Record<string, unknown>
-  confirmationLevel: ToolConfirmationLevel
-  preview?: string
   messageId: string
-  /** Calculated edit for ghost preview (if applicable) */
-  calculatedEdit?: CalculatedEdit
+  preview?: string
+  appliedCount?: number
+  failedCount?: number
+}
+
+interface BatchToolResult {
+  toolId: string
+  toolName: string
+  args: Record<string, unknown>
+  success: boolean
+  message: string
+}
+
+interface ActiveBatchReview {
+  id: string
+  messageId: string
+  snapshot: ReturnType<Editor['getJSON']>
+  calls: BatchToolResult[]
 }
 
 export interface UseEditorChatOptions {
@@ -198,10 +217,6 @@ export interface UseEditorChatReturn {
   reloadHistory: () => Promise<void>
   /** Whether ghost edits are currently displayed */
   hasGhostPreviews: boolean
-  /** Current active edit index (1-based) for toolbar navigation */
-  activeEditIndex: number
-  /** Navigate to next/prev edit in the editor */
-  navigateEdit: (direction: 'next' | 'prev') => void
   /** Stop the current AI generation */
   stopGeneration: () => void
 }
@@ -243,14 +258,11 @@ export function useEditorChat({
   
   // Track the messageId of the current tool batch for follow-up
   const currentToolMessageIdRef = useRef<string | null>(null)
+  // Incremented whenever tool results are recorded (including auto-exec-only flows)
+  const [toolResultsVersion, setToolResultsVersion] = useState(0)
   
-  // Refs for confirm/reject functions to avoid stale closures in inline callbacks
-  const confirmToolRef = useRef<((toolId: string) => void) | null>(null)
-  const rejectToolRef = useRef<((toolId: string) => void) | null>(null)
-  
-  // Track if an accept/reject is currently in progress to prevent race conditions
-  const isProcessingRef = useRef(false)
-  const pendingActionsRef = useRef<Array<{ type: 'confirm' | 'reject'; toolId: string }>>([])
+  // Active batch review (applied edits waiting for Keep/Undo decision)
+  const activeBatchReviewRef = useRef<ActiveBatchReview | null>(null)
   
   // Track if ghost previews are active
   const [hasGhostPreviews, setHasGhostPreviews] = useState(false)
@@ -271,94 +283,6 @@ export function useEditorChat({
     }
   }, [editor, pendingTools])
   
-  // Listen for ghost edits invalidation (when document changes externally)
-  // Try to recalculate positions, or clear if not possible
-  useEffect(() => {
-    if (!editor) return
-    
-    const handleGhostEditsInvalidated = (event: Event) => {
-      const customEvent = event as CustomEvent<{ editIds: string[]; reason: string }>
-      const { editIds, reason } = customEvent.detail
-      
-      console.log('[useEditorChat] Ghost edits invalidated:', { editIds, reason })
-      
-      // Get current pending tools that match the invalidated IDs
-      const currentPending = pendingToolsRef.current.filter(t => editIds.includes(t.id))
-      
-      if (currentPending.length === 0) {
-        // Nothing to recalculate
-        setPendingTools([])
-        setHasGhostPreviews(false)
-        return
-      }
-      
-      // Try to recalculate positions for each pending tool
-      const recalculated: PendingToolCall[] = []
-      let invalidCount = 0
-      
-      for (const tool of currentPending) {
-        const result = calculateEdit(editor, tool.toolName, tool.args, tool.id)
-        if (result.success && result.edit) {
-          recalculated.push({
-            ...tool,
-            calculatedEdit: result.edit,
-          })
-        } else {
-          console.log(`[useEditorChat] Could not recalculate edit "${tool.toolName}" after document change`)
-          executedTools.current.add(tool.id) // Mark as handled
-          invalidCount++
-        }
-      }
-      
-      if (recalculated.length > 0) {
-        // Update pending tools with recalculated positions
-        setPendingTools(recalculated)
-        
-        // Re-show ghost previews with new positions
-        const recalculatedEdits = recalculated
-          .map(t => t.calculatedEdit)
-          .filter((e): e is CalculatedEdit => e !== undefined)
-        
-        if (recalculatedEdits.length > 0) {
-          // Use setTimeout to ensure state is updated before showing previews
-          setTimeout(() => {
-            editor.commands.setGhostEdits(
-              recalculatedEdits,
-              (editId) => confirmToolRef.current?.(editId),
-              (editId) => rejectToolRef.current?.(editId)
-            )
-          }, 0)
-        }
-        
-        // Show toast indicating edits were recalculated
-        if (invalidCount > 0) {
-          toast.info('Edits recalculated', {
-            description: `${recalculated.length} edit${recalculated.length > 1 ? 's' : ''} updated, ${invalidCount} removed.`,
-            duration: 3000,
-          })
-        }
-        // Don't show toast if all edits were successfully recalculated - less noisy
-      } else {
-        // All edits became invalid
-        setPendingTools([])
-        setHasGhostPreviews(false)
-        
-        if (invalidCount > 0) {
-          toast.info('Pending edits cleared', {
-            description: 'Document was modified and edits could not be recalculated.',
-            duration: 3000,
-          })
-        }
-      }
-    }
-    
-    editor.view.dom.addEventListener('ghostedits:invalidated', handleGhostEditsInvalidated)
-    
-    return () => {
-      editor.view.dom.removeEventListener('ghostedits:invalidated', handleGhostEditsInvalidated)
-    }
-  }, [editor])
-
   const getEditorContext = useCallback(() => {
     const ed = editorRef.current
     if (!ed) return { documentContent: '', selectedText: undefined, documentStructure: '' }
@@ -376,18 +300,10 @@ export function useEditorChat({
     // Also shows citation markers and counts per block
     const documentStructure = getDocumentStructure(ed)
 
-    // Speed: cap very large documents sent to the chat endpoint.
-    // Keep intro + latest context to preserve quality while reducing payload.
-    const MAX_DOC_CHARS = 20_000
-    if (documentContent.length > MAX_DOC_CHARS) {
-      const head = documentContent.slice(0, 6_000)
-      const tail = documentContent.slice(-14_000)
-      documentContent =
-        `[Document truncated for speed: showing first 6000 chars + last 14000 chars of ${documentContent.length}]\n\n` +
-        head +
-        `\n\n---\n\n` +
-        tail
-    }
+    documentContent = truncateDocumentForAIContext(documentContent, {
+      maxChars: 20_000,
+      focusText: selectedText,
+    })
 
     return { documentContent, selectedText, documentStructure }
   }, [])
@@ -557,30 +473,58 @@ export function useEditorChat({
     
     // Categorize results
     const accepted = results.filter(r => r.accepted)
-    const userRejected = results.filter(r => !r.accepted && !r.summary.startsWith('Targeting failed'))
+    const readOnlySearchResults = accepted.filter(r => r.toolName === 'searchDocument')
+    const acceptedEdits = accepted.filter(r => r.toolName !== 'searchDocument')
+    const capOverflow = results.filter(r => !r.accepted && r.summary.startsWith('Capped:'))
+    const autoExecFailed = results.filter(r => !r.accepted && r.summary.startsWith('Auto-exec failed:'))
     const targetingFailed = results.filter(r => !r.accepted && r.summary.startsWith('Targeting failed'))
+    const userRejected = results.filter(r => !r.accepted && !r.summary.startsWith('Targeting failed') && !r.summary.startsWith('Capped:') && !r.summary.startsWith('Auto-exec failed:') && !r.summary.startsWith('Execution failed:'))
+    const executionFailed = results.filter(r => !r.accepted && r.summary.startsWith('Execution failed:'))
     
     // Create a system-style message for AI to respond to
     // Prefix with special marker so we can filter it from chat display
     let resultSummary = ''
     
-    // Handle targeting failures specially - AI can retry with different targeting
+    const parts: string[] = []
+
+    // Cap overflow — tell AI to use searchAndReplace
+    if (capOverflow.length > 0) {
+      parts.push(capOverflow[0].summary)
+    }
+
+    // Targeting failures — AI can retry with different targeting
     if (targetingFailed.length > 0) {
       const failureDetails = targetingFailed.map(r => `- ${r.toolName}: ${r.summary}`).join('\n')
-      resultSummary = `[TOOL_RESULT] ${targetingFailed.length} edit(s) failed due to targeting issues:\n${failureDetails}\n\nYou can retry with different targeting (try a shorter/different searchPhrase, or use section name instead).`
-      
-      if (accepted.length > 0) {
-        resultSummary += ` ${accepted.length} other edit(s) were accepted: ${accepted.map(r => r.summary).join(' ')}`
-      }
-    } else if (accepted.length > 0 && userRejected.length === 0) {
-      // All accepted
-      resultSummary = `[TOOL_RESULT] User accepted ${accepted.length === 1 ? 'the edit' : `all ${accepted.length} edits`}. ${accepted.map(r => r.summary).join(' ')} Please acknowledge briefly.`
-    } else if (userRejected.length > 0 && accepted.length === 0) {
-      // All rejected by user
-      resultSummary = `[TOOL_RESULT] User rejected ${userRejected.length === 1 ? 'the edit' : `all ${userRejected.length} edits`}. Ask if they'd like a different approach.`
+      parts.push(`${targetingFailed.length} edit(s) failed due to targeting:\n${failureDetails}\nRetry with a shorter/different searchPhrase, or use section name.`)
+    }
+
+    // Execution failures
+    if (executionFailed.length > 0 || autoExecFailed.length > 0) {
+      const allFailed = [...executionFailed, ...autoExecFailed]
+      parts.push(`${allFailed.length} edit(s) failed to execute: ${allFailed.map(r => r.summary).join('; ')}`)
+    }
+
+    if (readOnlySearchResults.length > 0) {
+      parts.push(readOnlySearchResults.map(r => r.summary).join('\n\n'))
+    }
+
+    if (acceptedEdits.length > 0) {
+      parts.push(`${acceptedEdits.length} edit(s) applied: ${acceptedEdits.map(r => r.summary).join(' ')}`)
+    }
+
+    if (userRejected.length > 0) {
+      parts.push(`User rejected ${userRejected.length} edit(s). Ask if they'd like a different approach.`)
+    }
+
+    if (parts.length === 0) return
+
+    // Build final summary
+    if (acceptedEdits.length > 0 && userRejected.length === 0 && targetingFailed.length === 0 && capOverflow.length === 0 && executionFailed.length === 0 && autoExecFailed.length === 0 && readOnlySearchResults.length === 0) {
+      resultSummary = `[TOOL_RESULT] User accepted ${acceptedEdits.length === 1 ? 'the edit' : `all ${acceptedEdits.length} edits`}. ${acceptedEdits.map(r => r.summary).join(' ')} Please acknowledge briefly.`
+    } else if (acceptedEdits.length === 0 && userRejected.length === 0 && targetingFailed.length === 0 && capOverflow.length === 0 && executionFailed.length === 0 && autoExecFailed.length === 0 && readOnlySearchResults.length > 0) {
+      resultSummary = `[TOOL_RESULT] ${readOnlySearchResults.map(r => r.summary).join('\n\n')}`
     } else {
-      // Mixed
-      resultSummary = `[TOOL_RESULT] User accepted ${accepted.length} edit(s), rejected ${userRejected.length}. ${accepted.map(r => r.summary).join(' ')} Acknowledge and ask about rejected edits.`
+      resultSummary = `[TOOL_RESULT] ${parts.join('\n\n')}`
     }
     
     // Send to AI - this triggers a new response
@@ -614,6 +558,7 @@ export function useEditorChat({
     const existing = toolResultsRef.current.get(messageId) || []
     existing.push({ toolName, toolId, accepted, summary })
     toolResultsRef.current.set(messageId, existing)
+    setToolResultsVersion((v) => v + 1)
   }, [])
 
   /**
@@ -636,124 +581,208 @@ export function useEditorChat({
         }, 500)
       }
     }
-  }, [pendingTools, sendToolResultsToAI])
+  }, [pendingTools, sendToolResultsToAI, toolResultsVersion])
 
-  /**
-   * Execute a tool call on the editor.
-   * @param toolName - Name of the tool to execute
-   * @param args - Tool arguments
-   * @param ghostEditId - Optional: If provided, marks the transaction to preserve other ghost previews
-   */
-  const executeToolCall = useCallback((
-    toolName: string, 
-    args: Record<string, unknown>,
-    ghostEditId?: string,
-    suppressHistory?: boolean
-  ) => {
-    const ed = editorRef.current
-    if (!ed) {
-      console.warn('Cannot execute tool: editor not available')
-      return
-    }
+  const showBatchChangeHighlights = useCallback((ed: Editor, messageId: string, changes: ReturnType<typeof computeDocumentChangeRanges>) => {
+    const successfulCount = activeBatchReviewRef.current?.calls.filter(call => call.success).length ?? 0
+    const failedCount = activeBatchReviewRef.current
+      ? activeBatchReviewRef.current.calls.length - successfulCount
+      : 0
 
-    // Import and execute with optional ghostEditId to preserve other previews
-    import('../services/tool-executor').then(({ executeDocumentTool }) => {
-      if (suppressHistory) {
-        // Wrap dispatch to suppress undo history entry (will be grouped with other edits)
-        const originalDispatch = ed.view.dispatch.bind(ed.view)
-        ed.view.dispatch = (tr) => {
-          if (tr.docChanged) {
-            tr.setMeta('addToHistory', false)
-          }
-          return originalDispatch(tr)
-        }
-        try {
-          executeDocumentTool(ed, toolName, args, { ghostEditId })
-        } finally {
-          ed.view.dispatch = originalDispatch
-        }
-      } else {
-        executeDocumentTool(ed, toolName, args, { ghostEditId })
-      }
-    })
+    const batchId = `${messageId}-batch-review`
+    setPendingTools([{
+      id: batchId,
+      toolName: 'batchReview',
+      args: { changeCount: changes.length },
+      messageId,
+      preview: `${changes.length} document change(s) highlighted`,
+      appliedCount: successfulCount,
+      failedCount,
+    }])
+
+    ed.commands.setChangeHighlights(changes)
+    setHasGhostPreviews(true)
   }, [])
 
   /**
-   * Show ghost edit previews in the editor.
-   * 
-   * Note: Uses pendingToolsRef to avoid stale closure issues - the callbacks
-   * created here will be called later when the user accepts/rejects, and we
-   * need to access the current pendingTools state at that time.
+   * Coalesce repeated granular replaceBlock calls into a single searchAndReplace.
+   *
+   * Safety: only coalesce calls that are not block-scoped and do not carry
+   * citation payloads, otherwise semantics can change.
    */
-  const showGhostPreviews = useCallback((ed: Editor, edits: CalculatedEdit[]) => {
-    // Helper to show acceptance/rejection animation
-    const showEditAnimation = (editId: string, type: 'accepted' | 'rejected') => {
-      // Escape special characters in editId for CSS selector
-      const escapedId = CSS.escape(editId)
-      const editElement = ed.view.dom.querySelector(`[data-edit-id="${escapedId}"]`) as HTMLElement | null
-      if (editElement) {
-        // Add animation class
-        editElement.classList.add(`ghost-edit-${type}`)
-        // Animation will play for ~400ms, then we clear the decoration
-        return 350 // Return delay before clearing
-      }
-      return 0
-    }
+  function coalesceToSearchAndReplace(invocations: ToolInvocation[]): ToolInvocation[] {
+    if (invocations.length <= MAX_TOOL_CALLS_PER_MESSAGE) return invocations
 
-    // Set up callbacks for when user accepts/rejects via inline buttons
-    // Use refs to access the latest confirm/reject functions, avoiding stale closures
-    const onAccept = (editId: string) => {
-      if (confirmToolRef.current) {
-        confirmToolRef.current(editId)
+    // Group replaceBlock calls by (searchPhrase → newContent)
+    const replaceGroups = new Map<string, { searchPhrase: string; newContent: string; section?: string; count: number; indices: number[] }>()
+
+    for (let i = 0; i < invocations.length; i++) {
+      const inv = invocations[i]
+      if (inv.toolName !== 'replaceBlock') continue
+      const args = inv.args as Record<string, unknown>
+      const searchPhrase = args.searchPhrase as string | undefined
+      const newContent = args.newContent as string | undefined
+      const section = args.section as string | undefined
+      const hasBlockScope = typeof args.blockId === 'string' && args.blockId.length > 0
+      const hasCitationPayload = Array.isArray(args.citations) && args.citations.length > 0
+      if (!searchPhrase || typeof newContent !== 'string' || hasBlockScope || hasCitationPayload) continue
+
+      const key = JSON.stringify({ searchPhrase, newContent, section })
+
+      const existing = replaceGroups.get(key)
+      if (existing) {
+        existing.count++
+        existing.indices.push(i)
       } else {
-        console.warn(`[useEditorChat] confirmToolRef not set for editId: ${editId}`)
-      }
-    }
-    
-    const onReject = (editId: string) => {
-      if (rejectToolRef.current) {
-        rejectToolRef.current(editId)
-      } else {
-        console.warn(`[useEditorChat] rejectToolRef not set for editId: ${editId}`)
+        replaceGroups.set(key, { searchPhrase, newContent, section, count: 1, indices: [i] })
       }
     }
 
-    // Set the ghost edits with callbacks
-    ed.commands.setGhostEdits(edits, onAccept, onReject)
-    setHasGhostPreviews(true)
-  }, []) // Callbacks use refs to access latest functions, no deps needed
+    // Only coalesce groups with 2+ calls
+    const indicesToRemove = new Set<number>()
+    const coalescedInvocations: ToolInvocation[] = []
+
+    for (const [, group] of replaceGroups) {
+      if (group.count < 2) continue
+
+      // Mark all individual calls for removal
+      for (const idx of group.indices) {
+        indicesToRemove.add(idx)
+      }
+
+      // Create a single searchAndReplace
+      coalescedInvocations.push({
+        toolName: 'searchAndReplace',
+        args: {
+          find: group.searchPhrase,
+          replaceWith: group.newContent,
+          ...(group.section ? { section: group.section } : {}),
+        },
+      })
+
+      console.log(
+        `[useEditorChat] Coalesced ${group.count} replaceBlock calls into 1 searchAndReplace: "${group.searchPhrase}" → "${group.newContent.slice(0, 40)}..."`
+      )
+    }
+
+    if (coalescedInvocations.length === 0) return invocations
+
+    // Rebuild: keep non-removed invocations + append coalesced ones
+    const result: ToolInvocation[] = []
+    for (let i = 0; i < invocations.length; i++) {
+      if (!indicesToRemove.has(i)) {
+        result.push(invocations[i])
+      }
+    }
+    result.push(...coalescedInvocations)
+
+    toast.info(`Grouped ${indicesToRemove.size} edits into ${coalescedInvocations.length} bulk replacement${coalescedInvocations.length > 1 ? 's' : ''}`, {
+      duration: 3000,
+    })
+
+    return result
+  }
 
   /**
    * Process tool invocations from a message.
-   * Queue those requiring confirmation with ghost previews, execute others immediately.
-   * 
-   * Includes deduplication to prevent duplicate tool calls from creating multiple previews.
+   * Read-only tools execute immediately. Editing tools execute as a batch, then
+   * enter Keep/Undo review mode with inline change highlights.
    */
   const processToolInvocations = useCallback((messageId: string, invocations: ToolInvocation[]) => {
     const ed = editorRef.current
-    const newPending: PendingToolCall[] = []
-    const calculatedEdits: CalculatedEdit[] = []
+    if (!ed) return
+
+    // Do not stack multiple active reviews.
+    if (pendingToolsRef.current.length > 0) {
+      toast.info('Finish reviewing current AI changes first.')
+      return
+    }
     
     // Track tool signatures we've seen in THIS batch to deduplicate
     const seenInBatch = new Set<string>()
-    // Queue auto-executed tools for undo grouping
-    const autoExecQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string }> = []
+    const readOnlyQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string }> = []
+    const reviewQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string }> = []
 
-    const cappedInvocations = invocations.slice(0, MAX_TOOL_CALLS_PER_MESSAGE)
-    const droppedInvocations = invocations.length - cappedInvocations.length
-    if (droppedInvocations > 0) {
+    // --- Pass 1: Coalesce repeated granular replaceBlock calls into searchAndReplace ---
+    const coalesced = coalesceToSearchAndReplace(invocations)
+
+    // Cap with structured feedback instead of silent drop
+    let workingInvocations = coalesced
+    if (coalesced.length > MAX_TOOL_CALLS_PER_MESSAGE) {
+      const droppedCount = coalesced.length - MAX_TOOL_CALLS_PER_MESSAGE
+      workingInvocations = coalesced.slice(0, MAX_TOOL_CALLS_PER_MESSAGE)
+
       console.warn(
-        `[useEditorChat] Dropping ${droppedInvocations} tool call(s): over per-message cap of ${MAX_TOOL_CALLS_PER_MESSAGE}`
+        `[useEditorChat] Capping ${droppedCount} tool call(s): over per-message cap of ${MAX_TOOL_CALLS_PER_MESSAGE}`
       )
       toast.warning(`Limited to ${MAX_TOOL_CALLS_PER_MESSAGE} edits in one response`, {
-        description: `${droppedInvocations} additional tool call${droppedInvocations > 1 ? 's were' : ' was'} skipped.`,
+        description: `${droppedCount} additional edit${droppedCount > 1 ? 's were' : ' was'} not applied. Use searchAndReplace for bulk changes.`,
         duration: 5000,
       })
+
+      // Record a feedback result so AI knows about the cap
+      recordToolResult(
+        messageId,
+        `${messageId}-cap-overflow`,
+        'system',
+        false,
+        `Capped: ${droppedCount} tool call(s) exceeded the per-message limit of ${MAX_TOOL_CALLS_PER_MESSAGE}. Use searchAndReplace for bulk changes instead of multiple replaceBlock calls.`
+      )
     }
 
-    for (const invocation of cappedInvocations) {
+    // If structured table insertion is present, skip only TRUE duplicate markdown-table
+    // insertContent calls (same target + same headers) from the same response.
+    const normalizeHeader = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ')
+    const getTableTargetKey = (args: Record<string, unknown>): string => {
+      const afterBlockId = typeof args.afterBlockId === 'string' ? args.afterBlockId : ''
+      const location = typeof args.location === 'string' ? args.location : ''
+      return `${afterBlockId}|${location}`
+    }
+    const getMarkdownTableHeaders = (content: unknown): string[] | null => {
+      if (typeof content !== 'string' || content.trim().length === 0) return null
+      const lines = content.split('\n').map(line => line.trim()).filter(Boolean)
+      for (let i = 0; i < lines.length - 1; i++) {
+        const headerLine = lines[i]
+        const separatorLine = lines[i + 1]
+        if ((headerLine.match(/\|/g)?.length || 0) < 2) continue
+        const isSeparator = /^[:|\-\s]+$/.test(separatorLine) && separatorLine.includes('-') && separatorLine.includes('|')
+        if (!isSeparator) continue
+        const headers = headerLine
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map(cell => normalizeHeader(cell))
+          .filter(Boolean)
+        return headers.length > 1 ? headers : null
+      }
+      return null
+    }
+    const insertTableSignatures = new Set<string>()
+    for (const invocation of workingInvocations) {
+      if (invocation.toolName !== 'insertTable') continue
+      const args = invocation.args as Record<string, unknown>
+      if (!Array.isArray(args.headers) || args.headers.length === 0) continue
+      const headers = (args.headers as unknown[])
+        .filter((h): h is string => typeof h === 'string')
+        .map(normalizeHeader)
+      if (headers.length === 0) continue
+      insertTableSignatures.add(`${getTableTargetKey(args)}::${headers.join('|')}`)
+    }
+
+    for (const invocation of workingInvocations) {
       const toolName = invocation.toolName
       const args = invocation.args as Record<string, unknown>
+
+      if (toolName === 'insertContent' && insertTableSignatures.size > 0) {
+        const headers = getMarkdownTableHeaders(args.content)
+        if (headers) {
+          const signature = `${getTableTargetKey(args)}::${headers.join('|')}`
+          if (insertTableSignatures.has(signature)) {
+            console.log('[useEditorChat] Skipping duplicate markdown-table insertContent (covered by insertTable)')
+            continue
+          }
+        }
+      }
       
       // Generate a CSS-selector-safe tool ID (avoids JSON special chars)
       const toolId = generateSafeToolId(messageId, toolName, args)
@@ -771,6 +800,10 @@ export function useEditorChat({
         section: args.section,
         location: args.location,
         searchPhrase: args.searchPhrase ? String(args.searchPhrase).slice(0, 50) : undefined,
+        find: args.find ? String(args.find).slice(0, 50) : undefined,
+        replaceWith: typeof args.replaceWith === 'string' ? args.replaceWith.slice(0, 50) : undefined,
+        query: args.query ? String(args.query).slice(0, 50) : undefined,
+        action: args.action,
       })
       
       if (seenInBatch.has(argsSignature)) {
@@ -779,485 +812,169 @@ export function useEditorChat({
       }
       seenInBatch.add(argsSignature)
       
-      // Also check if a very similar tool is already pending
-      const isDuplicateOfPending = pendingToolsRef.current.some(existing => {
-        if (existing.toolName !== toolName) return false
-        const existingArgs = existing.args
-        // Same search target + same replacement = duplicate
-        const sameSearch = existingArgs.searchPhrase === args.searchPhrase
-        const sameContent = (existingArgs.newContent || existingArgs.content) === (args.newContent || args.content)
-        return sameSearch && sameContent
-      })
-      
-      if (isDuplicateOfPending) {
-        console.log('[useEditorChat] Skipping tool call - similar edit already pending:', toolName)
-        continue
-      }
-
-      const confirmLevel = getConfirmationLevel(toolName)
-
-      if (confirmLevel === 'none') {
-        // Execute immediately — collect for undo grouping below
-        autoExecQueue.push({ toolName, args, toolId })
-        executedTools.current.add(toolId)
+      if (requiresReview(toolName)) {
+        reviewQueue.push({ toolName, args, toolId })
       } else {
-        // Calculate edit positions for ghost preview
-        let calcEdit: CalculatedEdit | undefined
-        if (ed) {
-          const result = calculateEdit(
+        readOnlyQueue.push({ toolName, args, toolId })
+      }
+    }
+
+    import('../services/tool-executor')
+      .then(({ executeToolsAsUndoGroup }) => {
+        // Read-only queue: execute immediately and record outcomes.
+        if (readOnlyQueue.length > 0) {
+          const readOnlyResults = executeToolsAsUndoGroup(
             ed,
-            toolName,
-            args,
-            toolId
+            readOnlyQueue.map(call => ({ toolName: call.toolName, args: call.args }))
           )
-          if (result.success && result.edit) {
-            calcEdit = result.edit
-            calculatedEdits.push(calcEdit)
+          for (let i = 0; i < readOnlyQueue.length; i++) {
+            const call = readOnlyQueue[i]
+            const succeeded = readOnlyResults[i]?.success ?? false
+            const executionMessage = readOnlyResults[i]?.message ?? 'unknown result'
+            executedTools.current.add(call.toolId)
+            recordToolResult(
+              messageId,
+              call.toolId,
+              call.toolName,
+              succeeded,
+              succeeded
+                ? (call.toolName === 'searchDocument'
+                    ? executionMessage
+                    : getToolSummary(call.toolName, call.args, true))
+                : `Execution failed: ${executionMessage}`
+            )
           }
         }
 
-        // Queue for confirmation
-        newPending.push({
-          id: toolId,
-          toolName: toolName,
-          args: args,
-          confirmationLevel: confirmLevel,
-          preview: generatePreview(toolName, args),
-          messageId,
-          calculatedEdit: calcEdit,
-        })
-      }
-    }
+        if (reviewQueue.length === 0) return
 
-    // Execute auto-exec tools as a single undo group
-    if (autoExecQueue.length > 0) {
-      if (autoExecQueue.length === 1) {
-        // Single tool — normal execution (creates one undo entry)
-        executeToolCall(autoExecQueue[0].toolName, autoExecQueue[0].args)
-      } else {
-        // Multiple tools — suppress history on all but the last
-        for (let i = 0; i < autoExecQueue.length; i++) {
-          const isLast = i === autoExecQueue.length - 1
-          executeToolCall(autoExecQueue[i].toolName, autoExecQueue[i].args, undefined, !isLast)
-        }
-      }
-    }
-
-    if (newPending.length > 0) {
-      setPendingTools(prev => [...prev, ...newPending])
-      
-      // Show ghost previews if we have calculated edits
-      if (ed && calculatedEdits.length > 0) {
-        showGhostPreviews(ed, calculatedEdits)
-      }
-    }
-  }, [executeToolCall, showGhostPreviews])
-
-  /**
-   * Generate a preview string for a tool call.
-   */
-  const generatePreview = (toolName: string, args: Record<string, unknown>): string => {
-    // Helper to get target description
-    const getTarget = () => {
-      if (args.blockId) return `block ${args.blockId}`
-      if (args.section && args.searchPhrase) return `"${args.section}": "${(args.searchPhrase as string).slice(0, 50)}..."`
-      if (args.section) return `section "${args.section}"`
-      if (args.searchPhrase) return `"${(args.searchPhrase as string).slice(0, 50)}..."`
-      return 'selected content'
-    }
-
-    switch (toolName) {
-      case 'insertContent': {
-        const location = args.afterBlockId 
-          ? `after block ${args.afterBlockId}`
-          : args.afterPhrase 
-            ? `after "${(args.afterPhrase as string).slice(0, 40)}..."`
-            : args.location 
-              ? `at ${args.location}`
-              : 'at cursor'
-        const contentPreview = (args.content as string)?.slice(0, 200) || ''
-        return `Insert ${location}:\n"${contentPreview}${contentPreview.length >= 200 ? '...' : ''}"`
-      }
-      case 'rewriteSection':
-        return `Rewrite "${args.section}" section:\n${(args.newContent as string)?.slice(0, 200)}...`
-      case 'deleteContent':
-        return `Delete ${getTarget()}${args.reason ? `\nReason: ${args.reason}` : ''}`
-      case 'replaceBlock':
-        return `Replace ${getTarget()}:\nNew content: "${(args.newContent as string)?.slice(0, 150)}..."`
-      case 'moveBlock':
-        return `Move ${getTarget()} to ${args.targetLocation}${args.reason ? `\nReason: ${args.reason}` : ''}`
-      case 'mergeBlocks':
-        return args.firstBlockId 
-          ? `Merge block ${args.firstBlockId} with ${args.secondBlockId}`
-          : `Merge blocks near "${(args.searchPhrase as string)?.slice(0, 50)}..."`
-      case 'splitBlock':
-        return `Split block after "${(args.splitAfterPhrase as string)?.slice(0, 60)}..."`
-      case 'insertTable': {
-        const headers = args.headers as string[]
-        const rows = args.rows as string[][]
-        return `Insert ${headers?.length || 0}-column table with ${rows?.length || 0} rows${args.caption ? `\n${args.caption}` : ''}`
-      }
-      case 'searchAndReplace':
-        return `Replace all "${args.find}" → "${args.replaceWith}"${args.section ? ` in ${args.section}` : ''}`
-      default:
-        return JSON.stringify(args, null, 2)
-    }
-  }
-
-  /**
-   * Recalculate positions for remaining pending edits after document changes.
-   * Returns { valid: edits that could be recalculated, invalidCount: number removed }
-   */
-  const recalculateRemainingEdits = useCallback((
-    ed: Editor,
-    remainingTools: PendingToolCall[],
-    onTargetingFailure?: (tool: PendingToolCall, error: string) => void
-  ): { valid: PendingToolCall[]; invalidCount: number } => {
-    const valid: PendingToolCall[] = []
-    let invalidCount = 0
-
-    for (const tool of remainingTools) {
-      const result = calculateEdit(ed, tool.toolName, tool.args, tool.id)
-      if (result.success && result.edit) {
-        // Update the calculated edit with new positions
-        valid.push({
-          ...tool,
-          calculatedEdit: result.edit,
-        })
-      } else {
-        // Target no longer exists in document
-        const targetInfo = tool.args.searchPhrase 
-          ? `text "${(tool.args.searchPhrase as string).slice(0, 30)}..."`
-          : tool.args.section 
-            ? `section "${tool.args.section}"`
-            : tool.args.blockId 
-              ? `block ${tool.args.blockId}`
-              : 'target'
-        const errorMsg = `Could not find ${targetInfo}`
-        console.log(`[useEditorChat] Edit "${tool.toolName}" targeting failed: ${errorMsg}`)
-        executedTools.current.add(tool.id) // Mark as handled
-        invalidCount++
-        
-        // Report targeting failure if callback provided
-        if (onTargetingFailure) {
-          onTargetingFailure(tool, errorMsg)
-        }
-      }
-    }
-
-    return { valid, invalidCount }
-  }, [])
-
-  /**
-   * Process the next action in the queue (if any)
-   */
-  const processNextAction = useCallback(() => {
-    if (pendingActionsRef.current.length === 0) {
-      isProcessingRef.current = false
-      return
-    }
-    
-    const action = pendingActionsRef.current.shift()!
-    if (action.type === 'confirm') {
-      confirmToolInternal(action.toolId)
-    } else {
-      rejectToolInternal(action.toolId)
-    }
-  }, [])
-
-  /**
-   * Internal confirm implementation (called by queue processor)
-   */
-  const confirmToolInternal = useCallback((toolId: string) => {
-    const ed = editorRef.current
-    const tool = pendingToolsRef.current.find(t => t.id === toolId)
-    if (!tool || !ed) {
-      // Tool already processed, move to next
-      processNextAction()
-      return
-    }
-
-    // Show acceptance animation on the diff block (escape ID for CSS selector)
-    const escapedId = CSS.escape(toolId)
-    const editElement = ed.view.dom.querySelector(`[data-edit-id="${escapedId}"]`)
-    if (editElement) {
-      editElement.classList.add('diff-block--accepted')
-    }
-
-    // Delay execution to let animation play
-    setTimeout(() => {
-      // Execute the accepted edit
-      executeToolCall(tool.toolName, tool.args, toolId)
-      executedTools.current.add(toolId)
-      
-      // Record tool result for AI follow-up
-      const summary = getToolSummary(tool.toolName, tool.args, true)
-      recordToolResult(tool.messageId, toolId, tool.toolName, true, summary)
-      
-      // Clear ghost edit for accepted tool
-      ed.commands.clearGhostEdit(toolId)
-      
-      // Get remaining tools (excluding the one we just accepted)
-      const remainingTools = pendingToolsRef.current.filter(t => t.id !== toolId)
-      
-      if (remainingTools.length === 0) {
-        // No other edits, just clean up
-        setPendingTools([])
-        setHasGhostPreviews(false)
-        toast.success('Edit accepted', {
-          description: 'Press Cmd+Z to undo',
-          duration: 3000,
-        })
-        processNextAction()
-        return
-      }
-      
-      // Recalculate positions for remaining edits
-      // Record targeting failures so AI can self-correct
-      const { valid, invalidCount } = recalculateRemainingEdits(ed, remainingTools, (failedTool, error) => {
-        recordToolResult(
-          failedTool.messageId, 
-          failedTool.id, 
-          failedTool.toolName, 
-          false, 
-          `Targeting failed: ${error}`
+        const snapshot = ed.getJSON()
+        const reviewResults = executeToolsAsUndoGroup(
+          ed,
+          reviewQueue.map(call => ({ toolName: call.toolName, args: call.args }))
         )
-      })
-      
-      // Update pending tools with recalculated positions
-      setPendingTools(valid)
-      
-      if (valid.length > 0) {
-        // Update ghost previews with new positions
-        const recalculatedEdits = valid
-          .map(t => t.calculatedEdit)
-          .filter((e): e is CalculatedEdit => e !== undefined)
-        
-        if (recalculatedEdits.length > 0) {
-          showGhostPreviews(ed, recalculatedEdits)
+
+        const calls: BatchToolResult[] = reviewQueue.map((call, index) => ({
+          ...call,
+          success: reviewResults[index]?.success ?? false,
+          message: reviewResults[index]?.message ?? 'unknown result',
+        }))
+
+        const successfulCalls = calls.filter(call => call.success)
+        const failedCalls = calls.filter(call => !call.success)
+
+        if (successfulCalls.length > 0) {
+          const changes = computeDocumentChangeRanges(snapshot, ed.state.doc)
+          if (changes.length > 0) {
+            activeBatchReviewRef.current = {
+              id: `${messageId}-batch-review`,
+              messageId,
+              snapshot,
+              calls,
+            }
+            showBatchChangeHighlights(ed, messageId, changes)
+            if (failedCalls.length > 0) {
+              toast.warning(`${failedCalls.length} edit${failedCalls.length > 1 ? 's' : ''} failed`, {
+                description: failedCalls.map(c => c.message).join('; ').slice(0, 120),
+                duration: 5000,
+              })
+            }
+            return
+          }
         }
-        
-        // Show toast with status
-        if (invalidCount > 0) {
-          toast.success('Edit accepted', {
-            description: `${valid.length} edit${valid.length > 1 ? 's' : ''} remaining. ${invalidCount} removed (target not found).`,
-            duration: 4000,
-          })
-        } else {
-          toast.success('Edit accepted', {
-            description: `${valid.length} edit${valid.length > 1 ? 's' : ''} remaining.`,
+
+        // If we couldn't produce a review state, commit results immediately.
+        for (const call of calls) {
+          executedTools.current.add(call.toolId)
+          recordToolResult(
+            messageId,
+            call.toolId,
+            call.toolName,
+            call.success,
+            call.success
+              ? getToolSummary(call.toolName, call.args, true)
+              : `Execution failed: ${call.message}`
+          )
+        }
+
+        if (successfulCalls.length > 0 && failedCalls.length === 0) {
+          toast.success(`Applied ${successfulCalls.length} edit${successfulCalls.length === 1 ? '' : 's'}`, {
+            description: 'Press Cmd+Z to undo',
             duration: 3000,
           })
+        } else if (successfulCalls.length > 0 && failedCalls.length > 0) {
+          toast.warning(`${successfulCalls.length} applied, ${failedCalls.length} failed`, {
+            duration: 4000,
+          })
         }
-      } else {
-        // All remaining edits were invalid
-        setHasGhostPreviews(false)
-        toast.success('Edit accepted', {
-          description: invalidCount > 0 
-            ? `${invalidCount} other edit${invalidCount > 1 ? 's' : ''} removed (target not found).`
-            : 'Press Cmd+Z to undo',
-          duration: 3000,
-        })
-      }
-      
-      processNextAction()
-    }, 300)
-  }, [executeToolCall, recalculateRemainingEdits, showGhostPreviews, processNextAction, recordToolResult])
-
-  /**
-   * Internal reject implementation (called by queue processor)
-   */
-  const rejectToolInternal = useCallback((toolId: string) => {
-    const ed = editorRef.current
-    
-    // Check if tool still exists in pending
-    const tool = pendingToolsRef.current.find(t => t.id === toolId)
-    if (!tool) {
-      processNextAction()
-      return
-    }
-    
-    // Show rejection animation on the diff block (escape ID for CSS selector)
-    const escapedId = CSS.escape(toolId)
-    const editElement = ed?.view.dom.querySelector(`[data-edit-id="${escapedId}"]`)
-    if (editElement) {
-      editElement.classList.add('diff-block--rejected')
-    }
-
-    // Delay removal to let animation play
-    setTimeout(() => {
-      executedTools.current.add(toolId) // Mark as handled (rejected)
-      
-      // Record tool result for AI follow-up
-      const summary = getToolSummary(tool.toolName, tool.args, false)
-      recordToolResult(tool.messageId, toolId, tool.toolName, false, summary)
-      
-      setPendingTools(prev => prev.filter(t => t.id !== toolId))
-      
-      // Clear ghost edit for this tool
-      if (ed) {
-        ed.commands.clearGhostEdit(toolId)
-        // Update ghost preview state
-        const remaining = pendingToolsRef.current.filter(t => t.id !== toolId && t.calculatedEdit)
-        setHasGhostPreviews(remaining.length > 0)
-      }
-
-      // Show toast notification
-      toast.info('Edit rejected', {
-        duration: 2000,
       })
-      
-      processNextAction()
-    }, 250)
-  }, [processNextAction, recordToolResult])
+      .catch((error) => {
+        console.error('[useEditorChat] Failed grouped tool execution:', error)
+      })
+  }, [recordToolResult, showBatchChangeHighlights])
 
-  /**
-   * Confirm a pending tool call (public API - queues the action)
-   * 
-   * After accepting, recalculates positions of remaining edits so user can
-   * continue accepting/rejecting them one by one.
-   */
-  const confirmTool = useCallback((toolId: string) => {
-    // Skip if already processed
-    if (executedTools.current.has(toolId)) return
-    
-    // Add to queue
-    pendingActionsRef.current.push({ type: 'confirm', toolId })
-    
-    // Start processing if not already
-    if (!isProcessingRef.current) {
-      isProcessingRef.current = true
-      processNextAction()
+  const finalizeBatchReview = useCallback((keepChanges: boolean) => {
+    const ed = editorRef.current
+    const batch = activeBatchReviewRef.current
+    if (!ed || !batch) return
+
+    if (!keepChanges) {
+      ed.commands.setContent(batch.snapshot)
     }
-  }, [processNextAction])
 
-  /**
-   * Reject a pending tool call (public API - queues the action)
-   */
-  const rejectTool = useCallback((toolId: string) => {
-    // Skip if already processed
-    if (executedTools.current.has(toolId)) return
-    
-    // Add to queue
-    pendingActionsRef.current.push({ type: 'reject', toolId })
-    
-    // Start processing if not already
-    if (!isProcessingRef.current) {
-      isProcessingRef.current = true
-      processNextAction()
+    ed.commands.clearChangeHighlights()
+    setPendingTools([])
+    setHasGhostPreviews(false)
+    activeBatchReviewRef.current = null
+
+    let successfulCount = 0
+    let failedCount = 0
+    for (const call of batch.calls) {
+      executedTools.current.add(call.toolId)
+      if (!call.success) {
+        failedCount += 1
+        recordToolResult(batch.messageId, call.toolId, call.toolName, false, `Execution failed: ${call.message}`)
+        continue
+      }
+
+      successfulCount += 1
+      recordToolResult(
+        batch.messageId,
+        call.toolId,
+        call.toolName,
+        keepChanges,
+        getToolSummary(call.toolName, call.args, keepChanges)
+      )
     }
-  }, [processNextAction])
 
-  /**
-   * Confirm all pending tool calls with staggered animation.
-   */
+    if (keepChanges) {
+      toast.success(`Kept ${successfulCount} edit${successfulCount === 1 ? '' : 's'}`, {
+        description: failedCount > 0 ? `${failedCount} tool call${failedCount === 1 ? '' : 's'} failed.` : 'Changes finalized.',
+        duration: 3500,
+      })
+    } else {
+      toast.info('Undid applied AI changes', {
+        description: failedCount > 0 ? `${failedCount} tool call${failedCount === 1 ? '' : 's'} had already failed.` : undefined,
+        duration: 3500,
+      })
+    }
+  }, [recordToolResult])
+
   const confirmAllTools = useCallback(() => {
-    const ed = editorRef.current
-    const toolCount = pendingTools.length
-    if (toolCount === 0) return
-    
-    // Get messageId from first tool for follow-up
-    const messageId = pendingTools[0]?.messageId
-    
-    // Apply acceptance animation to all blocks
-    pendingTools.forEach((tool, index) => {
-      const escapedId = CSS.escape(tool.id)
-      const editElement = ed?.view.dom.querySelector(`[data-edit-id="${escapedId}"]`)
-      if (editElement) {
-        // Stagger the animation slightly
-        setTimeout(() => {
-          editElement.classList.add('diff-block--accepted')
-        }, index * 50)
-      }
-    })
-    
-    // Execute all tools after animation starts
-    setTimeout(() => {
-      for (const tool of pendingTools) {
-        executeToolCall(tool.toolName, tool.args)
-        executedTools.current.add(tool.id)
-        
-        // Record tool result for AI follow-up
-        const summary = getToolSummary(tool.toolName, tool.args, true)
-        recordToolResult(tool.messageId, tool.id, tool.toolName, true, summary)
-      }
-      
-      setPendingTools([])
-      
-      // Clear all ghost edits
-      if (ed) {
-        ed.commands.clearGhostEdits()
-      }
-      setHasGhostPreviews(false)
-      
-      // Show summary toast
-      toast.success(`All ${toolCount} edit${toolCount !== 1 ? 's' : ''} accepted`, {
-        description: 'Document updated',
-        duration: 4000,
-      })
-    }, 300 + (toolCount * 50))
-  }, [pendingTools, executeToolCall, recordToolResult])
+    finalizeBatchReview(true)
+  }, [finalizeBatchReview])
 
-  /**
-   * Reject all pending tool calls with staggered animation.
-   */
   const rejectAllTools = useCallback(() => {
-    const ed = editorRef.current
-    const toolCount = pendingTools.length
-    if (toolCount === 0) return
-    
-    // Apply rejection animation to all blocks
-    pendingTools.forEach((tool, index) => {
-      const escapedId = CSS.escape(tool.id)
-      const editElement = ed?.view.dom.querySelector(`[data-edit-id="${escapedId}"]`)
-      if (editElement) {
-        // Stagger the animation slightly
-        setTimeout(() => {
-          editElement.classList.add('diff-block--rejected')
-        }, index * 30)
-      }
-    })
-    
-    // Clear after animation
-    setTimeout(() => {
-      for (const tool of pendingTools) {
-        executedTools.current.add(tool.id)
-        
-        // Record tool result for AI follow-up
-        const summary = getToolSummary(tool.toolName, tool.args, false)
-        recordToolResult(tool.messageId, tool.id, tool.toolName, false, summary)
-      }
-      
-      setPendingTools([])
-      
-      // Clear all ghost edits
-      if (ed) {
-        ed.commands.clearGhostEdits()
-      }
-      setHasGhostPreviews(false)
-      
-      // Show summary toast
-      toast.info(`All ${toolCount} edit${toolCount !== 1 ? 's' : ''} rejected`, {
-        duration: 3000,
-      })
-    }, 250 + (toolCount * 30))
-  }, [pendingTools, recordToolResult])
+    finalizeBatchReview(false)
+  }, [finalizeBatchReview])
 
-  // Keep refs updated so inline callbacks can access latest functions
-  useEffect(() => {
-    confirmToolRef.current = confirmTool
-    rejectToolRef.current = rejectTool
-  }, [confirmTool, rejectTool])
+  const confirmTool = useCallback((_toolId: string) => {
+    confirmAllTools()
+  }, [confirmAllTools])
 
-  /**
-   * Navigate to next/prev edit in the editor.
-   */
-  const navigateEdit = useCallback((direction: 'next' | 'prev') => {
-    const ed = editorRef.current
-    if (ed) {
-      ed.commands.navigateGhostEdit(direction)
-    }
-  }, [])
+  const rejectTool = useCallback((_toolId: string) => {
+    rejectAllTools()
+  }, [rejectAllTools])
 
   /**
    * Handle input change.
@@ -1350,6 +1067,12 @@ export function useEditorChat({
       setMessages([])
       executedTools.current.clear()
       setPendingTools([])
+      setHasGhostPreviews(false)
+      activeBatchReviewRef.current = null
+      const ed = editorRef.current
+      if (ed) {
+        ed.commands.clearChangeHighlights()
+      }
       queryClient.invalidateQueries({ queryKey: ['project', projectId, 'chat', 'history'] })
     },
     onError: (error) => {
@@ -1371,9 +1094,6 @@ export function useEditorChat({
     historyLoaded.current = false
     await refetchHistory()
   }, [refetchHistory])
-
-  // Get current active edit index from editor state
-  const activeEditIndex = editor ? getActiveEditIndex(editor) : 0
 
   // Filter out tool result messages from display (they start with [TOOL_RESULT])
   const displayMessages = useMemo(() => {
@@ -1402,8 +1122,6 @@ export function useEditorChat({
     clearHistory,
     reloadHistory,
     hasGhostPreviews,
-    activeEditIndex,
-    navigateEdit,
     stopGeneration: chatStop,
   }
 }
