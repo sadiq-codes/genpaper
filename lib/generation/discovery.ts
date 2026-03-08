@@ -395,85 +395,52 @@ export async function collectPapers(
 
 
 
-/** Count full-text chunks for a paper (excluding abstracts) */
-async function getChunkCount(paperId: string): Promise<number> {
-  try {
-    // Use service client to bypass RLS - this runs in background generation jobs
-    const sb = createServiceClient()
-    
-    // First check if the paper exists in the database at all
-    const { data: paperExists, error: paperError } = await sb
-      .from('papers')
-      .select('id')
-      .eq('id', paperId)
-      .single()
-
-    if (paperError || !paperExists) {
-      // Paper doesn't exist in database yet - this is expected for newly discovered papers
-      return 0
-    }
-    
-    // Get all chunks for this paper and filter by length in JavaScript
-    // This avoids the char_length() PostgreSQL function that doesn't work in PostgREST
-    const { data: chunks, error } = await sb
-      .from('paper_chunks')
-      .select('content')
-      .eq('paper_id', paperId)
-
-    if (error) {
-      console.error(`❌ Database error getting chunk count for ${paperId}:`, {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code
-      })
-      return 0
-    }
-
-    // Filter chunks by content length (>= 500 chars for substantial content)
-    const fullTextChunks = (chunks || []).filter((chunk: { content: string | null }) => 
-      chunk.content && chunk.content.length >= 500
-    ).length
-    
-    return fullTextChunks
-    
-  } catch (err) {
-    console.error(`💥 Critical error getting chunk count for ${paperId}:`, {
-      error: err,
-      message: err instanceof Error ? err.message : 'Unknown error',
-      stack: err instanceof Error ? err.stack : undefined
-    })
-    return 0
-  }
-}
-
 // ────────────────────────────────────────────────────────────
 // Chunk coverage gating system
 // ────────────────────────────────────────────────────────────
 
+const MIN_CHUNKS_OK = 5 // Require at least 5 full-text chunks
+
 /**
- * Get chunk coverage ratio for a set of papers using proper full-text chunk counting
+ * Get chunk coverage ratio for a set of papers using a SINGLE batch query.
  * @param paperIds Array of paper IDs to check
  * @returns Coverage ratio (0.0 to 1.0)
  */
 async function getCoverage(paperIds: string[]): Promise<number> {
-  if (paperIds.length === 0) return 1.0 // Nothing to wait for
+  if (paperIds.length === 0) return 1.0
 
   try {
-    // Count full-text chunks for each paper
-    const MIN_CHUNKS_OK = 5 // Require at least 5 full-text chunks (lowered from 10 for better coverage)
+    const sb = createServiceClient()
     
-    const fullTextChecks = await Promise.all(
-      paperIds.map(async (paperId) => {
-        const chunkCount = await getChunkCount(paperId)
-        return chunkCount >= MIN_CHUNKS_OK
-      })
-    )
-    
-    const papersWithFullText = fullTextChecks.filter(Boolean).length
+    // Single query to get all chunks for all papers at once
+    const { data: chunks, error } = await sb
+      .from('paper_chunks')
+      .select('paper_id, content')
+      .in('paper_id', paperIds)
+
+    if (error) {
+      console.error('getCoverage batch query failed:', error.message)
+      return 0
+    }
+
+    // Count chunks per paper (only those with substantial content)
+    const chunkCounts = new Map<string, number>()
+    for (const chunk of chunks || []) {
+      if (chunk.content && chunk.content.length >= 500) {
+        chunkCounts.set(chunk.paper_id, (chunkCounts.get(chunk.paper_id) || 0) + 1)
+      }
+    }
+
+    // Count papers that meet the threshold
+    let papersWithFullText = 0
+    for (const paperId of paperIds) {
+      if ((chunkCounts.get(paperId) || 0) >= MIN_CHUNKS_OK) {
+        papersWithFullText++
+      }
+    }
+
     const coverage = papersWithFullText / paperIds.length
-    
-    console.log(`📊 Coverage analysis: ${papersWithFullText}/${paperIds.length} papers have ≥${MIN_CHUNKS_OK} full-text chunks`)
+    console.log(`📊 Coverage: ${papersWithFullText}/${paperIds.length} papers have ≥${MIN_CHUNKS_OK} chunks`)
     
     return coverage
   } catch (err) {
@@ -494,7 +461,7 @@ async function waitForChunkCoverage(
   paperIds: string[],
   targetRatio = 0.7,
   maxWaitMs = 30_000,
-  pollEveryMs = 2_000
+  pollEveryMs = 5_000
 ): Promise<boolean> {
   const started = Date.now()
   let attempts = 0

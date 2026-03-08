@@ -139,3 +139,11 @@ export function getAzureDeploymentForModel(model: string): string {
 export function isSelfHostedEmbeddingConfigured(): boolean {
   return !!process.env.EMBEDDING_SERVER_URL
 }
+
+/**
+ * Check if OpenAI should be used directly for paper generation
+ * This bypasses Azure OpenAI for the heavy generation tasks (rate limit workaround)
+ */
+export function shouldUseOpenAIForGeneration(): boolean {
+  return process.env.USE_OPENAI_FOR_GENERATION === 'true'
+}

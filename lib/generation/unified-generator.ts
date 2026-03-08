@@ -1,6 +1,6 @@
 import 'server-only'
 import { generateText } from 'ai'
-import { getLanguageModel } from '@/lib/ai/vercel-client'
+import { getGenerationModel } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
 import type { SectionContext } from '@/lib/prompts/types'
 import { cleanNonCitationArtifacts } from '@/lib/citations/post-processor'
@@ -262,7 +262,7 @@ export async function generateWithUnifiedTemplate(
   const boundedPrompt = enforceInputTokenBudget(promptData.system, promptData.user)
 
   const initialResponse = await generateTextWithTimeout({
-    model: getLanguageModel(),
+    model: getGenerationModel(),
     system: boundedPrompt.system,
     prompt: boundedPrompt.user,
     temperature: resolvedOptions.temperature,
@@ -284,7 +284,7 @@ export async function generateWithUnifiedTemplate(
     progress('generation', 30, 'Detected possible truncation, retrying with larger output budget...')
 
     const retryResponse = await generateTextWithTimeout({
-      model: getLanguageModel(),
+      model: getGenerationModel(),
       system: boundedPrompt.system,
       prompt: boundedPrompt.user,
       temperature: resolvedOptions.temperature,

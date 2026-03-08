@@ -11,6 +11,7 @@ import {
   isAzureOpenAIConfigured,
   isSelfHostedEmbeddingConfigured,
   shouldUseAzureOpenAIForLLM,
+  shouldUseOpenAIForGeneration,
   getAzureDeploymentForModel
 } from './config'
 
@@ -86,6 +87,18 @@ export function getFastAutocompleteLanguageModel() {
  */
 export function getExtractionLanguageModel() {
   return getLanguageModelForName(getExtractionModelName())
+}
+
+/**
+ * Get the generation model for paper writing
+ * Uses OpenAI directly if USE_OPENAI_FOR_GENERATION=true (bypasses Azure rate limits)
+ * Otherwise uses the standard language model (Azure or OpenAI based on config)
+ */
+export function getGenerationModel() {
+  if (shouldUseOpenAIForGeneration()) {
+    return ai.languageModel(getModel())
+  }
+  return getLanguageModel()
 }
 
 /**
