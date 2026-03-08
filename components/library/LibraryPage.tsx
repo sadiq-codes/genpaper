@@ -552,7 +552,7 @@ export function LibraryPage() {
 
         <div className="flex flex-wrap gap-1.5">
           <Select value={filterSource} onValueChange={handleSourceChange}>
-            <SelectTrigger className="w-32 h-8 rounded-full border-border/40 text-xs">
+            <SelectTrigger className="w-32 h-8 rounded-full border-border/60 text-xs">
               <SelectValue placeholder="Source" />
             </SelectTrigger>
             <SelectContent className="rounded-xl">
@@ -563,7 +563,7 @@ export function LibraryPage() {
           </Select>
 
           <Select value={filterProject} onValueChange={handleProjectChange}>
-            <SelectTrigger className="w-44 h-8 rounded-full border-border/40 text-xs">
+            <SelectTrigger className="w-44 h-8 rounded-full border-border/60 text-xs">
               <SelectValue placeholder="Project" />
             </SelectTrigger>
             <SelectContent className="rounded-xl">
@@ -578,7 +578,7 @@ export function LibraryPage() {
           </Select>
 
           <Select value={filterBookmarked} onValueChange={handleBookmarkedChange}>
-            <SelectTrigger className="w-36 h-8 rounded-full border-border/40 text-xs">
+            <SelectTrigger className="w-36 h-8 rounded-full border-border/60 text-xs">
               <SelectValue placeholder="Bookmarked" />
             </SelectTrigger>
             <SelectContent className="rounded-xl">
@@ -589,7 +589,7 @@ export function LibraryPage() {
           </Select>
 
           <Select value={sortBy} onValueChange={handleSortChange}>
-            <SelectTrigger className="w-40 h-8 rounded-full border-border/40 text-xs">
+            <SelectTrigger className="w-40 h-8 rounded-full border-border/60 text-xs">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent className="rounded-xl">

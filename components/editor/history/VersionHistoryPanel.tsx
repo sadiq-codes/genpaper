@@ -90,7 +90,7 @@ const TriggerBadge = memo(function TriggerBadge({ triggerType }: { triggerType: 
 })
 
 const LatestBadge = (
-  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
     Latest
   </span>
 )

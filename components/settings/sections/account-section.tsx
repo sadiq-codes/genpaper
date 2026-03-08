@@ -94,7 +94,7 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
       </div>
 
       {/* Security */}
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-5">
         <div>
           <h3 className="font-instrument text-base tracking-tight">Security</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -114,7 +114,7 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
           </div>
           <button
             onClick={handleChangePassword}
-            className="h-8 px-3 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors w-full sm:w-auto"
+            className="h-8 px-3 rounded-full border border-border/60 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors w-full sm:w-auto"
           >
             Change Password
           </button>
@@ -122,7 +122,7 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
       </div>
 
       {/* Data Export */}
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-5">
         <div>
           <h3 className="font-instrument text-base tracking-tight">Export Data</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -143,7 +143,7 @@ export function AccountSection({ user: _user }: AccountSectionProps) {
           <button
             onClick={handleExportData}
             disabled={isExporting}
-            className="inline-flex items-center justify-center gap-2 h-8 px-3 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors disabled:opacity-50 w-full sm:w-auto"
+            className="inline-flex items-center justify-center gap-2 h-8 px-3 rounded-full border border-border/60 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50 w-full sm:w-auto"
           >
             {isExporting ? (
               <>

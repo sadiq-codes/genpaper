@@ -32,7 +32,7 @@ export function LoadingSpinner({
       textSizeClasses[size],
       className
     )}>
-      <Sparkles className={cn(sizeClasses[size], "animate-spin text-primary")} />
+      <Sparkles className={cn(sizeClasses[size], "animate-spin text-accent")} />
       <span>{text}</span>
     </div>
   )

@@ -105,9 +105,9 @@ export function BillingSection({ user, initialSubscription }: BillingSectionProp
         </p>
       </div>
 
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-6">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-6">
         {/* Current Plan */}
-        <div className="flex items-center justify-between p-4 rounded-lg bg-muted/30 border border-border/30">
+        <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50 border border-border/60">
           <div className="flex items-center gap-3">
             {currentTier === 'pro' ? (
               <div className="w-9 h-9 rounded-lg bg-foreground/5 flex items-center justify-center">
@@ -140,7 +140,7 @@ export function BillingSection({ user, initialSubscription }: BillingSectionProp
             <button
               onClick={handleManageSubscription}
               disabled={redirectingTier !== null}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-border/40 text-xs text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-border/60 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
             >
               {redirectingTier === 'manage' ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -293,8 +293,8 @@ function PlanCard({
   return (
     <div className={`relative rounded-xl border p-4 transition-all duration-200 ${
       recommended 
-        ? 'border-foreground/30 hover:border-foreground/50' 
-        : 'border-border/40 hover:border-border/60'
+        ? 'border-foreground/50 hover:border-foreground/70' 
+        : 'border-border/70 hover:border-border'
     }`}>
       {recommended && (
         <span className="absolute -top-2.5 left-4 text-[10px] font-medium bg-foreground/80 text-background px-2 py-0.5 rounded-full">
@@ -327,7 +327,7 @@ function PlanCard({
           className={`w-full h-9 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
             recommended 
               ? 'bg-foreground/80 text-background hover:bg-foreground' 
-              : 'border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60'
+              : 'border border-border/60 text-muted-foreground hover:text-foreground hover:border-border'
           }`}
         >
           {isRedirecting ? (

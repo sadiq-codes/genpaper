@@ -61,7 +61,7 @@ export default function BlogPage() {
               </Link>
               <Link
                 href="/signup"
-                className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
+                className="inline-flex h-9 items-center justify-center rounded-md bg-accent px-4 text-sm font-medium text-accent-foreground shadow transition-colors hover:bg-accent/90"
               >
                 Get Started
               </Link>
@@ -95,7 +95,7 @@ export default function BlogPage() {
               {posts.map((post) => (
                 <article key={post.slug} className="group">
                   <Link href={`/blog/${post.slug}`}>
-                    <div className="border border-border rounded-lg overflow-hidden bg-card hover:border-primary/50 transition-colors">
+                    <div className="border border-border rounded-lg overflow-hidden bg-card hover:border-accent/50 transition-colors">
                       {post.image && (
                         <div className="aspect-video relative bg-muted">
                           <Image
@@ -112,7 +112,7 @@ export default function BlogPage() {
                           <span>·</span>
                           <span>{post.readingTime}</span>
                         </div>
-                        <h2 className="font-instrument text-xl tracking-tight mb-2 group-hover:text-primary transition-colors">
+                        <h2 className="font-instrument text-xl tracking-tight mb-2 group-hover:text-accent transition-colors">
                           {post.title}
                         </h2>
                         <p className="text-sm text-muted-foreground line-clamp-2">

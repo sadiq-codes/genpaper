@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { getUserResearchProjects, createResearchProject, deleteResearchProject } from '@/lib/db/research'
+import { getUserResearchProjects, createResearchProject } from '@/lib/db/research'
 import { headers } from 'next/headers'
 import { getAbsoluteUrlFromHeaders } from '@/lib/config'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
@@ -234,19 +234,19 @@ export async function deleteProjectAction(projectId: string) {
   }
 
   try {
-    // Verify ownership
-    const { data: project, error } = await supabase
+    // Single round-trip delete with ownership check in WHERE clause.
+    // This avoids a separate pre-check query.
+    const { data: deleted, error } = await supabase
       .from('research_projects')
-      .select('id')
+      .delete()
       .eq('id', projectId)
       .eq('user_id', user.id)
+      .select('id')
       .single()
 
-    if (error || !project) {
+    if (error || !deleted) {
       return { success: false, error: 'Project not found' }
     }
-
-    await deleteResearchProject(projectId)
     
     revalidatePath('/projects')
     return { success: true }

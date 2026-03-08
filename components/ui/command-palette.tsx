@@ -196,7 +196,7 @@ export default function CommandPalette({
       className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm animate-in fade-in-0 duration-200"
     >
       <div className="fixed left-1/2 top-1/4 -translate-x-1/2 w-full max-w-lg mx-auto px-4">
-        <div className="bg-background border border-border/30 rounded-2xl shadow-lg animate-in zoom-in-95 duration-200 overflow-hidden">
+        <div className="bg-background border border-border rounded-2xl shadow-xl shadow-foreground/8 animate-in zoom-in-95 duration-200 overflow-hidden">
           {/* Search Input */}
           <div className="relative px-4 py-3 border-b border-border/20">
             <Search className="absolute left-7 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/40" aria-hidden="true" />
@@ -205,7 +205,7 @@ export default function CommandPalette({
               placeholder="Type a command or search..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="pl-10 border-none shadow-none focus-visible:ring-0 text-base bg-transparent placeholder:text-muted-foreground/30"
+              className="pl-10 border-none shadow-none focus-visible:ring-0 text-base bg-transparent placeholder:text-muted-foreground/50"
             />
           </div>
 

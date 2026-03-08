@@ -65,7 +65,7 @@ export function ProfileSection({ user }: ProfileSectionProps) {
         </p>
       </div>
 
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-5">
         <div>
           <h3 className="font-instrument text-base tracking-tight">Personal Information</h3>
           <p className="text-xs text-muted-foreground mt-0.5">

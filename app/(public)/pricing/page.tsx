@@ -405,15 +405,15 @@ function PricingCard({
   const savings = monthlyTotal - yearlyTotal
   
   return (
-    <Card className={`relative ${recommended ? 'border-primary border-2' : ''}`}>
+    <Card className={`relative ${recommended ? 'border-accent border-2' : ''}`}>
       {recommended && (
-        <Badge className="absolute -top-3 left-1/2 -translate-x-1/2">
+        <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-accent text-accent-foreground hover:bg-accent/90">
           Most Popular
         </Badge>
       )}
       <CardHeader className="text-center pb-2">
         <div className={`w-12 h-12 mx-auto rounded-lg flex items-center justify-center mb-4 ${
-          recommended ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+          recommended ? 'bg-accent/10 text-accent' : 'bg-muted text-muted-foreground'
         }`}>
           {icon}
         </div>

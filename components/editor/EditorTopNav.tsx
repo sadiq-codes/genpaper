@@ -137,10 +137,10 @@ export function EditorTopNav({
                   className={cn(
                     "inline-block h-2 w-2 shrink-0 rounded-full transition-colors",
                     isOffline
-                      ? "bg-red-500"
+                      ? "bg-destructive"
                       : saveStatus === 'saving'
-                        ? "bg-amber-400 animate-pulse"
-                        : "bg-emerald-500"
+                        ? "bg-warning animate-pulse"
+                        : "bg-success"
                   )}
                   aria-label={isOffline ? "Offline — changes saved locally" : saveStatus === 'saving' ? "Saving…" : "All changes saved"}
                 />

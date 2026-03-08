@@ -212,7 +212,7 @@ export const DiffBlock = memo(function DiffBlock({
         <div className="flex items-center gap-3">
           <div className={cn(
             'flex items-center justify-center w-8 h-8 rounded-lg',
-            'bg-white/80 dark:bg-gray-900/50 shadow-sm',
+            'bg-card/80 shadow-sm',
             config.iconClass
           )}>
             <Icon className="h-4 w-4" />

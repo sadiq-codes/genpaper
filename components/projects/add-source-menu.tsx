@@ -71,7 +71,7 @@ export function AddSourceMenu({ disabled, onPdfUpload, onOpenLibrary }: AddSourc
             className={cn(
               'h-8 w-8 rounded-full flex items-center justify-center',
               'text-muted-foreground/60 hover:text-foreground',
-              'border border-border/30 hover:border-border/50',
+              'border border-border/60 hover:border-border',
               'transition-colors cursor-pointer',
               'disabled:opacity-40'
             )}

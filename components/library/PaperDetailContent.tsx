@@ -121,7 +121,7 @@ function getYear(dateString: string | null): string {
 function ProcessingStatusLabel({ status, chunkCount }: { status: string | null; chunkCount: number }) {
   if (status === 'full_text_ready' && chunkCount > 0) {
     return (
-      <span className="inline-flex items-center gap-1 text-[9px] text-emerald-600/70 uppercase tracking-wide font-medium">
+      <span className="inline-flex items-center gap-1 text-[9px] text-success/70 uppercase tracking-wide font-medium">
         <CheckCircle className="h-2.5 w-2.5" />
         Full Text Ready
       </span>
@@ -129,7 +129,7 @@ function ProcessingStatusLabel({ status, chunkCount }: { status: string | null; 
   }
   if (status === 'abstract_ready' && chunkCount > 0) {
     return (
-      <span className="inline-flex items-center gap-1 text-[9px] text-blue-500/70 uppercase tracking-wide font-medium">
+      <span className="inline-flex items-center gap-1 text-[9px] text-info/70 uppercase tracking-wide font-medium">
         <CheckCircle className="h-2.5 w-2.5" />
         Abstract Ready
       </span>
@@ -394,7 +394,7 @@ export function PaperDetailContent({
                 View PDF
               </button>
               <button
-                className="h-8 px-4 text-xs rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
+                className="h-8 px-4 text-xs rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border transition-colors inline-flex items-center gap-1.5 disabled:opacity-50"
                 onClick={handleDownloadPdf}
                 disabled={isLoadingPdf}
               >
@@ -406,7 +406,7 @@ export function PaperDetailContent({
           
           {paper.doi && (
             <button
-              className="h-8 px-4 text-xs rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5"
+              className="h-8 px-4 text-xs rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border transition-colors inline-flex items-center gap-1.5"
               onClick={() => window.open(`https://doi.org/${paper.doi}`, '_blank')}
             >
               <ExternalLink className="h-3 w-3" />
@@ -489,7 +489,7 @@ export function PaperDetailContent({
                 <Link
                   key={citation.id}
                   href={`/editor/${citation.research_projects.id}`}
-                  className="block px-4 py-3 rounded-xl border border-border/20 hover:border-border/40 hover:bg-muted/20 transition-all"
+                  className="block px-4 py-3 rounded-xl border border-border/50 hover:border-border/80 hover:bg-muted/40 transition-all"
                 >
                   <p className="font-instrument text-[13px] tracking-tight line-clamp-1">
                     {citation.research_projects.topic}
@@ -518,7 +518,7 @@ export function PaperDetailContent({
               setIsNotesEdited(true)
             }}
             rows={4}
-            className="rounded-xl border-border/30 placeholder:text-muted-foreground/30 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
+            className="rounded-xl border-border/60 placeholder:text-muted-foreground/50 focus-visible:ring-0 focus-visible:border-accent/50 transition-colors"
           />
           {isNotesEdited && (
             <div className="flex justify-end mt-3">

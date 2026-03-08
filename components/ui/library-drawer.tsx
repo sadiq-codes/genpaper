@@ -69,7 +69,7 @@ export default function LibraryDrawer(props: LibraryDrawerProps) {
       
       {/* Drawer */}
       <div 
-        className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l border-border/30 shadow-lg animate-in slide-in-from-right duration-300 flex flex-col overflow-hidden"
+        className="absolute right-0 top-0 h-full w-[420px] max-w-[90vw] bg-background border-l border-border shadow-xl shadow-foreground/8 animate-in slide-in-from-right duration-300 flex flex-col overflow-hidden"
         role="dialog"
         aria-label="Paper library"
       >
@@ -205,7 +205,7 @@ function DrawerHeader({
             placeholder={searchMode === 'library' ? "Filter papers…" : "Search papers…"}
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
-            className="pl-9 h-9 rounded-xl border-border/30 bg-background text-sm placeholder:text-muted-foreground/30 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
+            className="pl-9 h-9 rounded-xl border-border/60 bg-background text-sm placeholder:text-muted-foreground/50 focus-visible:ring-0 focus-visible:border-accent/50 transition-colors"
             aria-label={searchMode === 'library' ? "Filter papers" : "Search papers"}
           />
         </div>

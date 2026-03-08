@@ -108,7 +108,7 @@ export function SettingsPage({ user, preferences, subscription }: SettingsPagePr
   return (
     <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 lg:gap-10 min-h-0">
       {/* Mobile Section Selector */}
-      <div className="lg:hidden sticky top-0 z-10 bg-background/95 backdrop-blur-sm py-3 -mx-4 px-4 sm:-mx-6 sm:px-6 border-b border-border/30">
+      <div className="lg:hidden sticky top-0 z-10 bg-background/95 backdrop-blur-sm py-3 -mx-4 px-4 sm:-mx-6 sm:px-6 border-b border-border/60">
         <div className="flex gap-1 overflow-x-auto pb-0.5 scrollbar-none">
           {SETTINGS_SECTIONS.map((section) => {
             const Icon = section.icon

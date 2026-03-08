@@ -80,7 +80,7 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
       </div>
 
       {/* Theme */}
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-5">
         <div>
           <h3 className="font-instrument text-base tracking-tight">Theme</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -102,8 +102,8 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
                   'flex flex-col items-center gap-1.5 sm:gap-2 p-3 sm:p-4 rounded-xl border transition-all duration-200',
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                   isActive
-                    ? 'border-foreground/40 bg-foreground/5'
-                    : 'border-border/40 hover:border-foreground/20 hover:bg-muted/50'
+                  ? 'border-brand/50 bg-brand/8 text-brand'
+                  : 'border-border/70 hover:border-border hover:bg-muted/50'
                 )}
               >
                 <Icon 
@@ -129,7 +129,7 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
       </div>
 
       {/* Font Size */}
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-5">
         <div>
           <h3 className="font-instrument text-base tracking-tight">Editor Font Size</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -161,7 +161,7 @@ export function AppearanceSection({ initialFontSize }: AppearanceSectionProps) {
           </div>
 
           {/* Preview */}
-          <div className="rounded-lg bg-muted/50 p-3 sm:p-4 w-full sm:max-w-md border border-border/30">
+          <div className="rounded-lg bg-muted/50 p-3 sm:p-4 w-full sm:max-w-md border border-border/70">
             <p className="text-muted-foreground text-[11px] mb-2 font-medium uppercase tracking-wide">Preview</p>
             <p 
               className="text-foreground"

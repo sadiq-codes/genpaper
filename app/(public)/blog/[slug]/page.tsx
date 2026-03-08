@@ -172,7 +172,7 @@ export default async function BlogPostPage({ params }: Props) {
               </Link>
               <Link
                 href="/signup"
-                className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
+                className="inline-flex h-9 items-center justify-center rounded-md bg-accent px-4 text-sm font-medium text-accent-foreground shadow transition-colors hover:bg-accent/90"
               >
                 Get Started
               </Link>
@@ -266,7 +266,7 @@ export default async function BlogPostPage({ params }: Props) {
             </p>
             <Link
               href="/signup"
-              className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
+              className="inline-flex h-10 items-center justify-center rounded-md bg-accent px-6 text-sm font-medium text-accent-foreground shadow transition-colors hover:bg-accent/90"
             >
               Get Started Free
             </Link>
@@ -284,11 +284,11 @@ export default async function BlogPostPage({ params }: Props) {
             <div className="grid gap-8 md:grid-cols-3">
               {relatedPosts.map((related) => (
                 <Link key={related.slug} href={`/blog/${related.slug}`}>
-                  <div className="border border-border rounded-lg p-6 bg-card hover:border-primary/50 transition-colors">
+                  <div className="border border-border rounded-lg p-6 bg-card hover:border-accent/50 transition-colors">
                     <div className="text-xs text-muted-foreground mb-2">
                       {formatDate(related.date)} · {related.readingTime}
                     </div>
-                    <h3 className="font-instrument text-lg tracking-tight mb-2 hover:text-primary transition-colors">
+                    <h3 className="font-instrument text-lg tracking-tight mb-2 hover:text-accent transition-colors">
                       {related.title}
                     </h3>
                     <p className="text-sm text-muted-foreground line-clamp-2">

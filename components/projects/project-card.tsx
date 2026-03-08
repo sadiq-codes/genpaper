@@ -29,6 +29,7 @@ import {
   type LucideIcon,
   ArrowUpRight,
 } from "lucide-react"
+import { toast } from "sonner"
 import { deleteProjectAction } from "@/components/dashboard/actions"
 import { cn } from "@/lib/utils"
 import type { ResearchProjectWithLatestVersion, PaperTypeKey, GenerationConfig } from "@/types/simplified"
@@ -66,6 +67,11 @@ interface ProjectCardProps {
   paperCount?: number
 }
 
+interface ProjectWithCount {
+  project: Record<string, unknown> & { id: string }
+  paperCount: number
+}
+
 export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
   const router = useRouter()
   const queryClient = useQueryClient()
@@ -88,9 +94,20 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
     e.preventDefault()
     setIsDeleting(true)
     startTransition(async () => {
+      // Optimistically remove from projects grid cache
+      const previous = queryClient.getQueryData<ProjectWithCount[]>(["projects"])
+      queryClient.setQueryData<ProjectWithCount[]>(["projects"], (old = []) =>
+        old.filter((entry) => entry.project.id !== project.id)
+      )
+
       const result = await deleteProjectAction(project.id)
       if (!result.success) {
         console.error("Failed to delete project:", result.error)
+        // Roll back optimistic update on failure
+        queryClient.setQueryData(["projects"], previous)
+        toast.error(result.error || "Failed to delete project")
+      } else {
+        toast.success("Project deleted")
       }
       setIsDeleting(false)
       queryClient.invalidateQueries({ queryKey: ["projects"] })
@@ -114,9 +131,9 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
 
   const getStatusColor = (status: string): string => {
     switch (status) {
-      case "complete": return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-      case "failed": return "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20"
-      case "generating": return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+      case "complete": return "bg-success/10 text-success border-success/20"
+      case "failed": return "bg-destructive/10 text-destructive border-destructive/20"
+      case "generating": return "bg-warning/10 text-warning border-warning/20"
       default: return "bg-muted text-muted-foreground border-border"
     }
   }

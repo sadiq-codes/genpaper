@@ -42,7 +42,7 @@ export function UsageIndicator({ className }: { className?: string }) {
   // Color based on usage level
   const getStatusColor = () => {
     if (isAtLimit) return 'text-destructive'
-    if (isLow) return 'text-yellow-600 dark:text-yellow-500'
+    if (isLow) return 'text-warning'
     return 'text-muted-foreground'
   }
   
@@ -96,7 +96,7 @@ export function UsageIndicator({ className }: { className?: string }) {
               className={cn(
                 "h-1.5",
                 isAtLimit && "[&>div]:bg-destructive",
-                isLow && !isAtLimit && "[&>div]:bg-yellow-500"
+                isLow && !isAtLimit && "[&>div]:bg-warning"
               )}
             />
             <p className="text-xs text-muted-foreground">
@@ -198,7 +198,7 @@ function DailyUsageRow({
       <span className={cn(
         "text-xs font-medium",
         isOut && "text-destructive",
-        isLow && !isOut && "text-yellow-600 dark:text-yellow-500"
+        isLow && !isOut && "text-warning"
       )}>
         {remaining}/{limit} left
       </span>

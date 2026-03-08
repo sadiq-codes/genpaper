@@ -141,9 +141,9 @@ export function ProjectInput() {
         {/* Input Container */}
         <div
           className={cn(
-            'rounded-2xl border border-border/30 bg-background transition-all duration-300',
-            'hover:border-border/50',
-            'focus-within:border-foreground/15 focus-within:shadow-xl focus-within:shadow-foreground/3',
+            'rounded-2xl border border-border/70 bg-background transition-all duration-300',
+            'hover:border-border',
+            'focus-within:border-accent/50 focus-within:shadow-lg focus-within:shadow-accent/5',
           )}
         >
           <PdfChipList
@@ -205,8 +205,8 @@ export function ProjectInput() {
               disabled={isLoading || !isFormValid}
               className={cn(
                 'h-10 rounded-full transition-all w-full sm:w-auto sm:px-5 gap-2 text-sm font-medium',
-                isFormValid && !isLoading 
-                  ? 'bg-foreground text-background hover:bg-foreground/90 shadow-sm' 
+                isFormValid && !isLoading
+                  ? 'bg-brand text-brand-foreground hover:bg-brand/90 shadow-sm' 
                   : '',
               )}
             >

@@ -35,7 +35,7 @@ export default function ProjectsPage() {
         </section>
 
         {/* Projects Section */}
-        <section className="border-t bg-muted/30">
+        <section className="border-t border-border/60 bg-muted/60">
           <div className="py-8 md:py-10 px-6">
             <div className="max-w-6xl mx-auto space-y-6">
               <h2 className="font-instrument text-2xl tracking-tight">Your Projects</h2>

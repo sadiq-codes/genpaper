@@ -109,7 +109,7 @@ export function ReviewToolbar({
 
         <button
           onClick={onAcceptAll}
-          className="text-[11px] text-emerald-600 dark:text-emerald-400 hover:underline transition-colors cursor-pointer flex items-center gap-0.5"
+          className="text-[11px] text-success hover:underline transition-colors cursor-pointer flex items-center gap-0.5"
         >
           <Check className="h-2.5 w-2.5" />
           Keep

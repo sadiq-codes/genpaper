@@ -136,7 +136,7 @@ function ProcessingBadge({
   
   if (status === 'processing') {
     return (
-      <span className="flex items-center gap-1 text-[9px] text-blue-500/70 shrink-0 uppercase tracking-wide font-medium">
+      <span className="flex items-center gap-1 text-[9px] text-info/70 shrink-0 uppercase tracking-wide font-medium">
         <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden="true" />
         <span>Processing</span>
       </span>
@@ -645,7 +645,7 @@ export function ResearchTab() {
         {hasUploadedPapers && (hasProcessingPapers || hasFailedPapers) && (
           <div className="mt-2 flex items-center gap-3 text-[10px]">
             {hasProcessingPapers && processingSummary && (
-              <span className="flex items-center gap-1 text-blue-500/70">
+              <span className="flex items-center gap-1 text-info/70">
                 <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden="true" />
                 Processing {processingSummary.processing + processingSummary.pending}
               </span>

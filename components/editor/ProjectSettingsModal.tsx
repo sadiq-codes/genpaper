@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Dialog,
   DialogContent,
@@ -54,6 +55,7 @@ export function ProjectSettingsModal({
   onAutocompletePrefsChange,
 }: ProjectSettingsModalProps) {
   const router = useRouter()
+  const queryClient = useQueryClient()
   
   // ----- Local buffered state (written to sources only on Save) -----
   const [citationStyle, setCitationStyle] = useState<string>(currentCitationStyle)
@@ -148,16 +150,25 @@ export function ProjectSettingsModal({
   const handleDelete = async () => {
     setIsDeleting(true)
     try {
+      // Optimistically remove deleted project from projects list cache.
+      const previous = queryClient.getQueryData<Array<{ project: { id: string } }>>(['projects'])
+      queryClient.setQueryData<Array<{ project: { id: string } }>>(['projects'], (old = []) =>
+        old.filter((entry) => entry.project.id !== projectId)
+      )
+
       const result = await deleteProjectAction(projectId)
       if (result.success) {
         toast.success('Project deleted')
         onOpenChange(false)
+        queryClient.invalidateQueries({ queryKey: ['projects'] })
         router.push('/projects')
       } else {
+        queryClient.setQueryData(['projects'], previous)
         toast.error(result.error || 'Failed to delete project')
       }
     } catch (error) {
       console.error('Failed to delete project:', error)
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
       toast.error('Failed to delete project')
     } finally {
       setIsDeleting(false)

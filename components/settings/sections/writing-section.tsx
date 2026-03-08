@@ -139,7 +139,7 @@ export function WritingSection({
       </div>
 
       {/* Citation Style */}
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-5">
         <div>
           <h3 className="font-instrument text-base tracking-tight">Citation Style</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -159,7 +159,7 @@ export function WritingSection({
           </div>
 
           {/* Preview */}
-          <div className="rounded-lg bg-muted/50 p-3 sm:p-4 text-sm w-full sm:max-w-md border border-border/30">
+          <div className="rounded-lg bg-muted/50 p-3 sm:p-4 text-sm w-full sm:max-w-md border border-border/60">
             <p className="text-muted-foreground text-[11px] mb-2 font-medium uppercase tracking-wide">Example</p>
             <p className="text-foreground text-sm">
               Research shows significant findings{' '}
@@ -174,7 +174,7 @@ export function WritingSection({
       </div>
 
       {/* Default Paper Type */}
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-5">
         <div>
           <h3 className="font-instrument text-base tracking-tight">Default Paper Type</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -200,7 +200,7 @@ export function WritingSection({
       </div>
 
       {/* AI Autocomplete */}
-      <div className="rounded-xl border border-border/40 p-5 sm:p-6 space-y-5">
+      <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-5">
         <div>
           <h3 className="font-instrument text-base tracking-tight">AI Autocomplete</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
