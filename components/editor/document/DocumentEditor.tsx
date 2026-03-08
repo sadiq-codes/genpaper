@@ -161,8 +161,7 @@ export function DocumentEditor({
     citationStyle = 'apa',
     autocompletePrefs,
     pendingEditCount,
-    activeEditIndex,
-    navigateEdit: onNavigateEdit,
+    failedEditCount,
     acceptAllEdits: onAcceptAllEdits,
     rejectAllEdits: onRejectAllEdits,
     mobileMenuOpen,
@@ -900,12 +899,11 @@ export function DocumentEditor({
       </div>
       
       <div ref={editorScrollContainerRef} className="flex-1 overflow-auto relative">
-        {/* Review Toolbar - only shows when multiple edits are pending */}
-        {pendingEditCount > 1 && (
+        {/* Review Toolbar - shows during batch review */}
+        {pendingEditCount > 0 && (
           <ReviewToolbar
             pendingCount={pendingEditCount}
-            currentIndex={activeEditIndex}
-            onNavigate={onNavigateEdit}
+            failedCount={failedEditCount}
             onAcceptAll={onAcceptAllEdits}
             onRejectAll={onRejectAllEdits}
             isMinimized={toolbarMinimized}

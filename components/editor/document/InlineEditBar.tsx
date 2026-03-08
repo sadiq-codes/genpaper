@@ -9,6 +9,7 @@ import { Sparkles, X, Loader2 } from 'lucide-react'
 import { calculateEdit, type CalculatedEdit } from '../services/edit-calculator'
 import { validateToolCall } from '@/lib/ai/tools/document-tools'
 import { serializeForAIContext } from '../utils/ai-context-serializer'
+import { truncateDocumentForAIContext } from '../utils/context-truncation'
 import { getDocumentStructure } from '../extensions/BlockId'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -27,7 +28,7 @@ interface InlineEditBarProps {
   onClose: () => void
 }
 
-type Phase = 'input' | 'loading'
+type Phase = 'input' | 'loading' | 'review'
 
 interface PendingEdit {
   id: string
@@ -116,43 +117,92 @@ export function InlineEditBar({
     setTimeout(() => inputRef.current?.focus(), 50)
   }, [editor, selectionFrom, selectionTo, containerRef])
 
-  const chatId = useRef(`inline-${Date.now()}`).current
+  const chatId = useMemo(() => `inline-${projectId}`, [projectId])
+  const chatSendMessageRef = useRef<null | ((
+    message: { text: string },
+    options?: { body?: Record<string, unknown> }
+  ) => void)>(null)
+  const acceptedCountRef = useRef(0)
+  const rejectedCountRef = useRef(0)
 
   const transport = useMemo(() => new DefaultChatTransport({
     api: '/api/editor/chat',
     body: { projectId, isInlineEdit: true },
   }), [projectId])
 
+  const sendInlineToolResultSummary = useCallback(() => {
+    const sender = chatSendMessageRef.current
+    if (!sender) return
+
+    const accepted = acceptedCountRef.current
+    const rejected = rejectedCountRef.current
+    const total = accepted + rejected
+    if (total === 0) return
+
+    const summary = rejected === 0
+      ? `[TOOL_RESULT] User accepted ${accepted} inline edit${accepted === 1 ? '' : 's'}.`
+      : accepted === 0
+        ? `[TOOL_RESULT] User rejected ${rejected} inline edit${rejected === 1 ? '' : 's'}.`
+        : `[TOOL_RESULT] User accepted ${accepted} inline edit${accepted === 1 ? '' : 's'} and rejected ${rejected}.`
+
+    sender(
+      { text: summary },
+      {
+        body: {
+          projectId,
+          isToolResultMessage: true,
+          isInlineEdit: true,
+        },
+      }
+    )
+
+    acceptedCountRef.current = 0
+    rejectedCountRef.current = 0
+  }, [projectId])
+
   const handleAcceptEdit = useCallback((editId: string) => {
     const edit = pendingEditsRef.current.find(e => e.id === editId)
     if (!edit) return
 
-    import('../services/tool-executor').then(({ executeDocumentTool }) => {
-      executeDocumentTool(editor, edit.toolName, edit.args, { ghostEditId: editId })
-    })
     editor.commands.clearGhostEdit(editId)
 
-    const remaining = pendingEditsRef.current.filter(e => e.id !== editId)
-    pendingEditsRef.current = remaining
+    import('../services/tool-executor').then(({ executeDocumentTool }) => {
+      const result = executeDocumentTool(editor, edit.toolName, edit.args, { ghostEditId: editId })
 
-    if (remaining.length === 0) {
-      toast.success('Edit applied')
-      onCloseRef.current()
-    }
-  }, [editor])
+      if (result.success) {
+        acceptedCountRef.current += 1
+      } else {
+        rejectedCountRef.current += 1
+        toast.error('Edit failed to apply')
+      }
+
+      const remaining = pendingEditsRef.current.filter(e => e.id !== editId)
+      pendingEditsRef.current = remaining
+
+      if (remaining.length === 0) {
+        if (acceptedCountRef.current > 0) {
+          toast.success('Edit applied')
+        }
+        sendInlineToolResultSummary()
+        onCloseRef.current()
+      }
+    })
+  }, [editor, sendInlineToolResultSummary])
 
   const handleRejectEdit = useCallback((editId: string) => {
     editor.commands.clearGhostEdit(editId)
+    rejectedCountRef.current += 1
 
     const remaining = pendingEditsRef.current.filter(e => e.id !== editId)
     pendingEditsRef.current = remaining
 
     if (remaining.length === 0) {
+      sendInlineToolResultSummary()
       onCloseRef.current()
     }
-  }, [editor])
+  }, [editor, sendInlineToolResultSummary])
 
-  const { sendMessage } = useChat({
+  const { sendMessage: chatSendMessage } = useChat({
     id: chatId,
     transport,
     onFinish: ({ message }) => {
@@ -178,6 +228,8 @@ export function InlineEditBar({
       }
 
       if (edits.length > 0) {
+        acceptedCountRef.current = 0
+        rejectedCountRef.current = 0
         pendingEditsRef.current = edits
         editor.commands.setGhostEdits(
           calculatedEdits,
@@ -185,7 +237,7 @@ export function InlineEditBar({
           (editId: string) => handleRejectEdit(editId),
         )
         toast.info('Review suggested edits in the diff blocks and accept/reject there.')
-        onCloseRef.current()
+        setPhase('review')
       } else {
         toast.error('Could not target the edit location')
         setPhase('input')
@@ -197,17 +249,15 @@ export function InlineEditBar({
       setPhase('input')
     },
   })
+  chatSendMessageRef.current = chatSendMessage
 
   const getEditorContext = useCallback(() => {
     let documentContent = serializeForAIContext(editor.state.doc)
     const documentStructure = getDocumentStructure(editor)
-
-    const MAX_DOC_CHARS = 20_000
-    if (documentContent.length > MAX_DOC_CHARS) {
-      const head = documentContent.slice(0, 6_000)
-      const tail = documentContent.slice(-14_000)
-      documentContent = `[Truncated]\n\n${head}\n\n---\n\n${tail}`
-    }
+    documentContent = truncateDocumentForAIContext(documentContent, {
+      maxChars: 20_000,
+      focusText: selectedText,
+    })
 
     return { documentContent, selectedText, documentStructure }
   }, [editor, selectedText])
@@ -217,7 +267,7 @@ export function InlineEditBar({
 
     const context = getEditorContext()
 
-    sendMessage({
+    chatSendMessage({
       text: `Edit the selected text based on my instruction.\n\nSelected text: "${selectedText}"\n\nInstruction: ${instruction}\n\nApply the edit using document tools. Make only the requested change.`,
     }, {
       body: {
@@ -228,19 +278,41 @@ export function InlineEditBar({
     })
 
     setPhase('loading')
-  }, [instruction, selectedText, projectId, getEditorContext, sendMessage])
+  }, [instruction, selectedText, projectId, getEditorContext, chatSendMessage])
+
+  const clearPendingInlineEdits = useCallback(() => {
+    if (pendingEditsRef.current.length > 0) {
+      for (const edit of pendingEditsRef.current) {
+        editor.commands.clearGhostEdit(edit.id)
+      }
+      pendingEditsRef.current = []
+      acceptedCountRef.current = 0
+      rejectedCountRef.current = 0
+    }
+  }, [editor])
+
+  const handleClose = useCallback(() => {
+    clearPendingInlineEdits()
+    onClose()
+  }, [clearPendingInlineEdits, onClose])
+
+  useEffect(() => {
+    return () => {
+      clearPendingInlineEdits()
+    }
+  }, [clearPendingInlineEdits])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       if (phase === 'loading') return
-      onClose()
+      handleClose()
     } else if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (phase === 'input') {
         handleSubmit()
       }
     }
-  }, [phase, handleSubmit, onClose])
+  }, [phase, handleSubmit, handleClose])
 
   return (
     <div
@@ -269,7 +341,7 @@ export function InlineEditBar({
               size="sm"
               variant="ghost"
               className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full"
-              onClick={onClose}
+              onClick={handleClose}
               aria-label="Close"
             >
               <X className="h-3 w-3" />
@@ -292,12 +364,30 @@ export function InlineEditBar({
           </>
         )}
 
+        {phase === 'review' && (
+          <>
+            <span className="flex-1 text-sm text-muted-foreground">
+              Review edits in the document and accept/reject each change.
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground hover:bg-muted rounded-full"
+              onClick={handleClose}
+              aria-label="Close"
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </>
+        )}
+
       </div>
 
       {/* Keyboard hints */}
       <div className="flex justify-end mt-1 px-1 max-w-3xl mx-auto">
         <span className="text-[10px] text-muted-foreground/40">
           {phase === 'input' && 'Enter to submit · Esc to cancel'}
+          {phase === 'review' && 'Esc to close'}
         </span>
       </div>
     </div>

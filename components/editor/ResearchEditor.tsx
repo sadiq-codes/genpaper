@@ -231,14 +231,16 @@ export function ResearchEditor({
   const chatError = chat.error
   const handleSendMessage = chat.sendMessage
   const pendingTools = chat.pendingTools
-  const confirmTool = chat.confirmTool
-  const rejectTool = chat.rejectTool
   const clearChatHistory = chat.clearHistory
   const confirmAllTools = chat.confirmAllTools
   const rejectAllTools = chat.rejectAllTools
-  const activeEditIndex = chat.activeEditIndex
-  const navigateEdit = chat.navigateEdit
   const stopGeneration = chat.stopGeneration
+  const pendingReviewCount = pendingTools.length > 0
+    ? (pendingTools[0].appliedCount ?? pendingTools.length)
+    : 0
+  const failedReviewCount = pendingTools.length > 0
+    ? (pendingTools[0].failedCount ?? 0)
+    : 0
 
   // ============================================================================
   // Effects
@@ -619,9 +621,8 @@ export function ResearchEditor({
     isProcessingPolling: processingStatus.isPolling,
 
     // Review toolbar
-    pendingEditCount: pendingTools.length,
-    activeEditIndex,
-    navigateEdit,
+    pendingEditCount: pendingReviewCount,
+    failedEditCount: failedReviewCount,
     acceptAllEdits: confirmAllTools,
     rejectAllEdits: rejectAllTools,
   }

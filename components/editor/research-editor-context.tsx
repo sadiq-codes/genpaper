@@ -61,8 +61,7 @@ export interface ResearchEditorContextValue {
 
   // Review toolbar
   pendingEditCount: number
-  activeEditIndex: number
-  navigateEdit: (direction: 'next' | 'prev') => void
+  failedEditCount: number
   acceptAllEdits: () => void
   rejectAllEdits: () => void
 }
