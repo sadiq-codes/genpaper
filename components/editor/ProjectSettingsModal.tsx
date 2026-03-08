@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Dialog,
   DialogContent,
@@ -9,18 +10,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Loader2, Check } from 'lucide-react'
+import { Loader2, Check, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CitationStyleSelector } from './CitationStyleSelector'
 import { getInlineExampleForStyle, getStyleById } from '@/lib/citations/csl-styles'
+import { deleteProjectAction } from '@/components/dashboard/actions'
 import type { AutocompletePrefs } from './hooks/useAutocompletePrefs'
 
 interface ProjectSettingsModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
+  projectTitle?: string
   /** Current citation style - passed from parent */
   currentCitationStyle?: string
   onCitationStyleChange?: (style: string) => void
@@ -34,15 +47,22 @@ export function ProjectSettingsModal({
   open,
   onOpenChange,
   projectId,
+  projectTitle,
   currentCitationStyle = 'apa',
   onCitationStyleChange,
   autocompletePrefs,
   onAutocompletePrefsChange,
 }: ProjectSettingsModalProps) {
+  const router = useRouter()
+  
   // ----- Local buffered state (written to sources only on Save) -----
   const [citationStyle, setCitationStyle] = useState<string>(currentCitationStyle)
   const [localPrefs, setLocalPrefs] = useState<AutocompletePrefs>(autocompletePrefs)
   const [isSaving, setIsSaving] = useState(false)
+  
+  // ----- Delete confirmation state -----
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Snapshot of prefs when modal opens, used for change detection
   const openSnapshotRef = useRef<AutocompletePrefs>(autocompletePrefs)
@@ -125,7 +145,27 @@ export function ProjectSettingsModal({
     onOpenChange(false)
   }, [onOpenChange])
 
-  const selectedStyle = getStyleById(citationStyle)
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    try {
+      const result = await deleteProjectAction(projectId)
+      if (result.success) {
+        toast.success('Project deleted')
+        onOpenChange(false)
+        router.push('/projects')
+      } else {
+        toast.error(result.error || 'Failed to delete project')
+      }
+    } catch (error) {
+      console.error('Failed to delete project:', error)
+      toast.error('Failed to delete project')
+    } finally {
+      setIsDeleting(false)
+      setShowDeleteConfirm(false)
+    }
+  }
+
+  const _selectedStyle = getStyleById(citationStyle)
   const inlinePreview = getInlineExampleForStyle(citationStyle || 'apa')
 
   return (
@@ -243,6 +283,30 @@ export function ProjectSettingsModal({
               </div>
             </div>
           </div>
+
+          <div className="border-t border-border/30" />
+
+          {/* Danger Zone */}
+          <div className="py-4">
+            <h4 className="text-[10px] text-destructive/80 uppercase tracking-wider font-medium mb-3">Danger Zone</h4>
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-medium">Delete this project</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Permanently delete this project and all its data
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-destructive/30 bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <DialogFooter className="gap-2">
@@ -272,6 +336,42 @@ export function ProjectSettingsModal({
           </button>
         </DialogFooter>
       </DialogContent>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete project?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {projectTitle ? (
+                <>
+                  This will permanently delete <span className="font-medium text-foreground">"{projectTitle}"</span> and all its data including papers, citations, and generated content.
+                </>
+              ) : (
+                'This will permanently delete this project and all its data including papers, citations, and generated content.'
+              )}
+              <span className="block mt-2 text-destructive">This action cannot be undone.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete project'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }

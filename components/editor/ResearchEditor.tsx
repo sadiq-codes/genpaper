@@ -754,6 +754,7 @@ export function ResearchEditor({
             open={settingsModalOpen}
             onOpenChange={setSettingsModalOpen}
             projectId={projectId}
+            projectTitle={currentTitle}
             currentCitationStyle={currentCitationStyle}
             onCitationStyleChange={(style) => setCurrentCitationStyle(style as CitationStyleType)}
             autocompletePrefs={autocompletePrefsHook.prefs}
