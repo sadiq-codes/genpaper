@@ -16,6 +16,7 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { CalculatedEdit } from '../services/edit-calculator'
+import type { DocumentChangeRange } from '../services/doc-diff'
 
 // =============================================================================
 // UTILS
@@ -36,6 +37,59 @@ function cleanCitationMarkers(text: string): string {
   return cleaned
 }
 
+/**
+ * Build an HTML <table> element from headers and rows arrays.
+ */
+function buildTableElement(headers: string[], rows: string[][], variant: 'old' | 'new'): HTMLElement {
+  const table = document.createElement('table')
+  table.className = `diff-block__table diff-block__table--${variant}`
+
+  const thead = document.createElement('thead')
+  const headerRow = document.createElement('tr')
+  for (const h of headers) {
+    const th = document.createElement('th')
+    th.textContent = h
+    headerRow.appendChild(th)
+  }
+  thead.appendChild(headerRow)
+  table.appendChild(thead)
+
+  const tbody = document.createElement('tbody')
+  for (const row of rows) {
+    const tr = document.createElement('tr')
+    for (let i = 0; i < headers.length; i++) {
+      const td = document.createElement('td')
+      td.textContent = row[i] || ''
+      tr.appendChild(td)
+    }
+    tbody.appendChild(tr)
+  }
+  table.appendChild(tbody)
+  return table
+}
+
+/**
+ * Try to parse pipe-separated text table into headers + rows.
+ * Returns null if the text doesn't look like a table.
+ */
+function parsePipeTable(text: string): { headers: string[]; rows: string[][] } | null {
+  const lines = text.split('\n').filter(l => l.trim())
+  if (lines.length < 2) return null
+  if (!lines[0].includes('|')) return null
+
+  const parseRow = (line: string) =>
+    line.split(/\s*\|\s*/).map(c => c.trim()).filter(Boolean)
+
+  const headers = parseRow(lines[0])
+  if (headers.length < 2) return null
+
+  const rows = lines.slice(1)
+    .filter(l => !l.match(/^[-|\s]+$/))
+    .map(parseRow)
+
+  return { headers, rows }
+}
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -43,6 +97,8 @@ function cleanCitationMarkers(text: string): string {
 export interface GhostEditState {
   /** Pending edits to preview */
   edits: CalculatedEdit[]
+  /** Batch change highlights for apply-then-review mode */
+  changeHighlights: DocumentChangeRange[]
   /** Currently focused edit (for keyboard navigation) */
   activeEditId: string | null
   /** Current chunk start index for pagination (0, 5, 10, ...) */
@@ -72,6 +128,14 @@ declare module '@tiptap/core' {
         onAccept?: (editId: string) => void,
         onReject?: (editId: string) => void
       ) => ReturnType
+      /**
+       * Set batch change highlights.
+       */
+      setChangeHighlights: (changes: DocumentChangeRange[]) => ReturnType
+      /**
+       * Clear batch change highlights.
+       */
+      clearChangeHighlights: () => ReturnType
       /**
        * Clear all ghost edits
        */
@@ -147,6 +211,16 @@ function createDiffBlockDecoration(
   })
 }
 
+function createDeletedChangeWidget(change: DocumentChangeRange): HTMLElement {
+  const container = document.createElement('div')
+  container.className = 'diff-change-delete-widget'
+  const preview = (change.oldContent || '').trim()
+  container.textContent = preview
+    ? `Deleted: ${preview.slice(0, 140)}${preview.length > 140 ? '...' : ''}`
+    : 'Deleted content'
+  return container
+}
+
 /**
  * Create the DOM element for a diff block - minimal inline card style
  */
@@ -176,18 +250,36 @@ function createDiffBlockElement(
   const showNew = edit.type === 'insert' || edit.type === 'replace'
 
   if (showOld && edit.oldContent) {
-    const oldText = document.createElement('div')
-    oldText.className = 'diff-block__text diff-block__text--old'
-    oldText.textContent = edit.oldContent
-    contentWrapper.appendChild(oldText)
+    const oldWrapper = document.createElement('div')
+    oldWrapper.className = 'diff-block__text diff-block__text--old'
+    const oldTable = parsePipeTable(edit.oldContent)
+    if (oldTable) {
+      oldWrapper.appendChild(buildTableElement(oldTable.headers, oldTable.rows, 'old'))
+    } else {
+      oldWrapper.textContent = edit.oldContent
+    }
+    contentWrapper.appendChild(oldWrapper)
   }
 
   if (showNew && edit.newContent) {
-    const newText = document.createElement('div')
-    newText.className = 'diff-block__text diff-block__text--new'
-    // Clean raw citation markers [@paperId#instanceId] → [citation] for readability
-    newText.textContent = cleanCitationMarkers(edit.newContent)
-    contentWrapper.appendChild(newText)
+    const newWrapper = document.createElement('div')
+    newWrapper.className = 'diff-block__text diff-block__text--new'
+    const isTableInsert = edit.toolName === 'insertTable'
+    const newTable = isTableInsert
+      ? { headers: edit.toolArgs.headers as string[], rows: (edit.toolArgs.rows || []) as string[][] }
+      : parsePipeTable(cleanCitationMarkers(edit.newContent))
+    if (newTable && newTable.headers?.length) {
+      if (edit.toolArgs.caption) {
+        const cap = document.createElement('div')
+        cap.className = 'diff-block__table-caption'
+        cap.textContent = edit.toolArgs.caption as string
+        newWrapper.appendChild(cap)
+      }
+      newWrapper.appendChild(buildTableElement(newTable.headers, newTable.rows, 'new'))
+    } else {
+      newWrapper.textContent = cleanCitationMarkers(edit.newContent)
+    }
+    contentWrapper.appendChild(newWrapper)
   }
 
   container.appendChild(contentWrapper)
@@ -227,20 +319,6 @@ function createDiffBlockElement(
   return container
 }
 
-
-/**
- * Get icon SVG for edit type
- */
-function getEditTypeIcon(type: 'delete' | 'insert' | 'replace'): string {
-  switch (type) {
-    case 'delete':
-      return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-    case 'insert':
-      return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-    case 'replace':
-      return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>'
-  }
-}
 
 /**
  * Get label for edit type
@@ -295,6 +373,7 @@ export const GhostEdit = Extension.create({
           init(): GhostEditState {
             return {
               edits: [],
+              changeHighlights: [],
               activeEditId: null,
               chunkStart: 0,
               chunkSize: CHUNK_SIZE,
@@ -312,6 +391,7 @@ export const GhostEdit = Extension.create({
             if (setEdits) {
               return {
                 edits: setEdits.edits,
+                changeHighlights: [],
                 activeEditId: setEdits.edits.length > 0 ? setEdits.edits[0].id : null,
                 chunkStart: 0,
                 chunkSize: CHUNK_SIZE,
@@ -320,10 +400,28 @@ export const GhostEdit = Extension.create({
               }
             }
 
+            const setChangeHighlights = tr.getMeta('setChangeHighlights') as { changes: DocumentChangeRange[] } | undefined
+            if (setChangeHighlights) {
+              return {
+                ...value,
+                edits: [],
+                activeEditId: null,
+                changeHighlights: setChangeHighlights.changes,
+              }
+            }
+
+            if (tr.getMeta('clearChangeHighlights')) {
+              return {
+                ...value,
+                changeHighlights: [],
+              }
+            }
+
             // Check for clearGhostEdits meta
             if (tr.getMeta('clearGhostEdits')) {
               return {
                 edits: [],
+                changeHighlights: [],
                 activeEditId: null,
                 chunkStart: 0,
                 chunkSize: CHUNK_SIZE,
@@ -370,25 +468,61 @@ export const GhostEdit = Extension.create({
               }
             }
 
-            // If document changed while ghost edits are active, clear them
-            // (positions may now be invalid)
+            // If document changed while ghost edits are active, map positions
+            // through the transaction and trigger a recalc in useEditorChat.
             if (tr.docChanged && value.edits.length > 0) {
+              const mappedEdits = value.edits
+                .map(edit => {
+                  const mappedFrom = tr.mapping.map(edit.from, -1)
+                  const mappedTo = tr.mapping.map(edit.to, 1)
+                  const clampedFrom = Math.max(0, Math.min(mappedFrom, tr.doc.content.size))
+                  const clampedTo = Math.max(clampedFrom, Math.min(mappedTo, tr.doc.content.size))
+                  return {
+                    ...edit,
+                    from: clampedFrom,
+                    to: clampedTo,
+                  }
+                })
+                .filter(edit => edit.from <= edit.to)
+
               if (!tr.getMeta('ghostEditAccepted')) {
                 // Emit event so useEditorChat can sync pendingTools state
-                const clearedEditIds = value.edits.map(e => e.id)
+                const affectedEditIds = value.edits.map(e => e.id)
                 setTimeout(() => {
                   editor.view.dom.dispatchEvent(new CustomEvent('ghostedits:invalidated', {
-                    detail: { editIds: clearedEditIds, reason: 'document-changed' },
+                    detail: { editIds: affectedEditIds, reason: 'document-changed' },
                     bubbles: true,
                   }))
                 }, 0)
-                
+              }
+
+              const activeEditStillExists = mappedEdits.some(e => e.id === value.activeEditId)
+              return {
+                ...value,
+                edits: mappedEdits,
+                activeEditId: mappedEdits.length === 0
+                  ? null
+                  : activeEditStillExists
+                    ? value.activeEditId
+                    : mappedEdits[0].id,
+              }
+            }
+
+            if (tr.docChanged && value.changeHighlights.length > 0) {
+              const mapped = value.changeHighlights.map(change => {
+                const mappedFrom = tr.mapping.map(change.from, -1)
+                const mappedTo = tr.mapping.map(change.to, 1)
+                const clampedFrom = Math.max(0, Math.min(mappedFrom, tr.doc.content.size))
+                const clampedTo = Math.max(clampedFrom, Math.min(mappedTo, tr.doc.content.size))
                 return {
-                  edits: [],
-                  activeEditId: null,
-                  chunkStart: 0,
-                  chunkSize: CHUNK_SIZE,
+                  ...change,
+                  from: clampedFrom,
+                  to: clampedTo,
                 }
+              })
+              return {
+                ...value,
+                changeHighlights: mapped,
               }
             }
 
@@ -399,11 +533,43 @@ export const GhostEdit = Extension.create({
         props: {
           decorations(state) {
             const pluginState = ghostEditPluginKey.getState(state)
-            if (!pluginState || pluginState.edits.length === 0) {
+            if (!pluginState || (pluginState.edits.length === 0 && pluginState.changeHighlights.length === 0)) {
               return DecorationSet.empty
             }
 
             const allDecorations: Decoration[] = []
+
+            if (pluginState.changeHighlights.length > 0 && pluginState.edits.length === 0) {
+              if (process.env.NODE_ENV === 'development') {
+                console.log('[GhostEdit] Rendering changeHighlights:', pluginState.changeHighlights.map(c => ({
+                  id: c.id, type: c.type, from: c.from, to: c.to, docSize: state.doc.content.size,
+                })))
+              }
+              for (const change of pluginState.changeHighlights) {
+                if (change.type === 'deleted') {
+                  allDecorations.push(
+                    Decoration.widget(change.from, () => createDeletedChangeWidget(change), {
+                      side: -1,
+                      key: `change-delete-${change.id}`,
+                    })
+                  )
+                  continue
+                }
+
+                if (change.from < change.to) {
+                  allDecorations.push(
+                    Decoration.inline(change.from, change.to, {
+                      class: change.type === 'added'
+                        ? 'diff-highlight diff-highlight--added'
+                        : 'diff-highlight diff-highlight--modified',
+                    })
+                  )
+                }
+              }
+
+              return DecorationSet.create(state.doc, allDecorations)
+            }
+
             const onAccept = pluginState.onAccept || (() => {})
             const onReject = pluginState.onReject || (() => {})
             const totalEdits = pluginState.edits.length
@@ -438,6 +604,17 @@ export const GhostEdit = Extension.create({
                 createNavigatePrev
               )
               allDecorations.push(decoration)
+
+              // Hide the original content for replace/delete edits so it
+              // doesn't render alongside the ghost diff widget
+              if ((edit.type === 'replace' || edit.type === 'delete') && edit.from < edit.to) {
+                allDecorations.push(
+                  Decoration.replace(edit.from, edit.to, {
+                    inclusiveStart: true,
+                    inclusiveEnd: true,
+                  })
+                )
+              }
             }
 
             return DecorationSet.create(state.doc, allDecorations)
@@ -489,6 +666,26 @@ export const GhostEdit = Extension.create({
 
   addCommands() {
     return {
+      setChangeHighlights:
+        (changes: DocumentChangeRange[]) =>
+        ({ tr, dispatch }) => {
+          if (dispatch) {
+            tr.setMeta('setChangeHighlights', { changes })
+            dispatch(tr)
+          }
+          return true
+        },
+
+      clearChangeHighlights:
+        () =>
+        ({ tr, dispatch }) => {
+          if (dispatch) {
+            tr.setMeta('clearChangeHighlights', true)
+            dispatch(tr)
+          }
+          return true
+        },
+
       setGhostEdits:
         (
           edits: CalculatedEdit[],
@@ -648,7 +845,7 @@ export function getGhostEditState(editor: { state: { doc: unknown } }): GhostEdi
  */
 export function hasGhostEdits(editor: { state: { doc: unknown } }): boolean {
   const state = getGhostEditState(editor)
-  return !!state && state.edits.length > 0
+  return !!state && (state.edits.length > 0 || state.changeHighlights.length > 0)
 }
 
 /**
@@ -656,7 +853,8 @@ export function hasGhostEdits(editor: { state: { doc: unknown } }): boolean {
  */
 export function getGhostEditCount(editor: { state: { doc: unknown } }): number {
   const state = getGhostEditState(editor)
-  return state?.edits.length || 0
+  if (!state) return 0
+  return state.edits.length > 0 ? state.edits.length : state.changeHighlights.length
 }
 
 /**

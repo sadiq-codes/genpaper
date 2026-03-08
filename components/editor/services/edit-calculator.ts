@@ -20,6 +20,36 @@ import {
 
 export type EditType = 'insert' | 'replace' | 'delete'
 
+/**
+ * Extract human-readable text from a ProseMirror node.
+ * For tables, formats as a simple text table instead of concatenating all cells.
+ */
+function readableNodeText(node: { type: { name: string }; textContent: string; content: { forEach: (cb: (child: any) => void) => void } }): string {
+  if (node.type.name !== 'table') {
+    return node.textContent
+  }
+
+  const rows: string[][] = []
+  node.content.forEach((row: any) => {
+    if (row.type.name !== 'tableRow') return
+    const cells: string[] = []
+    row.content.forEach((cell: any) => {
+      cells.push(cell.textContent.trim())
+    })
+    rows.push(cells)
+  })
+
+  if (rows.length === 0) return node.textContent
+
+  const colWidths = rows[0].map((_, colIdx) =>
+    Math.max(...rows.map(r => (r[colIdx] || '').length))
+  )
+
+  return rows.map(row =>
+    row.map((cell, i) => cell.padEnd(colWidths[i] || 0)).join('  |  ')
+  ).join('\n')
+}
+
 export interface CalculatedEdit {
   id: string
   type: EditType
@@ -72,9 +102,11 @@ export function calculateEdit(
         return calculateSplitBlock(editor, args, editId, toolName)
       case 'insertTable':
         return calculateInsertTable(editor, args, editId, toolName)
+      case 'editTable':
+        return calculateEditTable(editor, args, editId, toolName)
+      case 'addCitation':
+        return calculateAddCitation(editor, args, editId, toolName)
       default:
-        // Non-visual tools (addCitation, highlightText, addComment, formatText,
-        // moveBlock, searchAndReplace) don't need ghost preview
         return { 
           success: false, 
           error: `Tool "${toolName}" does not support ghost preview` 
@@ -311,7 +343,7 @@ function calculateReplace(
         toolArgs: args,
         from: block.pos,
         to: block.pos + block.node.nodeSize,
-        oldContent: block.node.textContent,
+        oldContent: readableNodeText(block.node),
         newContent,
         description: 'Replace entire block',
       }
@@ -413,7 +445,7 @@ function calculateDelete(
         toolArgs: args,
         from: block.pos,
         to: block.pos + block.node.nodeSize,
-        oldContent: block.node.textContent,
+        oldContent: readableNodeText(block.node),
         newContent: '',
         description: reason || 'Delete entire block',
       }
@@ -651,6 +683,145 @@ function calculateInsertTable(
       oldContent: '',
       newContent: tablePreview,
       description: caption || 'Insert table',
+    }
+  }
+}
+
+// =============================================================================
+// EDIT TABLE CALCULATOR
+// =============================================================================
+
+function calculateEditTable(
+  editor: Editor,
+  args: Record<string, unknown>,
+  editId: string,
+  toolName: string
+): CalculationResult {
+  const action = args.action as string
+  const tableIndex = (args.tableIndex as number | undefined) ?? 0
+  const section = args.section as string | undefined
+
+  if (!action) return { success: false, error: 'Missing table action' }
+
+  let searchFrom = 0
+  let searchTo = editor.state.doc.content.size
+  if (section) {
+    const sectionBounds = findSectionBounds(editor, section)
+    if (!sectionBounds.found) return { success: false, error: `Section not found: ${section}` }
+    searchFrom = sectionBounds.contentStartPos
+    searchTo = sectionBounds.contentEndPos
+  }
+
+  const tablePositions: number[] = []
+  editor.state.doc.nodesBetween(searchFrom, searchTo, (node, pos) => {
+    if (node.type.name === 'table') tablePositions.push(pos)
+  })
+
+  if (tablePositions.length === 0) {
+    return { success: false, error: section ? `No tables in section "${section}"` : 'No tables in document' }
+  }
+  if (tableIndex >= tablePositions.length) {
+    return { success: false, error: `tableIndex ${tableIndex} out of range (0-${tablePositions.length - 1})` }
+  }
+
+  const tablePos = tablePositions[tableIndex]
+  const tableNode = editor.state.doc.nodeAt(tablePos)
+  if (!tableNode || tableNode.type.name !== 'table') {
+    return { success: false, error: 'Could not resolve target table' }
+  }
+
+  const oldContent = readableNodeText(tableNode)
+
+  let description = 'Edit table'
+  let newContent = oldContent
+
+  if (action === 'appendRow') {
+    const row = args.row as string[] | undefined
+    if (Array.isArray(row)) {
+      newContent = oldContent + '\n' + row.join('  |  ')
+      description = 'Append row to table'
+    }
+  } else if (action === 'updateCell') {
+    const value = args.value as string | undefined
+    description = `Update table cell to "${(value || '').slice(0, 30)}"`
+    // For updateCell, rebuild the text preview with the changed cell
+    const rowIndex = args.rowIndex as number | undefined
+    const colIndex = args.colIndex as number | undefined
+    if (typeof rowIndex === 'number' && typeof colIndex === 'number' && typeof value === 'string') {
+      const lines = oldContent.split('\n')
+      const targetLine = rowIndex + 1 // +1 for header row
+      if (targetLine >= 0 && targetLine < lines.length) {
+        const cells = lines[targetLine].split('  |  ')
+        if (colIndex >= 0 && colIndex < cells.length) {
+          cells[colIndex] = value
+          lines[targetLine] = cells.join('  |  ')
+          newContent = lines.join('\n')
+        }
+      }
+    }
+  } else if (action === 'renameColumn') {
+    const header = args.header as string | undefined
+    const colIndex = args.colIndex as number | undefined
+    description = `Rename column to "${(header || '').slice(0, 30)}"`
+    if (typeof colIndex === 'number' && typeof header === 'string') {
+      const lines = oldContent.split('\n')
+      if (lines.length > 0) {
+        const cells = lines[0].split('  |  ')
+        if (colIndex >= 0 && colIndex < cells.length) {
+          cells[colIndex] = header
+          lines[0] = cells.join('  |  ')
+          newContent = lines.join('\n')
+        }
+      }
+    }
+  }
+
+  return {
+    success: true,
+    edit: {
+      id: editId, type: 'replace', toolName, toolArgs: args,
+      from: tablePos, to: tablePos + tableNode.nodeSize,
+      oldContent,
+      newContent,
+      description,
+    }
+  }
+}
+
+// =============================================================================
+// ADD CITATION CALCULATOR
+// =============================================================================
+
+function calculateAddCitation(
+  editor: Editor,
+  args: Record<string, unknown>,
+  editId: string,
+  toolName: string
+): CalculationResult {
+  const afterPhrase = args.afterPhrase as string | undefined
+  const blockId = args.blockId as string | undefined
+  const section = args.section as string | undefined
+  const paperId = args.paperId as string | undefined
+
+  if (!afterPhrase) return { success: false, error: 'Missing afterPhrase' }
+  if (!paperId) return { success: false, error: 'Missing paperId' }
+
+  const match = findTextInStructure(editor, afterPhrase, { blockId, section })
+  if (!match.found) {
+    return { success: false, error: `Could not find text: "${afterPhrase.slice(0, 50)}..."` }
+  }
+
+  const range = matchToRange(match)
+  if (!range) return { success: false, error: 'Failed to calculate citation position' }
+
+  return {
+    success: true,
+    edit: {
+      id: editId, type: 'insert', toolName, toolArgs: args,
+      from: range.to, to: range.to,
+      oldContent: '',
+      newContent: ` (${paperId.slice(0, 8)}...)`,
+      description: `Add citation after "${afterPhrase.slice(0, 30)}..."`,
     }
   }
 }

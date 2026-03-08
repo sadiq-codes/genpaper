@@ -43,10 +43,20 @@ const BLOCK_TYPES = [
  * Generate a short unique ID for a block.
  * Format: {type_prefix}_{random_suffix}
  */
-function generateBlockId(nodeType: string): string {
+function generateBlockId(nodeType: string, existingIds?: Set<string>): string {
   const prefix = nodeType.slice(0, 3).toLowerCase()
-  const suffix = Math.random().toString(36).substring(2, 8)
-  return `${prefix}_${suffix}`
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const suffix = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().replace(/-/g, '').slice(0, 10)
+      : Math.random().toString(36).substring(2, 12)
+    const id = `${prefix}_${suffix}`
+    if (!existingIds || !existingIds.has(id)) {
+      return id
+    }
+  }
+
+  // Extremely unlikely fallback after collision retries.
+  return `${prefix}_${Date.now().toString(36)}`
 }
 
 /**
@@ -142,6 +152,14 @@ export const BlockId = Extension.create<BlockIdOptions>({
 
           const tr = newState.tr
           let modified = false
+          const existingIds = new Set<string>()
+
+          newState.doc.descendants((node: ProseMirrorNode) => {
+            const currentId = node.attrs[attributeName]
+            if (typeof currentId === 'string' && currentId.length > 0) {
+              existingIds.add(currentId)
+            }
+          })
 
           // Walk through all nodes
           newState.doc.descendants((node: ProseMirrorNode, pos: number) => {
@@ -152,7 +170,8 @@ export const BlockId = Extension.create<BlockIdOptions>({
             if (node.attrs[attributeName]) return
 
             // Generate and set new ID
-            const newId = generateBlockId(node.type.name)
+            const newId = generateBlockId(node.type.name, existingIds)
+            existingIds.add(newId)
             tr.setNodeMarkup(pos, undefined, {
               ...node.attrs,
               [attributeName]: newId,
@@ -180,6 +199,24 @@ export interface BlockInfo {
   pos: number
   size: number
   citationCount: number  // Number of citations in this block
+}
+
+const blockIndexCache = new WeakMap<ProseMirrorNode, Map<string, { node: ProseMirrorNode; pos: number }>>()
+
+function getBlockIndex(doc: ProseMirrorNode): Map<string, { node: ProseMirrorNode; pos: number }> {
+  const cached = blockIndexCache.get(doc)
+  if (cached) return cached
+
+  const index = new Map<string, { node: ProseMirrorNode; pos: number }>()
+  doc.descendants((node: ProseMirrorNode, pos: number) => {
+    const id = node.attrs.blockId
+    if (typeof id === 'string' && id.length > 0) {
+      index.set(id, { node, pos })
+    }
+  })
+
+  blockIndexCache.set(doc, index)
+  return index
 }
 
 /**
@@ -228,18 +265,7 @@ export function findBlockById(
   editor: { state: { doc: ProseMirrorNode } },
   blockId: string
 ): { node: ProseMirrorNode; pos: number } | null {
-  let result: { node: ProseMirrorNode; pos: number } | null = null
-  
-  editor.state.doc.descendants((node: ProseMirrorNode, pos: number) => {
-    if (result) return false // Already found
-    
-    if (node.attrs.blockId === blockId) {
-      result = { node, pos }
-      return false
-    }
-  })
-  
-  return result
+  return getBlockIndex(editor.state.doc).get(blockId) ?? null
 }
 
 /**
