@@ -271,7 +271,7 @@ async function generateObjectWithRateLimitRetry<T>(
   partName: AnalysisPartName
 ): Promise<{ object: T }> {
   const RATE_LIMIT_RETRY_COUNT = 3
-  const RATE_LIMIT_BASE_BACKOFF_MS = 1000
+  const RATE_LIMIT_BASE_BACKOFF_MS = 30000
   let lastError: unknown = null
 
   for (let rateLimitRetry = 0; rateLimitRetry <= RATE_LIMIT_RETRY_COUNT; rateLimitRetry++) {

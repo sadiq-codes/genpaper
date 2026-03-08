@@ -26,10 +26,13 @@ import { getPaperTypeConfig, getPaperTypeGuardrails, resolveSectionType } from '
 const MAX_PROFILE_RETRIES = 3
 
 /** Exponential backoff base delay between retries (ms) */
-const BASE_RETRY_DELAY_MS = 1000
+const BASE_RETRY_DELAY_MS = 2000
 
 /** Cap retry delays to keep total latency bounded */
-const MAX_RETRY_DELAY_MS = 8000
+const MAX_RETRY_DELAY_MS = 60000
+
+/** Longer base delay specifically for rate-limit (429) retries */
+const RATE_LIMIT_BASE_DELAY_MS = 30000
 
 function getErrorStatusCode(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined
@@ -84,9 +87,15 @@ function isPermanentProviderError(error: unknown): boolean {
   )
 }
 
-function getRetryDelayMs(attempt: number): number {
+function getRetryDelayMs(attempt: number, error?: Error): number {
   if (attempt <= 0) return 0
-  return Math.min(BASE_RETRY_DELAY_MS * (2 ** (attempt - 1)), MAX_RETRY_DELAY_MS)
+  const isRateLimit = error && (
+    error.message.toLowerCase().includes('429') ||
+    error.message.toLowerCase().includes('rate limit') ||
+    error.message.toLowerCase().includes('too many requests')
+  )
+  const base = isRateLimit ? RATE_LIMIT_BASE_DELAY_MS : BASE_RETRY_DELAY_MS
+  return Math.min(base * (2 ** (attempt - 1)), MAX_RETRY_DELAY_MS)
 }
 
 /**
@@ -126,7 +135,7 @@ export async function generatePaperProfile(
     }
     try {
       if (attempt > 0) {
-        const retryDelayMs = getRetryDelayMs(attempt)
+        const retryDelayMs = getRetryDelayMs(attempt, lastError)
         warn({ attempt, maxRetries: MAX_PROFILE_RETRIES, retryDelayMs }, 'Retrying paper profile generation')
         await new Promise(resolve => setTimeout(resolve, retryDelayMs))
       }
