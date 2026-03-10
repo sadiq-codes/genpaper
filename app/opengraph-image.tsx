@@ -45,7 +45,7 @@ export default function OpenGraphImage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div
               style={{
-                display: 'inline-flex',
+                display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 width: '88px',

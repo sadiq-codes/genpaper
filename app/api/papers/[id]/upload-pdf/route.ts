@@ -70,32 +70,31 @@ export async function POST(
     const sanitizedFileName = sanitizeFilename(file.name)
     const storagePath = `${user.id}/${Date.now()}-${sanitizedFileName}`
 
-    // Upload to storage
-    let uploadError: { message?: string } | null = null
-    const attemptUpload = async () => {
-      const result = await serviceClient
+    // Upload to storage with bucket auto-creation
+    const doUpload = async () => {
+      return serviceClient
         .storage
         .from(PAPER_PDFS_BUCKET)
         .upload(storagePath, fileBuffer, {
           contentType: 'application/pdf',
           upsert: false,
         })
-      uploadError = result.error
     }
 
-    await attemptUpload()
+    let result = await doUpload()
 
-    if (uploadError?.message?.includes('Bucket not found')) {
+    // If bucket doesn't exist, create it and retry
+    if (result.error?.message?.includes('Bucket not found')) {
       await ensureStorageBucket(serviceClient, PAPER_PDFS_BUCKET, {
         public: true,
         fileSizeLimit: maxSize,
       })
-      await attemptUpload()
+      result = await doUpload()
     }
 
-    if (uploadError) {
-      console.error('PDF upload error:', uploadError)
-      return NextResponse.json({ error: uploadError.message || 'Failed to upload PDF' }, { status: 500 })
+    if (result.error) {
+      console.error('PDF upload error:', result.error)
+      return NextResponse.json({ error: result.error.message || 'Failed to upload PDF' }, { status: 500 })
     }
 
     const { data: urlData } = serviceClient
