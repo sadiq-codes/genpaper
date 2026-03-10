@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { getStoragePathFromPublicUrl, PAPER_PDFS_BUCKET } from '@/lib/supabase/storage-buckets'
 
 export async function GET(
   request: NextRequest,
@@ -52,24 +53,22 @@ export async function GET(
 
     // Extract storage path from pdf_url
     // URL formats:
-    // - Public: https://[project].supabase.co/storage/v1/object/public/papers/[path]
-    // - Signed: https://[project].supabase.co/storage/v1/object/sign/papers/[path]
-    const storagePathMatch = paper.pdf_url.match(/\/papers\/(.+?)(?:\?|$)/)
-    
-    if (!storagePathMatch) {
+    // - Public: https://[project].supabase.co/storage/v1/object/public/<bucket>/[path]
+    // - Signed: https://[project].supabase.co/storage/v1/object/sign/<bucket>/[path]
+    const storagePath = getStoragePathFromPublicUrl(paper.pdf_url, PAPER_PDFS_BUCKET)
+
+    if (!storagePath) {
       // Can't parse URL, return as-is (it might still work as a public URL)
       console.warn('Could not parse storage path from pdf_url:', paper.pdf_url)
       return NextResponse.json({ url: paper.pdf_url, isExternal: false, fallback: true })
     }
-
-    const storagePath = decodeURIComponent(storagePathMatch[1])
 
     // Use service client to generate signed URL (bypasses RLS)
     const serviceClient = createServiceClient()
     
     // First try to create a signed URL (works for both public and private buckets)
     const { data: signedUrlData, error: signedUrlError } = await serviceClient.storage
-      .from('papers')
+      .from(PAPER_PDFS_BUCKET)
       .createSignedUrl(storagePath, 60 * 60) // 1 hour expiry
 
     if (signedUrlData?.signedUrl) {
@@ -87,7 +86,7 @@ export async function GET(
 
     // Fallback: Try to get public URL
     const { data: publicUrlData } = serviceClient.storage
-      .from('papers')
+      .from(PAPER_PDFS_BUCKET)
       .getPublicUrl(storagePath)
 
     if (publicUrlData?.publicUrl) {

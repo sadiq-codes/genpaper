@@ -170,6 +170,38 @@ function findTargetBlock(
   return { found: false, pos: -1, endPos: -1, method: 'text' }
 }
 
+function normalizeHeadingLabel(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function findSectionBoundsExact(editor: Editor, sectionName: string): { found: boolean; contentStartPos: number; contentEndPos: number } {
+  const target = normalizeHeadingLabel(sectionName)
+  const headings: Array<{ start: number; end: number; text: string }> = []
+
+  editor.state.doc.forEach((node, offset) => {
+    if (node.type.name === 'heading') {
+      headings.push({
+        start: offset,
+        end: offset + node.nodeSize,
+        text: normalizeHeadingLabel(node.textContent || ''),
+      })
+    }
+  })
+
+  const index = headings.findIndex(h => h.text === target)
+  if (index === -1) {
+    return { found: false, contentStartPos: -1, contentEndPos: -1 }
+  }
+
+  const current = headings[index]
+  const next = headings[index + 1]
+  return {
+    found: true,
+    contentStartPos: current.end,
+    contentEndPos: next ? next.start : editor.state.doc.content.size,
+  }
+}
+
 /**
  * Generate a helpful error message when a block can't be found.
  */
@@ -295,7 +327,7 @@ export function executeDocumentTool(
       if (options.groupUndo) {
         tr.setMeta('addToHistory', false)
       }
-      if (options.ghostEditId) {
+    if (options.ghostEditId) {
         tr.setMeta('ghostEditAccepted', options.ghostEditId)
       }
     }
@@ -338,7 +370,11 @@ export function executeToolsAsUndoGroup(
   editor.view.dispatch = (tr) => {
     if (tr.docChanged) {
       tr.setMeta('aiEdit', true)
+      // Keep history entries by default so editor Undo works reliably
+      // for multi-step tool sequences (including table edit flows).
+      if (options.groupUndo) {
       tr.setMeta('addToHistory', false)
+    }
     }
     if (tr.docChanged && options.ghostEditId) {
       tr.setMeta('ghostEditAccepted', options.ghostEditId)
@@ -377,6 +413,8 @@ function dispatchTool(
   switch (toolName) {
     case 'insertContent':
       return executeInsertContent(editor, args, papers, projectId)
+    case 'insertHeading':
+      return executeInsertHeading(editor, args)
     case 'replaceBlock':
     case 'replaceInSection': // Legacy fallback — routes to replaceBlock
       return executeReplaceBlock(editor, args, papers, projectId)
@@ -630,6 +668,61 @@ function flattenToInline(content: unknown): unknown {
   return inlineNodes.length > 0 ? inlineNodes : content
 }
 
+function looksLikeStandaloneParagraph(rawContent: string): boolean {
+  const text = rawContent.trim()
+  if (!text) return false
+
+  if (/\n\s*\n/.test(text)) return true
+  if (/^\s*[-*]\s+/m.test(text)) return true
+  if (/^\s*\d+\.\s+/m.test(text)) return true
+  if (/^\s*#{1,6}\s+/m.test(text)) return true
+  if (/\|.+\|/.test(text)) return true
+
+  const sentenceCount = (text.match(/[.!?](?=\s|$)/g) || []).length
+  if (sentenceCount >= 2) return true
+
+  return text.length >= 140
+}
+
+function getContainingTextblockBoundary(
+  editor: Editor,
+  pos: number
+): { from: number; to: number } | null {
+  const $pos = editor.state.doc.resolve(pos)
+
+  for (let depth = $pos.depth; depth > 0; depth--) {
+    const node = $pos.node(depth)
+    if (!node.isTextblock) continue
+
+    const from = $pos.before(depth)
+    const to = from + node.nodeSize
+    return { from, to }
+  }
+
+  return null
+}
+
+function wrapStringAsParagraph(content: string): Record<string, unknown> {
+  return {
+    type: 'paragraph',
+    content: [{ type: 'text', text: content }],
+  }
+}
+
+function prepareContentForBlockInsertion(
+  rawContent: string,
+  papers: ProjectPaper[] = [],
+  citations?: CitationInput[]
+): PreparedContent {
+  const prepared = prepareContent(rawContent, papers, citations)
+
+  if (typeof prepared.content === 'string') {
+    prepared.content = wrapStringAsParagraph(prepared.content)
+  }
+
+  return prepared
+}
+
 /**
  * Prepare content with inline awareness.
  * If the target is mid-paragraph, strips paragraph wrappers to prevent sentence breaks.
@@ -848,7 +941,24 @@ function executeInsertContent(
 
     const insertPos = range.to
 
-    // Prepare content with inline awareness for phrase insertions
+    const shouldInsertAsBlock = looksLikeStandaloneParagraph(rawContent)
+    if (shouldInsertAsBlock) {
+      const textblockBoundary = getContainingTextblockBoundary(editor, insertPos)
+      if (textblockBoundary) {
+        const { content, instances } = prepareContentForBlockInsertion(rawContent, papers, citations)
+        editor.chain()
+          .focus()
+          .setTextSelection(textblockBoundary.to)
+          .insertContent(content)
+          .run()
+
+        persistCitationInstances(instances)
+        toast.success('Paragraph inserted after phrase')
+        return { success: true, message: 'Inserted paragraph after phrase' }
+      }
+    }
+
+    // Prepare content with inline awareness for true inline phrase insertions
     const { content, instances } = prepareContentForContext(
       editor, rawContent, insertPos, insertPos, papers, citations
     )
@@ -895,13 +1005,18 @@ function executeInsertContent(
     }
 
     const insertPos = block.pos + block.node.nodeSize
+    const { content: contentToInsert, instances: blockInstances } = prepareContentForBlockInsertion(
+      rawContent,
+      papers,
+      citations
+    )
     editor.chain()
       .focus()
       .setTextSelection(insertPos)
-      .insertContent(content)
+      .insertContent(contentToInsert)
       .run()
 
-    persistCitationInstances(instances)
+    persistCitationInstances(blockInstances)
     toast.success('Content inserted')
     return { success: true, message: `Inserted after block ${afterBlockId}`, blockId: afterBlockId }
   }
@@ -909,6 +1024,22 @@ function executeInsertContent(
   // Priority 3: Explicit location targeting
   if (location) {
     if (location === 'cursor') {
+      const cursorPos = editor.state.selection.from
+      if (looksLikeStandaloneParagraph(rawContent)) {
+        const textblockBoundary = getContainingTextblockBoundary(editor, cursorPos)
+        if (textblockBoundary) {
+          const { content: cursorBlockContent, instances: cursorBlockInstances } = prepareContentForBlockInsertion(
+            rawContent,
+            papers,
+            citations
+          )
+          editor.chain().focus().setTextSelection(textblockBoundary.to).insertContent(cursorBlockContent).run()
+          persistCitationInstances(cursorBlockInstances)
+          toast.success('Paragraph inserted at cursor')
+          return { success: true, message: 'Inserted paragraph at cursor' }
+        }
+      }
+
       editor.chain().focus().insertContent(content).run()
       persistCitationInstances(instances)
       toast.success('Content inserted at cursor')
@@ -916,12 +1047,17 @@ function executeInsertContent(
     }
 
     if (location === 'end') {
+      const { content: endContent, instances: endInstances } = prepareContentForBlockInsertion(
+        rawContent,
+        papers,
+        citations
+      )
       editor.chain()
         .focus()
         .setTextSelection(editor.state.doc.content.size)
-        .insertContent(content)
+        .insertContent(endContent)
         .run()
-      persistCitationInstances(instances)
+      persistCitationInstances(endInstances)
       toast.success('Content appended')
       return { success: true, message: 'Appended to document' }
     }
@@ -940,8 +1076,13 @@ function executeInsertContent(
       }
 
       const insertPos = sectionBounds.contentEndPos
-      editor.chain().focus().setTextSelection(insertPos).insertContent(content).run()
-      persistCitationInstances(instances)
+      const { content: sectionContent, instances: sectionInstances } = prepareContentForBlockInsertion(
+        rawContent,
+        papers,
+        citations
+      )
+      editor.chain().focus().setTextSelection(insertPos).insertContent(sectionContent).run()
+      persistCitationInstances(sectionInstances)
       toast.success(`Content added to ${sectionName}`)
       return { success: true, message: `Inserted at end of ${sectionName}` }
     }
@@ -957,8 +1098,13 @@ function executeInsertContent(
       }
 
       const insertPos = sectionBounds.contentStartPos
-      editor.chain().focus().setTextSelection(insertPos).insertContent(content).run()
-      persistCitationInstances(instances)
+      const { content: sectionStartContent, instances: sectionStartInstances } = prepareContentForBlockInsertion(
+        rawContent,
+        papers,
+        citations
+      )
+      editor.chain().focus().setTextSelection(insertPos).insertContent(sectionStartContent).run()
+      persistCitationInstances(sectionStartInstances)
       toast.success(`Content added to ${sectionName}`)
       return { success: true, message: `Inserted at start of ${sectionName}` }
     }
@@ -969,10 +1115,101 @@ function executeInsertContent(
   }
 
   // No explicit target: insert at cursor
+  const fallbackCursorPos = editor.state.selection.from
+  if (looksLikeStandaloneParagraph(rawContent)) {
+    const textblockBoundary = getContainingTextblockBoundary(editor, fallbackCursorPos)
+    if (textblockBoundary) {
+      const { content: fallbackBlockContent, instances: fallbackBlockInstances } = prepareContentForBlockInsertion(
+        rawContent,
+        papers,
+        citations
+      )
+      editor.chain().focus().setTextSelection(textblockBoundary.to).insertContent(fallbackBlockContent).run()
+      persistCitationInstances(fallbackBlockInstances)
+      toast.success('Paragraph inserted at cursor')
+      return { success: true, message: 'Inserted paragraph at cursor' }
+    }
+  }
+
   editor.chain().focus().insertContent(content).run()
   persistCitationInstances(instances)
   toast.success('Content inserted at cursor')
   return { success: true, message: 'Inserted at cursor' }
+}
+
+function executeInsertHeading(
+  editor: Editor,
+  args: Record<string, unknown>
+): ToolExecutionResult {
+  const text = (args.text as string | undefined)?.trim()
+  const level = (args.level as number | undefined) ?? 2
+  const afterBlockId = args.afterBlockId as string | undefined
+  const afterPhrase = args.afterPhrase as string | undefined
+  const location = args.location as string | undefined
+
+  if (!text) {
+    return { success: false, message: 'No heading text provided' }
+  }
+  if (!Number.isInteger(level) || level < 1 || level > 6) {
+    return { success: false, message: 'Heading level must be between 1 and 6' }
+  }
+
+  const headingNode: Record<string, unknown> = {
+    type: 'heading',
+    attrs: { level },
+    content: [{ type: 'text', text }],
+  }
+
+  const insertAt = (pos: number, message: string): ToolExecutionResult => {
+    editor.chain().focus().setTextSelection(pos).insertContent(headingNode).run()
+    toast.success('Heading inserted')
+    return { success: true, message }
+  }
+
+  if (afterPhrase) {
+    const match = findTextInStructure(editor, afterPhrase)
+    if (!match.found) {
+      const message = `Could not find phrase for heading insertion: "${afterPhrase.slice(0, 50)}..."`
+      toast.error(message)
+      return { success: false, message }
+    }
+    const range = matchToRange(match)
+    if (!range) return { success: false, message: 'Failed to calculate insertion range' }
+    const textblockBoundary = getContainingTextblockBoundary(editor, range.to)
+    return insertAt(textblockBoundary?.to ?? range.to, 'Inserted heading after phrase')
+  }
+
+  if (afterBlockId) {
+    const block = findBlockById(editor, afterBlockId)
+    if (!block) {
+      const message = `Block not found for heading insertion: ${afterBlockId}`
+      toast.error(message)
+      return { success: false, message }
+    }
+    return insertAt(block.pos + block.node.nodeSize, `Inserted heading after block ${afterBlockId}`)
+  }
+
+  if (location === 'end') {
+    return insertAt(editor.state.doc.content.size, 'Inserted heading at end of document')
+  }
+
+  if (location) {
+    const afterMatch = location.match(/^after:(.+)$/i)
+    const startMatch = location.match(/^start:(.+)$/i)
+    if (afterMatch) {
+      const bounds = findSectionBounds(editor, afterMatch[1])
+      if (!bounds.found) return { success: false, message: `Section "${afterMatch[1]}" not found` }
+      return insertAt(bounds.contentEndPos, `Inserted heading at end of ${afterMatch[1]}`)
+    }
+    if (startMatch) {
+      const bounds = findSectionBounds(editor, startMatch[1])
+      if (!bounds.found) return { success: false, message: `Section "${startMatch[1]}" not found` }
+      return insertAt(bounds.contentStartPos, `Inserted heading at start of ${startMatch[1]}`)
+    }
+    return { success: false, message: `Invalid heading location: ${location}` }
+  }
+
+  return insertAt(editor.state.selection.from, 'Inserted heading at cursor')
 }
 
 
@@ -1017,8 +1254,8 @@ function executeReplaceBlock(
     }
     if (matches.length === 0) {
       const message = `Could not find text: "${searchPhrase.slice(0, 50)}..."`
-      toast.error(message)
-      return { success: false, message }
+        toast.error(message)
+        return { success: false, message }
     }
 
     if (!blockId && !occurrenceIndex && matches.length > 1) {
@@ -1183,6 +1420,7 @@ function executeRewriteSection(
   const sectionName = args.section as string
   const rawContent = args.newContent as string
   const citations = args.citations as CitationInput[] | undefined
+  const exactSectionMatch = args.exactSectionMatch === true
 
   if (!sectionName || !rawContent) {
     return { success: false, message: 'Missing section name or new content' }
@@ -1191,7 +1429,9 @@ function executeRewriteSection(
   // Prepare content - convert markdown to TipTap JSON if needed
   const { content: newContent, instances } = prepareContent(rawContent, papers, citations)
 
-  const sectionBounds = findSectionBounds(editor, sectionName)
+  const sectionBounds = exactSectionMatch
+    ? findSectionBoundsExact(editor, sectionName)
+    : findSectionBounds(editor, sectionName)
 
   if (!sectionBounds.found) {
     toast.error(`Section "${sectionName}" not found`)
@@ -1260,8 +1500,8 @@ function executeDeleteContent(
     }
     if (matches.length === 0) {
       const message = `Could not find text: "${searchPhrase.slice(0, 50)}..."`
-      toast.error(message)
-      return { success: false, message }
+        toast.error(message)
+        return { success: false, message }
     }
 
     if (!blockId && !occurrenceIndex && matches.length > 1) {
@@ -1383,7 +1623,7 @@ function executeAddCitation(
     return { success: false, message: error }
   }
   if (matches.length === 0) {
-    const preview = afterPhrase.slice(0, 50)
+      const preview = afterPhrase.slice(0, 50)
     const scopedMsg = blockId ? ` in block ${blockId}` : section ? ` in section "${section}"` : ''
     toast.error(`Could not find text${scopedMsg}: "${preview}..."`)
     return { success: false, message: `Could not find text${scopedMsg}: "${preview}..."` }
@@ -1427,7 +1667,7 @@ function executeAddCitation(
   // Scan a few nodes ahead (whitespace, punctuation, then citation)
   // This catches cases like "claim. [citation]" where there's punctuation/space between
   let scanPos = insertPos
-  const maxScanDistance = 10 // characters
+  const maxScanDistance = 120 // characters
   const endScanPos = Math.min(insertPos + maxScanDistance, editor.state.doc.content.size)
   
   while (scanPos < endScanPos) {
@@ -1442,11 +1682,6 @@ function executeAddCitation(
         success: false, 
         message: 'Citation already exists shortly after this location - skipping to prevent duplicate' 
       }
-    }
-    
-    // If we hit actual text content (not just whitespace/punctuation), stop scanning
-    if (scanNode.isText && scanNode.text && /[a-zA-Z0-9]/.test(scanNode.text)) {
-      break
     }
     
     scanPos += scanNode.nodeSize
@@ -1740,7 +1975,7 @@ function executeMoveBlock(
   // Determine target insertion position
   let insertPos: number | null = null
 
-  const afterBlockMatch = targetLocation.match(/^after:(.+)$/i)
+  const afterBlockMatch = targetLocation.match(/^afterBlock:(.+)$/i) || targetLocation.match(/^after:(.+)$/i)
   const endOfSectionMatch = targetLocation.match(/^endOfSection:(.+)$/i)
   const startOfSectionMatch = targetLocation.match(/^startOfSection:(.+)$/i)
 
@@ -1800,8 +2035,8 @@ function executeMoveBlock(
   } else if (source) {
     // Extract the content before deleting
     const sourceSlice = editor.state.doc.slice(source.pos, source.endPos)
-    // Delete the source block first
-    tr.delete(source.pos, source.endPos)
+  // Delete the source block first
+  tr.delete(source.pos, source.endPos)
     // Map target position through the delete step to avoid drift.
     const mappedInsertPos = Math.max(
       0,
@@ -2027,8 +2262,8 @@ function executeFormatText(
   const markName = markNameByFormat[format]
   const markType = markName ? editor.state.schema.marks[markName] : undefined
   if (!markType) {
-    return { success: false, message: `Unknown format: ${format}` }
-  }
+        return { success: false, message: `Unknown format: ${format}` }
+    }
   const targets = applyToAll
     ? matches
     : [occurrenceIndex ? matches[occurrenceIndex - 1] : matches[0]]
@@ -2037,7 +2272,7 @@ function executeFormatText(
   for (const target of targets) {
     if (remove) {
       tr.removeMark(target.from, target.to, markType)
-    } else {
+  } else {
       tr.addMark(target.from, target.to, markType.create())
     }
   }
@@ -2072,6 +2307,7 @@ function executeInsertTable(
   const citations = args.citations as CitationInput[] | undefined
   const caption = args.caption as string | undefined
   const afterBlockId = args.afterBlockId as string | undefined
+  const afterPhrase = args.afterPhrase as string | undefined
   const location = args.location as string | undefined
 
   if (!headers || headers.length === 0) {
@@ -2160,6 +2396,32 @@ function executeInsertTable(
     return { success: true, message: 'Table inserted', blockId: afterBlockId }
   }
 
+  if (afterPhrase) {
+    const match = findTextInStructure(editor, afterPhrase)
+    if (!match.found) {
+      const message = `Could not find phrase for table insertion: "${afterPhrase.slice(0, 50)}..."`
+      toast.error(message)
+      return { success: false, message }
+    }
+
+    const range = matchToRange(match)
+    if (!range) {
+      return { success: false, message: 'Failed to calculate insertion range for table' }
+    }
+
+    const textblockBoundary = getContainingTextblockBoundary(editor, range.to)
+    const insertPos = textblockBoundary?.to ?? range.to
+
+    editor.chain()
+      .focus()
+      .setTextSelection(insertPos)
+      .insertContent(contentToInsert)
+      .run()
+    persistCitations()
+    toast.success('Table inserted')
+    return { success: true, message: 'Table inserted after phrase' }
+  }
+
   if (location) {
     const afterMatch = location.match(/^after:(.+)$/i)
     if (afterMatch) {
@@ -2210,7 +2472,7 @@ function executeEditTable(
   editor: Editor,
   args: Record<string, unknown>
 ): ToolExecutionResult {
-  const action = args.action as 'appendRow' | 'updateCell' | 'renameColumn'
+  const action = args.action as 'appendRow' | 'updateCell' | 'renameColumn' | 'removeColumn' | 'removeRow'
   const tableIndex = (args.tableIndex as number | undefined) ?? 0
   const section = args.section as string | undefined
   const citations = args.citations as CitationInput[] | undefined
@@ -2321,6 +2583,30 @@ function executeEditTable(
       return { success: false, message: 'Header row has invalid structure' }
     }
     headerRow.content[colIndex] = makeCell('tableHeader', header)
+  } else if (action === 'removeColumn') {
+    const colIndex = args.colIndex as number | undefined
+    if (typeof colIndex !== 'number') {
+      return { success: false, message: 'removeColumn requires colIndex' }
+    }
+    if (colIndex < 0 || colIndex >= colCount) {
+      return { success: false, message: `colIndex ${colIndex} out of range (0-${colCount - 1})` }
+    }
+    // Remove the cell at colIndex from every row (header + data rows)
+    for (const row of rows) {
+      if (Array.isArray(row.content)) {
+        ;(row.content as unknown[]).splice(colIndex, 1)
+      }
+    }
+  } else if (action === 'removeRow') {
+    const rowIndex = args.rowIndex as number | undefined
+    if (typeof rowIndex !== 'number') {
+      return { success: false, message: 'removeRow requires rowIndex' }
+    }
+    const targetRowPos = rowIndex + 1 // +1 to skip header row
+    if (targetRowPos < 1 || targetRowPos >= rows.length) {
+      return { success: false, message: `rowIndex ${rowIndex} out of range (0-${Math.max(0, rows.length - 2)})` }
+    }
+    rows.splice(targetRowPos, 1)
   } else {
     return { success: false, message: `Unsupported table action: ${String(action)}` }
   }
@@ -2341,7 +2627,11 @@ function executeEditTable(
       ? 'Appended row to table'
       : action === 'updateCell'
         ? 'Updated table cell'
-        : 'Renamed table column'
+        : action === 'renameColumn'
+          ? 'Renamed table column'
+          : action === 'removeColumn'
+            ? 'Removed table column'
+            : 'Removed table row'
   toast.success(message)
   return { success: true, message }
 }
@@ -2414,22 +2704,22 @@ function collectSearchMatches(
         }
       }
     } else {
-      const searchStr = matchCase ? findText : findText.toLowerCase()
-      const nodeText = matchCase ? textValue : textValue.toLowerCase()
-      let idx = 0
-      while (idx <= nodeText.length) {
+    const searchStr = matchCase ? findText : findText.toLowerCase()
+    const nodeText = matchCase ? textValue : textValue.toLowerCase()
+    let idx = 0
+    while (idx <= nodeText.length) {
         if (matches.length >= maxMatches) {
           truncated = true
           break
         }
-        const found = nodeText.indexOf(searchStr, idx)
-        if (found === -1) break
-        const matchFrom = pos + found
-        const matchTo = matchFrom + findText.length
-        if (matchFrom >= searchFrom && matchTo <= searchTo) {
-          matches.push({ from: matchFrom, to: matchTo, marks: node.marks })
-        }
-        idx = found + 1
+      const found = nodeText.indexOf(searchStr, idx)
+      if (found === -1) break
+      const matchFrom = pos + found
+      const matchTo = matchFrom + findText.length
+      if (matchFrom >= searchFrom && matchTo <= searchTo) {
+        matches.push({ from: matchFrom, to: matchTo, marks: node.marks })
+      }
+      idx = found + 1
       }
     }
   })

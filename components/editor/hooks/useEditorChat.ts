@@ -23,8 +23,10 @@ import { DefaultChatTransport, type UIMessage } from 'ai'
 interface ToolInvocation {
   toolName: string
   args: Record<string, unknown>
+  toolCallId?: string
   state?: string
   result?: unknown
+  errorText?: string
 }
 import { requiresReview, validateToolCall } from '@/lib/ai/tools/document-tools'
 import { getDocumentStructure } from '../extensions/BlockId'
@@ -80,6 +82,10 @@ function getToolSummary(toolName: string, args: Record<string, unknown>, accepte
     case 'insertContent': {
       const location = args.afterPhrase || args.afterBlockId || args.location || 'document'
       return `${action} insertion at ${preview(location)}`
+    }
+    case 'insertHeading': {
+      const location = args.afterPhrase || args.afterBlockId || args.location || 'cursor'
+      return `${action} heading "${preview(args.text)}" at ${preview(location)}`
     }
     case 'replaceBlock': {
       const target = args.searchPhrase || args.blockId || args.section || 'block'
@@ -160,6 +166,7 @@ export interface PendingToolCall {
 
 interface BatchToolResult {
   toolId: string
+  toolCallId?: string
   toolName: string
   args: Record<string, unknown>
   success: boolean
@@ -387,8 +394,10 @@ export function useEditorChat({
             return {
               toolName,
               args: parsedArgs,
+              toolCallId: p?.toolCallId ?? p?.toolInvocation?.toolCallId,
               state: p?.state ?? p?.toolInvocation?.state,
               result: p?.result ?? p?.toolInvocation?.result,
+              errorText: p?.errorText ?? p?.toolInvocation?.errorText,
             } as ToolInvocation
           })
           .filter(Boolean) as ToolInvocation[]
@@ -427,6 +436,89 @@ export function useEditorChat({
 
   const { messages, setMessages, sendMessage: chatSendMessage, status, error, stop: chatStop } = chat
   const isLoading = status === 'streaming' || status === 'submitted'
+
+  const updateMessageToolStates = useCallback((
+    messageId: string,
+    updates: Array<{
+      toolCallId?: string
+      toolName: string
+      args?: Record<string, unknown>
+      state: string
+      result?: Record<string, unknown>
+      errorText?: string
+    }>
+  ) => {
+    if (updates.length === 0) return
+
+    const updatesById = new Map(
+      updates
+        .filter(update => typeof update.toolCallId === 'string' && update.toolCallId.length > 0)
+        .map(update => [update.toolCallId as string, update])
+    )
+
+    setMessages((currentMessages: UIMessage[]) => currentMessages.map(message => {
+      if (message.id !== messageId || !Array.isArray(message.parts) || message.parts.length === 0) {
+        return message
+      }
+
+      const remainingFallbacks = updates.filter(update => !update.toolCallId)
+      let changed = false
+
+      const nextParts = message.parts.map((part: any) => {
+        const nested = part?.toolInvocation && typeof part.toolInvocation === 'object'
+          ? part.toolInvocation
+          : part
+
+        const toolName = (part?.type?.startsWith?.('tool-') && part.type !== 'tool-invocation' && part.type !== 'tool-call')
+          ? part.type.replace('tool-', '')
+          : (nested?.toolName ?? part?.toolName)
+
+        if (!toolName) return part
+
+        const toolCallId = part?.toolCallId ?? nested?.toolCallId
+        let update = toolCallId ? updatesById.get(toolCallId) : undefined
+
+        if (!update && remainingFallbacks.length > 0) {
+          const partArgs = part?.args ?? part?.input ?? nested?.args ?? nested?.input ?? {}
+          const partArgsSignature = JSON.stringify(partArgs)
+          const matchIndex = remainingFallbacks.findIndex(candidate =>
+            candidate.toolName === toolName &&
+            JSON.stringify(candidate.args ?? {}) === partArgsSignature
+          )
+
+          if (matchIndex >= 0) {
+            update = remainingFallbacks[matchIndex]
+            remainingFallbacks.splice(matchIndex, 1)
+          }
+        }
+
+        if (!update) return part
+
+        changed = true
+
+        if (part?.toolInvocation && typeof part.toolInvocation === 'object') {
+          return {
+            ...part,
+            toolInvocation: {
+              ...part.toolInvocation,
+              state: update.state,
+              result: update.result,
+              errorText: update.errorText,
+            },
+          }
+        }
+
+        return {
+          ...part,
+          state: update.state,
+          result: update.result,
+          errorText: update.errorText,
+        }
+      })
+
+      return changed ? { ...message, parts: nextParts } : message
+    }))
+  }, [setMessages])
 
   // Timeout mechanism: detect hung/stalled streams and reset.
   // If isLoading stays true for 90 seconds with no new content, stop the stream.
@@ -583,18 +675,22 @@ export function useEditorChat({
     }
   }, [pendingTools, sendToolResultsToAI, toolResultsVersion])
 
-  const showBatchChangeHighlights = useCallback((ed: Editor, messageId: string, changes: ReturnType<typeof computeDocumentChangeRanges>) => {
-    const successfulCount = activeBatchReviewRef.current?.calls.filter(call => call.success).length ?? 0
-    const failedCount = activeBatchReviewRef.current
-      ? activeBatchReviewRef.current.calls.length - successfulCount
-      : 0
+  const showBatchChangeHighlights = useCallback((
+    ed: Editor,
+    batch: ActiveBatchReview,
+    changes: ReturnType<typeof computeDocumentChangeRanges>
+  ) => {
+    // Keep batch state and visible review card state in lockstep.
+    activeBatchReviewRef.current = batch
+    const successfulCount = batch.calls.filter(call => call.success).length
+    const failedCount = batch.calls.length - successfulCount
 
-    const batchId = `${messageId}-batch-review`
+    const batchId = batch.id
     setPendingTools([{
       id: batchId,
       toolName: 'batchReview',
       args: { changeCount: changes.length },
-      messageId,
+      messageId: batch.messageId,
       preview: `${changes.length} document change(s) highlighted`,
       appliedCount: successfulCount,
       failedCount,
@@ -700,8 +796,8 @@ export function useEditorChat({
     
     // Track tool signatures we've seen in THIS batch to deduplicate
     const seenInBatch = new Set<string>()
-    const readOnlyQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string }> = []
-    const reviewQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string }> = []
+    const readOnlyQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string; toolCallId?: string }> = []
+    const reviewQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string; toolCallId?: string }> = []
 
     // --- Pass 1: Coalesce repeated granular replaceBlock calls into searchAndReplace ---
     const coalesced = coalesceToSearchAndReplace(invocations)
@@ -813,25 +909,50 @@ export function useEditorChat({
       seenInBatch.add(argsSignature)
       
       if (requiresReview(toolName)) {
-        reviewQueue.push({ toolName, args, toolId })
+        reviewQueue.push({ toolName, args, toolId, toolCallId: invocation.toolCallId })
       } else {
-        readOnlyQueue.push({ toolName, args, toolId })
+        readOnlyQueue.push({ toolName, args, toolId, toolCallId: invocation.toolCallId })
       }
     }
 
     import('../services/tool-executor')
-      .then(({ executeToolsAsUndoGroup }) => {
+      .then(({ executeToolsAsUndoGroup, preflightSearchAndReplace }) => {
         // Read-only queue: execute immediately and record outcomes.
         if (readOnlyQueue.length > 0) {
           const readOnlyResults = executeToolsAsUndoGroup(
             ed,
             readOnlyQueue.map(call => ({ toolName: call.toolName, args: call.args }))
           )
+          const messageStateUpdates: Array<{
+            toolCallId?: string
+            toolName: string
+            args: Record<string, unknown>
+            state: string
+            result?: Record<string, unknown>
+            errorText?: string
+          }> = []
           for (let i = 0; i < readOnlyQueue.length; i++) {
             const call = readOnlyQueue[i]
             const succeeded = readOnlyResults[i]?.success ?? false
             const executionMessage = readOnlyResults[i]?.message ?? 'unknown result'
             executedTools.current.add(call.toolId)
+            messageStateUpdates.push(
+              succeeded
+                ? {
+                    toolCallId: call.toolCallId,
+                    toolName: call.toolName,
+                    args: call.args,
+                    state: 'output-available',
+                    result: { success: true, message: executionMessage },
+                  }
+                : {
+                    toolCallId: call.toolCallId,
+                    toolName: call.toolName,
+                    args: call.args,
+                    state: 'output-error',
+                    errorText: executionMessage,
+                  }
+            )
             recordToolResult(
               messageId,
               call.toolId,
@@ -844,21 +965,58 @@ export function useEditorChat({
                 : `Execution failed: ${executionMessage}`
             )
           }
+          updateMessageToolStates(messageId, messageStateUpdates)
         }
 
         if (reviewQueue.length === 0) return
 
-        const snapshot = ed.getJSON()
-        const reviewResults = executeToolsAsUndoGroup(
-          ed,
-          reviewQueue.map(call => ({ toolName: call.toolName, args: call.args }))
-        )
+        // Preflight bulk search/replace before executing to avoid surprising
+        // large edits and give clearer failure reasons.
+        const preflightFailures: BatchToolResult[] = []
+        const executableReviewQueue: Array<{ toolName: string; args: Record<string, unknown>; toolId: string; toolCallId?: string }> = []
+        for (const call of reviewQueue) {
+          if (call.toolName !== 'searchAndReplace') {
+            executableReviewQueue.push(call)
+            continue
+          }
 
-        const calls: BatchToolResult[] = reviewQueue.map((call, index) => ({
-          ...call,
-          success: reviewResults[index]?.success ?? false,
-          message: reviewResults[index]?.message ?? 'unknown result',
-        }))
+          const preflight = preflightSearchAndReplace(ed, call.args)
+          if (preflight.error) {
+            preflightFailures.push({
+              ...call,
+              success: false,
+              message: preflight.error,
+            })
+            continue
+          }
+          if (preflight.matchCount === 0) {
+            const find = String(call.args.find || '')
+            preflightFailures.push({
+              ...call,
+              success: false,
+              message: `No matches found for "${find}"${preflight.scopeMsg}`,
+            })
+            continue
+          }
+          executableReviewQueue.push(call)
+        }
+
+        const snapshot = ed.getJSON()
+        const reviewResults = executableReviewQueue.length > 0
+          ? executeToolsAsUndoGroup(
+              ed,
+              executableReviewQueue.map(call => ({ toolName: call.toolName, args: call.args }))
+            )
+          : []
+
+        const calls: BatchToolResult[] = [
+          ...preflightFailures,
+          ...executableReviewQueue.map((call, index) => ({
+            ...call,
+            success: reviewResults[index]?.success ?? false,
+            message: reviewResults[index]?.message ?? 'unknown result',
+          })),
+        ]
 
         const successfulCalls = calls.filter(call => call.success)
         const failedCalls = calls.filter(call => !call.success)
@@ -866,13 +1024,22 @@ export function useEditorChat({
         if (successfulCalls.length > 0) {
           const changes = computeDocumentChangeRanges(snapshot, ed.state.doc)
           if (changes.length > 0) {
-            activeBatchReviewRef.current = {
+            if (failedCalls.length > 0) {
+              updateMessageToolStates(messageId, failedCalls.map(call => ({
+                toolCallId: call.toolCallId,
+                toolName: call.toolName,
+                args: call.args,
+                state: 'output-error',
+                errorText: call.message,
+              })))
+            }
+            const batch: ActiveBatchReview = {
               id: `${messageId}-batch-review`,
               messageId,
               snapshot,
               calls,
             }
-            showBatchChangeHighlights(ed, messageId, changes)
+            showBatchChangeHighlights(ed, batch, changes)
             if (failedCalls.length > 0) {
               toast.warning(`${failedCalls.length} edit${failedCalls.length > 1 ? 's' : ''} failed`, {
                 description: failedCalls.map(c => c.message).join('; ').slice(0, 120),
@@ -884,8 +1051,33 @@ export function useEditorChat({
         }
 
         // If we couldn't produce a review state, commit results immediately.
+        const messageStateUpdates: Array<{
+          toolCallId?: string
+          toolName: string
+          args: Record<string, unknown>
+          state: string
+          result?: Record<string, unknown>
+          errorText?: string
+        }> = []
         for (const call of calls) {
           executedTools.current.add(call.toolId)
+          messageStateUpdates.push(
+            call.success
+              ? {
+                  toolCallId: call.toolCallId,
+                  toolName: call.toolName,
+                  args: call.args,
+                  state: 'output-available',
+                  result: { success: true, message: call.message },
+                }
+              : {
+                  toolCallId: call.toolCallId,
+                  toolName: call.toolName,
+                  args: call.args,
+                  state: 'output-error',
+                  errorText: call.message,
+                }
+          )
           recordToolResult(
             messageId,
             call.toolId,
@@ -896,6 +1088,7 @@ export function useEditorChat({
               : `Execution failed: ${call.message}`
           )
         }
+        updateMessageToolStates(messageId, messageStateUpdates)
 
         if (successfulCalls.length > 0 && failedCalls.length === 0) {
           toast.success(`Applied ${successfulCalls.length} edit${successfulCalls.length === 1 ? '' : 's'}`, {
@@ -911,15 +1104,27 @@ export function useEditorChat({
       .catch((error) => {
         console.error('[useEditorChat] Failed grouped tool execution:', error)
       })
-  }, [recordToolResult, showBatchChangeHighlights])
+  }, [recordToolResult, showBatchChangeHighlights, updateMessageToolStates])
 
   const finalizeBatchReview = useCallback((keepChanges: boolean) => {
     const ed = editorRef.current
     const batch = activeBatchReviewRef.current
     if (!ed || !batch) return
 
+    const successfulCalls = batch.calls.filter(call => call.success)
+    const failedCalls = batch.calls.filter(call => !call.success)
+
     if (!keepChanges) {
-      ed.commands.setContent(batch.snapshot)
+      for (let i = 0; i < successfulCalls.length; i++) {
+        const didUndo = ed.chain().focus().undo().run()
+        if (!didUndo) {
+          toast.error('Could not undo the pending AI changes', {
+            description: 'The review is still active because the editor history could not be reversed.',
+            duration: 4000,
+          })
+          return
+        }
+      }
     }
 
     ed.commands.clearChangeHighlights()
@@ -927,17 +1132,45 @@ export function useEditorChat({
     setHasGhostPreviews(false)
     activeBatchReviewRef.current = null
 
-    let successfulCount = 0
-    let failedCount = 0
+    const messageStateUpdates: Array<{
+      toolCallId?: string
+      toolName: string
+      args: Record<string, unknown>
+      state: string
+      result?: Record<string, unknown>
+      errorText?: string
+    }> = []
     for (const call of batch.calls) {
       executedTools.current.add(call.toolId)
       if (!call.success) {
-        failedCount += 1
+        messageStateUpdates.push({
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          args: call.args,
+          state: 'output-error',
+          errorText: call.message,
+        })
         recordToolResult(batch.messageId, call.toolId, call.toolName, false, `Execution failed: ${call.message}`)
         continue
       }
 
-      successfulCount += 1
+      messageStateUpdates.push(
+        keepChanges
+          ? {
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              args: call.args,
+              state: 'output-available',
+              result: { success: true, kept: true, message: call.message },
+            }
+          : {
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              args: call.args,
+              state: 'output-available',
+              result: { success: true, discarded: true, message: call.message },
+            }
+      )
       recordToolResult(
         batch.messageId,
         call.toolId,
@@ -946,19 +1179,20 @@ export function useEditorChat({
         getToolSummary(call.toolName, call.args, keepChanges)
       )
     }
+    updateMessageToolStates(batch.messageId, messageStateUpdates)
 
     if (keepChanges) {
-      toast.success(`Kept ${successfulCount} edit${successfulCount === 1 ? '' : 's'}`, {
-        description: failedCount > 0 ? `${failedCount} tool call${failedCount === 1 ? '' : 's'} failed.` : 'Changes finalized.',
+      toast.success(`Kept ${successfulCalls.length} edit${successfulCalls.length === 1 ? '' : 's'}`, {
+        description: failedCalls.length > 0 ? `${failedCalls.length} tool call${failedCalls.length === 1 ? '' : 's'} failed.` : 'Changes finalized.',
         duration: 3500,
       })
     } else {
       toast.info('Undid applied AI changes', {
-        description: failedCount > 0 ? `${failedCount} tool call${failedCount === 1 ? '' : 's'} had already failed.` : undefined,
+        description: failedCalls.length > 0 ? `${failedCalls.length} tool call${failedCalls.length === 1 ? '' : 's'} had already failed.` : undefined,
         duration: 3500,
       })
     }
-  }, [recordToolResult])
+  }, [recordToolResult, updateMessageToolStates])
 
   const confirmAllTools = useCallback(() => {
     finalizeBatchReview(true)
@@ -989,6 +1223,10 @@ export function useEditorChat({
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim() || isLoading) return
+    if (pendingToolsRef.current.length > 0) {
+      toast.info('Finish reviewing the current AI changes first.')
+      return
+    }
     
     // Get fresh context right before sending
     const context = getEditorContext()
@@ -1011,6 +1249,10 @@ export function useEditorChat({
    */
   const sendMessage = useCallback((contentOrOptions: string | SendMessageOptions) => {
     if (isLoading) return
+    if (pendingToolsRef.current.length > 0) {
+      toast.info('Finish reviewing the current AI changes first.')
+      return
+    }
     
     const context = getEditorContext()
     

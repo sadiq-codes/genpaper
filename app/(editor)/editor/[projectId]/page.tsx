@@ -174,7 +174,7 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
   })()
 
   return (
-    <div className="h-screen w-full p-2 md:p-4">
+    <div className="h-screen min-w-0 box-border p-2 md:p-4">
       <ResearchEditor
         projectId={projectId}
         projectTitle={project.topic || 'Untitled Document'}

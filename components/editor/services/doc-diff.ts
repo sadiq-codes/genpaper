@@ -8,6 +8,7 @@ export interface DocumentChangeRange {
   type: DocumentChangeType
   from: number
   to: number
+  presentation?: 'table'
   oldContent?: string
   newContent?: string
 }
@@ -15,6 +16,7 @@ export interface DocumentChangeRange {
 interface CurrentTopLevelNode {
   from: number
   to: number
+  type: string
   signature: string
   textContent: string
 }
@@ -49,6 +51,7 @@ function getTopLevelCurrentNodes(doc: ProseMirrorNode): CurrentTopLevelNode[] {
     nodes.push({
       from: offset,
       to: offset + node.nodeSize,
+      type: node.type.name,
       signature: JSON.stringify(node.toJSON()),
       textContent: node.textContent || '',
     })
@@ -132,11 +135,14 @@ export function computeDocumentChangeRanges(
     // Modified block (fallback when we cannot classify as pure add/delete)
     if (i < oldNodes.length && j < currentNodes.length) {
       const currentNode = currentNodes[j]
+      const oldNodeType = (oldNodes[i] as Record<string, unknown>).type
+      const isTableChange = oldNodeType === 'table' || currentNode.type === 'table'
       ranges.push({
         id: `change-${++idCounter}`,
         type: 'modified',
         from: currentNode.from,
         to: currentNode.to,
+        ...(isTableChange ? { presentation: 'table' as const } : {}),
         oldContent: nodeTextFromJson(oldNodes[i]).trim(),
         newContent: currentNode.textContent.trim(),
       })

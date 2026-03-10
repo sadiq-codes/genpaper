@@ -37,9 +37,9 @@ export default async function AppLayout({
           
           <AppSidebar />
           
-          <SidebarInset>
+          <SidebarInset className="min-w-0 overflow-x-hidden">
             {/* Main content area - matches editor layout with bg-muted/30 */}
-            <main id="main-content" className="flex-1 min-h-screen bg-muted/30 p-2 md:p-4">
+            <main id="main-content" className="flex-1 min-h-screen min-w-0 overflow-x-hidden bg-muted/30 p-2 md:p-4">
               {children}
             </main>
           </SidebarInset>

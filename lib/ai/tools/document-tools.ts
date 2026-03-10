@@ -89,6 +89,8 @@ When searchPhrase has multiple matches, use occurrenceIndex (1-based) to select 
 
 CITATIONS: If newContent has [1], [2], [3] markers, include citations array.
 PRESERVE existing [@...] markers when editing - they are existing citations.
+REVISION FIDELITY: Preserve the original factual meaning, scope, and level of support unless the user explicitly asks to change them.
+Do not introduce new unsupported claims, methods, conclusions, or comparisons during a revision.
 
 Examples (illustrative, not exhaustive):
 - Replace whole paragraph: { blockId: "par_abc123", newContent: "New paragraph text" }
@@ -112,14 +114,24 @@ Examples (illustrative, not exhaustive):
  * Rewrite an entire section.
  */
 export const rewriteSection = tool({
-  description: `Completely rewrite a section. Use for major restructuring.
+  description: `Completely rewrite a section. Use ONLY for major restructuring of the entire section.
   
 WARNING: Replaces ALL content in the section. User will confirm.
-If newContent has [1], [2], [3] markers, include citations array.`,
+DO NOT use this for a local paragraph/sentence revision - use replaceBlock instead.
+
+CITATIONS:
+- PRESERVE existing [@...] markers when the supporting claim remains.
+- If you rewrite evidence-backed claims, keep them cited.
+- If newContent has [1], [2], [3] markers, include citations array.
+- Do not replace concrete cited content with generic uncited prose.
+REVISION FIDELITY:
+- Preserve the section's original factual scope and supported claims unless the user explicitly asks to broaden, narrow, or reframe them.
+- Do not introduce new unsupported claims such as extra methods, implications, or recommendations that were not present in the original.`,
   inputSchema: z.object({
     section: z.string().describe('Section name to rewrite'),
-    newContent: z.string().describe('Complete new section content (use [1], [2], [3] for citations)'),
+    newContent: z.string().describe('Complete new section content. Preserve existing [@...] citations when claims remain, and use [1], [2], [3] with citations array for any new citations'),
     citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker'),
+    exactSectionMatch: z.boolean().optional().describe('If true, match section heading exactly (prevents prefix/partial matches)'),
     reason: z.string().describe('Why rewriting is needed'),
   }),
 })
@@ -246,7 +258,7 @@ The source is identified by blockId, blockIds, or searchPhrase.
 The destination is specified by targetLocation.
 
 Examples (illustrative, not exhaustive):
-- Move paragraph after another: { blockId: "par_abc", targetLocation: "after:par_xyz" }
+- Move paragraph after another: { blockId: "par_abc", targetLocation: "afterBlock:par_xyz" }
 - Move to end of section: { blockId: "par_abc", targetLocation: "endOfSection:Methods" }
 - Move to start of section: { blockId: "par_abc", targetLocation: "startOfSection:Introduction" }
 - Move to end of document: { blockId: "par_abc", targetLocation: "end" }`,
@@ -255,7 +267,7 @@ Examples (illustrative, not exhaustive):
     blockIds: z.array(z.string()).optional().describe('Move multiple block IDs together (preserves provided order)'),
     searchPhrase: z.string().optional().describe('Text to find the block to move'),
     section: z.string().optional().describe('Section to scope the search'),
-    targetLocation: z.string().describe('Where to move: "after:blockId", "endOfSection:Name", "startOfSection:Name", "end"'),
+    targetLocation: z.string().describe('Where to move: "afterBlock:blockId", "endOfSection:Name", "startOfSection:Name", "end"'),
     reason: z.string().describe('Why this content should be moved'),
   }),
 })
@@ -318,12 +330,37 @@ Examples (illustrative, not exhaustive):
 })
 
 /**
+ * Insert a heading node.
+ */
+export const insertHeading = tool({
+  description: `Insert a heading into the document.
+
+Targeting (in order of preference):
+1. afterBlockId - Insert heading after a specific block
+2. afterPhrase - Insert heading after specific text
+3. location - General positioning: "cursor", "end", "after:SectionName", "start:SectionName"
+`,
+  inputSchema: z.object({
+    text: z.string().describe('Heading text'),
+    level: z.number().int().min(1).max(6).optional().describe('Heading level (1-6, default: 2)'),
+    afterBlockId: z.string().optional().describe('Insert heading after this block ID'),
+    afterPhrase: z.string().optional().describe('Insert heading after this specific text'),
+    location: z.string().optional().describe('General location: "cursor", "end", "after:SectionName", "start:SectionName"'),
+  }),
+})
+
+/**
  * Insert a structured table.
  */
 export const insertTable = tool({
   description: `Insert a table into the document with specified headers and rows. More reliable than inserting markdown tables.
 
 CITATIONS: Cell values can use [1], [2], [3] markers. Include citations array to map them.
+
+Targeting (in order of preference):
+1. afterBlockId
+2. afterPhrase
+3. location ("end", "after:SectionName")
 
 Example (illustrative, not exhaustive):
 {
@@ -345,6 +382,7 @@ Example (illustrative, not exhaustive):
     citations: z.array(citationEntrySchema).optional().describe('Citation data for each [N] marker in cell values'),
     caption: z.string().optional().describe('Optional table caption'),
     afterBlockId: z.string().optional().describe('Insert table after this block'),
+    afterPhrase: z.string().optional().describe('Insert table after this exact phrase'),
     location: z.string().optional().describe('General location: "cursor", "end", "after:SectionName"'),
   }),
 })
@@ -359,17 +397,21 @@ Supported actions:
 - appendRow: add a new data row
 - updateCell: update a specific data cell
 - renameColumn: rename a column header
+- removeColumn: permanently delete an entire column (header + all its cells)
+- removeRow: permanently delete a data row (0-based, excludes header)
 
 Targeting:
 - tableIndex (0-based) selects which table to edit in scope
-- section can limit scope when there are many tables`,
+- section can limit scope when there are many tables
+
+IMPORTANT: Use removeColumn when the user asks to delete/remove a column. Never rename a column to "(Column Removed)" or similar — use removeColumn instead.`,
   inputSchema: z.object({
-    action: z.enum(['appendRow', 'updateCell', 'renameColumn']).describe('Table edit action'),
+    action: z.enum(['appendRow', 'updateCell', 'renameColumn', 'removeColumn', 'removeRow']).describe('Table edit action'),
     tableIndex: z.number().int().min(0).optional().describe('Which table to edit in scope (0-based, default: 0)'),
     section: z.string().optional().describe('Limit table search to this section'),
     row: z.array(z.string()).optional().describe('Row values for appendRow'),
-    rowIndex: z.number().int().min(0).optional().describe('Data row index for updateCell (0-based, excludes header row)'),
-    colIndex: z.number().int().min(0).optional().describe('Column index for updateCell/renameColumn (0-based)'),
+    rowIndex: z.number().int().min(0).optional().describe('Data row index for updateCell/removeRow (0-based, excludes header row)'),
+    colIndex: z.number().int().min(0).optional().describe('Column index for updateCell/renameColumn/removeColumn (0-based)'),
     value: z.string().optional().describe('New cell value for updateCell'),
     header: z.string().optional().describe('New header text for renameColumn'),
     citations: z.array(citationEntrySchema).optional().describe('Citation data for [N] markers in row/value/header'),
@@ -446,6 +488,7 @@ Examples (illustrative, not exhaustive):
  */
 export const documentTools = {
   insertContent,
+  insertHeading,
   replaceBlock,
   rewriteSection,
   deleteContent,
@@ -468,6 +511,7 @@ export const documentTools = {
 
 export const toolReviewRequirements: Record<string, boolean> = {
   insertContent: true,
+  insertHeading: true,
   replaceBlock: true,
   rewriteSection: true,
   deleteContent: true,
@@ -576,10 +620,22 @@ export function validateToolCall(
       if (!args.newContent || typeof args.newContent !== 'string') {
         return { valid: false, error: 'rewriteSection requires newContent' }
       }
+      if (args.exactSectionMatch !== undefined && typeof args.exactSectionMatch !== 'boolean') {
+        return { valid: false, error: 'rewriteSection exactSectionMatch must be a boolean when provided' }
+      }
       // Check citation format
       const rewriteWarning = checkCitationFormat(args.newContent, citations)
       if (rewriteWarning) {
         return { valid: false, error: rewriteWarning }
+      }
+      break
+
+    case 'insertHeading':
+      if (!args.text || typeof args.text !== 'string') {
+        return { valid: false, error: 'insertHeading requires text' }
+      }
+      if (args.level !== undefined && (typeof args.level !== 'number' || !Number.isInteger(args.level) || args.level < 1 || args.level > 6)) {
+        return { valid: false, error: 'insertHeading level must be an integer between 1 and 6' }
       }
       break
       
@@ -627,6 +683,9 @@ export function validateToolCall(
       if (!args.targetLocation || typeof args.targetLocation !== 'string') {
         return { valid: false, error: 'moveBlock requires targetLocation' }
       }
+      if (!/^(afterBlock:.+|after:.+|endOfSection:.+|startOfSection:.+|end)$/i.test(args.targetLocation)) {
+        return { valid: false, error: 'moveBlock targetLocation must be one of: afterBlock:..., endOfSection:..., startOfSection:..., end' }
+      }
       if (args.blockIds && (!Array.isArray(args.blockIds) || (args.blockIds as unknown[]).length === 0)) {
         return { valid: false, error: 'moveBlock blockIds must be a non-empty array when provided' }
       }
@@ -666,14 +725,17 @@ export function validateToolCall(
       if (!Array.isArray(args.rows)) {
         return { valid: false, error: 'insertTable requires rows array' }
       }
+      if (args.afterPhrase !== undefined && typeof args.afterPhrase !== 'string') {
+        return { valid: false, error: 'insertTable afterPhrase must be a string when provided' }
+      }
       break
 
     case 'editTable':
       if (!args.action || typeof args.action !== 'string') {
         return { valid: false, error: 'editTable requires action' }
       }
-      if (!['appendRow', 'updateCell', 'renameColumn'].includes(args.action)) {
-        return { valid: false, error: 'editTable action must be appendRow, updateCell, or renameColumn' }
+      if (!['appendRow', 'updateCell', 'renameColumn', 'removeColumn', 'removeRow'].includes(args.action)) {
+        return { valid: false, error: 'editTable action must be appendRow, updateCell, renameColumn, removeColumn, or removeRow' }
       }
       if (args.action === 'appendRow' && !Array.isArray(args.row)) {
         return { valid: false, error: 'editTable appendRow requires row array' }
@@ -692,6 +754,16 @@ export function validateToolCall(
         }
         if (typeof args.header !== 'string') {
           return { valid: false, error: 'editTable renameColumn requires header' }
+        }
+      }
+      if (args.action === 'removeColumn') {
+        if (typeof args.colIndex !== 'number') {
+          return { valid: false, error: 'editTable removeColumn requires colIndex' }
+        }
+      }
+      if (args.action === 'removeRow') {
+        if (typeof args.rowIndex !== 'number') {
+          return { valid: false, error: 'editTable removeRow requires rowIndex' }
         }
       }
       if (args.action === 'appendRow' && Array.isArray(args.row)) {

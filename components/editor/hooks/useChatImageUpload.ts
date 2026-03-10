@@ -10,7 +10,6 @@
 
 import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
-import { createClient } from '@/lib/supabase/client'
 
 interface UseChatImageUploadOptions {
   /** Project ID for organizing uploads */
@@ -28,19 +27,8 @@ interface UseChatImageUploadReturn {
   isUploading: boolean
 }
 
-const CHAT_IMAGES_BUCKET = 'chat-images'
 const DEFAULT_MAX_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-
-/**
- * Generate a unique filename for the uploaded image
- */
-function generateFilename(projectId: string, file: File): string {
-  const timestamp = Date.now()
-  const random = Math.random().toString(36).substring(2, 8)
-  const extension = file.name.split('.').pop() || 'png'
-  return `${projectId}/${timestamp}-${random}.${extension}`
-}
 
 export function useChatImageUpload({
   projectId,
@@ -75,35 +63,32 @@ export function useChatImageUpload({
     setIsUploading(true)
 
     try {
-      const supabase = createClient()
-      const filename = generateFilename(projectId, file)
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('projectId', projectId)
 
-      // Upload to Supabase storage
-      const { error: uploadError } = await supabase.storage
-        .from(CHAT_IMAGES_BUCKET)
-        .upload(filename, file, {
-          cacheControl: '3600',
-          upsert: false,
-        })
+      const response = await fetch('/api/editor/chat/upload-image', {
+        method: 'POST',
+        body: formData,
+      })
 
-      if (uploadError) {
-        console.error('Image upload error:', uploadError)
+      const data = await response.json().catch(() => ({ error: 'Failed to upload image' }))
+      if (!response.ok || !data.url) {
+        const message = data.error || 'Failed to upload image'
+        console.error('Image upload error:', message)
         toast.error('Failed to upload image', {
-          description: uploadError.message,
+          description: message,
         })
         return null
       }
 
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from(CHAT_IMAGES_BUCKET)
-        .getPublicUrl(filename)
-
-      return urlData.publicUrl
+      return data.url as string
 
     } catch (error) {
       console.error('Image upload error:', error)
-      toast.error('Failed to upload image')
+      toast.error('Failed to upload image', {
+        description: error instanceof Error ? error.message : undefined,
+      })
       return null
     } finally {
       setIsUploading(false)

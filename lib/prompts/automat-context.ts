@@ -240,14 +240,19 @@ export const DEFAULT_CHAT_TOOLS: ToolDefinition[] = [
     preferredFor: 'Adding new paragraphs, sections, content with citations',
   },
   {
+    name: 'insertHeading',
+    description: 'Insert a heading at a precise location (afterBlockId, afterPhrase, or location).',
+    preferredFor: 'Adding new section/subsection titles',
+  },
+  {
     name: 'replaceBlock',
     description: 'Replace a block\'s content entirely (use blockId). Use [N] markers AND `citations` array for new citations. Preserve existing [@...] markers.',
     preferredFor: 'Rewriting paragraphs with citations, editing content',
   },
   {
     name: 'rewriteSection',
-    description: 'Rewrite an entire section (requires user confirmation). Include `citations` array if adding citations.',
-    preferredFor: 'Major section overhauls, restructuring',
+    description: 'Rewrite an entire section (requires user confirmation). Use only for true section-wide overhauls. Preserve existing [@...] markers when claims remain, and include `citations` array for new [N] citations.',
+    preferredFor: 'Major section overhauls, full-section restructuring',
   },
   {
     name: 'deleteContent',

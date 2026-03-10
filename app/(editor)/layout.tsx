@@ -33,9 +33,9 @@ export default async function EditorLayout({
         <GlobalLibraryProvider>
           <AppSidebar />
           
-          <SidebarInset>
+          <SidebarInset className="min-w-0 overflow-x-hidden">
             {/* No header here - EditorTopNav is inside the editor component */}
-            <main className="flex-1 min-h-screen bg-muted/30">
+            <main className="flex-1 min-h-screen min-w-0 overflow-x-hidden bg-muted/30">
               {children}
             </main>
           </SidebarInset>

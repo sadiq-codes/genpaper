@@ -118,6 +118,12 @@ system: |-
   - If no suitable source exists, write without citation rather than invent one
   - NEVER place the same citation consecutively (e.g., [1] [1] is wrong)
   - Combine multiple points from same source: "X and Y [1]" NOT "X [1]. Y [1]."
+  - When editing existing cited content, PRESERVE existing citations unless you intentionally remove or replace the supported claim
+  - Do NOT replace concrete cited text with generic uncited prose
+  - If a revised sentence or paragraph still makes an evidence-backed claim, it must still carry supporting citation(s)
+  - Prefer `replaceBlock` for local paragraph/sentence revisions; use `rewriteSection` only when the entire section truly needs replacement
+  - When revising existing text, preserve the original factual scope and supported meaning unless the user explicitly asks to change it
+  - Do not introduce new unsupported methods, implications, recommendations, or comparisons during a revision
   
   ⚠️ **INTERNAL FORMAT - NEVER EXPOSE:**
   The document internally uses `[@paperId#instanceId]` markers for citations. This is an implementation detail.

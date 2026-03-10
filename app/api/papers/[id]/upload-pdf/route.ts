@@ -3,6 +3,7 @@ export const runtime = 'nodejs'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { ensureStorageBucket, PAPER_PDFS_BUCKET } from '@/lib/supabase/storage-buckets'
 import { sanitizeFilename } from '@/lib/utils/text'
 
 /**
@@ -70,22 +71,36 @@ export async function POST(
     const storagePath = `${user.id}/${Date.now()}-${sanitizedFileName}`
 
     // Upload to storage
-    const { error: uploadError } = await serviceClient
-      .storage
-      .from('papers')
-      .upload(storagePath, fileBuffer, {
-        contentType: 'application/pdf',
-        upsert: false,
+    let uploadError: { message?: string } | null = null
+    const attemptUpload = async () => {
+      const result = await serviceClient
+        .storage
+        .from(PAPER_PDFS_BUCKET)
+        .upload(storagePath, fileBuffer, {
+          contentType: 'application/pdf',
+          upsert: false,
+        })
+      uploadError = result.error
+    }
+
+    await attemptUpload()
+
+    if (uploadError?.message?.includes('Bucket not found')) {
+      await ensureStorageBucket(serviceClient, PAPER_PDFS_BUCKET, {
+        public: true,
+        fileSizeLimit: maxSize,
       })
+      await attemptUpload()
+    }
 
     if (uploadError) {
       console.error('PDF upload error:', uploadError)
-      return NextResponse.json({ error: 'Failed to upload PDF' }, { status: 500 })
+      return NextResponse.json({ error: uploadError.message || 'Failed to upload PDF' }, { status: 500 })
     }
 
     const { data: urlData } = serviceClient
       .storage
-      .from('papers')
+      .from(PAPER_PDFS_BUCKET)
       .getPublicUrl(storagePath)
 
     const pdfUrl = urlData.publicUrl

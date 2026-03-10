@@ -373,9 +373,13 @@ export function DocumentEditor({
   // Callbacks that depend on editor (must be after useEditor)
   const handleAiEdit = useCallback((text: string) => {
     if (!editor) return
+    if (pendingEditCount > 0) {
+      toast.info('Finish reviewing the current AI changes first.')
+      return
+    }
     const { from, to } = editor.state.selection
     setInlineEdit({ selectedText: text, from, to })
-  }, [editor])
+  }, [editor, pendingEditCount])
 
   const handleOpenCitationPicker = useCallback(() => {
     if (!editor) return
@@ -806,7 +810,7 @@ export function DocumentEditor({
   const canDeleteTable = editor.can().chain().focus().deleteTable().run()
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex min-w-0 flex-col h-full bg-background">
       {/* Editor toolbar */}
       <div className="flex items-center border-b border-border/30 shrink-0 sticky top-0 z-10 bg-background">
         {/* Sidebar toggle - pinned outside scroll area */}
@@ -898,7 +902,7 @@ export function DocumentEditor({
         </div>
       </div>
       
-      <div ref={editorScrollContainerRef} className="flex-1 overflow-auto relative">
+      <div ref={editorScrollContainerRef} className="flex-1 min-w-0 overflow-auto relative">
         {/* Review Toolbar - shows during batch review */}
         {pendingEditCount > 0 && (
           <ReviewToolbar
@@ -968,7 +972,7 @@ export function DocumentEditor({
             onClose={handleCloseCitationPicker}
           />
         )}
-        <EditorContent editor={editor} className="h-full" />
+        <EditorContent editor={editor} className="h-full min-w-0" />
         <CitationPopover
           editor={editor}
           projectId={projectId}

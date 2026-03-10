@@ -4,7 +4,7 @@ import { useRef, useEffect, useCallback, memo, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 // Native scroll used instead of Radix ScrollArea for reliable scrolling in nested flex layouts
-import { Bot, User, Wrench, Trash2, Square, MessageSquare, X } from 'lucide-react'
+import { Bot, User, Wrench, Trash2, Square, MessageSquare, X, CheckCircle2, Clock3, AlertCircle, Loader2, Undo2 } from 'lucide-react'
 import { RichChatInput } from './RichChatInput'
 import { EvidencePanel } from './EvidencePanel'
 import { ChatLimitBanner } from '@/components/billing/chat-limit-banner'
@@ -213,22 +213,84 @@ export interface ChatSendOptions {
 // COMPONENTS
 // =============================================================================
 
-function ToolCallBadge({ toolName }: { toolName: string }) {
-  const toolLabels: Record<string, string> = {
-    insertContent: 'Insert',
-    rewriteSection: 'Rewrite',
-    deleteContent: 'Delete',
-    addCitation: 'Cite',
-    highlightText: 'Highlight',
-    addComment: 'Comment',
-  }
+type ToolDisplayStatus = 'review' | 'requested' | 'running' | 'completed' | 'discarded' | 'failed'
 
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-foreground/80 text-background px-2 py-0.5 text-[9px] font-medium tracking-wide uppercase">
-      <Wrench className="h-2 w-2" />
-      {toolLabels[toolName] || toolName}
-    </span>
-  )
+const READ_ONLY_TOOLS = new Set(['searchDocument'])
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function getToolActionLabel(toolName: string, args: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'insertContent':
+      return 'Added content'
+    case 'insertHeading':
+      return 'Inserted heading'
+    case 'rewriteSection':
+      return 'Rewrote section'
+    case 'replaceBlock':
+      return 'Replaced text'
+    case 'deleteContent':
+      return 'Removed content'
+    case 'searchAndReplace':
+      return 'Bulk replace'
+    case 'addCitation':
+      return 'Added citation'
+    case 'insertTable':
+      return 'Inserted table'
+    case 'highlightText':
+      return 'Highlighted text'
+    case 'addComment':
+      return 'Added comment'
+    case 'moveBlock':
+      return 'Moved block'
+    case 'mergeBlocks':
+      return 'Merged blocks'
+    case 'splitBlock':
+      return 'Split block'
+    case 'formatText':
+      return typeof args.format === 'string'
+        ? `Formatted ${args.format}`
+        : 'Formatted text'
+    case 'searchDocument':
+      return 'Searched document'
+    case 'editTable': {
+      switch (args.action) {
+        case 'appendRow':
+          return 'Added table row'
+        case 'updateCell':
+          return 'Updated table'
+        case 'renameColumn':
+          return 'Renamed table column'
+        case 'removeColumn':
+          return 'Removed table column'
+        case 'removeRow':
+          return 'Removed table row'
+        default:
+          return 'Updated table'
+      }
+    }
+    default:
+      return toolName.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, char => char.toUpperCase())
+  }
+}
+
+function getToolStatus(
+  rawState: string | undefined,
+  result: unknown,
+  errorText: string | undefined
+): ToolDisplayStatus {
+  const resultRecord = toRecord(result)
+  if (resultRecord?.discarded === true) return 'discarded'
+  if (errorText || rawState === 'output-error') return 'failed'
+  if (resultRecord?.success === true || rawState === 'output-available' || rawState === 'result') {
+    return 'completed'
+  }
+  if (rawState === 'input-streaming' || rawState === 'call') return 'running'
+  return 'requested'
 }
 
 
@@ -255,6 +317,11 @@ function getMessageText(message: UIMessage): string {
 interface ToolInvocationDisplay {
   toolCallId: string
   toolName: string
+  args: Record<string, unknown>
+  rawState?: string
+  status: ToolDisplayStatus
+  errorText?: string
+  result?: unknown
 }
 
 function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
@@ -275,18 +342,154 @@ function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
     })
      
     .map((p: any) => {
+      const nested = toRecord(p?.toolInvocation) ?? toRecord(p) ?? {}
       // AI SDK v6 uses type like 'tool-insertContent' where tool name is in the type
       const toolName = (p.type?.startsWith('tool-') && p.type !== 'tool-invocation' && p.type !== 'tool-call')
         ? p.type.replace('tool-', '')  // 'tool-insertContent' → 'insertContent'
-        : (p.toolInvocation?.toolName || p.toolName || 'unknown')
+        : (nested.toolName || p.toolName || 'unknown')
       
-      const toolCallId = p.toolCallId || p.toolInvocation?.toolCallId || p.id || Math.random().toString()
+      const toolCallId = p.toolCallId || nested.toolCallId || p.id || `${message.id}-${toolName}-${Math.random().toString(36).slice(2)}`
+      const args = toRecord(p.args) ?? toRecord(p.input) ?? toRecord(nested.args) ?? toRecord(nested.input) ?? {}
+      const rawState = typeof (p.state ?? nested.state) === 'string'
+        ? String(p.state ?? nested.state)
+        : undefined
+      const errorText = typeof (p.errorText ?? nested.errorText) === 'string'
+        ? String(p.errorText ?? nested.errorText)
+        : undefined
+      const result = p.result ?? nested.result
       
       return {
         toolCallId,
         toolName,
+        args,
+        rawState,
+        status: getToolStatus(rawState, result, errorText),
+        errorText,
+        result,
       }
     })
+}
+
+function ToolCallSummary({
+  invocations,
+  isActiveReview = false,
+  activeReviewCount = 0,
+}: {
+  invocations: ToolInvocationDisplay[]
+  isActiveReview?: boolean
+  activeReviewCount?: number
+}) {
+  const totalCount = isActiveReview && activeReviewCount > 0 ? activeReviewCount : invocations.length
+  const hasChanges = invocations.some(invocation => !READ_ONLY_TOOLS.has(invocation.toolName))
+  const noun = totalCount === 1 ? (hasChanges ? 'change' : 'action') : (hasChanges ? 'changes' : 'actions')
+  const counts = invocations.reduce(
+    (acc, invocation) => {
+      acc[invocation.status] += 1
+      return acc
+    },
+    { review: 0, requested: 0, running: 0, completed: 0, discarded: 0, failed: 0 } as Record<ToolDisplayStatus, number>
+  )
+
+  let status: ToolDisplayStatus = 'requested'
+  let summary = `Prepared ${totalCount} ${noun}`
+
+  if (isActiveReview) {
+    status = 'review'
+    summary = `${totalCount} ${noun} ready`
+  } else if (counts.running > 0) {
+    status = 'running'
+    summary = `Applying ${totalCount} ${noun}`
+  } else if (counts.failed === invocations.length) {
+    status = 'failed'
+    summary = `${totalCount} ${noun} failed`
+  } else if (counts.discarded === invocations.length) {
+    status = 'discarded'
+    summary = `Dismissed ${totalCount} ${noun}`
+  } else if (counts.completed === invocations.length) {
+    status = 'completed'
+    summary = `Completed ${totalCount} ${noun}`
+  } else if (counts.completed > 0 && counts.failed > 0) {
+    status = 'completed'
+    summary = `${counts.completed} completed, ${counts.failed} failed`
+  }
+
+  const grouped = Array.from(
+    invocations.reduce((map, invocation) => {
+      const label = getToolActionLabel(invocation.toolName, invocation.args)
+      const existing = map.get(label)
+      if (existing) {
+        existing.count += 1
+      } else {
+        map.set(label, { label, count: 1 })
+      }
+      return map
+    }, new Map<string, { label: string; count: number }>())
+      .values()
+  ).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+
+  const visibleGroups = grouped.slice(0, 3)
+  const hiddenCount = grouped.slice(3).reduce((sum, group) => sum + group.count, 0)
+
+  const statusProps: Record<ToolDisplayStatus, { icon: typeof Clock3; className: string }> = {
+    review: {
+      icon: Clock3,
+      className: 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    },
+    requested: {
+      icon: Wrench,
+      className: 'border-border/50 bg-muted/35 text-foreground/75',
+    },
+    running: {
+      icon: Loader2,
+      className: 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+    },
+    completed: {
+      icon: CheckCircle2,
+      className: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+    },
+    discarded: {
+      icon: Undo2,
+      className: 'border-border/50 bg-muted/45 text-muted-foreground',
+    },
+    failed: {
+      icon: AlertCircle,
+      className: 'border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300',
+    },
+  }
+
+  const { icon: StatusIcon, className } = statusProps[status]
+
+  return (
+    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+      <span className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-medium',
+        className
+      )}>
+        <StatusIcon className={cn('h-3 w-3', status === 'running' && 'animate-spin')} />
+        <span>{summary}</span>
+      </span>
+
+      {visibleGroups.map((group) => (
+        <span
+          key={group.label}
+          className="inline-flex items-center gap-1 rounded-full border border-border/45 bg-background/80 px-2.5 py-1 text-[10px] font-medium text-muted-foreground"
+        >
+          <span>{group.label}</span>
+          {group.count > 1 && (
+            <span className="rounded-full bg-muted px-1 py-0 text-[9px] font-semibold text-foreground/75">
+              {group.count}
+            </span>
+          )}
+        </span>
+      ))}
+
+      {hiddenCount > 0 && (
+        <span className="inline-flex items-center rounded-full border border-border/40 bg-background/70 px-2 py-1 text-[10px] text-muted-foreground">
+          +{hiddenCount} more
+        </span>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -296,9 +499,17 @@ function getToolInvocations(message: UIMessage): ToolInvocationDisplay[] {
 const MessageBubble = memo(function MessageBubble({ 
   message,
   papers = [],
+  isActiveReview = false,
+  activeReviewCount = 0,
+  isContinuation = false,
+  hideBottomDivider = false,
 }: { 
   message: UIMessage
   papers?: ProjectPaper[]
+  isActiveReview?: boolean
+  activeReviewCount?: number
+  isContinuation?: boolean
+  hideBottomDivider?: boolean
 }) {
   const isAssistant = message.role === 'assistant'
   
@@ -320,33 +531,40 @@ const MessageBubble = memo(function MessageBubble({
 
   // Memoize timestamp - stable per message (created once when message first renders)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const timestamp = useMemo(() => new Date(), [])
+  const createdAt = (message as UIMessage & { createdAt?: string | Date }).createdAt
+  const timestamp = useMemo(() => (
+    createdAt ? new Date(createdAt) : new Date()
+  ), [createdAt])
 
   return (
     <div className={cn(
       "px-4 py-4 border-b border-border/20 last:border-b-0",
+      isContinuation && "pt-1",
+      hideBottomDivider && "border-b-0",
       !isAssistant && "bg-muted/20"
     )}>
       {/* Role header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <div className={cn(
-            "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
-            isAssistant ? "bg-foreground/80 text-background" : "border border-border/40"
-          )}>
-            {isAssistant ? <Bot className="h-2.5 w-2.5" /> : <User className="h-2.5 w-2.5 text-muted-foreground" />}
+      {!isContinuation && (
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <div className={cn(
+              "w-5 h-5 rounded-full flex items-center justify-center shrink-0",
+              isAssistant ? "bg-foreground/80 text-background" : "border border-border/40"
+            )}>
+              {isAssistant ? <Bot className="h-2.5 w-2.5" /> : <User className="h-2.5 w-2.5 text-muted-foreground" />}
+            </div>
+            <span className="font-instrument text-sm tracking-tight">
+              {isAssistant ? 'Assistant' : 'You'}
+            </span>
           </div>
-          <span className="font-instrument text-sm tracking-tight">
-            {isAssistant ? 'Assistant' : 'You'}
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
-        <span className="text-[10px] text-muted-foreground tabular-nums">
-          {timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </span>
-      </div>
+      )}
       
       {/* Message content */}
-      {(content || toolInvocations.length > 0) && (
+      {content && (
         <div className={cn(
           "text-[13px] leading-[1.7] text-foreground/85",
           "prose prose-sm prose-neutral dark:prose-invert max-w-none",
@@ -363,17 +581,17 @@ const MessageBubble = memo(function MessageBubble({
           "[&_a]:text-foreground/80 [&_a]:underline [&_a]:decoration-foreground/25 [&_a]:underline-offset-2 [&_a]:hover:text-foreground [&_a]:hover:decoration-foreground/50",
           isAssistant ? "pl-0.5" : ""
         )}>
-          {content ? <MemoizedMarkdown content={content} papers={papers} /> : <span className="text-muted-foreground italic text-xs font-instrument">Applying edits…</span>}
+          <MemoizedMarkdown content={content} papers={papers} />
         </div>
       )}
 
       {/* Tool invocations */}
-      {toolInvocations && toolInvocations.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap gap-1">
-          {toolInvocations.map((invocation) => (
-            <ToolCallBadge key={invocation.toolCallId} toolName={invocation.toolName} />
-          ))}
-        </div>
+      {toolInvocations.length > 0 && (
+        <ToolCallSummary
+          invocations={toolInvocations}
+          isActiveReview={isActiveReview}
+          activeReviewCount={activeReviewCount}
+        />
       )}
 
       {/* Evidence */}
@@ -441,6 +659,7 @@ export function ChatTab() {
     projectId,
     insertCitation,
     pendingTools,
+    pendingEditCount,
     clearChatHistory: onClearHistory,
     stopGeneration: onStop,
     chatComposerPrefill,
@@ -455,6 +674,7 @@ export function ChatTab() {
   // Image upload hook
   const { uploadImage, isUploading } = useChatImageUpload({ projectId })
   const { canChat } = useSubscription()
+  const activeToolMessageId = pendingTools[0]?.messageId ?? null
   
   // Get length of the last message content (for streaming detection)
   const lastMessage = messages[messages.length - 1]
@@ -585,6 +805,7 @@ export function ChatTab() {
           </button>
         </div>
       )}
+
       
       {/* Messages area - takes remaining space and scrolls */}
       <div
@@ -597,6 +818,10 @@ export function ChatTab() {
         ) : (
           <div>
             {messages.map((message, index) => {
+              const prevMessage = index > 0 ? messages[index - 1] : null
+              const nextMessage = index < messages.length - 1 ? messages[index + 1] : null
+              const isAssistantContinuation = message.role === 'assistant' && prevMessage?.role === 'assistant'
+              const hasAssistantContinuationAfter = message.role === 'assistant' && nextMessage?.role === 'assistant'
               // Skip rendering an empty assistant message while loading —
               // the LoadingBubble handles that visual state instead.
               if (
@@ -613,6 +838,10 @@ export function ChatTab() {
                   key={message.id} 
                   message={message}
                   papers={papers}
+                  isActiveReview={message.id === activeToolMessageId}
+                  activeReviewCount={message.id === activeToolMessageId ? pendingEditCount : 0}
+                  isContinuation={isAssistantContinuation}
+                  hideBottomDivider={hasAssistantContinuationAfter}
                 />
               )
             })}

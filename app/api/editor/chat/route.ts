@@ -42,6 +42,12 @@ interface ChatRequest {
 // HELPERS
 // =============================================================================
 
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
 /**
  * Build system prompt with document and research context using AUTOMAT framework.
  * 
@@ -872,8 +878,10 @@ export async function POST(request: NextRequest) {
           await saveMessages(projectId, ragQuery, {
             content: text,
             toolInvocations: toolCalls?.map(tc => ({
+              toolCallId: 'toolCallId' in tc && typeof tc.toolCallId === 'string' ? tc.toolCallId : undefined,
               toolName: tc.toolName,
               args: 'input' in tc ? tc.input : {},
+              state: 'state' in tc && typeof tc.state === 'string' ? tc.state : 'input-available',
               requiresConfirmation: requiresReview(tc.toolName),
             })),
           })
@@ -957,13 +965,50 @@ export async function GET(request: NextRequest) {
     }
 
     // Transform to UIMessage format with parts array (Vercel AI SDK v6 format)
-    // This ensures consistency between what client sends and receives
-    const formattedMessages: UIMessage[] = (messages || []).map(m => ({
-      id: m.id,
-      role: m.role as 'user' | 'assistant' | 'system',
-      parts: [{ type: 'text' as const, text: m.content }],
-      createdAt: new Date(m.created_at),
-    }))
+    // This ensures consistency between what client sends and receives.
+    // For assistant messages with saved tool_invocations, reconstruct tool-invocation
+    // parts so the chat UI shows tool call badges after a page refresh.
+    const formattedMessages: UIMessage[] = (messages || []).map(m => {
+      const textPart = { type: 'text' as const, text: m.content || '' }
+
+      if (m.role !== 'assistant') {
+        return {
+          id: m.id,
+          role: m.role as 'user' | 'assistant' | 'system',
+          parts: [textPart],
+          createdAt: new Date(m.created_at),
+        }
+      }
+
+      // Reconstruct tool-invocation parts from saved tool_invocations
+      const savedTools = Array.isArray(m.tool_invocations) ? m.tool_invocations : []
+      const toolParts = savedTools
+        .filter((tc: Record<string, unknown>) => tc && typeof tc.toolName === 'string')
+        .map((tc: Record<string, unknown>, index: number) => ({
+          type: 'tool-invocation' as const,
+          toolInvocation: {
+            toolCallId: typeof tc.toolCallId === 'string'
+              ? tc.toolCallId
+              : `${m.id}-${tc.toolName as string}-${index}`,
+            toolName: tc.toolName as string,
+            args: (tc.args as Record<string, unknown>) ?? {},
+            state: typeof tc.state === 'string' ? tc.state : 'input-available',
+            result: toRecord(tc.result) ?? { restored: true },
+            errorText: typeof tc.errorText === 'string' ? tc.errorText : undefined,
+          },
+        }))
+
+      const parts: UIMessage['parts'] = toolParts.length > 0
+        ? [...toolParts, textPart]
+        : [textPart]
+
+      return {
+        id: m.id,
+        role: 'assistant' as const,
+        parts,
+        createdAt: new Date(m.created_at),
+      }
+    })
 
     return new Response(JSON.stringify({ messages: formattedMessages }), {
       headers: { 'Content-Type': 'application/json' }

@@ -287,19 +287,27 @@ export function ResearchEditor({
     })
   }, [isWriteMode, projectId, projectTopic])
 
-  // Trigger background processing of project papers when papers exist
-  // This runs on mount and whenever new papers are added to ensure all papers get processed
-  const processedPaperCountRef = useRef<number>(0)
+  // Trigger background processing only when NEW paper IDs are added after mount.
+  // Do not retrigger on refresh for already-existing project papers.
+  const knownPaperIdsRef = useRef<Set<string> | null>(null)
   
   useEffect(() => {
     if (!projectId || papers.length === 0) return
-    
-    // Only trigger if we have new papers that haven't been seen
-    // This prevents re-triggering on every render while still catching new additions
-    if (papers.length <= processedPaperCountRef.current) return
-    processedPaperCountRef.current = papers.length
-    
-    // Start background processing of all papers in this project
+
+    const currentPaperIds = new Set(papers.map(p => p.id).filter(Boolean))
+
+    // First load: seed known IDs and do not start processing on refresh.
+    if (knownPaperIdsRef.current === null) {
+      knownPaperIdsRef.current = currentPaperIds
+      return
+    }
+
+    const hasNewPaper = Array.from(currentPaperIds).some(id => !knownPaperIdsRef.current?.has(id))
+    knownPaperIdsRef.current = currentPaperIds
+
+    if (!hasNewPaper) return
+
+    // Start background processing when new papers are added to the project
     const triggerProcessing = async () => {
       try {
         console.log('[ResearchEditor] Triggering background paper processing for project:', projectId, 'papers:', papers.length)
@@ -324,7 +332,7 @@ export function ResearchEditor({
     }
     
     triggerProcessing()
-  }, [projectId, papers.length])
+  }, [projectId, papers])
 
   // Sync papers and projectId with tool executor for markdown processing and citation saving
   useEffect(() => {
@@ -635,7 +643,7 @@ export function ResearchEditor({
 
   return (
     <ResearchEditorProvider value={contextValue}>
-      <div className="h-screen w-full flex flex-col rounded-xl border border-border/40 overflow-hidden bg-background">
+      <div className="h-screen w-full min-w-0 flex flex-col rounded-xl border border-border/40 overflow-hidden bg-background">
         {/* Top Navigation */}
         <EditorTopNav
           projectTitle={currentTitle}
@@ -679,7 +687,7 @@ export function ResearchEditor({
         )}
 
         {/* Main Content Area */}
-        <div className="flex-1 flex overflow-hidden relative">
+        <div className="flex-1 min-w-0 flex overflow-hidden relative">
           {/* Left Sidebar - Desktop */}
           {!isMobile && (
             <div
@@ -724,9 +732,9 @@ export function ResearchEditor({
           )}
 
           {/* Document Editor Area */}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
             {/* Editor */}
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 min-w-0 overflow-hidden">
               <DocumentEditor
                 initialContent={initialContent}
                 onUpdate={(newContent) => {

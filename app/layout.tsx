@@ -44,17 +44,8 @@ export const metadata: Metadata = {
   authors: [{ name: "GenPaper" }],
   creator: "GenPaper",
   icons: {
-    icon: [
-      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
-      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
-    ],
-    apple: [
-      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
-    ],
-    other: [
-      { rel: 'android-chrome-192x192', url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
-      { rel: 'android-chrome-512x512', url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
-    ],
+    icon: '/icon',
+    apple: '/apple-icon',
   },
   manifest: '/site.webmanifest',
   openGraph: {
@@ -66,7 +57,7 @@ export const metadata: Metadata = {
     description: 'Generate high-quality research papers with AI assistance. Create literature reviews, theses, dissertations, and academic articles.',
     images: [
       {
-        url: '/og-image.png',
+        url: '/opengraph-image',
         width: 1200,
         height: 630,
         alt: 'GenPaper - AI Research Paper Generator',
@@ -77,7 +68,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'GenPaper - AI Research Paper Generator',
     description: 'Generate high-quality research papers with AI assistance.',
-    images: ['/og-image.png'],
+    images: ['/twitter-image'],
   },
   robots: {
     index: true,

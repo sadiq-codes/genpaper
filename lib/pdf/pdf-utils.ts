@@ -6,9 +6,11 @@
  */
 
 import { getSB } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
+import { ensureStorageBucket, PAPER_PDFS_BUCKET } from '@/lib/supabase/storage-buckets'
 
 // Configuration constants
-export const PDF_BUCKET = 'papers-pdfs'
+export const PDF_BUCKET = PAPER_PDFS_BUCKET
 export const MAX_PDF_SIZE = 50 * 1024 * 1024 // 50MB limit
 export const DOWNLOAD_TIMEOUT = 60000 // 60 seconds (increased from 30s for slower academic servers)
 
@@ -176,7 +178,11 @@ export async function downloadPdfBuffer(url: string): Promise<Buffer> {
  */
 export async function uploadPDFToStorage(buffer: Buffer, filename: string): Promise<string | null> {
   try {
-    const supabase = await getSB()
+    const supabase = createServiceClient()
+    await ensureStorageBucket(supabase, PDF_BUCKET, {
+      public: true,
+      fileSizeLimit: MAX_PDF_SIZE,
+    })
     
     // Upload file to storage bucket
     const { error } = await supabase.storage

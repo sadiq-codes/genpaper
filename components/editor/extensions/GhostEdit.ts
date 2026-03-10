@@ -212,12 +212,17 @@ function createDiffBlockDecoration(
 }
 
 function createDeletedChangeWidget(change: DocumentChangeRange): HTMLElement {
-  const container = document.createElement('div')
+  const container = document.createElement('span')
   container.className = 'diff-change-delete-widget'
-  const preview = (change.oldContent || '').trim()
-  container.textContent = preview
-    ? `Deleted: ${preview.slice(0, 140)}${preview.length > 140 ? '...' : ''}`
-    : 'Deleted content'
+
+  // For table modifications, avoid dumping all concatenated cell text — show a compact label
+  if (change.presentation === 'table') {
+    container.textContent = 'Table before edit'
+    return container
+  }
+
+  const preview = cleanCitationMarkers((change.oldContent || '').trim())
+  container.textContent = preview || 'Deleted content'
   return container
 }
 
@@ -245,8 +250,10 @@ function createDiffBlockElement(
   const contentWrapper = document.createElement('div')
   contentWrapper.className = 'diff-block__content-wrapper'
 
-  // Show content based on edit type
-  const showOld = edit.type === 'delete' || edit.type === 'replace'
+  // Show content based on edit type.
+  // Delete edits keep original text visible with a red inline highlight,
+  // so the diff-block only needs the action bar (no content rows).
+  const showOld = edit.type === 'replace'
   const showNew = edit.type === 'insert' || edit.type === 'replace'
 
   if (showOld && edit.oldContent) {
@@ -290,7 +297,7 @@ function createDiffBlockElement(
 
   const acceptBtn = document.createElement('button')
   acceptBtn.className = 'diff-block__btn diff-block__btn--accept'
-  acceptBtn.textContent = 'Accept'
+  acceptBtn.textContent = edit.type === 'delete' ? 'Delete' : 'Accept'
   acceptBtn.onclick = (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -546,22 +553,39 @@ export const GhostEdit = Extension.create({
                 })))
               }
               for (const change of pluginState.changeHighlights) {
-                if (change.type === 'deleted') {
+                if (change.from < change.to) {
+                  if (change.type === 'modified' && change.presentation === 'table') {
+                    // Show old table content as a red "Removed" widget before the node,
+                    // and highlight the new (current) table in green — matching the text diff language.
+                    if (change.oldContent) {
+                      allDecorations.push(
+                        Decoration.widget(change.from, () => createDeletedChangeWidget(change), {
+                          side: -1,
+                          key: `deleted-table-${change.id}`,
+                        })
+                      )
+                    }
+                    allDecorations.push(
+                      Decoration.node(change.from, change.to, {
+                        class: 'diff-node-highlight diff-node-highlight--table-added',
+                      })
+                    )
+                    continue
+                  }
+                  allDecorations.push(
+                    Decoration.inline(change.from, change.to, {
+                      class: change.type === 'deleted'
+                        ? 'diff-highlight diff-highlight--deleted'
+                        : change.type === 'added'
+                          ? 'diff-highlight diff-highlight--added'
+                          : 'diff-highlight diff-highlight--modified',
+                    })
+                  )
+                } else if (change.type === 'deleted') {
                   allDecorations.push(
                     Decoration.widget(change.from, () => createDeletedChangeWidget(change), {
                       side: -1,
-                      key: `change-delete-${change.id}`,
-                    })
-                  )
-                  continue
-                }
-
-                if (change.from < change.to) {
-                  allDecorations.push(
-                    Decoration.inline(change.from, change.to, {
-                      class: change.type === 'added'
-                        ? 'diff-highlight diff-highlight--added'
-                        : 'diff-highlight diff-highlight--modified',
+                      key: `deleted-change-${change.id}`,
                     })
                   )
                 }
@@ -605,13 +629,23 @@ export const GhostEdit = Extension.create({
               )
               allDecorations.push(decoration)
 
-              // Hide the original content for replace/delete edits so it
-              // doesn't render alongside the ghost diff widget
-              if ((edit.type === 'replace' || edit.type === 'delete') && edit.from < edit.to) {
+              // For replace edits: hide original content so it doesn't render
+            // alongside the diff widget (the widget shows old+new stacked).
+            // For delete edits: keep the original content visible and apply a
+            // red inline highlight instead — consistent with how additions are shown.
+              if (edit.type === 'replace' && edit.from < edit.to) {
                 allDecorations.push(
                   Decoration.inline(edit.from, edit.to, {
                     class: 'ghost-edit-hidden',
                     style: 'display: none;',
+                  })
+                )
+              }
+
+              if (edit.type === 'delete' && edit.from < edit.to) {
+                allDecorations.push(
+                  Decoration.inline(edit.from, edit.to, {
+                    class: 'diff-highlight diff-highlight--deleted',
                   })
                 )
               }

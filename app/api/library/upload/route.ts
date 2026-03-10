@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { ensureStorageBucket, PAPER_PDFS_BUCKET } from '@/lib/supabase/storage-buckets'
 import { addPaperToLibrary } from '@/lib/db/library'
 import { sanitizeFilename } from '@/lib/utils/text'
 import { info, warn, logError } from '@/lib/utils/logger'
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest) {
       
       const { data: uploadData, error: uploadError } = await serviceClient
         .storage
-        .from('papers')
+        .from(PAPER_PDFS_BUCKET)
         .upload(storagePath, fileBuffer, {
           contentType: 'application/pdf',
           upsert: false
@@ -114,22 +115,15 @@ export async function POST(request: NextRequest) {
         if (uploadError.message?.includes('Bucket not found')) {
           warn('Storage bucket not found, attempting to create')
           
-          // Try to create the bucket (public for research papers)
-          const { error: createError } = await serviceClient
-            .storage
-            .createBucket('papers', { 
-              public: true,
-              fileSizeLimit: maxSize
-            })
-          
-          if (createError && !createError.message?.includes('already exists')) {
-            throw new Error(`Failed to create storage bucket: ${createError.message}`)
-          }
+          await ensureStorageBucket(serviceClient, PAPER_PDFS_BUCKET, {
+            public: true,
+            fileSizeLimit: maxSize,
+          })
           
           // Retry upload
           const { data: retryData, error: retryError } = await serviceClient
             .storage
-            .from('papers')
+            .from(PAPER_PDFS_BUCKET)
             .upload(storagePath, fileBuffer, {
               contentType: 'application/pdf',
               upsert: false
@@ -142,7 +136,7 @@ export async function POST(request: NextRequest) {
           if (retryData) {
             const { data: urlData } = serviceClient
               .storage
-              .from('papers')
+              .from(PAPER_PDFS_BUCKET)
               .getPublicUrl(storagePath)
             storedPdfUrl = urlData.publicUrl
           }
@@ -152,7 +146,7 @@ export async function POST(request: NextRequest) {
       } else if (uploadData) {
         const { data: urlData } = serviceClient
           .storage
-          .from('papers')
+          .from(PAPER_PDFS_BUCKET)
           .getPublicUrl(storagePath)
         storedPdfUrl = urlData.publicUrl
       }

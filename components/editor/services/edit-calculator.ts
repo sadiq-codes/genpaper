@@ -50,6 +50,35 @@ function readableNodeText(node: { type: { name: string }; textContent: string; c
   ).join('\n')
 }
 
+function looksLikeStandaloneParagraph(content: string): boolean {
+  const text = content.trim()
+  if (!text) return false
+
+  if (/\n\s*\n/.test(text)) return true
+  if (/^\s*[-*]\s+/m.test(text)) return true
+  if (/^\s*\d+\.\s+/m.test(text)) return true
+  if (/^\s*#{1,6}\s+/m.test(text)) return true
+  if (/\|.+\|/.test(text)) return true
+
+  const sentenceCount = (text.match(/[.!?](?=\s|$)/g) || []).length
+  if (sentenceCount >= 2) return true
+
+  return text.length >= 140
+}
+
+function getContainingTextblockEnd(editor: Editor, pos: number): number | null {
+  const $pos = editor.state.doc.resolve(pos)
+
+  for (let depth = $pos.depth; depth > 0; depth--) {
+    const node = $pos.node(depth)
+    if (!node.isTextblock) continue
+    const from = $pos.before(depth)
+    return from + node.nodeSize
+  }
+
+  return null
+}
+
 export interface CalculatedEdit {
   id: string
   type: EditType
@@ -89,6 +118,8 @@ export function calculateEdit(
     switch (toolName) {
       case 'insertContent':
         return calculateInsert(editor, args, editId, toolName)
+      case 'insertHeading':
+        return calculateInsertHeading(editor, args, editId, toolName)
       case 'replaceBlock':
       case 'replaceInSection':
         return calculateReplace(editor, args, editId, toolName)
@@ -151,7 +182,9 @@ function calculateInsert(
     if (match.found) {
       const range = matchToRange(match)
       if (range) {
-        insertPos = range.to
+        insertPos = looksLikeStandaloneParagraph(content)
+          ? (getContainingTextblockEnd(editor, range.to) ?? range.to)
+          : range.to
         return {
           success: true,
           edit: {
@@ -163,7 +196,9 @@ function calculateInsert(
             to: insertPos,
             oldContent: '',
             newContent: content,
-            description: `Insert after "${afterPhrase.slice(0, 30)}..."`,
+            description: looksLikeStandaloneParagraph(content)
+              ? `Insert paragraph after "${afterPhrase.slice(0, 30)}..."`
+              : `Insert after "${afterPhrase.slice(0, 30)}..."`,
           }
         }
       }
@@ -207,6 +242,26 @@ function calculateInsert(
         oldContent: '',
         newContent: content,  // No prefix - TipTap handles paragraph spacing
         description: 'Insert at end of document',
+      }
+    }
+  }
+
+  if (location === 'cursor') {
+    insertPos = looksLikeStandaloneParagraph(content)
+      ? (getContainingTextblockEnd(editor, editor.state.selection.from) ?? editor.state.selection.from)
+      : editor.state.selection.from
+    return {
+      success: true,
+      edit: {
+        id: editId,
+        type: 'insert',
+        toolName,
+        toolArgs: args,
+        from: insertPos,
+        to: insertPos,
+        oldContent: '',
+        newContent: content,
+        description: looksLikeStandaloneParagraph(content) ? 'Insert paragraph at cursor' : 'Insert at cursor',
       }
     }
   }
@@ -262,7 +317,9 @@ function calculateInsert(
   }
 
   // Default: cursor position
-  insertPos = editor.state.selection.from
+  insertPos = looksLikeStandaloneParagraph(content)
+    ? (getContainingTextblockEnd(editor, editor.state.selection.from) ?? editor.state.selection.from)
+    : editor.state.selection.from
   return {
     success: true,
     edit: {
@@ -274,7 +331,7 @@ function calculateInsert(
       to: insertPos,
       oldContent: '',
       newContent: content,
-      description: 'Insert at cursor',
+      description: looksLikeStandaloneParagraph(content) ? 'Insert paragraph at cursor' : 'Insert at cursor',
     }
   }
 }
@@ -499,12 +556,38 @@ function calculateRewriteSection(
   const sectionName = args.section as string
   const newContent = args.newContent as string
   const reason = args.reason as string | undefined
+  const exactSectionMatch = args.exactSectionMatch === true
 
   if (!sectionName || !newContent) {
     return { success: false, error: 'Missing section name or new content' }
   }
 
-  const sectionBounds = findSectionBounds(editor, sectionName)
+  const findSectionBoundsExact = () => {
+    const target = sectionName.trim().toLowerCase().replace(/\s+/g, ' ')
+    const headings: Array<{ start: number; end: number; text: string }> = []
+    editor.state.doc.forEach((node, offset) => {
+      if (node.type.name === 'heading') {
+        headings.push({
+          start: offset,
+          end: offset + node.nodeSize,
+          text: (node.textContent || '').trim().toLowerCase().replace(/\s+/g, ' '),
+        })
+      }
+    })
+    const idx = headings.findIndex(h => h.text === target)
+    if (idx === -1) return { found: false, contentStartPos: -1, contentEndPos: -1 }
+    const current = headings[idx]
+    const next = headings[idx + 1]
+    return {
+      found: true,
+      contentStartPos: current.end,
+      contentEndPos: next ? next.start : editor.state.doc.content.size,
+    }
+  }
+
+  const sectionBounds = exactSectionMatch
+    ? findSectionBoundsExact()
+    : findSectionBounds(editor, sectionName)
 
   if (!sectionBounds.found) {
     return { success: false, error: `Section "${sectionName}" not found` }
@@ -640,6 +723,64 @@ function calculateSplitBlock(
 // INSERT TABLE CALCULATOR
 // =============================================================================
 
+function calculateInsertHeading(
+  editor: Editor,
+  args: Record<string, unknown>,
+  editId: string,
+  toolName: string
+): CalculationResult {
+  const text = (args.text as string | undefined)?.trim()
+  const level = (args.level as number | undefined) ?? 2
+  const afterBlockId = args.afterBlockId as string | undefined
+  const afterPhrase = args.afterPhrase as string | undefined
+  const location = args.location as string | undefined
+
+  if (!text) return { success: false, error: 'No heading text provided' }
+  if (!Number.isInteger(level) || level < 1 || level > 6) {
+    return { success: false, error: 'Heading level must be between 1 and 6' }
+  }
+
+  let insertPos = editor.state.selection.from
+  if (afterBlockId) {
+    const block = findBlockById(editor, afterBlockId)
+    if (block) insertPos = block.pos + block.node.nodeSize
+  } else if (afterPhrase) {
+    const match = findTextInStructure(editor, afterPhrase)
+    if (match.found) {
+      const range = matchToRange(match)
+      if (range) insertPos = getContainingTextblockEnd(editor, range.to) ?? range.to
+    }
+  } else if (location === 'end') {
+    insertPos = editor.state.doc.content.size
+  } else if (location) {
+    const afterMatch = location.match(/^after:(.+)$/i)
+    const startMatch = location.match(/^start:(.+)$/i)
+    if (afterMatch) {
+      const bounds = findSectionBounds(editor, afterMatch[1])
+      if (bounds.found) insertPos = bounds.contentEndPos
+    } else if (startMatch) {
+      const bounds = findSectionBounds(editor, startMatch[1])
+      if (bounds.found) insertPos = bounds.contentStartPos
+    }
+  }
+
+  const headingPrefix = '#'.repeat(level)
+  return {
+    success: true,
+    edit: {
+      id: editId,
+      type: 'insert',
+      toolName,
+      toolArgs: args,
+      from: insertPos,
+      to: insertPos,
+      oldContent: '',
+      newContent: `${headingPrefix} ${text}`,
+      description: `Insert heading "${text.slice(0, 40)}"`,
+    }
+  }
+}
+
 function calculateInsertTable(
   editor: Editor,
   args: Record<string, unknown>,
@@ -650,6 +791,7 @@ function calculateInsertTable(
   const rows = args.rows as string[][]
   const caption = args.caption as string | undefined
   const afterBlockId = args.afterBlockId as string | undefined
+  const afterPhrase = args.afterPhrase as string | undefined
   const location = args.location as string | undefined
 
   if (!headers || headers.length === 0) return { success: false, error: 'No headers provided' }
@@ -665,6 +807,14 @@ function calculateInsertTable(
   if (afterBlockId) {
     const block = findBlockById(editor, afterBlockId)
     if (block) insertPos = block.pos + block.node.nodeSize
+  } else if (afterPhrase) {
+    const match = findTextInStructure(editor, afterPhrase)
+    if (match.found) {
+      const range = matchToRange(match)
+      if (range) {
+        insertPos = getContainingTextblockEnd(editor, range.to) ?? range.to
+      }
+    }
   } else if (location === 'end') {
     insertPos = editor.state.doc.content.size
   } else if (location) {
@@ -772,6 +922,29 @@ function calculateEditTable(
           lines[0] = cells.join('  |  ')
           newContent = lines.join('\n')
         }
+      }
+    }
+  } else if (action === 'removeColumn') {
+    const colIndex = args.colIndex as number | undefined
+    description = `Remove column ${colIndex ?? ''}`
+    if (typeof colIndex === 'number') {
+      newContent = oldContent.split('\n').map(line => {
+        const cells = line.split('  |  ')
+        if (colIndex >= 0 && colIndex < cells.length) {
+          cells.splice(colIndex, 1)
+        }
+        return cells.join('  |  ')
+      }).join('\n')
+    }
+  } else if (action === 'removeRow') {
+    const rowIndex = args.rowIndex as number | undefined
+    description = `Remove row ${rowIndex ?? ''}`
+    if (typeof rowIndex === 'number') {
+      const lines = oldContent.split('\n')
+      const targetLine = rowIndex + 1 // +1 to skip header
+      if (targetLine >= 1 && targetLine < lines.length) {
+        lines.splice(targetLine, 1)
+        newContent = lines.join('\n')
       }
     }
   }
