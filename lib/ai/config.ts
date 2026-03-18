@@ -147,3 +147,11 @@ export function isSelfHostedEmbeddingConfigured(): boolean {
 export function shouldUseOpenAIForGeneration(): boolean {
   return process.env.USE_OPENAI_FOR_GENERATION === 'true'
 }
+
+/**
+ * Check if OpenAI should be used directly for paper extraction
+ * This bypasses Azure OpenAI for extraction tasks (rate limit workaround)
+ */
+export function shouldUseOpenAIForExtraction(): boolean {
+  return process.env.USE_OPENAI_FOR_EXTRACTION === 'true'
+}

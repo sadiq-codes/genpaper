@@ -12,6 +12,7 @@ import {
   isSelfHostedEmbeddingConfigured,
   shouldUseAzureOpenAIForLLM,
   shouldUseOpenAIForGeneration,
+  shouldUseOpenAIForExtraction,
   getAzureDeploymentForModel
 } from './config'
 
@@ -82,10 +83,14 @@ export function getFastAutocompleteLanguageModel() {
 
 /**
  * Get the extraction model for paper processing
- * Uses a smaller, faster model since extraction is a structured task
- * Override with AI_EXTRACTION_MODEL env var
+ * Uses OpenAI directly if USE_OPENAI_FOR_EXTRACTION=true (bypasses Azure rate limits)
+ * Otherwise uses the standard language model (Azure or OpenAI based on config)
+ * Override model with AI_EXTRACTION_MODEL env var
  */
 export function getExtractionLanguageModel() {
+  if (shouldUseOpenAIForExtraction()) {
+    return ai.languageModel(getExtractionModelName())
+  }
   return getLanguageModelForName(getExtractionModelName())
 }
 
