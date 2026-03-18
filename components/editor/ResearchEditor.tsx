@@ -362,6 +362,11 @@ export function ResearchEditor({
 
   const handleChatFromToolbar = useCallback(
     (selectedText: string) => {
+      if (pendingTools.length > 0) {
+        toast.info('Finish reviewing the current AI changes first.')
+        return
+      }
+
       const normalizedSelection = selectedText.replace(/\s+/g, " ").trim()
       setActiveTab("chat")
       if (isMobile) setMobileMenuOpen(true)
@@ -382,7 +387,7 @@ export function ResearchEditor({
         text: `Question about this selected text:\n"${trimmedSelection}"\n\n`,
       })
     },
-    [clearChatComposerPrefill, isMobile]
+    [clearChatComposerPrefill, isMobile, pendingTools.length]
   )
 
   // Handle citation insertion

@@ -17,16 +17,6 @@
 // =============================================================================
 
 /**
- * Statistical precision details for quantitative findings.
- * Captures confidence intervals, p-values, and effect size interpretation.
- */
-export interface StatisticalPrecision {
-  confidenceInterval?: string      // "95% CI [1.5-3.4]"
-  pValue?: string                  // "p<0.001" or "p=0.034"
-  effectSizeInterpretation?: 'small' | 'medium' | 'large' | 'not_applicable'
-}
-
-/**
  * Evidence type classification for discipline-aware synthesis.
  */
 export type EvidenceType = 
@@ -52,6 +42,8 @@ export interface Finding {
   // Quantitative value - MUST be numeric when available
   value?: string                   // "24%", "r=0.67", "β=0.34", "d=0.8", "N=500", "3 themes"
   valueType?: string               // Specific: "percentage", "correlation_r", "effect_size_d", "sample_size", "theme_count"
+  confidenceInterval?: string      // "95% CI [1.5-3.4]"
+  pValue?: string                  // "p<0.001" or "p=0.034"
   
   // Nature of the finding
   direction?: string               // "positive", "negative", "no_effect", "mixed", "descriptive"
@@ -67,9 +59,6 @@ export interface Finding {
   
   // Extraction quality
   confidence: number               // 0.7-1.0
-  
-  // NEW: Enhanced statistical precision
-  statisticalPrecision?: StatisticalPrecision
   
   // NEW: Evidence type for discipline-aware synthesis
   // Optional for backward compatibility with existing DB records
