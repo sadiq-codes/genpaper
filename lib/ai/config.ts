@@ -12,6 +12,7 @@ const DEFAULT_CHAT_MODEL = 'gpt-4.1' // Advanced model for editor chat (excellen
 const DEFAULT_AUTOCOMPLETE_MODEL = 'gpt-4.1-mini' // Fast, cost-efficient for inline completions
 const DEFAULT_FAST_AUTOCOMPLETE_MODEL = 'gpt-4.1-nano' // Fastest, most cost-efficient for high-volume tasks
 const DEFAULT_EXTRACTION_MODEL = 'gpt-4.1-nano' // Fast model for paper extraction (structured task)
+const DEFAULT_ANALYSIS_MODEL = 'gpt-4.1-mini' // Fast model for cross-document analysis (pattern detection)
 
 /**
  * Get the configured AI model from environment
@@ -56,6 +57,17 @@ export function getFastAutocompleteModel(): string {
  */
 export function getExtractionModel(): string {
   return process.env.AI_EXTRACTION_MODEL || DEFAULT_EXTRACTION_MODEL
+}
+
+/**
+ * Get the analysis model for cross-document pattern detection
+ * Uses a fast model since analysis is pattern matching across findings
+ * 
+ * Set AI_ANALYSIS_MODEL env var to override
+ * Defaults to gpt-4.1-mini for speed
+ */
+export function getAnalysisModel(): string {
+  return process.env.AI_ANALYSIS_MODEL || DEFAULT_ANALYSIS_MODEL
 }
 
 /**

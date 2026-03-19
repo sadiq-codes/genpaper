@@ -5,7 +5,8 @@ import {
   getChatModel as getChatModelName, 
   getAutocompleteModel as getAutocompleteModelName, 
   getFastAutocompleteModel as getFastAutocompleteModelName, 
-  getExtractionModel as getExtractionModelName, 
+  getExtractionModel as getExtractionModelName,
+  getAnalysisModel as getAnalysisModelName,
   EMBEDDING_CONFIG, 
   getAzureEmbeddingDeployment,
   isAzureOpenAIConfigured,
@@ -104,6 +105,14 @@ export function getGenerationModel() {
     return ai.languageModel(getModel())
   }
   return getLanguageModel()
+}
+
+/**
+ * Get the analysis model for cross-document pattern detection
+ * Uses a fast model (gpt-4.1-mini) for speed since analysis is pattern matching
+ */
+export function getAnalysisLanguageModel() {
+  return getLanguageModelForName(getAnalysisModelName())
 }
 
 /**

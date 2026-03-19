@@ -16,7 +16,7 @@ import { generateObject } from 'ai'
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { createHash } from 'crypto'
-import { getLanguageModel } from '@/lib/ai/vercel-client'
+import { getAnalysisLanguageModel } from '@/lib/ai/vercel-client'
 import type {
   AnalysisInput,
   AnalysisResult,
@@ -444,7 +444,7 @@ Only return JSON matching the provided schema.`
           }
           try {
             return await generateObject({
-              model: getLanguageModel(),
+              model: getAnalysisLanguageModel(),
               schema,
               system: SYSTEM_PROMPT,
               prompt,
@@ -676,7 +676,7 @@ patterns, contradictions, gaps, summary, keyInsights, synthesisStrength, fieldMa
           }
           try {
             return await generateObject({
-              model: getLanguageModel(),
+              model: getAnalysisLanguageModel(),
               schema: _AnalysisSchema,
               system: SYSTEM_PROMPT,
               prompt,
@@ -957,7 +957,7 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
       keyInsights: [],
       analyzedAt: new Date(),
       analysisTimeMs: Date.now() - startTime,
-      modelUsed: 'gpt-4o',
+      modelUsed: 'gpt-4.1-mini',
       findingsHash: hashFindings(findings),
       completeness: {
         status: 'complete',
@@ -973,18 +973,34 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
     }
   }
   
-  const uniquePapers = new Set(findings.map(f => f.paperId)).size
-  
-  // Use batched analysis for large finding sets to prevent token overflow
-  if (findings.length > BATCH_THRESHOLD) {
-    console.log(`\n📊 Finding count (${findings.length}) exceeds threshold (${BATCH_THRESHOLD}), using batched analysis...`)
-    return analyzeFindingsBatched(projectId, findings, topic, signal)
+  // Cap findings for performance - sample most confident/main findings if over limit
+  let analysisFindings = findings
+  if (findings.length > MAX_FINDINGS_FOR_ANALYSIS) {
+    console.log(`\n📊 Capping findings from ${findings.length} to ${MAX_FINDINGS_FOR_ANALYSIS} for analysis...`)
+    // Prioritize: main findings first, then by confidence
+    analysisFindings = [...findings]
+      .sort((a, b) => {
+        // Main findings first
+        if (a.isMainFinding && !b.isMainFinding) return -1
+        if (!a.isMainFinding && b.isMainFinding) return 1
+        // Then by confidence
+        return (b.confidence || 0) - (a.confidence || 0)
+      })
+      .slice(0, MAX_FINDINGS_FOR_ANALYSIS)
   }
   
-  console.log(`\n🔍 Analyzing ${findings.length} findings from ${uniquePapers} papers...`)
+  const uniquePapers = new Set(analysisFindings.map(f => f.paperId)).size
+  
+  // Use batched analysis for large finding sets to prevent token overflow
+  if (analysisFindings.length > BATCH_THRESHOLD) {
+    console.log(`\n📊 Finding count (${analysisFindings.length}) exceeds threshold (${BATCH_THRESHOLD}), using batched analysis...`)
+    return analyzeFindingsBatched(projectId, analysisFindings, topic, signal)
+  }
+  
+  console.log(`\n🔍 Analyzing ${analysisFindings.length} findings from ${uniquePapers} papers...`)
   
   try {
-    const generated = await generateAnalysisObjectWithRetry(findings, topic, 'Cross-document analysis', signal)
+    const generated = await generateAnalysisObjectWithRetry(analysisFindings, topic, 'Cross-document analysis', signal)
     const object = generated.object
     if (generated.packing.droppedFindings > 0) {
       console.warn(
@@ -994,7 +1010,7 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
     }
     
     // Build lookup maps for enriching results
-    const findingsMap = new Map(findings.map(f => [f.id, f]))
+    const findingsMap = new Map(analysisFindings.map(f => [f.id, f]))
     
     // Transform patterns with full paper support details
     const patterns: Pattern[] = object.patterns.map(pattern =>
@@ -1085,14 +1101,21 @@ export async function analyzeFindings(input: AnalysisInput): Promise<AnalysisRes
 
 /**
  * Maximum findings per batch to avoid token overflow
- * ~150 findings × ~200 tokens = ~30k tokens, leaving room for response
+ * ~100 findings × ~200 tokens = ~20k tokens, leaving room for response
  */
-const MAX_FINDINGS_PER_BATCH = 70
+const MAX_FINDINGS_PER_BATCH = 100
 
 /**
  * Threshold above which we use batched analysis
+ * Lowered to 80 to reduce per-batch processing time
  */
-const BATCH_THRESHOLD = 120
+const BATCH_THRESHOLD = 80
+
+/**
+ * Maximum findings to analyze (cap for performance)
+ * Beyond this, we sample the most relevant findings
+ */
+const MAX_FINDINGS_FOR_ANALYSIS = 150
 
 type TransformedBatchResult = {
   patterns: Pattern[]
@@ -1190,38 +1213,46 @@ async function analyzeFindingsBatched(
   
   const batches = buildBatchesByPaper(findings)
   
-  console.log(`\n🔍 Analyzing ${findings.length} findings in ${batches.length} batches...`)
+  console.log(`\n🔍 Analyzing ${findings.length} findings in ${batches.length} batches (parallel)...`)
   
-  // Analyze each batch sequentially. Simpler flow, predictable failure semantics.
-  const batchResults: TransformedBatchResult[] = []
-  const failedBatchIndexes: number[] = []
-
-  for (let i = 0; i < batches.length; i++) {
+  // Analyze batches in parallel for speed
+  const batchPromises = batches.map(async (batch, i) => {
     if (signal?.aborted) {
-      console.log(`   🛑 Analysis cancelled before batch ${i + 1}/${batches.length}`)
       throw new Error('Run was cancelled')
     }
 
-    const batch = batches[i]
     const batchPapers = new Set(batch.map(f => f.paperId)).size
     console.log(`   📦 Batch ${i + 1}/${batches.length}: ${batch.length} findings from ${batchPapers} papers`)
 
     try {
       const generated = await generateAnalysisObjectWithRetry(batch, topic, `Batch ${i + 1}/${batches.length}`, signal)
       const transformed = transformBatchObject(generated.object, batch, batchPapers, generated.packing)
-      batchResults.push(transformed)
       console.log(
         `   ✅ Batch ${i + 1}: ${transformed.patterns.length} patterns, ` +
         `${transformed.contradictions.length} contradictions, ${transformed.gaps.length} gaps`
       )
+      return { success: true as const, result: transformed, index: i }
     } catch (error) {
-      failedBatchIndexes.push(i)
       console.error(`   ❌ Batch ${i + 1} failed:`, error)
       if (STRICT_BATCH_MODE) {
         throw new Error(
           `Batched analysis failed in strict mode at batch ${i + 1}: ${error instanceof Error ? error.message : String(error)}`
         )
       }
+      return { success: false as const, index: i }
+    }
+  })
+
+  const settledResults = await Promise.all(batchPromises)
+  
+  const batchResults: TransformedBatchResult[] = []
+  const failedBatchIndexes: number[] = []
+  
+  for (const result of settledResults) {
+    if (result.success) {
+      batchResults.push(result.result)
+    } else {
+      failedBatchIndexes.push(result.index)
     }
   }
 
