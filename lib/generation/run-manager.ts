@@ -628,6 +628,41 @@ export async function clearPipelineState(runId: string): Promise<void> {
   }
 }
 
+/**
+ * Reset pipeline state for retry while preserving completed work.
+ * This allows generation to resume from where it left off instead of starting over.
+ * 
+ * Preserves:
+ * - config, profile, paperIds (expensive to regenerate)
+ * - sectionResults, completedSectionIndices (already written sections)
+ * - contextSummaries, themeAnalysis (analysis work)
+ * - Context cache (RAG chunks)
+ * 
+ * Clears:
+ * - extractionProgress (may need re-extraction for failed papers)
+ */
+export async function resetPipelineForRetry(runId: string): Promise<{
+  completedSections: number;
+  totalSections: number;
+}> {
+  const state = await getPipelineState(runId);
+  
+  const completedSections = state.completedSectionIndices?.length || 0;
+  const totalSections = state.contextSummaries?.length || 0;
+  
+  // Only clear extraction progress - everything else is preserved
+  // The pipeline will skip completed sections on retry
+  if (state.extractionProgress) {
+    await updatePipelineState(runId, { extractionProgress: undefined });
+  }
+  
+  console.log(
+    `[run-manager] Reset pipeline for retry: ${completedSections}/${totalSections} sections preserved`
+  );
+  
+  return { completedSections, totalSections };
+}
+
 // =============================================================================
 // Context Cache (avoids rebuilding contexts in every generation step)
 // =============================================================================

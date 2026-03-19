@@ -553,6 +553,23 @@ export async function runGenerationPipeline(
         throw new Error("State incomplete for section generation");
       }
 
+      // Skip already-completed sections (for resumption after retry)
+      const completedIndices = state.completedSectionIndices || [];
+      if (completedIndices.includes(sectionIndex)) {
+        const existingResult = state.sectionResults?.find(
+          (r, idx) => idx === sectionIndex || state.contextSummaries?.[sectionIndex]?.sectionKey === r.sectionKey
+        );
+        console.log(
+          `[generate-paper] Skipping section ${sectionIndex} (already completed: ${existingResult?.sectionKey || 'unknown'})`
+        );
+        return {
+          sectionKey: existingResult?.sectionKey || `section-${sectionIndex}`,
+          wordCount: existingResult?.wordCount || 0,
+          citationCount: existingResult?.citations?.length || 0,
+          skipped: true,
+        };
+      }
+
       const pipelineConfig: PipelineConfig = {
         topic: config.topic,
         paperType: config.paperType as PaperTypeKey,

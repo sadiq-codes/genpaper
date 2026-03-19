@@ -11,7 +11,7 @@ import {
   handleGenerationPipelineFailure,
 } from "@/lib/generation/pipeline-runner";
 import {
-  clearPipelineState,
+  resetPipelineForRetry,
   getRun,
   updateRunStatus,
 } from "@/lib/generation/run-manager";
@@ -121,15 +121,22 @@ export async function processGenerationJob(
     }
 
     if (job.attempts < job.max_attempts) {
-      await clearPipelineState(job.run_id);
+      // Preserve completed sections instead of clearing everything
+      const { completedSections, totalSections } = await resetPipelineForRetry(job.run_id);
+      
+      // Calculate progress based on completed sections
+      const resumeProgress = totalSections > 0 
+        ? Math.round((completedSections / totalSections) * 50) + 50 // 50-100% range for writing phase
+        : 0;
+      
       await updateRunStatus(job.run_id, "pending", {
-        progress: 0,
-        current_stage: "queued",
+        progress: completedSections > 0 ? resumeProgress : 0,
+        current_stage: completedSections > 0 ? "resuming" : "queued",
         error_message: errorMessage,
       });
       await markGenerationJobRetryable(job.id, workerId, errorMessage);
       console.warn(
-        `[generation-worker] Requeued job ${job.id} after error (attempt ${job.attempts}/${job.max_attempts}): ${errorMessage}`
+        `[generation-worker] Requeued job ${job.id} after error (attempt ${job.attempts}/${job.max_attempts}, ${completedSections}/${totalSections} sections preserved): ${errorMessage}`
       );
       return;
     }
