@@ -32,15 +32,15 @@ const FindingSchema = z.object({
   evidence: z.string().describe('Direct quote from the paper supporting this finding - EXACT text, not paraphrased'),
   value: z.string().nullable().describe('MUST be numeric: "24%", "r=0.67", "β=0.34", "d=0.8", "OR=2.3", "N=500", "mean=3.4 (SD=1.2)". For qualitative: "3 themes", "5 of 8 participants". NOT words like "significant" or "large". null only if genuinely non-countable'),
   valueType: z.string().nullable().describe('Specific type: "percentage", "correlation_r", "beta_coefficient", "effect_size_d", "odds_ratio", "p_value", "sample_size", "mean_sd", "confidence_interval", "theme_count", "frequency", "chi_square". null if no value'),
-  confidenceInterval: z.string().nullable().optional().describe('Confidence interval if reported, e.g., "95% CI [1.5-3.4]"'),
-  pValue: z.string().nullable().optional().describe('p-value if reported, e.g., "p<0.001" or "p=0.034"'),
+  confidenceInterval: z.string().nullable().describe('Confidence interval if reported, e.g., "95% CI [1.5-3.4]". null if not reported'),
+  pValue: z.string().nullable().describe('p-value if reported, e.g., "p<0.001" or "p=0.034". null if not reported'),
   direction: z.string().nullable().describe('Nature of finding: "positive", "negative", "no_effect", "mixed", or "descriptive" for non-directional findings'),
-  comparedTo: z.string().nullable().optional().describe('What this finding compares against, null if not comparative'),
+  comparedTo: z.string().nullable().describe('What this finding compares against, null if not comparative'),
   context: z.string().nullable().describe('Specific context: population, setting, time period, conditions'),
   isMainFinding: z.boolean().describe('true if this is a primary/main result, false if secondary/background'),
   confidence: z.number().min(0).max(1).describe('How confident you are in this extraction (0.7-1.0)'),
 
-  // NEW: Evidence type classification
+  // Evidence type classification
   evidenceType: z.enum([
     "empirical_quantitative",    // Stats, experiments, surveys with numbers
     "empirical_qualitative",     // Interviews, observations, themes
