@@ -84,12 +84,13 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
         setIsLoading(false)
 
         // Handle specific events
-        if (event === 'SIGNED_OUT') {
-          // Clear any cached data on sign out
+        if (event === 'PASSWORD_RECOVERY') {
+          window.location.href = '/reset-password'
+          return
+        } else if (event === 'SIGNED_OUT') {
           setUser(null)
           setSession(null)
         } else if (event === 'TOKEN_REFRESHED') {
-          // Token was refreshed, update session
           setSession(newSession)
         }
       }
