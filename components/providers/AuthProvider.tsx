@@ -1,6 +1,7 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { User, Session, AuthChangeEvent } from '@supabase/supabase-js'
 
@@ -44,10 +45,21 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
   const [user, setUser] = useState<User | null>(initialUser)
   const [session, setSession] = useState<Session | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [pendingRecovery, setPendingRecovery] = useState(() =>
+    typeof window !== 'undefined' && window.location.hash.includes('type=recovery')
+  )
+  const router = useRouter()
+  const routerRef = useRef(router)
+  routerRef.current = router
 
   useEffect(() => {
     const supabase = createClient()
     const hashHasRecovery = window.location.hash.includes('type=recovery')
+
+    const navigateToReset = () => {
+      setPendingRecovery(true)
+      routerRef.current.replace('/reset-password')
+    }
 
     // Get initial session
     const initSession = async () => {
@@ -62,7 +74,7 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
         // time, so the PASSWORD_RECOVERY event fires before this listener
         // exists. Detect it here as a fallback after the session is ready.
         if (hashHasRecovery && currentSession) {
-          window.location.href = '/reset-password'
+          navigateToReset()
           return
         }
       } catch (error) {
@@ -92,7 +104,7 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
 
         // Handle specific events
         if (event === 'PASSWORD_RECOVERY') {
-          window.location.href = '/reset-password'
+          navigateToReset()
           return
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
@@ -109,11 +121,22 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     }
   }, [initialUser])
 
+  // Clear the recovery gate once client-side navigation lands on /reset-password
+  useEffect(() => {
+    if (pendingRecovery && window.location.pathname === '/reset-password') {
+      setPendingRecovery(false)
+    }
+  }, [pendingRecovery])
+
   const value: AuthContextType = {
     user,
     session,
     isLoading,
     isAuthenticated: !!user,
+  }
+
+  if (pendingRecovery) {
+    return null
   }
 
   return (
