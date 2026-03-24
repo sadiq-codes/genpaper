@@ -47,16 +47,23 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
 
   useEffect(() => {
     const supabase = createClient()
+    const hashHasRecovery = window.location.hash.includes('type=recovery')
 
     // Get initial session
     const initSession = async () => {
       try {
         const { data: { session: currentSession } } = await supabase.auth.getSession()
         setSession(currentSession ?? null)
-        // If the server already provided an authenticated user (cookie-based SSR),
-        // don't overwrite it with a null client session during initial hydration.
         if (currentSession?.user) {
           setUser(currentSession.user)
+        }
+
+        // The singleton client processes hash-fragment tokens at module-import
+        // time, so the PASSWORD_RECOVERY event fires before this listener
+        // exists. Detect it here as a fallback after the session is ready.
+        if (hashHasRecovery && currentSession) {
+          window.location.href = '/reset-password'
+          return
         }
       } catch (error) {
         console.error('AuthProvider: Failed to get session:', error)
