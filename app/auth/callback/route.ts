@@ -37,6 +37,14 @@ export async function GET(request: NextRequest) {
           } else {
             console.log('✅ Profile ensured for user:', user.id)
           }
+
+          // Auto-detect recovery flow when no explicit `next` was provided
+          if (!searchParams.has('next') && user.recovery_sent_at) {
+            const elapsed = Date.now() - new Date(user.recovery_sent_at).getTime()
+            if (elapsed < 3_600_000) {
+              return NextResponse.redirect(toRedirectUrl('/reset-password'))
+            }
+          }
         }
         
         // Authentication successful, redirect to destination
