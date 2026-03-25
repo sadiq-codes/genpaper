@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { User, Session, AuthChangeEvent } from '@supabase/supabase-js'
 
@@ -49,6 +49,7 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     typeof window !== 'undefined' && window.location.hash.includes('type=recovery')
   )
   const router = useRouter()
+  const pathname = usePathname()
   const routerRef = useRef(router)
   routerRef.current = router
 
@@ -121,12 +122,19 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     }
   }, [initialUser])
 
-  // Clear the recovery gate once client-side navigation lands on /reset-password
+  // Clear the recovery gate once client-side navigation lands on /reset-password.
+  // Safety timeout prevents a permanent blank screen if navigation somehow stalls.
   useEffect(() => {
-    if (pendingRecovery && window.location.pathname === '/reset-password') {
+    if (!pendingRecovery) return
+
+    if (pathname === '/reset-password') {
       setPendingRecovery(false)
+      return
     }
-  }, [pendingRecovery])
+
+    const timer = setTimeout(() => setPendingRecovery(false), 5_000)
+    return () => clearTimeout(timer)
+  }, [pendingRecovery, pathname])
 
   const value: AuthContextType = {
     user,

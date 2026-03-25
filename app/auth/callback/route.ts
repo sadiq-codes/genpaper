@@ -5,6 +5,7 @@ import { getAbsoluteUrlFromHeaders } from '@/lib/config'
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
+  const type = searchParams.get('type')
   const next = searchParams.get('next') ?? '/projects'
   const toRedirectUrl = (path: string) => getAbsoluteUrlFromHeaders(request.headers, path)
 
@@ -33,41 +34,39 @@ export async function GET(request: NextRequest) {
             })
           
           if (profileError) {
-            console.error('Error creating/updating profile:', profileError)
-          } else {
-            console.log('✅ Profile ensured for user:', user.id)
+            console.error('[auth/callback] Profile upsert error:', profileError)
           }
 
-          // Auto-detect recovery flow when no explicit `next` was provided
-          if (!searchParams.has('next') && user.recovery_sent_at) {
-            const elapsed = Date.now() - new Date(user.recovery_sent_at).getTime()
-            if (elapsed < 3_600_000) {
-              return NextResponse.redirect(toRedirectUrl('/reset-password'))
-            }
+          // Explicit type param (set in forgot-password redirectTo) is the primary signal.
+          // Fall back to recovery_sent_at for emails sent before the redirectTo fix.
+          const isRecovery = type === 'recovery' || (
+            !searchParams.has('next') &&
+            !!user.recovery_sent_at &&
+            Date.now() - new Date(user.recovery_sent_at).getTime() < 3_600_000
+          )
+          if (isRecovery) {
+            return NextResponse.redirect(toRedirectUrl('/reset-password'))
           }
         }
         
         // Authentication successful, redirect to destination
         return NextResponse.redirect(toRedirectUrl(next))
       } else {
-        console.error('Code exchange failed:', error)
+        console.error('[auth/callback] Code exchange failed:', error.message, error.status)
         return NextResponse.redirect(
           toRedirectUrl(`/login?error=${encodeURIComponent('Authentication failed. Please try again.')}`)
         )
       }
     } catch (error) {
-      console.error('Callback error:', error)
+      console.error('[auth/callback] Unexpected error:', error)
       return NextResponse.redirect(
         toRedirectUrl(`/login?error=${encodeURIComponent('Network error. Please check your connection and try again.')}`)
-      )
+        )
     }
   }
 
-  // Handle hash-based recovery/signup tokens (Supabase PKCE flow).
-  // When the user clicks the email link, Supabase redirects with tokens in the
-  // URL hash fragment. The server can't read those, so redirect to the client
-  // page which will pick them up automatically via the Supabase client SDK.
-  const type = searchParams.get('type')
+  // Hash-based recovery fallback: server can't read hash fragments, so redirect
+  // to the client page which picks them up via the Supabase client SDK.
   if (type === 'recovery') {
     return NextResponse.redirect(toRedirectUrl('/reset-password'))
   }

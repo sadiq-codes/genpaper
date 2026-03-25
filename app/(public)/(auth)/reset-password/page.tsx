@@ -40,6 +40,7 @@ function ResetPasswordContent() {
       const { error } = await supabase.auth.updateUser({ password })
 
       if (error) {
+        console.error('[reset-password] updateUser failed:', error.message, error.status)
         setError(error.message)
       } else {
         setSuccess(true)
@@ -47,7 +48,8 @@ function ResetPasswordContent() {
           router.replace("/projects")
         }, 2000)
       }
-    } catch {
+    } catch (err) {
+      console.error('[reset-password] Unexpected error:', err)
       setError("An unexpected error occurred. Please try again.")
     } finally {
       setLoading(false)
