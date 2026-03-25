@@ -65,15 +65,34 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     // Get initial session
     const initSession = async () => {
       try {
-        const { data: { session: currentSession } } = await supabase.auth.getSession()
+        let { data: { session: currentSession } } = await supabase.auth.getSession()
+
+        // @supabase/ssr forces flowType:"pkce", so the client ignores hash-fragment
+        // tokens. When Supabase falls back to implicit flow (e.g. redirectTo not in
+        // the project allowlist), we must extract the hash tokens manually.
+        if (hashHasRecovery && !currentSession) {
+          const hashParams = new URLSearchParams(window.location.hash.substring(1))
+          const accessToken = hashParams.get('access_token')
+          const refreshToken = hashParams.get('refresh_token')
+          if (accessToken && refreshToken) {
+            const { data, error: setErr } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            })
+            if (!setErr && data.session) {
+              currentSession = data.session
+            } else {
+              console.error('[AuthProvider] Failed to set session from hash tokens:', setErr?.message)
+            }
+            window.history.replaceState(null, '', window.location.pathname + window.location.search)
+          }
+        }
+
         setSession(currentSession ?? null)
         if (currentSession?.user) {
           setUser(currentSession.user)
         }
 
-        // The singleton client processes hash-fragment tokens at module-import
-        // time, so the PASSWORD_RECOVERY event fires before this listener
-        // exists. Detect it here as a fallback after the session is ready.
         if (hashHasRecovery && currentSession) {
           navigateToReset()
           return
