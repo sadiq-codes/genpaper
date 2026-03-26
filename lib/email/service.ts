@@ -1,6 +1,7 @@
 import 'server-only'
 import { Resend } from 'resend'
 import { createServiceClient } from '@/lib/supabase/service'
+import { createHmac } from 'crypto'
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://genpaper.ai'
 const FROM_ADDRESS = 'GenPaper <noreply@genpaper.ai>'
@@ -114,7 +115,6 @@ export function getBaseUrl(): string {
 }
 
 export function buildUnsubscribeUrl(userId: string): string {
-  const { createHmac } = require('crypto') as typeof import('crypto')
   const secret = process.env.CRON_SECRET || 'fallback-secret'
   const token = createHmac('sha256', secret).update(userId).digest('hex')
   return `${BASE_URL}/api/email/unsubscribe?uid=${userId}&token=${token}`

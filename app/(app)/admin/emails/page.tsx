@@ -92,7 +92,7 @@ export default function AdminEmailsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Email Campaigns</h1>
-        <p className="text-sm text-muted-foreground">Send emails to all users who haven't unsubscribed.</p>
+        <p className="text-sm text-muted-foreground">Send emails to all users who haven&apos;t unsubscribed.</p>
       </div>
 
       <div className="grid md:grid-cols-5 gap-6">
