@@ -1,17 +1,15 @@
-import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { isAdmin } from '@/lib/admin'
 import { AdminNav } from './admin-nav'
+import { getUserOrRedirect } from '@/lib/auth/cached'
 
 export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-
-  if (error || !user || !isAdmin(user.id)) {
+  const user = await getUserOrRedirect()
+  if (!isAdmin(user.id)) {
     redirect('/projects')
   }
 

@@ -1,23 +1,17 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/app-shell/sidebar'
 import GlobalLibraryProvider from '@/components/GlobalLibraryProvider'
 import { QueryProvider } from '@/components/providers/QueryProvider'
 import { isAdmin } from '@/lib/admin'
+import { getUserOrRedirect } from '@/lib/auth/cached'
 
 export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-
-  if (error || !user) {
-    redirect('/login')
-  }
+  const user = await getUserOrRedirect()
 
   // Get sidebar state from cookies
   const cookieStore = await cookies()

@@ -67,22 +67,19 @@ function LoginPageContent() {
     setResendMessage("")
 
     try {
-      const response = await fetch("/auth/signin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+      const normalizedEmail = email.trim().toLowerCase()
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
       })
 
-      const data = await response.json().catch(() => null)
-
-      if (!response.ok) {
-        const message = data?.error || "Invalid email or password"
+      if (signInError) {
+        const code = (signInError as { code?: string }).code
         const invalidCredentials =
-          data?.error === "Invalid login credentials" ||
-          data?.code === "invalid_credentials"
+          code === "invalid_credentials" ||
+          signInError.message === "Invalid login credentials"
 
         if (invalidCredentials) {
-          const normalizedEmail = email.trim().toLowerCase()
           const { error: fallbackError } = await supabase.auth.signInWithOtp({
             email: normalizedEmail,
             options: {
@@ -96,14 +93,25 @@ function LoginPageContent() {
               "Invalid email or password. We sent a sign-in link to your email as a fallback. Open it, then set a new password if needed."
             )
           } else {
-            setError(message)
+            setError("Invalid email or password")
           }
 
           setCanResendConfirmation(true)
           return
         }
 
-        setError(message)
+        if (code === "email_not_confirmed") {
+          setError("Please confirm your email before signing in.")
+          setCanResendConfirmation(true)
+          return
+        }
+
+        setError(signInError.message || "Invalid email or password")
+        return
+      }
+
+      if (!data.session) {
+        setError("Sign in failed. Please try again.")
         return
       }
 
@@ -124,15 +132,16 @@ function LoginPageContent() {
     setResendMessage("")
 
     try {
-      const response = await fetch("/auth/resend-confirmation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: normalizedEmail }),
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: normalizedEmail,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+        },
       })
 
-      const data = await response.json().catch(() => null)
-      if (!response.ok) {
-        setResendMessage(data?.error || "Could not resend confirmation email.")
+      if (error) {
+        setResendMessage("Could not resend confirmation email.")
         return
       }
 

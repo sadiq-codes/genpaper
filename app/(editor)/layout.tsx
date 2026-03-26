@@ -1,11 +1,10 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { Toaster } from 'sonner'
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/app-shell/sidebar'
 import GlobalLibraryProvider from '@/components/GlobalLibraryProvider'
 import { QueryProvider } from '@/components/providers/QueryProvider'
+import { getUserOrRedirect } from '@/lib/auth/cached'
 
 // Full-screen layout for editor with collapsible app sidebar
 // No header bar - EditorTopNav serves as the header
@@ -14,12 +13,7 @@ export default async function EditorLayout({
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-
-  if (error || !user) {
-    redirect('/login')
-  }
+  await getUserOrRedirect()
 
   // Get sidebar state from cookies - default to closed for editor
   const cookieStore = await cookies()
