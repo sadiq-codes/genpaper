@@ -11,6 +11,27 @@ export async function GET(request: NextRequest) {
   const type = searchParams.get('type')
   const next = searchParams.get('next') ?? '/projects'
   const toRedirectUrl = (path: string) => getAbsoluteUrlFromHeaders(request.headers, path)
+  const toRecoveryError = (description = 'Email link is invalid or has expired') => {
+    const params = new URLSearchParams({
+      error: 'access_denied',
+      error_code: 'otp_expired',
+      error_description: description,
+    })
+    return toRedirectUrl(`/reset-password?${params.toString()}`)
+  }
+  const toLoginWithCode = () => {
+    if (!code) {
+      return toRedirectUrl(`/login?error=${encodeURIComponent('Authentication failed. Please try again.')}`)
+    }
+    const params = new URLSearchParams({
+      code,
+      next,
+    })
+    if (type) {
+      params.set('type', type)
+    }
+    return toRedirectUrl(`/login?${params.toString()}`)
+  }
 
   if (code) {
     try {
@@ -76,16 +97,25 @@ export async function GET(request: NextRequest) {
         // Authentication successful, redirect to destination
         return NextResponse.redirect(toRedirectUrl(next))
       } else {
-        console.error('[auth/callback] Code exchange failed:', error.message, error.status)
-        return NextResponse.redirect(
-          toRedirectUrl(`/login?error=${encodeURIComponent('Authentication failed. Please try again.')}`)
+        console.error(
+          '[auth/callback] Code exchange failed:',
+          error.message,
+          error.status,
+          (error as { code?: string }).code
         )
+        if (type === 'recovery') {
+          return NextResponse.redirect(toRecoveryError())
+        }
+        // Fallback to browser-side exchange. This can recover when the verifier
+        // is only available in the client context.
+        return NextResponse.redirect(toLoginWithCode())
       }
     } catch (error) {
       console.error('[auth/callback] Unexpected error:', error)
-      return NextResponse.redirect(
-        toRedirectUrl(`/login?error=${encodeURIComponent('Network error. Please check your connection and try again.')}`)
-        )
+      if (type === 'recovery') {
+        return NextResponse.redirect(toRecoveryError())
+      }
+      return NextResponse.redirect(toLoginWithCode())
     }
   }
 

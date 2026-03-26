@@ -1,11 +1,11 @@
 "use client"
 
 import type React from "react"
-import { useState, Suspense } from "react"
-import { useRouter } from "next/navigation"
+import { useState, Suspense, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
-import { createClient } from "@/lib/supabase/client"
+import { createImplicitClient } from "@/lib/supabase/implicit-client"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
 
@@ -17,12 +17,104 @@ function ResetPasswordContent() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState(false)
+  const [initializing, setInitializing] = useState(true)
   const router = useRouter()
-  const supabase = createClient()
+  const searchParams = useSearchParams()
+  const supabase = createImplicitClient()
+  const authCode = searchParams.get("code")
+  const authErrorCode = searchParams.get("error_code")
+  const authErrorDescription = searchParams.get("error_description")
+
+  const invalidResetLinkMessage = "This password reset link is invalid or expired. Please request a new reset link."
+
+  useEffect(() => {
+    let cancelled = false
+
+    const initializeRecoverySession = async () => {
+      const waitForSession = async (attempts = 12, delayMs = 150) => {
+        for (let i = 0; i < attempts; i += 1) {
+          const { data: { session } } = await supabase.auth.getSession()
+          if (session) return true
+          await new Promise((resolve) => setTimeout(resolve, delayMs))
+        }
+        return false
+      }
+
+      try {
+        if (authErrorCode === "otp_expired" || authErrorCode === "access_denied") {
+          setError(authErrorDescription ? authErrorDescription.replace(/\+/g, " ") : invalidResetLinkMessage)
+          return
+        }
+
+        if (authCode) {
+          const codeStatusKey = `reset-code-status:${authCode}`
+          const existingStatus = sessionStorage.getItem(codeStatusKey)
+
+          if (existingStatus === "pending" || existingStatus === "done") {
+            const hasSession = await waitForSession()
+            if (!hasSession && existingStatus === "done") {
+              setError(invalidResetLinkMessage)
+            }
+            return
+          }
+
+          const { data: { session: existingSession } } = await supabase.auth.getSession()
+          if (existingSession) {
+            window.history.replaceState(null, "", "/reset-password")
+            return
+          }
+
+          sessionStorage.setItem(codeStatusKey, "pending")
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(authCode)
+          if (exchangeError) {
+            console.error(
+              "[reset-password] exchangeCodeForSession failed:",
+              exchangeError.message,
+              exchangeError.status,
+              (exchangeError as { code?: string }).code
+            )
+            sessionStorage.removeItem(codeStatusKey)
+            setError(invalidResetLinkMessage)
+            return
+          }
+
+          sessionStorage.setItem(codeStatusKey, "done")
+          const hasSession = await waitForSession()
+          if (!hasSession) {
+            setError("This password reset session is missing or expired. Please request a new reset link.")
+            return
+          }
+
+          // Cleanup one-time code params after successful exchange.
+          window.history.replaceState(null, "", "/reset-password")
+          return
+        }
+
+        const hasSession = await waitForSession()
+        if (!hasSession) {
+          setError("This password reset session is missing or expired. Please request a new reset link.")
+        }
+      } finally {
+        if (!cancelled) {
+          setInitializing(false)
+        }
+      }
+    }
+
+    initializeRecoverySession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [authCode, authErrorCode, authErrorDescription, supabase])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+
+    if (initializing) {
+      return
+    }
 
     if (password.length < 6) {
       setError("Password must be at least 6 characters.")
@@ -37,11 +129,21 @@ function ResetPasswordContent() {
     setLoading(true)
 
     try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setError("This password reset session is missing or expired. Please request a new reset link.")
+        return
+      }
+
       const { error } = await supabase.auth.updateUser({ password })
 
       if (error) {
-        console.error('[reset-password] updateUser failed:', error.message, error.status)
-        setError(error.message)
+        console.error('[reset-password] updateUser failed:', error.message, error.status, (error as { code?: string }).code)
+        if (error.message.toLowerCase().includes("auth session missing")) {
+          setError("This password reset session is missing or expired. Please request a new reset link.")
+        } else {
+          setError(error.message)
+        }
       } else {
         setSuccess(true)
         setTimeout(() => {
@@ -128,6 +230,16 @@ function ResetPasswordContent() {
         {error && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-3">
             <p className="text-sm text-destructive">{error}</p>
+            {error.toLowerCase().includes("reset link") && (
+              <div className="mt-2">
+                <Link
+                  href="/forgot-password"
+                  className="inline-flex items-center rounded-full border border-border/40 px-3 py-1 text-xs font-medium hover:bg-muted transition-colors"
+                >
+                  Request a new reset link
+                </Link>
+              </div>
+            )}
           </div>
         )}
 
@@ -184,11 +296,11 @@ function ResetPasswordContent() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || initializing}
           className="w-full h-11 rounded-full bg-foreground text-background text-sm font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-2"
         >
-          {loading && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
-          {loading ? "Updating\u2026" : "Update Password"}
+          {(loading || initializing) && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+          {initializing ? "Preparing\u2026" : loading ? "Updating\u2026" : "Update Password"}
         </button>
       </form>
 

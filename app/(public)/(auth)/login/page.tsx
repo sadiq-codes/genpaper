@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect, Suspense } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
@@ -21,10 +21,25 @@ function LoginPageContent() {
   const [resendLoading, setResendLoading] = useState(false)
   const [resendMessage, setResendMessage] = useState("")
   const [googleLoading, setGoogleLoading] = useState(false)
-  const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
   const nextPath = searchParams.get("next") || "/projects"
+  const authCode = searchParams.get("code")
+  const authType = searchParams.get("type")
+  const authError = searchParams.get("error")
+  const authErrorCode = searchParams.get("error_code")
+  const authErrorDescription = searchParams.get("error_description")
+
+  const safeDecode = (value: string) => {
+    try {
+      return decodeURIComponent(value)
+    } catch {
+      return value
+    }
+  }
+
+  const getEmailAuthRedirectTo = () =>
+    `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true)
@@ -48,16 +63,108 @@ function LoginPageContent() {
   }
 
   useEffect(() => {
-    const checkUser = async () => {
-      setChecking(false)
-    }
-    checkUser()
+    let cancelled = false
 
-    const errorParam = searchParams.get("error")
-    if (errorParam) {
-      setError(decodeURIComponent(errorParam))
+    const redirectAfterAuth = () => {
+      if (authType === "recovery") {
+        window.location.href = "/reset-password"
+        return
+      }
+      window.location.href = nextPath
     }
-  }, [router, searchParams])
+
+    const waitForSession = async (attempts = 6, delayMs = 150) => {
+      for (let i = 0; i < attempts; i += 1) {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session) return true
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+      }
+      return false
+    }
+
+    const initializeAuthState = async () => {
+      try {
+        if (authCode) {
+          const codeStatusKey = `login-code-status:${authCode}`
+          const existingStatus = sessionStorage.getItem(codeStatusKey)
+
+          if (existingStatus === "pending" || existingStatus === "done") {
+            const hasSession = await waitForSession()
+            if (hasSession) {
+              redirectAfterAuth()
+              return
+            }
+
+            if (existingStatus === "done") {
+              setError("This sign-in link is invalid or expired. Request a new one and open it in the same browser.")
+              setCanResendConfirmation(true)
+            }
+            return
+          }
+
+          const nextOnlyParams = new URLSearchParams({ next: nextPath })
+          window.history.replaceState(null, "", `/login?${nextOnlyParams.toString()}`)
+
+          sessionStorage.setItem(codeStatusKey, "pending")
+          const { data: { session: existingSession } } = await supabase.auth.getSession()
+          if (existingSession) {
+            sessionStorage.setItem(codeStatusKey, "done")
+            redirectAfterAuth()
+            return
+          }
+
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(authCode)
+          if (!exchangeError) {
+            sessionStorage.setItem(codeStatusKey, "done")
+            redirectAfterAuth()
+            return
+          }
+
+          sessionStorage.removeItem(codeStatusKey)
+          console.error(
+            "[login] exchangeCodeForSession failed:",
+            exchangeError.message,
+            exchangeError.status,
+            (exchangeError as { code?: string }).code
+          )
+          setError("This sign-in link is invalid or expired. Request a new one and open it in the same browser.")
+          setCanResendConfirmation(true)
+          return
+        }
+
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session) {
+          redirectAfterAuth()
+          return
+        }
+
+        if (authErrorCode || authErrorDescription) {
+          setError(safeDecode(authErrorDescription || authErrorCode || "Authentication failed"))
+          if ((authErrorCode || "").toLowerCase().includes("otp")) {
+            setCanResendConfirmation(true)
+          }
+          return
+        }
+
+        if (authError) {
+          setError(safeDecode(authError))
+          if (authError.toLowerCase().includes("authentication failed")) {
+            setCanResendConfirmation(true)
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setChecking(false)
+        }
+      }
+    }
+
+    initializeAuthState()
+
+    return () => {
+      cancelled = true
+    }
+  }, [authCode, authError, authErrorCode, authErrorDescription, authType, nextPath, supabase])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -84,7 +191,7 @@ function LoginPageContent() {
             email: normalizedEmail,
             options: {
               shouldCreateUser: false,
-              emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+              emailRedirectTo: getEmailAuthRedirectTo(),
             },
           })
 
@@ -136,7 +243,7 @@ function LoginPageContent() {
         type: "signup",
         email: normalizedEmail,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+          emailRedirectTo: getEmailAuthRedirectTo(),
         },
       })
 
