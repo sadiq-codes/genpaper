@@ -8,6 +8,7 @@ import { headers } from 'next/headers'
 import { getAbsoluteUrlFromHeaders } from '@/lib/config'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 import { parseTopicInput } from '@/lib/generation/topic-parser'
+import { trackEvent } from '@/lib/tracking/events'
 
 // Projects Actions
 export async function getProjectsAction(limit = 20, offset = 0) {
@@ -172,7 +173,9 @@ export async function createProjectAction(
     }
 
     const project = await createResearchProject(user.id, projectTitle, generationConfig)
-    
+
+    trackEvent(user.id, 'project_created', { projectId: project.id, paperType, generationMode }).catch(() => {})
+
     // Link all papers (uploaded + selected from library) to the project via CitationService
     if (allPaperIds.length > 0) {
       console.log(`📎 Linking ${allPaperIds.length} papers to project ${project.id}`)

@@ -1,0 +1,16 @@
+name: Daily Drip Emails
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # 09:00 UTC daily
+  workflow_dispatch: {}   # manual trigger
+
+jobs:
+  send-drip-emails:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger drip email cron
+        run: |
+          curl -sf -X POST "${{ secrets.APP_URL }}/api/cron/drip-emails" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json"

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { trackEvent } from "@/lib/tracking/events";
 import { createProject } from "@/lib/services/project-service";
 import { getResearchProject, getProjectWithContent } from "@/lib/db/research";
 import {
@@ -284,6 +285,8 @@ export async function startGenerationRun(
           : "Failed to launch generation worker",
     };
   }
+
+  trackEvent(userId, 'generation_started', { projectId, runId: run.id, paperType }).catch(() => {});
 
   return {
     success: true,

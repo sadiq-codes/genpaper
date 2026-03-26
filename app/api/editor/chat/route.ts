@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { trackEvent } from '@/lib/tracking/events'
 import { getChatLanguageModel } from '@/lib/ai/vercel-client'
 import { streamText, convertToModelMessages, type UIMessage } from 'ai'
 import { NextRequest } from 'next/server'
@@ -466,6 +467,8 @@ export async function POST(request: NextRequest) {
       documentStructure,
       isToolResultMessage = false,
     } = body
+
+    trackEvent(user.id, 'chat_message', { projectId }).catch(() => {})
 
     const isInlineEdit = typeof raw.isInlineEdit === 'boolean' 
       ? raw.isInlineEdit as boolean 

@@ -6,6 +6,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server'
+import { trackEvent } from '@/lib/tracking/events'
 import { NextRequest, NextResponse } from 'next/server'
 import { parseDocument } from '@/lib/export/document-parser'
 import { generateDocx } from '@/lib/export/docx-generator'
@@ -53,6 +54,8 @@ export async function POST(request: NextRequest) {
 
     const body: ExportRequest = await request.json()
     const { format, document, papers, citationStyle, title, authors, abstract } = body
+
+    trackEvent(user.id, 'export', { format }).catch(() => {})
 
     // Validate request
     if (!document || !document.type) {

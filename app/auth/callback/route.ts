@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getAbsoluteUrlFromHeaders } from '@/lib/config'
+import { trackEvent } from '@/lib/tracking/events'
+import { sendEmail } from '@/lib/email/service'
+import { welcomeEmail } from '@/lib/email/templates/welcome'
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -35,6 +38,27 @@ export async function GET(request: NextRequest) {
           
           if (profileError) {
             console.error('[auth/callback] Profile upsert error:', profileError)
+          }
+
+          // New user detection: send welcome email + track signup (fire-and-forget)
+          const isNewUser = user.created_at &&
+            Date.now() - new Date(user.created_at).getTime() < 120_000
+          if (isNewUser) {
+            const name = user.user_metadata?.full_name || user.user_metadata?.name || user.email || ''
+            trackEvent(user.id, 'signup').catch(() => {})
+            sendEmail({
+              to: user.email || '',
+              subject: "Welcome to GenPaper — let's write your first paper",
+              html: welcomeEmail({ name, userId: user.id }),
+              userId: user.id,
+              emailType: 'drip',
+            }).then(async (sent) => {
+              if (sent) {
+                const { createServiceClient } = await import('@/lib/supabase/service')
+                const svc = createServiceClient()
+                await svc.from('profiles').update({ onboarding_email_step: 1 }).eq('id', user.id)
+              }
+            }).catch(() => {})
           }
 
           // Explicit type param (set in forgot-password redirectTo) is the primary signal.

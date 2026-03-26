@@ -14,6 +14,9 @@ import {
   saveContextCache,
   loadContextCache,
 } from "@/lib/generation/run-manager";
+import { trackEvent } from "@/lib/tracking/events";
+import { sendEmail } from "@/lib/email/service";
+import { generationFailedEmail } from "@/lib/email/templates/generation-failed";
 import {
   runProfilePhase,
   runDiscoveryPhase,
@@ -105,7 +108,7 @@ export function createProgressCallback(runId: string) {
 }
 
 export async function handleGenerationPipelineFailure(
-  input: Pick<GenerationPipelineInput, "runId" | "projectId">,
+  input: Pick<GenerationPipelineInput, "runId" | "projectId"> & { userId?: string },
   error: unknown
 ): Promise<void> {
   const errorMessage =
@@ -117,6 +120,44 @@ export async function handleGenerationPipelineFailure(
   }
   if (input.projectId) {
     await updateResearchProjectStatus(input.projectId, "failed" as PaperStatus);
+  }
+
+  if (input.userId) {
+    trackEvent(input.userId, "generation_failed", {
+      projectId: input.projectId,
+      runId: input.runId,
+      error: errorMessage,
+    }).catch(() => {});
+
+    sendFailureNotification(input.userId, input.projectId, errorMessage).catch(() => {});
+  }
+}
+
+async function sendFailureNotification(userId: string, projectId: string, errorMessage: string) {
+  try {
+    const { createServiceClient } = await import("@/lib/supabase/service");
+    const supabase = createServiceClient();
+    const [{ data: profile }, { data: project }] = await Promise.all([
+      supabase.from("profiles").select("email, full_name, marketing_email_opt_out").eq("id", userId).single(),
+      supabase.from("research_projects").select("title").eq("id", projectId).single(),
+    ]);
+    if (!profile?.email || profile.marketing_email_opt_out) return;
+    const html = generationFailedEmail({
+      name: profile.full_name || profile.email.split("@")[0],
+      userId,
+      projectTitle: project?.title || "Untitled",
+      projectId,
+      errorSummary: errorMessage.length > 200 ? errorMessage.slice(0, 200) + "…" : errorMessage,
+    });
+    await sendEmail({
+      to: profile.email,
+      subject: "Your paper generation needs another try",
+      html,
+      userId,
+      emailType: "failure_notification",
+    });
+  } catch (e) {
+    console.error("[pipeline-runner] failure notification error:", e);
   }
 }
 
@@ -743,6 +784,13 @@ export async function runGenerationPipeline(
     if (recorded) {
       console.log(`[Billing] Recorded first generation for project ${projectId}`);
     }
+
+    trackEvent(userId, "generation_completed", {
+      projectId,
+      runId,
+      wordCount: result.content.split(/\s+/).length,
+      citationCount: result.citationCount,
+    }).catch(() => {});
 
     // Emit completion
     await emitComplete(runId, result.content);
