@@ -24,6 +24,9 @@ RUN bun install --frozen-lockfile || bun install
 FROM oven/bun:1-alpine AS builder
 WORKDIR /app
 
+# Next.js lockfile patch step shells out to npm; ensure npm exists in builder.
+RUN apk add --no-cache nodejs npm
+
 # Build-time arguments for environment variables needed during build
 # These are required for Next.js static page generation
 ARG NEXT_PUBLIC_SUPABASE_URL
