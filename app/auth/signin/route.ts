@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null)
-    const email = body?.email
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : ''
     const password = body?.password
 
     if (!email || !password) {

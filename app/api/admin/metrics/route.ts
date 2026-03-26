@@ -1,15 +1,12 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
-
-const ADMIN_USER_IDS = [
-  'e97fda5f-92d7-4087-be83-ca26aea7faaa',
-]
+import { isAdmin } from '@/lib/admin'
 
 export async function GET() {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user || !ADMIN_USER_IDS.includes(user.id)) {
+  if (authError || !user || !isAdmin(user.id)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

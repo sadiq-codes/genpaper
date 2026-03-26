@@ -7,6 +7,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server'
+import { isAdmin } from '@/lib/admin'
 
 export interface AuthResult {
   authenticated: boolean
@@ -14,11 +15,6 @@ export interface AuthResult {
   userId?: string
   error?: string
 }
-
-// Admin user IDs (you can also use a database table for this)
-const ADMIN_USER_IDS = [
-  'e97fda5f-92d7-4087-be83-ca26aea7faaa', // Your user ID
-]
 
 /**
  * Validate API key from Authorization header
@@ -50,10 +46,7 @@ async function validateSession(): Promise<{ valid: boolean; userId?: string }> {
       return { valid: false }
     }
     
-    // Check if user is admin
-    const isAdmin = ADMIN_USER_IDS.includes(user.id)
-    
-    return { valid: isAdmin, userId: user.id }
+    return { valid: isAdmin(user.id), userId: user.id }
   } catch {
     return { valid: false }
   }

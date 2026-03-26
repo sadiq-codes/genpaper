@@ -3,15 +3,43 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { sendBulkEmails } from '@/lib/email/service'
 import { campaignEmail } from '@/lib/email/templates/campaign-wrapper'
+import { isAdmin } from '@/lib/admin'
 
-const ADMIN_USER_IDS = [
-  'e97fda5f-92d7-4087-be83-ca26aea7faaa',
-]
+async function requireAdmin() {
+  const supabase = await createClient()
+  const { data: { user }, error } = await supabase.auth.getUser()
+  if (error || !user || !isAdmin(user.id)) return null
+  return user
+}
+
+export async function GET() {
+  if (!(await requireAdmin())) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const svc = createServiceClient()
+
+  const [{ data: campaigns }, { count: recipientCount }] = await Promise.all([
+    svc
+      .from('email_campaigns')
+      .select('id, subject, recipient_count, sent_at')
+      .order('sent_at', { ascending: false })
+      .limit(20),
+    svc
+      .from('profiles')
+      .select('id', { count: 'exact', head: true })
+      .eq('marketing_email_opt_out', false)
+      .not('email', 'eq', ''),
+  ])
+
+  return NextResponse.json({
+    campaigns: campaigns || [],
+    recipientCount: recipientCount || 0,
+  })
+}
 
 export async function POST(request: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user || !ADMIN_USER_IDS.includes(user.id)) {
+  if (!(await requireAdmin())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -22,7 +50,6 @@ export async function POST(request: NextRequest) {
 
   const svc = createServiceClient()
 
-  // Fetch all users who haven't opted out
   const { data: profiles, error: fetchErr } = await svc
     .from('profiles')
     .select('id, email')
@@ -38,7 +65,6 @@ export async function POST(request: NextRequest) {
     userId: p.id,
   }))
 
-  // Wrap body in layout for each user
   const result = await sendBulkEmails({
     subject,
     html: campaignEmail({ bodyHtml, userId: '' }),
@@ -46,7 +72,6 @@ export async function POST(request: NextRequest) {
     emailType: 'campaign',
   })
 
-  // Record campaign
   await svc.from('email_campaigns').insert({
     subject,
     body_html: bodyHtml,

@@ -810,7 +810,7 @@ export function DocumentEditor({
   const canDeleteTable = editor.can().chain().focus().deleteTable().run()
 
   return (
-    <div className="flex min-w-0 flex-col h-full bg-background">
+    <div data-tour="document-editor" className="flex min-w-0 flex-col h-full bg-background">
       {/* Editor toolbar */}
       <div className="flex items-center border-b border-border/30 shrink-0 sticky top-0 z-10 bg-background">
         {/* Sidebar toggle - pinned outside scroll area */}

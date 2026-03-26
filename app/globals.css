@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "driver.js/dist/driver.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -1477,4 +1478,68 @@ kbd {
 .prose h3,
 .prose h4 {
   @apply relative;
+}
+
+/* driver.js tour overrides */
+.driver-popover {
+  --driverjs-bg: oklch(0.999 0.002 85);
+  --driverjs-color: oklch(0.18 0.02 60);
+  background: var(--driverjs-bg) !important;
+  color: var(--driverjs-color) !important;
+  border-radius: 0.75rem !important;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.12) !important;
+  font-family: inherit !important;
+  max-width: 340px !important;
+}
+
+.dark .driver-popover {
+  --driverjs-bg: oklch(0.20 0.01 60);
+  --driverjs-color: oklch(0.95 0.005 85);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5) !important;
+}
+
+.driver-popover .driver-popover-title {
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+}
+
+.driver-popover .driver-popover-description {
+  font-size: 0.875rem !important;
+  line-height: 1.5 !important;
+  color: inherit !important;
+  opacity: 0.75;
+}
+
+.driver-popover .driver-popover-navigation-btns .driver-popover-next-btn {
+  background: oklch(0.65 0.15 55) !important;
+  color: white !important;
+  border-radius: 9999px !important;
+  padding: 0.35rem 1rem !important;
+  font-size: 0.8125rem !important;
+  font-weight: 500 !important;
+  border: none !important;
+  text-shadow: none !important;
+}
+
+.driver-popover .driver-popover-navigation-btns .driver-popover-prev-btn {
+  border-radius: 9999px !important;
+  padding: 0.35rem 1rem !important;
+  font-size: 0.8125rem !important;
+  font-weight: 500 !important;
+  border: none !important;
+  text-shadow: none !important;
+}
+
+.driver-popover .driver-popover-progress-text {
+  font-size: 0.75rem !important;
+  opacity: 0.5;
+}
+
+.driver-popover .driver-popover-close-btn {
+  color: inherit !important;
+  opacity: 0.5;
+}
+
+.driver-popover .driver-popover-close-btn:hover {
+  opacity: 1;
 }

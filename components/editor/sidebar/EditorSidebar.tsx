@@ -15,6 +15,7 @@ export function EditorSidebar() {
       <div className="shrink-0 flex items-center p-2 border-b border-border/30">
         <div className="flex gap-0.5 w-full" role="tablist">
           <button
+            data-tour="chat-tab"
             role="tab"
             aria-selected={activeTab === 'chat'}
             onClick={() => setActiveTab('chat')}
@@ -29,6 +30,7 @@ export function EditorSidebar() {
             <span>Chat</span>
           </button>
           <button
+            data-tour="papers-tab"
             role="tab"
             aria-selected={activeTab === 'research'}
             onClick={() => setActiveTab('research')}

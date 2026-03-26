@@ -55,7 +55,20 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
 
   useEffect(() => {
     const supabase = createClient()
-    const hashHasRecovery = window.location.hash.includes('type=recovery')
+    const getAuthHash = () => {
+      const hash = window.location.hash.startsWith('#')
+        ? window.location.hash.substring(1)
+        : window.location.hash
+      const params = new URLSearchParams(hash)
+      return {
+        type: params.get('type'),
+        accessToken: params.get('access_token'),
+        refreshToken: params.get('refresh_token'),
+      }
+    }
+    const initialHash = getAuthHash()
+    const hashType = initialHash.type
+    const hashHasRecovery = hashType === 'recovery'
 
     const navigateToReset = () => {
       setPendingRecovery(true)
@@ -67,13 +80,10 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
       try {
         let { data: { session: currentSession } } = await supabase.auth.getSession()
 
-        // @supabase/ssr forces flowType:"pkce", so the client ignores hash-fragment
-        // tokens. When Supabase falls back to implicit flow (e.g. redirectTo not in
-        // the project allowlist), we must extract the hash tokens manually.
-        if (hashHasRecovery && !currentSession) {
-          const hashParams = new URLSearchParams(window.location.hash.substring(1))
-          const accessToken = hashParams.get('access_token')
-          const refreshToken = hashParams.get('refresh_token')
+        // @supabase/ssr uses PKCE flow, but some email links can still arrive with
+        // implicit-flow hash tokens. Restore client session from hash when present.
+        if (!currentSession) {
+          const { accessToken, refreshToken } = getAuthHash()
           if (accessToken && refreshToken) {
             const { data, error: setErr } = await supabase.auth.setSession({
               access_token: accessToken,

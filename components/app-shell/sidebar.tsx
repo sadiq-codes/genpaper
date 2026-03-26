@@ -7,7 +7,8 @@ import {
   Library,
   Loader2,
   LogOut,
-  Settings
+  Settings,
+  Shield
 } from 'lucide-react'
 import {
   Sidebar,
@@ -46,7 +47,7 @@ const navigation = [
   },
 ]
 
-export function AppSidebar() {
+export function AppSidebar({ showAdmin = false }: { showAdmin?: boolean }) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -127,6 +128,7 @@ export function AppSidebar() {
                       href={item.url}
                       onMouseEnter={() => handlePrefetch(item.url)}
                       onFocus={() => handlePrefetch(item.url)}
+                      {...(item.url === '/library' ? { 'data-tour': 'library-link' } : {})}
                     >
                       <item.icon />
                       <span>{item.title}</span>
@@ -137,6 +139,32 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {showAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Admin</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname.startsWith('/admin')}
+                    tooltip="Admin"
+                  >
+                    <Link
+                      href="/admin/metrics"
+                      onMouseEnter={() => handlePrefetch('/admin/metrics')}
+                      onFocus={() => handlePrefetch('/admin/metrics')}
+                    >
+                      <Shield />
+                      <span>Admin</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
       
       <SidebarFooter>

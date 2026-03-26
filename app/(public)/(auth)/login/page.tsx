@@ -17,6 +17,9 @@ function LoginPageContent() {
   const [showPassword, setShowPassword] = useState(false)
   const [checking, setChecking] = useState(true)
   const [error, setError] = useState("")
+  const [canResendConfirmation, setCanResendConfirmation] = useState(false)
+  const [resendLoading, setResendLoading] = useState(false)
+  const [resendMessage, setResendMessage] = useState("")
   const [googleLoading, setGoogleLoading] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -60,19 +63,26 @@ function LoginPageContent() {
     e.preventDefault()
     setLoading(true)
     setError("")
+    setCanResendConfirmation(false)
+    setResendMessage("")
 
     try {
       const response = await fetch("/auth/signin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
       })
 
       const data = await response.json().catch(() => null)
 
       if (!response.ok) {
         const message = data?.error || "Invalid email or password"
-        setError(message)
+        if (data?.error === "Invalid login credentials") {
+          setError("Invalid email or password. If you recently signed up, check your inbox for a confirmation email first.")
+          setCanResendConfirmation(true)
+        } else {
+          setError(message)
+        }
         return
       }
 
@@ -82,6 +92,34 @@ function LoginPageContent() {
       setError("Network error. Please check your connection and try again.")
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleResendConfirmation = async () => {
+    const normalizedEmail = email.trim().toLowerCase()
+    if (!normalizedEmail) return
+
+    setResendLoading(true)
+    setResendMessage("")
+
+    try {
+      const response = await fetch("/auth/resend-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalizedEmail }),
+      })
+
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        setResendMessage(data?.error || "Could not resend confirmation email.")
+        return
+      }
+
+      setResendMessage("If your account exists and is unconfirmed, we sent a new confirmation email.")
+    } catch {
+      setResendMessage("Network error while resending confirmation email.")
+    } finally {
+      setResendLoading(false)
     }
   }
 
@@ -145,6 +183,21 @@ function LoginPageContent() {
         {error && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-3">
             <p className="text-sm text-destructive">{error}</p>
+            {canResendConfirmation && (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={handleResendConfirmation}
+                  disabled={resendLoading || !email.trim()}
+                  className="inline-flex items-center rounded-full border border-border/40 px-3 py-1 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
+                >
+                  {resendLoading ? "Sending..." : "Resend confirmation email"}
+                </button>
+              </div>
+            )}
+            {resendMessage && (
+              <p className="mt-2 text-xs text-muted-foreground">{resendMessage}</p>
+            )}
           </div>
         )}
 

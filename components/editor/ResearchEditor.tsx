@@ -48,6 +48,8 @@ import {
 } from "./hooks"
 import { useResizablePanel } from "./hooks/useResizablePanel"
 import { usePaperProcessingStatus } from "./hooks/usePaperProcessingStatus"
+import { useTour } from "@/lib/onboarding/use-tour"
+import { EDITOR_TOUR_STEPS } from "@/lib/onboarding/tours"
 import { useAutocompletePrefs, DEFAULT_PREFS, type AutocompletePrefs } from "./hooks/useAutocompletePrefs"
 
 // CitationStyleType now accepts any CSL style ID string
@@ -110,6 +112,7 @@ export function ResearchEditor({
   const [chatSelectionContext, setChatSelectionContext] = useState<string | null>(null)
   const [currentCitationStyle, setCurrentCitationStyle] = useState<CitationStyleType>(citationStyle)
   const [isGenerating, setIsGenerating] = useState(initialIsGenerating)
+  const { startTour: startEditorTour } = useTour('editor', EDITOR_TOUR_STEPS)
   const [currentTitle, setCurrentTitle] = useState(projectTitle)
   const [historyPanelOpen, setHistoryPanelOpen] = useState(false)
   const lastGenerationCompleteRef = useRef<{ key: string; at: number } | null>(null)
@@ -262,7 +265,8 @@ export function ResearchEditor({
 
     window.sessionStorage.removeItem(GENERATION_COMPLETION_TOAST_KEY)
     toast.success("Paper generated successfully!")
-  }, [projectId])
+    setTimeout(startEditorTour, 1500)
+  }, [projectId, startEditorTour])
 
   // Check for mobile on mount and resize
   useEffect(() => {

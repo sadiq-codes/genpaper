@@ -162,18 +162,16 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ slug: s
 
   if (loading) {
     return (
-      <div className="container max-w-4xl py-8">
-        <div className="flex items-center justify-center py-24">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+      <div className="flex items-center justify-center py-24">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     )
   }
 
   return (
-    <div className="container max-w-4xl py-8">
+    <div className="max-w-4xl space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="sm" asChild>
             <Link href="/admin/blog">
@@ -182,7 +180,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ slug: s
             </Link>
           </Button>
           <div>
-            <h1 className="font-instrument text-2xl tracking-tight">
+            <h1 className="text-xl font-semibold tracking-tight">
               {isNew ? 'New Post' : 'Edit Post'}
             </h1>
             {!isNew && (
@@ -245,7 +243,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ slug: s
 
       {/* Error */}
       {error && (
-        <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
+        <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
           {error}
         </div>
       )}

@@ -202,6 +202,7 @@ export function ProjectInputSection() {
             
             {/* Textarea — larger, more breathing room */}
             <Textarea
+              data-tour="topic-input"
               name="topic"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
@@ -224,11 +225,13 @@ export function ProjectInputSection() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 pb-4 pt-1">
               {/* Left: Source + Options + Selects */}
               <div className="flex items-center gap-1.5 flex-wrap">
+                <span data-tour="add-sources">
                 <AddSourceMenu 
                   disabled={isLoading} 
                   onPdfUpload={handlePdfUpload} 
                   onOpenLibrary={() => setIsLibraryOpen(true)}
                 />
+                </span>
                 <AdvancedOptionsPopover
                   hasOriginalResearch={hasOriginalResearch}
                   onHasOriginalResearchChange={setHasOriginalResearch}
@@ -241,12 +244,14 @@ export function ProjectInputSection() {
                   disabled={isLoading}
                 />
                 <div className="hidden sm:block w-px h-4 bg-border/30 mx-0.5" />
+                <span data-tour="paper-type">
                 <PaperTypeSelect
                   value={paperType}
                   onValueChange={setPaperType}
                   disabled={isLoading}
                   userTier={subscription?.tier}
                 />
+                </span>
                 <GenerationModeSelect
                   value={generationMode}
                   onValueChange={setGenerationMode}
@@ -256,6 +261,7 @@ export function ProjectInputSection() {
 
               {/* Right: Submit */}
               <Button
+                data-tour="start-button"
                 type="submit"
                 disabled={isLoading || !isFormValid}
                 className={cn(

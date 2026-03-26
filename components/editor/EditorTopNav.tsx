@@ -161,7 +161,7 @@ export function EditorTopNav({
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground" aria-label="Export">
+                  <Button data-tour="export-button" variant="ghost" size="icon" className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground" aria-label="Export">
                     <Upload className="h-3.5 w-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -242,6 +242,7 @@ export function EditorTopNav({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button 
+                data-tour="settings-button"
                 variant="ghost" 
                 size="icon" 
                 className="h-7 w-7 rounded-full text-muted-foreground hover:text-foreground"

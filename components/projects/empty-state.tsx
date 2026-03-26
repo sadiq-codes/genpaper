@@ -1,8 +1,18 @@
 'use client'
 
+import { useEffect } from 'react'
 import { FileText } from 'lucide-react'
+import { useTour } from '@/lib/onboarding/use-tour'
+import { PROJECTS_TOUR_STEPS } from '@/lib/onboarding/tours'
 
 export function EmptyState() {
+  const { startTour } = useTour('projects', PROJECTS_TOUR_STEPS)
+
+  useEffect(() => {
+    const timer = setTimeout(startTour, 800)
+    return () => clearTimeout(timer)
+  }, [startTour])
+
   return (
     <div className="flex flex-col items-center justify-center py-20 px-4">
       <div className="w-12 h-12 rounded-xl bg-muted/50 flex items-center justify-center mb-5">

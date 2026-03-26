@@ -1,4 +1,3 @@
-// Use service layer for auth to satisfy module boundaries
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
@@ -6,6 +5,7 @@ import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/app-shell/sidebar'
 import GlobalLibraryProvider from '@/components/GlobalLibraryProvider'
 import { QueryProvider } from '@/components/providers/QueryProvider'
+import { isAdmin } from '@/lib/admin'
 
 export default async function AppLayout({
   children,
@@ -35,7 +35,7 @@ export default async function AppLayout({
             Skip to content
           </a>
           
-          <AppSidebar />
+          <AppSidebar showAdmin={isAdmin(user.id)} />
           
           <SidebarInset className="min-w-0 overflow-x-hidden">
             {/* Main content area - matches editor layout with bg-muted/30 */}
