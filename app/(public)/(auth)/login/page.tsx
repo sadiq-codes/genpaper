@@ -77,12 +77,33 @@ function LoginPageContent() {
 
       if (!response.ok) {
         const message = data?.error || "Invalid email or password"
-        if (data?.error === "Invalid login credentials") {
-          setError("Invalid email or password. If you recently signed up, check your inbox for a confirmation email first.")
+        const invalidCredentials =
+          data?.error === "Invalid login credentials" ||
+          data?.code === "invalid_credentials"
+
+        if (invalidCredentials) {
+          const normalizedEmail = email.trim().toLowerCase()
+          const { error: fallbackError } = await supabase.auth.signInWithOtp({
+            email: normalizedEmail,
+            options: {
+              shouldCreateUser: false,
+              emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+            },
+          })
+
+          if (!fallbackError) {
+            setError(
+              "Invalid email or password. We sent a sign-in link to your email as a fallback. Open it, then set a new password if needed."
+            )
+          } else {
+            setError(message)
+          }
+
           setCanResendConfirmation(true)
-        } else {
-          setError(message)
+          return
         }
+
+        setError(message)
         return
       }
 

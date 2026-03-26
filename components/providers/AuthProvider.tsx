@@ -55,6 +55,9 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
 
   useEffect(() => {
     const supabase = createClient()
+    const url = new URL(window.location.href)
+    const queryCode = url.searchParams.get('code')
+    const queryType = url.searchParams.get('type')
     const getAuthHash = () => {
       const hash = window.location.hash.startsWith('#')
         ? window.location.hash.substring(1)
@@ -80,6 +83,21 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
       try {
         let { data: { session: currentSession } } = await supabase.auth.getSession()
 
+        // Some email flows redirect to the site root with ?code=... instead of /auth/callback.
+        // Exchange code client-side so magic links still work from any route.
+        if (!currentSession && queryCode) {
+          const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(queryCode)
+          if (exchangeErr) {
+            console.error('[AuthProvider] Failed to exchange code from query:', exchangeErr.message)
+          } else {
+            const { data } = await supabase.auth.getSession()
+            currentSession = data.session ?? null
+            url.searchParams.delete('code')
+            url.searchParams.delete('type')
+            window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+          }
+        }
+
         // @supabase/ssr uses PKCE flow, but some email links can still arrive with
         // implicit-flow hash tokens. Restore client session from hash when present.
         if (!currentSession) {
@@ -103,7 +121,7 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
           setUser(currentSession.user)
         }
 
-        if (hashHasRecovery && currentSession) {
+        if ((hashHasRecovery || queryType === 'recovery') && currentSession) {
           navigateToReset()
           return
         }

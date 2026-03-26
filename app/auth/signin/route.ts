@@ -18,7 +18,19 @@ export async function POST(request: Request) {
     })
 
     if (error) {
+      const errorCode = (error as { code?: string }).code
       console.error('Sign-in error:', error)
+
+      if (errorCode === 'invalid_credentials') {
+        return NextResponse.json(
+          {
+            error: 'Invalid email or password',
+            code: 'invalid_credentials',
+          },
+          { status: 401 }
+        )
+      }
+
       return NextResponse.json(
         { error: error.message || 'Invalid credentials' },
         { status: 401 }
