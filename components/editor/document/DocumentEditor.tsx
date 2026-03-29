@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useState, useEffect, useRef } from 'react'
+import { useCallback, useState, useEffect, useMemo, useRef } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
+import dynamic from 'next/dynamic'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Link from '@tiptap/extension-link'
@@ -22,11 +23,6 @@ import { common, createLowlight } from 'lowlight'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { Undo, Redo, ChevronsRight, ChevronsLeft, Bold, Italic, Underline as UnderlineIcon, Strikethrough, List, ListOrdered, Quote, Code, Minus, ChevronDown, Trash2, Plus, Rows3, Columns3 } from 'lucide-react'
-import { FloatingToolbar } from './FloatingToolbar'
-import { InlineEditBar } from './InlineEditBar'
-import { InlineCitationPicker } from './InlineCitationPicker'
-import { CitationPopover } from '../CitationPopover'
-import { ReviewToolbar } from '../ReviewToolbar'
 import { Citation } from '../extensions/Citation'
 import { Mathematics } from '../extensions/Mathematics'
 import { GhostText } from '../extensions/GhostText'
@@ -44,8 +40,31 @@ import type { ProjectPaper } from '../types'
 import { isNumericStyle, clearCaches as clearCitationCaches, resolveStyleId, isStyleAvailable, loadStyle } from '@/lib/citations/local-formatter'
 import { toast } from 'sonner'
 import { useResearchEditor } from '../research-editor-context'
-import { useSubscription } from '@/lib/hooks/use-subscription'
-import { getVisibleReferencesCount } from '@/types/subscription'
+
+const FloatingToolbar = dynamic(
+  () => import('./FloatingToolbar').then(m => m.FloatingToolbar),
+  { ssr: false }
+)
+
+const InlineEditBar = dynamic(
+  () => import('./InlineEditBar').then(m => m.InlineEditBar),
+  { ssr: false }
+)
+
+const InlineCitationPicker = dynamic(
+  () => import('./InlineCitationPicker').then(m => m.InlineCitationPicker),
+  { ssr: false }
+)
+
+const CitationPopover = dynamic(
+  () => import('../CitationPopover').then(m => m.CitationPopover),
+  { ssr: false }
+)
+
+const ReviewToolbar = dynamic(
+  () => import('../ReviewToolbar').then(m => m.ReviewToolbar),
+  { ssr: false }
+)
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
@@ -145,6 +164,36 @@ interface DocumentEditorProps {
 }
 
 const DEFAULT_CONTENT = `<h1></h1><p></p>`
+const INITIAL_CONTENT_CACHE_LIMIT = 8
+type ProcessedInitialContent = ReturnType<typeof processContent>['json'] | typeof DEFAULT_CONTENT
+
+const initialContentCache = new Map<string, ProcessedInitialContent>()
+
+function getInitialContentSignature(content: string): string {
+  return `${content.length}:${content.slice(0, 120)}:${content.slice(-120)}`
+}
+
+function getCachedInitialContent(signature: string): ProcessedInitialContent | undefined {
+  const cached = initialContentCache.get(signature)
+  if (cached !== undefined) {
+    initialContentCache.delete(signature)
+    initialContentCache.set(signature, cached)
+  }
+  return cached
+}
+
+function setCachedInitialContent(signature: string, value: ProcessedInitialContent) {
+  if (initialContentCache.has(signature)) {
+    initialContentCache.delete(signature)
+  }
+  initialContentCache.set(signature, value)
+  if (initialContentCache.size > INITIAL_CONTENT_CACHE_LIMIT) {
+    const oldestKey = initialContentCache.keys().next().value
+    if (oldestKey) {
+      initialContentCache.delete(oldestKey)
+    }
+  }
+}
 
 export function DocumentEditor({
   initialContent = DEFAULT_CONTENT,
@@ -159,6 +208,7 @@ export function DocumentEditor({
     projectTitle: projectTopic = '',
     papers = [],
     citationStyle = 'apa',
+    referencesVisible = 'all',
     autocompletePrefs,
     pendingEditCount,
     failedEditCount,
@@ -167,10 +217,6 @@ export function DocumentEditor({
     mobileMenuOpen,
     toggleSidebar: onToggleMobileMenu,
   } = useResearchEditor()
-  const { subscription } = useSubscription()
-  // Default to 'all' while loading so paid users never see a flash of locked references.
-  // Server-side gates still enforce tier limits on actual API calls.
-  const referencesVisible = subscription ? getVisibleReferencesCount(subscription.tier) : 'all'
   // Ref for debouncing markdown conversion - prevents typing lag in large documents
   const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   
@@ -199,19 +245,122 @@ export function DocumentEditor({
   const handleCloseCitationPicker = useCallback(() => {
     setCitationPickerPos(null)
   }, [])
+
+  const editorExtensions = useMemo(() => ([
+    StarterKit.configure({
+      heading: {
+        levels: [1, 2, 3],
+        // Ensure markdown shortcuts work (e.g., ## for H2)
+      },
+      codeBlock: false, // Disable default code block, use CodeBlockLowlight instead
+      // Explicitly enable markdown shortcuts for bold, italic, etc.
+    }),
+    CodeBlockLowlight.configure({
+      lowlight,
+      HTMLAttributes: {
+        class: 'hljs rounded-lg',
+      },
+    }),
+    Underline,
+    Link.configure({
+      openOnClick: false,
+      HTMLAttributes: {
+        class: 'text-gray-600 hover:text-gray-800 underline cursor-pointer',
+      },
+    }),
+    Image.configure({
+      HTMLAttributes: {
+        class: 'max-w-full h-auto rounded-lg my-4',
+      },
+    }),
+    Table.configure({
+      resizable: true,
+      HTMLAttributes: {
+        class: 'border-collapse table-auto w-full my-4',
+      },
+    }),
+    TableRow,
+    TableHeader.configure({
+      HTMLAttributes: {
+        class: 'bg-muted font-semibold border border-border p-2 text-left',
+      },
+    }),
+    TableCell.configure({
+      HTMLAttributes: {
+        class: 'border border-border p-2',
+      },
+    }),
+    Placeholder.configure({
+      placeholder: ({ node }) => {
+        if (node.type.name === 'heading') {
+          const level = node.attrs.level
+          if (level === 1) return 'Untitled'
+          return `Heading ${level}`
+        }
+        return "Type '/' for commands..."
+      },
+    }),
+    TextStyle,
+    Color,
+    Highlight.configure({
+      multicolor: true,
+    }),
+    TextAlign.configure({
+      types: ['heading', 'paragraph'],
+    }),
+    Typography,
+    Citation.configure({
+      citationStyle: 'apa',
+      referencesVisible: 'all',
+    }),
+    Mathematics,
+    GhostText,
+    GhostEdit,
+    TaskList,
+    TaskItem.configure({
+      nested: true,
+    }),
+    SlashCommands,
+    BlockId,
+    ReferencesBlock,
+  ]), [])
+
+  const handleEditorUpdate = useCallback(({ editor }: { editor: Editor }) => {
+    // Debounce markdown conversion to prevent typing lag in large documents
+    // This avoids blocking the main thread on every keystroke
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current)
+    }
+    debounceTimeoutRef.current = setTimeout(() => {
+      const markdown = editorToMarkdown(editor)
+      onUpdate?.(markdown)
+      debounceTimeoutRef.current = null
+    }, 300)
+  }, [onUpdate])
+
+  const handleEditorCreate = useCallback(({ editor }: { editor: Editor }) => {
+    onEditorReady?.(editor)
+  }, [onEditorReady])
   
   // Process content helper function - converts markdown to TipTap JSON
-  const processInitialContent = useCallback((content: string, papersList: ProjectPaper[]) => {
+  const processInitialContent = useCallback((content: string, papersList: ProjectPaper[]): ProcessedInitialContent => {
     // If no content or empty, use default
     if (!content || content.trim() === '') {
       return DEFAULT_CONTENT
     }
-    
+
+    const signature = getInitialContentSignature(content)
+    const cached = getCachedInitialContent(signature)
+    if (cached !== undefined) {
+      return cached
+    }
+
     const trimmedContent = content.trim()
-    
+    let processedResult: ProcessedInitialContent
+
     // Check if content looks like HTML (legacy data)
     const looksLikeHtml = /^<(h[1-6]|p|div|ul|ol|blockquote|pre|table)[^>]*>/i.test(trimmedContent)
-    
+
     if (looksLikeHtml) {
       // Legacy HTML content - extract text and try to recover markdown
       const textContent = content
@@ -232,142 +381,62 @@ export function DocumentEditor({
           const { json, isFullDoc } = processContent(textContent, papersList)
           if (isFullDoc && json) {
             console.log('[DocumentEditor] Recovered markdown from legacy HTML')
-            return json
+            processedResult = json
+            setCachedInitialContent(signature, processedResult)
+            return processedResult
           }
         } catch (err) {
           console.error('Failed to process legacy HTML content:', err)
         }
       }
       // If recovery failed, let TipTap try to parse the HTML directly
-      return content
+      processedResult = content
+      setCachedInitialContent(signature, processedResult)
+      return processedResult
     }
-    
+
     // Content is markdown - process through AST pipeline
     try {
       const { json, isFullDoc } = processContent(trimmedContent, papersList)
       if (isFullDoc && json) {
-        return json
+        processedResult = json
+        setCachedInitialContent(signature, processedResult)
+        return processedResult
       }
-      
+
       // Handle plain text with citations (returns a fragment, not full doc)
       if (Array.isArray(json) && json.length > 0) {
-        return {
+        processedResult = {
           type: 'doc',
           content: [{
             type: 'paragraph',
             content: json
           }]
         }
+        setCachedInitialContent(signature, processedResult)
+        return processedResult
       }
     } catch (err) {
       console.error('Failed to process markdown content:', err)
     }
-    
+
     // Final fallback: return as plain text for TipTap to handle
-    return content
+    processedResult = content
+    setCachedInitialContent(signature, processedResult)
+    return processedResult
   }, [])
 
   const editor = useEditor({
     immediatelyRender: false,
-    extensions: [
-      StarterKit.configure({
-        heading: {
-          levels: [1, 2, 3],
-          // Ensure markdown shortcuts work (e.g., ## for H2)
-        },
-        codeBlock: false, // Disable default code block, use CodeBlockLowlight instead
-        // Explicitly enable markdown shortcuts for bold, italic, etc.
-      }),
-      CodeBlockLowlight.configure({
-        lowlight,
-        HTMLAttributes: {
-          class: 'hljs rounded-lg',
-        },
-      }),
-      Underline,
-      Link.configure({
-        openOnClick: false,
-        HTMLAttributes: {
-          class: 'text-gray-600 hover:text-gray-800 underline cursor-pointer',
-        },
-      }),
-      Image.configure({
-        HTMLAttributes: {
-          class: 'max-w-full h-auto rounded-lg my-4',
-        },
-      }),
-      Table.configure({
-        resizable: true,
-        HTMLAttributes: {
-          class: 'border-collapse table-auto w-full my-4',
-        },
-      }),
-      TableRow,
-      TableHeader.configure({
-        HTMLAttributes: {
-          class: 'bg-muted font-semibold border border-border p-2 text-left',
-        },
-      }),
-      TableCell.configure({
-        HTMLAttributes: {
-          class: 'border border-border p-2',
-        },
-      }),
-      Placeholder.configure({
-        placeholder: ({ node }) => {
-          if (node.type.name === 'heading') {
-            const level = node.attrs.level
-            if (level === 1) return 'Untitled'
-            return `Heading ${level}`
-          }
-          return "Type '/' for commands..."
-        },
-      }),
-      TextStyle,
-      Color,
-      Highlight.configure({
-        multicolor: true,
-      }),
-      TextAlign.configure({
-        types: ['heading', 'paragraph'],
-      }),
-      Typography,
-      Citation.configure({
-        citationStyle: citationStyle,
-        referencesVisible: referencesVisible,
-      }),
-      Mathematics,
-      GhostText,
-      GhostEdit,
-      TaskList,
-      TaskItem.configure({
-        nested: true,
-      }),
-      SlashCommands,
-      BlockId,
-      ReferencesBlock,
-    ],
+    extensions: editorExtensions,
     content: DEFAULT_CONTENT, // Initial empty state - real content set via effect
     editorProps: {
       attributes: {
         class: 'prose prose-lg max-w-5xl mx-auto focus:outline-none min-h-[calc(100vh-200px)] px-4 pt-3 pb-6 sm:px-8 sm:pt-4 sm:pb-8 md:px-12 md:pt-6 lg:px-16 lg:pt-8 lg:pb-12',
       },
     },
-    onUpdate: ({ editor }) => {
-      // Debounce markdown conversion to prevent typing lag in large documents
-      // This avoids blocking the main thread on every keystroke
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current)
-      }
-      debounceTimeoutRef.current = setTimeout(() => {
-        const markdown = editorToMarkdown(editor)
-        onUpdate?.(markdown)
-        debounceTimeoutRef.current = null
-      }, 300)
-    },
-    onCreate: ({ editor }) => {
-      onEditorReady?.(editor)
-    },
+    onUpdate: handleEditorUpdate,
+    onCreate: handleEditorCreate,
   })
 
   // Callbacks that depend on editor (must be after useEditor)
@@ -412,7 +481,7 @@ export function DocumentEditor({
     // Skip if we already processed the same content payload.
     // Do not key this by papers, otherwise late paper-sync updates can
     // overwrite in-progress user edits by reapplying initial content.
-    const key = `${initialContent.length}:${initialContent.slice(0, 80)}:${initialContent.slice(-80)}`
+    const key = getInitialContentSignature(initialContent)
     if (processedKey === key || pendingProcessedKeyRef.current === key) return
     pendingProcessedKeyRef.current = key
     
@@ -424,6 +493,11 @@ export function DocumentEditor({
       const contentPreview = initialContent.slice(0, 200)
       const isHtml = /^<(h[1-6]|p|div|ul|ol|blockquote|pre|table)[^>]*>/i.test(initialContent.trim())
       const hasRawMarkdown = /^#{1,6}\s+/m.test(initialContent)
+      const processedIsDoc =
+        typeof processed === 'object' &&
+        processed !== null &&
+        'type' in processed &&
+        processed.type === 'doc'
       
       // Extract citation IDs from content for debugging
       const citationPattern = /\[@([a-f0-9-]+)\]|\[CITE:\s*([a-f0-9-]+)\]/gi
@@ -435,7 +509,7 @@ export function DocumentEditor({
         hasMarkdown: hasMarkdownFormatting(initialContent),
         hasRawMarkdownHeadings: hasRawMarkdown,
         processedType: typeof processed === 'object' ? 'JSON' : 'string',
-        processedIsDoc: typeof processed === 'object' && processed?.type === 'doc',
+        processedIsDoc,
         papersCount: papers.length,
         paperIds: papers.map(p => p.id),
         citationIdsInContent: citationIds,
@@ -457,9 +531,10 @@ export function DocumentEditor({
       // Skip stale scheduled work if a newer content key superseded this one.
       if (pendingProcessedKeyRef.current !== key) return
 
-      // Set the processed content, then apply citation style to build numbers.
+      // Set the processed content, then apply citation style once to build numbers.
       editor.commands.setContent(processed)
-      editor.commands.setCitationStyle(citationStyle)
+      prevCitationStyleRef.current = citationStyle
+      editor.commands.setCitationStyle(latestCitationStyleRef.current)
       setProcessedKey(key)
       pendingProcessedKeyRef.current = null
     })
@@ -490,6 +565,11 @@ export function DocumentEditor({
       console.log(`[DocEditor] citationStyle changed: "${prevCitationStyleRef.current}" → "${citationStyle}"`)
     }
     prevCitationStyleRef.current = citationStyle
+
+    const shouldDeferInitialStylePass =
+      !!initialContent &&
+      initialContent.trim() !== '' &&
+      processedKey === ''
     
     // Clear cached inline citation text so it regenerates with the new style
     clearCitationCaches()
@@ -497,10 +577,15 @@ export function DocumentEditor({
       console.log(`[DocEditor] Cleared citation caches`)
     }
     
-    // Apply the style immediately (uses fallback for non-loaded styles)
-    editor.commands.setCitationStyle(citationStyle)
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`[DocEditor] setCitationStyle command dispatched`)
+    // When content is still being hydrated, let the initial-content effect apply the
+    // first real style pass after setContent so we don't traverse the placeholder doc.
+    if (!shouldDeferInitialStylePass) {
+      editor.commands.setCitationStyle(citationStyle)
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[DocEditor] setCitationStyle command dispatched`)
+      }
+    } else if (process.env.NODE_ENV === 'development') {
+      console.log(`[DocEditor] deferring initial citationStyle pass until content hydration`)
     }
     
     // Load the CSL style (same-origin endpoint first) if not already available,
@@ -542,7 +627,7 @@ export function DocumentEditor({
         console.log(`[DocEditor] Style "${resolved}" already loaded`)
       }
     }
-  }, [editor, citationStyle])
+  }, [editor, citationStyle, initialContent, processedKey])
 
   // Rebuild numeric citation numbers map when citations are added/removed.
   // Without this, IEEE/Vancouver inline citations can show "[?]" until refresh
@@ -915,43 +1000,47 @@ export function DocumentEditor({
           />
         )}
         
-        <FloatingToolbar
-          editor={editor}
-          onAiEdit={handleAiEdit}
-          onInsertCitation={handleOpenCitationPicker}
-          onChat={onChat}
-        />
+        {editor ? (
+          <FloatingToolbar
+            editor={editor}
+            onAiEdit={handleAiEdit}
+            onInsertCitation={handleOpenCitationPicker}
+            onChat={onChat}
+          />
+        ) : null}
 
         {/* Table Bubble Menu - shows when cursor is inside a table */}
-        <BubbleMenu
-          editor={editor}
-          options={{
-            placement: 'top',
-          }}
-          shouldShow={({ editor: e }) => e.isActive('table')}
-          className="flex items-center gap-0.5 p-1 bg-card border border-border rounded-lg shadow-md"
-        >
-          <Button variant="ghost" size="sm" aria-label="Add row" className="h-7 px-2 text-xs gap-1" disabled={!canAddRow} onClick={() => editor.chain().focus().addRowAfter().run()}>
-            <Rows3 className="h-3 w-3" aria-hidden="true" /> Row
-            <Plus className="h-2.5 w-2.5" aria-hidden="true" />
-          </Button>
-          <Button variant="ghost" size="sm" aria-label="Add column" className="h-7 px-2 text-xs gap-1" disabled={!canAddColumn} onClick={() => editor.chain().focus().addColumnAfter().run()}>
-            <Columns3 className="h-3 w-3" aria-hidden="true" /> Col
-            <Plus className="h-2.5 w-2.5" aria-hidden="true" />
-          </Button>
-          <Button variant="ghost" size="sm" aria-label="Delete row" className="h-7 px-2 text-xs gap-1 text-muted-foreground" disabled={!canDeleteRow} onClick={() => editor.chain().focus().deleteRow().run()}>
-            <Rows3 className="h-3 w-3" aria-hidden="true" />
-            <Minus className="h-2.5 w-2.5" aria-hidden="true" />
-          </Button>
-          <Button variant="ghost" size="sm" aria-label="Delete column" className="h-7 px-2 text-xs gap-1 text-muted-foreground" disabled={!canDeleteColumn} onClick={() => editor.chain().focus().deleteColumn().run()}>
-            <Columns3 className="h-3 w-3" aria-hidden="true" />
-            <Minus className="h-2.5 w-2.5" aria-hidden="true" />
-          </Button>
-          <div className="w-px h-4 bg-border mx-0.5" />
-          <Button variant="ghost" size="sm" aria-label="Delete table" className="h-7 px-2 text-xs gap-1 text-destructive hover:text-destructive hover:bg-destructive/10" disabled={!canDeleteTable} onClick={() => editor.chain().focus().deleteTable().run()}>
-            <Trash2 className="h-3 w-3" /> Delete
-          </Button>
-        </BubbleMenu>
+        {editor ? (
+          <BubbleMenu
+            editor={editor}
+            options={{
+              placement: 'top',
+            }}
+            shouldShow={({ editor: e }) => e.isActive('table')}
+            className="flex items-center gap-0.5 p-1 bg-card border border-border rounded-lg shadow-md"
+          >
+            <Button variant="ghost" size="sm" aria-label="Add row" className="h-7 px-2 text-xs gap-1" disabled={!canAddRow} onClick={() => editor.chain().focus().addRowAfter().run()}>
+              <Rows3 className="h-3 w-3" aria-hidden="true" /> Row
+              <Plus className="h-2.5 w-2.5" aria-hidden="true" />
+            </Button>
+            <Button variant="ghost" size="sm" aria-label="Add column" className="h-7 px-2 text-xs gap-1" disabled={!canAddColumn} onClick={() => editor.chain().focus().addColumnAfter().run()}>
+              <Columns3 className="h-3 w-3" aria-hidden="true" /> Col
+              <Plus className="h-2.5 w-2.5" aria-hidden="true" />
+            </Button>
+            <Button variant="ghost" size="sm" aria-label="Delete row" className="h-7 px-2 text-xs gap-1 text-muted-foreground" disabled={!canDeleteRow} onClick={() => editor.chain().focus().deleteRow().run()}>
+              <Rows3 className="h-3 w-3" aria-hidden="true" />
+              <Minus className="h-2.5 w-2.5" aria-hidden="true" />
+            </Button>
+            <Button variant="ghost" size="sm" aria-label="Delete column" className="h-7 px-2 text-xs gap-1 text-muted-foreground" disabled={!canDeleteColumn} onClick={() => editor.chain().focus().deleteColumn().run()}>
+              <Columns3 className="h-3 w-3" aria-hidden="true" />
+              <Minus className="h-2.5 w-2.5" aria-hidden="true" />
+            </Button>
+            <div className="w-px h-4 bg-border mx-0.5" />
+            <Button variant="ghost" size="sm" aria-label="Delete table" className="h-7 px-2 text-xs gap-1 text-destructive hover:text-destructive hover:bg-destructive/10" disabled={!canDeleteTable} onClick={() => editor.chain().focus().deleteTable().run()}>
+              <Trash2 className="h-3 w-3" /> Delete
+            </Button>
+          </BubbleMenu>
+        ) : null}
         {inlineEdit && (
           <InlineEditBar
             editor={editor}
@@ -973,12 +1062,14 @@ export function DocumentEditor({
           />
         )}
         <EditorContent editor={editor} className="h-full min-w-0" />
-        <CitationPopover
-          editor={editor}
-          projectId={projectId}
-          papers={papers}
-          onPaperUpdated={onPaperUpdated}
-        />
+        {editor ? (
+          <CitationPopover
+            editor={editor}
+            projectId={projectId}
+            papers={papers}
+            onPaperUpdated={onPaperUpdated}
+          />
+        ) : null}
         {/* CitationUpdater removed - citations now format locally via CitationNodeView */}
       </div>
 

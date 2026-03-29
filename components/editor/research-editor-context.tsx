@@ -23,6 +23,7 @@ export interface ResearchEditorContextValue {
   projectTitle: string
   papers: ProjectPaper[]
   citationStyle: string
+  referencesVisible: number | 'all'
 
   // Autocomplete preferences (DB-backed)
   autocompletePrefs: AutocompletePrefs

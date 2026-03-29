@@ -1,10 +1,19 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { FlaskConical, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { ChatTab } from './ChatTab'
-import { ResearchTab } from './ResearchTab'
 import { useResearchEditor } from '../research-editor-context'
+
+const ChatTab = dynamic(
+  () => import('./ChatTab').then(m => m.ChatTab),
+  { ssr: false }
+)
+
+const ResearchTab = dynamic(
+  () => import('./ResearchTab').then(m => m.ResearchTab),
+  { ssr: false }
+)
 
 export function EditorSidebar() {
   const { activeTab, setActiveTab } = useResearchEditor()

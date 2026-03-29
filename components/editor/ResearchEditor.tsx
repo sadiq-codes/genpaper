@@ -3,10 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import type { Editor } from "@tiptap/react"
 import { EditorTopNav } from "./EditorTopNav"
-import { EditorSidebar } from "./sidebar/EditorSidebar"
 import { DocumentEditor } from "./document/DocumentEditor"
-import LibraryDrawer from "@/components/ui/library-drawer"
-import { ProjectSettingsModal } from "./ProjectSettingsModal"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -32,6 +29,21 @@ import { editorToMarkdown } from "./utils/tiptap-to-markdown"
 import { GenerationProgress } from "./GenerationProgress"
 import { setToolExecutorPapers, setToolExecutorProjectId, processFailedCitationQueue } from "./services/tool-executor"
 import dynamic from "next/dynamic"
+
+const EditorSidebar = dynamic(
+  () => import("./sidebar/EditorSidebar").then(m => m.EditorSidebar),
+  { ssr: false }
+)
+
+const LibraryDrawer = dynamic(
+  () => import("@/components/ui/library-drawer"),
+  { ssr: false }
+)
+
+const ProjectSettingsModal = dynamic(
+  () => import("./ProjectSettingsModal").then(m => m.ProjectSettingsModal),
+  { ssr: false }
+)
 
 const VersionHistoryPanel = dynamic(
   () => import("./history/VersionHistoryPanel").then(m => m.VersionHistoryPanel),
@@ -218,13 +230,11 @@ export function ResearchEditor({
     },
   })
 
-  // Streaming chat with tools support
-  // Always enabled - prefetches chat history in background after editor loads
-  // React Query caches the result, so switching to chat tab is instant
+  // Load chat lazily when the chat tab is actually opened.
   const chat = useEditorChat({
     projectId: projectId || '',
     editor,
-    enabled: true, // Always prefetch chat history in background
+    enabled: activeTab === 'chat',
   })
 
   // Extract chat properties
@@ -601,6 +611,7 @@ export function ResearchEditor({
     projectTitle: currentTitle,
     papers,
     citationStyle: currentCitationStyle,
+    referencesVisible: getVisibleReferencesCount(subscription?.tier ?? 'pro'),
 
     // Autocomplete preferences
     autocompletePrefs: autocompletePrefsHook.prefs,
@@ -644,7 +655,8 @@ export function ResearchEditor({
     rejectAllEdits: rejectAllTools,
   }
 
-  const sidebarContent = <EditorSidebar />
+  const shouldRenderSidebar = isMobile ? mobileMenuOpen : sidebarOpen
+  const sidebarContent = shouldRenderSidebar ? <EditorSidebar /> : null
 
   // ============================================================================
   // Render
@@ -707,7 +719,7 @@ export function ResearchEditor({
               )}
               style={{ width: sidebarOpen ? sidebarWidth : 0 }}
             >
-              <div className="h-full p-3 pr-0">{sidebarContent}</div>
+              {shouldRenderSidebar ? <div className="h-full p-3 pr-0">{sidebarContent}</div> : null}
               
               {/* Resize Handle */}
               {sidebarOpen && (
@@ -758,15 +770,17 @@ export function ResearchEditor({
         </div>
 
         {/* Library Drawer */}
-        <LibraryDrawer
-          isOpen={libraryDrawerOpen}
-          onClose={() => setLibraryDrawerOpen(false)}
-          onAddToProject={handleAddPaperToProject}
-          currentProjectId={projectId}
-        />
+        {libraryDrawerOpen ? (
+          <LibraryDrawer
+            isOpen={libraryDrawerOpen}
+            onClose={() => setLibraryDrawerOpen(false)}
+            onAddToProject={handleAddPaperToProject}
+            currentProjectId={projectId}
+          />
+        ) : null}
 
         {/* Project Settings Modal */}
-        {projectId && (
+        {projectId && settingsModalOpen ? (
           <ProjectSettingsModal
             open={settingsModalOpen}
             onOpenChange={setSettingsModalOpen}
@@ -777,10 +791,10 @@ export function ResearchEditor({
             autocompletePrefs={autocompletePrefsHook.prefs}
             onAutocompletePrefsChange={autocompletePrefsHook.updatePrefs}
           />
-        )}
+        ) : null}
 
         {/* Version History Panel */}
-        {projectId && (
+        {projectId && historyPanelOpen ? (
           <VersionHistoryPanel
             projectId={projectId}
             papers={papers}
@@ -789,7 +803,7 @@ export function ResearchEditor({
             onOpenChange={setHistoryPanelOpen}
             onRestore={handleRestoreVersion}
           />
-        )}
+        ) : null}
 
         {/* Remove Paper Confirmation Dialog */}
         <Dialog
