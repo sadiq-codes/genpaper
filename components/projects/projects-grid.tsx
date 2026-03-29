@@ -1,32 +1,33 @@
 "use client"
 
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ProjectCard } from "./project-card"
 import { EmptyState } from "./empty-state"
 import { Skeleton } from "@/components/ui/skeleton"
+import { SectionErrorState } from "@/components/ui/async-state"
+import { Button } from "@/components/ui/button"
+import { Loader2 } from "lucide-react"
+import type { ResearchProjectWithLatestVersion } from "@/types/simplified"
 
-interface ProjectWithCount {
-  project: Record<string, unknown> & { id: string }
+export interface ProjectWithCount {
+  project: ResearchProjectWithLatestVersion
   paperCount: number
 }
 
 async function fetchProjects(): Promise<ProjectWithCount[]> {
-  try {
-    const res = await fetch("/api/projects?limit=20&offset=0")
-    if (!res.ok) return []
-    const data = await res.json()
-
-    const projects = data.data?.projects || data.projects || []
-    if (projects.length === 0) return []
-
-    return projects.map((project: Record<string, unknown> & { id: string }) => ({
-      project,
-      paperCount:
-        typeof project.citation_count === "number" ? project.citation_count : 0,
-    }))
-  } catch {
-    return []
+  const res = await fetch("/api/projects?limit=20&offset=0")
+  if (!res.ok) {
+    throw new Error("Failed to load projects")
   }
+
+  const data = await res.json()
+  const projects = data.data?.projects || data.projects || []
+
+  return projects.map((project: ResearchProjectWithLatestVersion) => ({
+    project,
+    paperCount:
+      typeof project.citation_count === "number" ? project.citation_count : 0,
+  }))
 }
 
 function ProjectsGridSkeleton() {
@@ -49,14 +50,35 @@ function ProjectsGridSkeleton() {
   )
 }
 
-export function ProjectsGrid() {
-  const { data: projectsWithCounts, isLoading } = useQuery({
+export function ProjectsGrid({ initialProjectsWithCounts }: { initialProjectsWithCounts?: ProjectWithCount[] }) {
+  const queryClient = useQueryClient()
+  const { data: projectsWithCounts, isLoading, error, isFetching } = useQuery({
     queryKey: ["projects"],
     queryFn: fetchProjects,
     staleTime: 5 * 60 * 1000, // Keep cached list for quick revisits
+    initialData: initialProjectsWithCounts,
   })
 
   if (isLoading) return <ProjectsGridSkeleton />
+
+  if (error) {
+    return (
+      <SectionErrorState
+        title="Failed to load projects"
+        description="We couldn't load your recent projects right now."
+        action={(
+          <Button
+            size="sm"
+            onClick={() => queryClient.invalidateQueries({ queryKey: ["projects"] })}
+            disabled={isFetching}
+          >
+            {isFetching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Try again
+          </Button>
+        )}
+      />
+    )
+  }
 
   if (!projectsWithCounts || projectsWithCounts.length === 0) {
     return <EmptyState />

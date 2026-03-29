@@ -33,6 +33,7 @@ import { toast } from "sonner"
 import { deleteProjectAction } from "@/components/dashboard/actions"
 import { cn } from "@/lib/utils"
 import type { ResearchProjectWithLatestVersion, PaperTypeKey, GenerationConfig } from "@/types/simplified"
+import type { ProjectWithCount } from "./projects-grid"
 
 const paperTypeConfig: Record<PaperTypeKey, { icon: LucideIcon; label: string; shortLabel: string }> = {
   literatureReview: {
@@ -65,11 +66,6 @@ const paperTypeConfig: Record<PaperTypeKey, { icon: LucideIcon; label: string; s
 interface ProjectCardProps {
   project: ResearchProjectWithLatestVersion
   paperCount?: number
-}
-
-interface ProjectWithCount {
-  project: Record<string, unknown> & { id: string }
-  paperCount: number
 }
 
 export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
@@ -159,7 +155,7 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
     <Link
       href={editorUrl}
       className="block group"
-      prefetch={true}
+      prefetch={false}
     >
       <div
         className={cn(
@@ -195,7 +191,7 @@ export function ProjectCard({ project, paperCount = 0 }: ProjectCardProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuItem asChild>
-                <Link href={editorUrl}>
+                <Link href={editorUrl} prefetch={false}>
                   <PenLine className="h-3.5 w-3.5 mr-2" />
                   Open Editor
                 </Link>

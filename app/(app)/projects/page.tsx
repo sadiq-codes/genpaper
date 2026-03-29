@@ -1,10 +1,49 @@
-import { ProjectInputSection } from "@/components/projects/project-input-section"
 import { ProjectsGrid } from "@/components/projects/projects-grid"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { UsageIndicator } from "@/components/billing/usage-indicator"
+import { createClient } from "@/lib/supabase/server"
+import { getUserResearchProjects } from "@/lib/db/research"
+import dynamic from "next/dynamic"
 
-export default function ProjectsPage() {
+const ProjectInputSection = dynamic(
+  () => import("@/components/projects/project-input-section").then((mod) => mod.ProjectInputSection),
+  {
+    loading: () => (
+      <div className="space-y-5 pt-2">
+        <div className="w-full max-w-3xl mx-auto">
+          <div className="rounded-2xl border border-border/70 bg-background px-6 py-6">
+            <div className="h-24 rounded-xl bg-muted/60 animate-pulse" />
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <div className="h-8 w-8 rounded-full bg-muted/60 animate-pulse" />
+              <div className="h-8 w-24 rounded-full bg-muted/60 animate-pulse" />
+              <div className="h-8 w-28 rounded-full bg-muted/60 animate-pulse" />
+              <div className="ml-auto h-10 w-24 rounded-full bg-muted/60 animate-pulse" />
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-center gap-2">
+          <div className="h-8 w-28 rounded-full bg-muted/50 animate-pulse" />
+          <div className="h-8 w-28 rounded-full bg-muted/50 animate-pulse" />
+          <div className="h-8 w-28 rounded-full bg-muted/50 animate-pulse" />
+        </div>
+      </div>
+    ),
+  }
+)
+
+export default async function ProjectsPage() {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  const projects = user ? await getUserResearchProjects(user.id, 20, 0) : []
+  const initialProjectsWithCounts = projects.map((project) => ({
+    project,
+    paperCount: typeof project.citation_count === "number" ? project.citation_count : 0,
+  }))
+
   return (
     <PageContainer>
       <PageHeader title="Projects" actions={<UsageIndicator />} />
@@ -39,7 +78,7 @@ export default function ProjectsPage() {
           <div className="py-8 md:py-10 px-6">
             <div className="max-w-6xl mx-auto space-y-6">
               <h2 className="font-instrument text-2xl tracking-tight">Your Projects</h2>
-              <ProjectsGrid />
+              <ProjectsGrid initialProjectsWithCounts={initialProjectsWithCounts} />
             </div>
           </div>
         </section>

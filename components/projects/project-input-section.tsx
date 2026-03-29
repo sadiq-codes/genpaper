@@ -1,11 +1,10 @@
 'use client'
 
 import { useActionState, useState, useEffect, useMemo, useCallback, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { ArrowRight, Loader2, BookOpen } from 'lucide-react'
+import { ArrowRight, Loader2 } from 'lucide-react'
 import { createProjectAction } from '@/components/dashboard/actions'
 import { cn } from '@/lib/utils'
 import { PaperTypeSelect, type PaperTypeValue } from './paper-type-select'
@@ -43,18 +42,12 @@ const PLACEHOLDER_CONFIG: Record<PaperTypeValue, string> = {
  * This is the main component to use on the projects page.
  */
 export function ProjectInputSection() {
-  const router = useRouter()
   const { subscription } = useSubscription()
   const [state, formAction, isPending] = useActionState(createProjectAction, null)
-  const [isNavigating, startTransition] = useTransition()
+  const [isNavigating] = useTransition()
 
   // Combined loading state for best UX
   const isLoading = isPending || isNavigating
-
-  // Prefetch editor route on mount for faster navigation
-  useEffect(() => {
-    router.prefetch('/editor/[projectId]')
-  }, [router])
 
   // Form state
   const [paperType, setPaperType] = useState<PaperTypeValue>('literatureReview')
@@ -124,12 +117,6 @@ export function ProjectInputSection() {
   const selectedPaperIds = useMemo(
     () => selectedPapers.map((p) => p.id),
     [selectedPapers]
-  )
-  
-  // Combined paper IDs (uploads + library selections)
-  const allPaperIds = useMemo(
-    () => [...new Set([...uploadedPaperIds, ...selectedPaperIds])],
-    [uploadedPaperIds, selectedPaperIds]
   )
   
   // Check if any uploads are in progress
@@ -347,12 +334,14 @@ export function ProjectInputSection() {
       />
       
       {/* Library Drawer */}
-      <LibraryDrawer
-        isOpen={isLibraryOpen}
-        onClose={() => setIsLibraryOpen(false)}
-        onSelectForProject={handleSelectPaper}
-        selectedPaperIds={selectedPaperIds}
-      />
+      {isLibraryOpen ? (
+        <LibraryDrawer
+          isOpen={isLibraryOpen}
+          onClose={() => setIsLibraryOpen(false)}
+          onSelectForProject={handleSelectPaper}
+          selectedPaperIds={selectedPaperIds}
+        />
+      ) : null}
     </div>
   )
 }
