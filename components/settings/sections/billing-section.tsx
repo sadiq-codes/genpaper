@@ -19,6 +19,7 @@ import { TIER_CONFIG } from '@/types/subscription'
 import type { SubscriptionTier, BillingInterval } from '@/types/subscription'
 import { toast } from 'sonner'
 import { Switch } from '@/components/ui/switch'
+import { SectionErrorState } from '@/components/ui/async-state'
 
 interface BillingSectionProps {
   user: {
@@ -46,18 +47,23 @@ export function BillingSection({ user, initialSubscription }: BillingSectionProp
   )
   const [redirectingTier, setRedirectingTier] = useState<'starter' | 'pro' | 'manage' | null>(null)
   const [billingInterval, setBillingInterval] = useState<BillingInterval>('yearly')
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   const searchParams = useSearchParams()
   
   // Refresh subscription data from API (only called after checkout success)
   const refresh = async () => {
     try {
+      setRefreshError(null)
       const response = await fetch('/api/billing/subscription')
-      if (response.ok) {
-        const data = await response.json()
-        setSubscription(data)
+      if (!response.ok) {
+        throw new Error('Failed to refresh subscription')
       }
-    } catch {
-      console.warn('Failed to refresh subscription')
+
+      const data = await response.json()
+      setSubscription(data)
+    } catch (error) {
+      console.warn('Failed to refresh subscription', error)
+      setRefreshError(error instanceof Error ? error.message : 'Failed to refresh subscription')
     }
   }
 
@@ -106,6 +112,22 @@ export function BillingSection({ user, initialSubscription }: BillingSectionProp
       </div>
 
       <div className="rounded-xl border border-border/70 p-5 sm:p-6 space-y-6">
+        {refreshError ? (
+          <SectionErrorState
+            title="Could not refresh billing status"
+            description="Your latest subscription change may not be reflected yet."
+            className="min-h-[180px]"
+            action={(
+              <button
+                onClick={() => void refresh()}
+                className="h-8 px-4 text-xs font-medium rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors"
+              >
+                Try again
+              </button>
+            )}
+          />
+        ) : null}
+
         {/* Current Plan */}
         <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50 border border-border/60">
           <div className="flex items-center gap-3">
