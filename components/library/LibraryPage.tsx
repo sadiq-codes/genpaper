@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useMemo, useCallback, memo, startTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useMemo, useCallback, memo, startTransition, useEffect } from 'react'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { SectionEmptyState, SectionErrorState } from '@/components/ui/async-state'
 
 // Types
 interface UnifiedPaper {
@@ -63,14 +64,40 @@ interface Project {
 interface AllPapersResponse {
   papers: UnifiedPaper[]
   count: number
+  offset: number
+  limit: number
+  hasMore: boolean
   projects: Project[]
+  stats: {
+    total: number
+    uploaded: number
+    searched: number
+    bookmarked: number
+    projects: number
+  }
 }
 
-// Fetch all papers (library + projects)
-async function fetchAllPapers(projectId?: string): Promise<AllPapersResponse> {
-  const url = projectId 
-    ? `/api/library/all-papers?projectId=${projectId}`
-    : '/api/library/all-papers'
+const PAGE_SIZE = 30
+
+async function fetchAllPapers(params: {
+  q: string
+  sort: 'added_at' | 'title' | 'year'
+  source: 'all' | 'upload' | 'search'
+  project: string
+  bookmarked: 'all' | 'bookmarked' | 'not-bookmarked'
+  offset: number
+  limit: number
+}): Promise<AllPapersResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.q) searchParams.set('q', params.q)
+  if (params.sort !== 'added_at') searchParams.set('sort', params.sort)
+  if (params.source !== 'all') searchParams.set('source', params.source)
+  if (params.project !== 'all') searchParams.set('project', params.project)
+  if (params.bookmarked !== 'all') searchParams.set('bookmarked', params.bookmarked)
+  searchParams.set('offset', String(params.offset))
+  searchParams.set('limit', String(params.limit))
+
+  const url = `/api/library/all-papers?${searchParams.toString()}`
   const response = await fetch(url)
   if (!response.ok) throw new Error('Failed to load papers')
   return response.json()
@@ -319,27 +346,111 @@ const PaperCard = memo(function PaperCard({
 
 export function LibraryPage() {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const queryClient = useQueryClient()
+  const initialSearch = searchParams.get('q') || ''
+  const initialSort = (searchParams.get('sort') as 'added_at' | 'title' | 'year' | null) || 'added_at'
+  const initialSource = (searchParams.get('source') as 'all' | 'upload' | 'search' | null) || 'all'
+  const initialProject = searchParams.get('project') || 'all'
+  const initialBookmarked = (searchParams.get('bookmarked') as 'all' | 'bookmarked' | 'not-bookmarked' | null) || 'all'
   
-  // OPTIMIZATION: Could combine into single state object, but keeping separate for simplicity
-  const [searchQuery, setSearchQuery] = useState('')
-  const [sortBy, setSortBy] = useState<'added_at' | 'title' | 'year'>('added_at')
-  const [filterSource, setFilterSource] = useState<'all' | 'upload' | 'search'>('all')
-  const [filterProject, setFilterProject] = useState<string>('all')
-  const [filterBookmarked, setFilterBookmarked] = useState<'all' | 'bookmarked' | 'not-bookmarked'>('all')
+  // URL state keeps library views shareable and back-button friendly.
+  const [searchQuery, setSearchQuery] = useState(initialSearch)
+  const [sortBy, setSortBy] = useState<'added_at' | 'title' | 'year'>(initialSort)
+  const [filterSource, setFilterSource] = useState<'all' | 'upload' | 'search'>(initialSource)
+  const [filterProject, setFilterProject] = useState<string>(initialProject)
+  const [filterBookmarked, setFilterBookmarked] = useState<'all' | 'bookmarked' | 'not-bookmarked'>(initialBookmarked)
   const [paperToDelete, setPaperToDelete] = useState<UnifiedPaper | null>(null)
+  const [page, setPage] = useState(0)
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(initialSearch)
 
-  // Fetch all papers with keepPreviousData for smooth filter transitions
+  const syncFiltersToUrl = useCallback((nextState: {
+    q?: string
+    sort?: 'added_at' | 'title' | 'year'
+    source?: 'all' | 'upload' | 'search'
+    project?: string
+    bookmarked?: 'all' | 'bookmarked' | 'not-bookmarked'
+  }) => {
+    const params = new URLSearchParams(searchParams.toString())
+    const merged = {
+      q: nextState.q ?? searchQuery,
+      sort: nextState.sort ?? sortBy,
+      source: nextState.source ?? filterSource,
+      project: nextState.project ?? filterProject,
+      bookmarked: nextState.bookmarked ?? filterBookmarked,
+    }
+
+    if (merged.q) params.set('q', merged.q)
+    else params.delete('q')
+
+    if (merged.sort !== 'added_at') params.set('sort', merged.sort)
+    else params.delete('sort')
+
+    if (merged.source !== 'all') params.set('source', merged.source)
+    else params.delete('source')
+
+    if (merged.project !== 'all') params.set('project', merged.project)
+    else params.delete('project')
+
+    if (merged.bookmarked !== 'all') params.set('bookmarked', merged.bookmarked)
+    else params.delete('bookmarked')
+
+    const nextQuery = params.toString()
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false })
+  }, [filterBookmarked, filterProject, filterSource, pathname, router, searchParams, searchQuery, sortBy])
+
+  const searchParamsString = searchParams.toString()
+  useEffect(() => {
+    const q = searchParams.get('q') || ''
+    const sort = (searchParams.get('sort') as 'added_at' | 'title' | 'year' | null) || 'added_at'
+    const source = (searchParams.get('source') as 'all' | 'upload' | 'search' | null) || 'all'
+    const project = searchParams.get('project') || 'all'
+    const bookmarked = (searchParams.get('bookmarked') as 'all' | 'bookmarked' | 'not-bookmarked' | null) || 'all'
+
+    if (q !== searchQuery) setSearchQuery(q)
+    if (sort !== sortBy) setSortBy(sort)
+    if (source !== filterSource) setFilterSource(source)
+    if (project !== filterProject) setFilterProject(project)
+    if (bookmarked !== filterBookmarked) setFilterBookmarked(bookmarked)
+    setPage(0)
+  }, [filterBookmarked, filterProject, filterSource, searchParamsString, searchQuery, searchParams, sortBy])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim())
+    }, 200)
+
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
+  // Fetch only the visible slice of papers for the current filters.
   const { data, isLoading, error, isFetching } = useQuery({
-    queryKey: ['library', 'all-papers'],
-    queryFn: () => fetchAllPapers(),
+    queryKey: ['library', 'all-papers', debouncedSearchQuery, sortBy, filterSource, filterProject, filterBookmarked, page],
+    queryFn: () => fetchAllPapers({
+      q: debouncedSearchQuery,
+      sort: sortBy,
+      source: filterSource,
+      project: filterProject,
+      bookmarked: filterBookmarked,
+      offset: page * PAGE_SIZE,
+      limit: PAGE_SIZE,
+    }),
     staleTime: 2 * 60 * 1000,
-    placeholderData: keepPreviousData, // OPTIMIZATION: Smooth transitions
+    placeholderData: keepPreviousData,
   })
 
-  // OPTIMIZATION: Memoize data extraction to prevent useMemo dependency changes
   const papers = useMemo(() => data?.papers ?? [], [data?.papers])
   const projects = useMemo(() => data?.projects ?? [], [data?.projects])
+  const totalCount = data?.count ?? 0
+  const hasMore = data?.hasMore ?? false
+  const stats = data?.stats ?? {
+    total: 0,
+    uploaded: 0,
+    searched: 0,
+    bookmarked: 0,
+    projects: 0,
+  }
 
   // Delete mutation
   const deleteMutation = useMutation({
@@ -366,82 +477,6 @@ export function LibraryPage() {
     },
   })
 
-  // Sort comparator function
-  const getSortComparator = useCallback((sortKey: typeof sortBy) => {
-    return (a: UnifiedPaper, b: UnifiedPaper) => {
-      switch (sortKey) {
-        case 'title':
-          return a.title.localeCompare(b.title)
-        case 'year':
-          const yearA = a.publication_date ? new Date(a.publication_date).getTime() : 0
-          const yearB = b.publication_date ? new Date(b.publication_date).getTime() : 0
-          return yearB - yearA
-        case 'added_at':
-        default:
-          return new Date(b.firstAddedAt).getTime() - new Date(a.firstAddedAt).getTime()
-      }
-    }
-  }, [])
-
-  // Filter and sort papers
-  const filteredPapers = useMemo(() => {
-    // OPTIMIZATION: Early return if no filters active (rule: js-early-exit)
-    const hasFilters = searchQuery.trim() || filterSource !== 'all' || 
-                       filterProject !== 'all' || filterBookmarked !== 'all'
-    
-    if (!hasFilters) {
-      // OPTIMIZATION: Use toSorted() for immutability (rule: js-tosorted-immutable)
-      return papers.toSorted(getSortComparator(sortBy))
-    }
-
-    let result = papers
-
-    // Filter by search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      result = result.filter(
-        (p) =>
-          p.title.toLowerCase().includes(q) ||
-          p.authors?.some((a) => a.toLowerCase().includes(q)) ||
-          p.venue?.toLowerCase().includes(q) ||
-          p.libraryNotes?.toLowerCase().includes(q)
-      )
-    }
-
-    // Filter by source
-    if (filterSource !== 'all') {
-      result = result.filter((p) => p.source === filterSource)
-    }
-
-    // Filter by project
-    if (filterProject !== 'all') {
-      if (filterProject === 'none') {
-        result = result.filter((p) => p.projects.length === 0)
-      } else {
-        result = result.filter((p) => p.projects.some((proj) => proj.id === filterProject))
-      }
-    }
-
-    // Filter by bookmarked status
-    if (filterBookmarked === 'bookmarked') {
-      result = result.filter((p) => p.isBookmarked)
-    } else if (filterBookmarked === 'not-bookmarked') {
-      result = result.filter((p) => !p.isBookmarked)
-    }
-
-    // OPTIMIZATION: Use toSorted() for immutability (rule: js-tosorted-immutable)
-    return result.toSorted(getSortComparator(sortBy))
-  }, [papers, searchQuery, sortBy, filterSource, filterProject, filterBookmarked, getSortComparator])
-
-  // Stats - memoized
-  const stats = useMemo(() => {
-    const uploadCount = papers.filter((p) => p.source === 'upload').length
-    const searchCount = papers.filter((p) => p.source !== 'upload').length
-    const bookmarkedCount = papers.filter((p) => p.isBookmarked).length
-    const projectCount = projects.length
-    return { total: papers.length, uploaded: uploadCount, searched: searchCount, bookmarked: bookmarkedCount, projects: projectCount }
-  }, [papers, projects])
-
   // OPTIMIZATION: Stable callbacks for PaperCard (rule: rerender-functional-setstate)
   const handleNavigate = useCallback((id: string) => {
     router.push(`/library/${id}`)
@@ -458,52 +493,60 @@ export function LibraryPage() {
   // OPTIMIZATION: Use startTransition for non-urgent filter updates (rule: rerender-transitions)
   const handleSearchChange = useCallback((value: string) => {
     startTransition(() => {
+      setPage(0)
       setSearchQuery(value)
+      syncFiltersToUrl({ q: value })
     })
-  }, [])
+  }, [syncFiltersToUrl])
 
   const handleSourceChange = useCallback((value: typeof filterSource) => {
     startTransition(() => {
+      setPage(0)
       setFilterSource(value)
+      syncFiltersToUrl({ source: value })
     })
-  }, [])
+  }, [syncFiltersToUrl])
 
   const handleProjectChange = useCallback((value: string) => {
     startTransition(() => {
+      setPage(0)
       setFilterProject(value)
+      syncFiltersToUrl({ project: value })
     })
-  }, [])
+  }, [syncFiltersToUrl])
 
   const handleBookmarkedChange = useCallback((value: typeof filterBookmarked) => {
     startTransition(() => {
+      setPage(0)
       setFilterBookmarked(value)
+      syncFiltersToUrl({ bookmarked: value })
     })
-  }, [])
+  }, [syncFiltersToUrl])
 
   const handleSortChange = useCallback((value: typeof sortBy) => {
     startTransition(() => {
+      setPage(0)
       setSortBy(value)
+      syncFiltersToUrl({ sort: value })
     })
-  }, [])
+  }, [syncFiltersToUrl])
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <div className="w-12 h-12 rounded-full border border-destructive/20 flex items-center justify-center mb-4">
-          <X className="h-5 w-5 text-destructive/60" />
-        </div>
-        <h3 className="font-instrument text-lg tracking-tight mb-1">Failed to load library</h3>
-        <p className="text-sm text-muted-foreground mb-5">
-          There was an error loading your papers.
-        </p>
-        <button
-          className="h-8 px-4 text-xs font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
-          disabled={isFetching}
-          onClick={() => queryClient.invalidateQueries({ queryKey: ['library'] })}
-        >
-          {isFetching ? <><Loader2 className="h-3 w-3 animate-spin" />Retrying…</> : "Try Again"}
-        </button>
-      </div>
+      <SectionErrorState
+        title="Failed to load library"
+        description="There was an error loading your papers."
+        icon={<X className="h-5 w-5 text-destructive/60" aria-hidden="true" />}
+        action={(
+          <button
+            className="h-8 px-4 text-xs font-medium rounded-full bg-foreground/80 text-background hover:bg-foreground/70 transition-colors inline-flex items-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
+            disabled={isFetching}
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['library'] })}
+          >
+            {isFetching ? <><Loader2 className="h-3 w-3 animate-spin" />Retrying…</> : "Try Again"}
+          </button>
+        )}
+      />
     )
   }
 
@@ -604,28 +647,24 @@ export function LibraryPage() {
       {/* Papers List */}
       {isLoading ? (
         paperListSkeleton
-      ) : filteredPapers.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="w-10 h-10 rounded-full border border-border/40 flex items-center justify-center mb-4">
-            {searchQuery || filterSource !== 'all' || filterProject !== 'all' ? (
-              <Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-            ) : (
-              <BookOpen className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-            )}
-          </div>
-          <h3 className="font-instrument text-base tracking-tight mb-1">
-            {searchQuery || filterSource !== 'all' || filterProject !== 'all' ? 'No papers found' : 'No papers yet'}
-          </h3>
-          <p className="text-xs text-muted-foreground max-w-[260px] leading-relaxed">
-            {searchQuery || filterSource !== 'all' || filterProject !== 'all'
+      ) : papers.length === 0 ? (
+        <SectionEmptyState
+          title={searchQuery || filterSource !== 'all' || filterProject !== 'all' ? 'No papers found' : 'No papers yet'}
+          description={
+            searchQuery || filterSource !== 'all' || filterProject !== 'all'
               ? 'Try adjusting your search or filters.'
-              : 'Papers will appear here when you upload PDFs, search for papers, or create projects.'}
-          </p>
-        </div>
+              : 'Papers will appear here when you upload PDFs, search for papers, or create projects.'
+          }
+          icon={
+            searchQuery || filterSource !== 'all' || filterProject !== 'all'
+              ? <Search className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+              : <BookOpen className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+          }
+        />
       ) : (
         <ScrollArea className="h-[calc(100vh-420px)] min-h-[300px]">
           <div className="space-y-3 pr-4">
-            {filteredPapers.map((paper) => (
+            {papers.map((paper) => (
               <PaperCard
                 key={paper.id}
                 paper={paper}
@@ -640,10 +679,28 @@ export function LibraryPage() {
       )}
 
       {/* Results count */}
-      {!isLoading && filteredPapers.length > 0 && (
-        <p className="text-xs text-muted-foreground text-center font-instrument italic">
-          Showing {filteredPapers.length} of {papers.length} papers
-        </p>
+      {!isLoading && papers.length > 0 && (
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-xs text-muted-foreground text-center font-instrument italic">
+            Showing {page * PAGE_SIZE + 1}-{page * PAGE_SIZE + papers.length} of {totalCount} papers
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              className="h-8 rounded-full border border-border/50 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setPage((current) => Math.max(0, current - 1))}
+              disabled={page === 0 || isFetching}
+            >
+              Previous
+            </button>
+            <button
+              className="h-8 rounded-full border border-border/50 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setPage((current) => current + 1)}
+              disabled={!hasMore || isFetching}
+            >
+              Next
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Delete Confirmation Dialog */}

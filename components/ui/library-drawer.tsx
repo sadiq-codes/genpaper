@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { useLibraryDrawer, type SearchResult, type PaperActions } from './use-library-drawer'
+import { SectionEmptyState, SectionErrorState } from '@/components/ui/async-state'
 
 // =============================================================================
 // Types
@@ -89,10 +90,12 @@ export default function LibraryDrawer(props: LibraryDrawerProps) {
         <DrawerResults
           results={drawer.results}
           showSkeletons={drawer.showSkeletons}
+          showErrorState={drawer.showErrorState}
           showEmptyLibrary={drawer.showEmptyLibrary}
           showSearchPrompt={drawer.showSearchPrompt}
           showMinCharsHint={drawer.showMinCharsHint}
           showNoResults={drawer.showNoResults}
+          errorMessage={drawer.errorMessage}
           searchMode={drawer.searchMode}
           onSearchModeChange={drawer.setSearchMode}
           expandedAbstract={drawer.expandedAbstract}
@@ -107,6 +110,7 @@ export default function LibraryDrawer(props: LibraryDrawerProps) {
           hasNextPage={drawer.hasNextPage}
           libraryCount={drawer.libraryPapers.length}
           pageSize={drawer.LIBRARY_PAGE_SIZE}
+          onRetry={drawer.retry}
         />
 
         <DrawerFooter
@@ -234,10 +238,12 @@ function DrawerHeader({
 function DrawerResults({
   results,
   showSkeletons,
+  showErrorState,
   showEmptyLibrary,
   showSearchPrompt,
   showMinCharsHint,
   showNoResults,
+  errorMessage,
   searchMode,
   onSearchModeChange,
   expandedAbstract,
@@ -252,13 +258,16 @@ function DrawerResults({
   hasNextPage,
   libraryCount,
   pageSize,
+  onRetry,
 }: {
   results: SearchResult[]
   showSkeletons: boolean
+  showErrorState: boolean
   showEmptyLibrary: boolean
   showSearchPrompt: boolean
   showMinCharsHint: boolean
   showNoResults: boolean
+  errorMessage: string
   searchMode: 'library' | 'online'
   onSearchModeChange: (mode: 'library' | 'online') => void
   expandedAbstract: string | null
@@ -273,6 +282,7 @@ function DrawerResults({
   hasNextPage: boolean | undefined
   libraryCount: number
   pageSize: number
+  onRetry: () => void
 }) {
   return (
     <ScrollArea className="flex-1 min-h-0 overscroll-contain">
@@ -285,11 +295,28 @@ function DrawerResults({
           </>
         )}
 
+        {showErrorState && (
+          <SectionErrorState
+            title={searchMode === 'library' ? 'Failed to load papers' : 'Search failed'}
+            description={errorMessage}
+            className="min-h-[260px] border-0 bg-transparent px-4"
+            action={
+              <button
+                onClick={onRetry}
+                className="h-7 px-3 text-[11px] font-medium rounded-full border border-border/40 text-muted-foreground hover:text-foreground hover:border-border/60 transition-colors inline-flex items-center gap-1.5"
+              >
+                Retry
+              </button>
+            }
+          />
+        )}
+
         {showEmptyLibrary && (
-          <EmptyState
-            icon={BookOpen}
+          <SectionEmptyState
             title="No papers yet"
             description="Search online to find papers"
+            icon={<BookOpen className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
+            className="min-h-[260px] border-0 bg-transparent px-4"
             action={
               <button
                 onClick={() => onSearchModeChange('online')}
@@ -303,28 +330,31 @@ function DrawerResults({
         )}
 
         {showSearchPrompt && (
-          <EmptyState
-            icon={Search}
+          <SectionEmptyState
             title="Search academic papers"
             description="Enter a topic to search across databases"
+            icon={<Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
+            className="min-h-[260px] border-0 bg-transparent px-4"
           />
         )}
 
         {showMinCharsHint && (
-          <EmptyState
-            icon={Search}
+          <SectionEmptyState
             title="Keep typing…"
             description="Enter at least 3 characters"
+            icon={<Search className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
+            className="min-h-[260px] border-0 bg-transparent px-4"
           />
         )}
 
         {showNoResults && (
-          <EmptyState
-            icon={FileText}
+          <SectionEmptyState
             title="No papers found"
             description={searchMode === 'library' 
               ? "Try different keywords" 
               : "Try different search terms"}
+            icon={<FileText className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
+            className="min-h-[260px] border-0 bg-transparent px-4"
             action={searchMode === 'library' && (
               <button
                 onClick={() => onSearchModeChange('online')}
@@ -406,29 +436,6 @@ function PaperCardSkeleton() {
         <div className="h-4 bg-muted/20 rounded-full w-14" />
         <div className="h-4 bg-muted/20 rounded-full w-10" />
       </div>
-    </div>
-  )
-}
-
-function EmptyState({ 
-  icon: Icon, 
-  title, 
-  description, 
-  action 
-}: { 
-  icon: React.ComponentType<{ className?: string }>
-  title: string
-  description: string
-  action?: React.ReactNode
-}) {
-  return (
-    <div className="flex flex-col items-center justify-center py-12 text-center px-6">
-      <div className="w-10 h-10 rounded-full border border-border/40 flex items-center justify-center mb-3">
-        <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-      </div>
-      <h3 className="font-instrument text-sm tracking-tight mb-1">{title}</h3>
-      <p className="text-xs text-muted-foreground mb-3 max-w-[200px] leading-relaxed">{description}</p>
-      {action}
     </div>
   )
 }

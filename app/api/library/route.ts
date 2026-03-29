@@ -3,8 +3,11 @@ import { z } from 'zod'
 import { 
   getUserLibraryPapers, 
   addPaperToLibrary, 
+  getLibraryPaper,
   removePaperFromLibrary
 } from '@/lib/db/library'
+import { ensurePaperMetadata } from '@/lib/services/paper-content-service'
+import type { RankedPaper } from '@/lib/services/paper-aggregation'
 import {
   getAuthenticatedUser,
   unauthorized,
@@ -32,13 +35,59 @@ const GetQuerySchema = z.object({
 })
 
 const PostBodySchema = z.object({
-  paperId: z.string().min(1, 'Paper ID is required'),
+  paperId: z.string().min(1, 'Paper ID is required').optional(),
   collectionId: z.string().optional(),
+  searchQuery: z.string().max(500).optional(),
+  searchResult: z.object({
+    canonical_id: z.string().min(1),
+    title: z.string().min(1),
+    abstract: z.string().optional(),
+    authors: z.array(z.string()).optional(),
+    year: z.number().int().nullable().optional(),
+    venue: z.string().optional(),
+    doi: z.string().optional(),
+    url: z.string().optional(),
+    pdfUrl: z.string().optional(),
+    citationCount: z.number().int().min(0).optional(),
+    relevanceScore: z.number().optional(),
+    source: z.string().min(1),
+  }).optional(),
+}).refine((value) => value.paperId || value.searchResult, {
+  message: 'Paper ID or search result is required',
+  path: ['paperId'],
 })
 
 const DeleteQuerySchema = z.object({
-  id: UuidSchema,
+  id: UuidSchema.optional(),
+  paperId: UuidSchema.optional(),
+}).refine((value) => value.id || value.paperId, {
+  message: 'Library entry id or paper id is required',
+  path: ['id'],
 })
+
+function toRankedPaper(searchResult: z.infer<typeof PostBodySchema>['searchResult']): RankedPaper {
+  const currentYear = new Date().getFullYear()
+  const year = searchResult?.year && Number.isFinite(searchResult.year) ? searchResult.year : currentYear
+
+  return {
+    canonical_id: searchResult?.canonical_id || '',
+    title: searchResult?.title || 'Untitled',
+    abstract: searchResult?.abstract || '',
+    year,
+    venue: searchResult?.venue,
+    doi: searchResult?.doi,
+    url: searchResult?.url,
+    pdf_url: searchResult?.pdfUrl,
+    citationCount: searchResult?.citationCount || 0,
+    authors: searchResult?.authors || [],
+    source: (searchResult?.source || 'openalex') as RankedPaper['source'],
+    relevanceScore: searchResult?.relevanceScore || 0,
+    combinedScore: searchResult?.relevanceScore || 0,
+    bm25Score: searchResult?.relevanceScore,
+    authorityScore: undefined,
+    recencyScore: undefined,
+  }
+}
 
 // ============================================================================
 // GET - Retrieve user's library papers
@@ -100,10 +149,14 @@ export async function POST(request: NextRequest) {
       return badRequest(bodyResult.error)
     }
 
-    const { paperId, collectionId } = bodyResult.data
-    const libraryPaper = await addPaperToLibrary(user.id, paperId, collectionId)
+    const { paperId, collectionId, searchQuery, searchResult } = bodyResult.data
+    const resolvedPaperId = searchResult
+      ? (await ensurePaperMetadata(toRankedPaper(searchResult), searchQuery || searchResult.title)).paperId
+      : paperId!
 
-    return success({ success: true, libraryPaper })
+    const libraryPaper = await addPaperToLibrary(user.id, resolvedPaperId, collectionId)
+
+    return success({ success: true, paperId: resolvedPaperId, libraryPaper })
 
   } catch (error) {
     console.error('Error in library POST API:', error)
@@ -125,7 +178,14 @@ export async function DELETE(request: NextRequest) {
       return badRequest(queryResult.error)
     }
 
-    await removePaperFromLibrary(queryResult.data.id)
+    const targetLibraryId = queryResult.data.id
+      ?? (await getLibraryPaper(user.id, queryResult.data.paperId!))?.id
+
+    if (!targetLibraryId) {
+      return badRequest('Paper is not in your library')
+    }
+
+    await removePaperFromLibrary(targetLibraryId)
 
     return success({ success: true })
 

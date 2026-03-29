@@ -43,7 +43,9 @@ export default function GlobalLibraryProvider({ children }: GlobalLibraryProvide
       queryKey: ['library', 'papers'],
       queryFn: async () => {
         const res = await fetch('/api/papers?library=me&sortBy=added_at&sortOrder=desc&maxResults=25&offset=0')
-        if (!res.ok) return []
+        if (!res.ok) {
+          throw new Error('Failed to prefetch library papers')
+        }
         const data = await res.json()
         return data.papers.map((item: any) => ({
           id: item.paper.id,

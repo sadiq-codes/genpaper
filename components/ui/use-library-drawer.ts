@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 
 export interface SearchResult {
   id: string
+  canonicalId?: string
   title: string
   authors: string[]
   year: number | null
@@ -67,6 +68,7 @@ async function fetchLibraryPapers({
   const data = await response.json()
   return data.papers.map((item: any) => ({
     id: item.paper.id,
+    canonicalId: typeof item.paper.metadata?.canonical_id === 'string' ? item.paper.metadata.canonical_id : undefined,
     title: item.paper.title,
     authors: item.paper.author_names || [],
     year: item.paper.publication_date ? new Date(item.paper.publication_date).getFullYear() : null,
@@ -106,6 +108,7 @@ async function searchPapersFast(
   return {
     papers: data.papers.map((paper: any) => ({
       id: paper.canonical_id,
+      canonicalId: paper.canonical_id,
       title: paper.title,
       authors: paper.authors || [],
       year: paper.year,
@@ -157,6 +160,7 @@ async function rerankPapers(
   
   return data.papers.map((paper: any) => ({
     id: paper.canonical_id,
+    canonicalId: paper.canonical_id,
     title: paper.title,
     authors: paper.authors || [],
     year: paper.year,
@@ -171,13 +175,41 @@ async function rerankPapers(
   }))
 }
 
-async function addPaperToLibraryApi(paperId: string): Promise<void> {
+async function addPaperToLibraryApi({
+  paper,
+  searchQuery,
+}: {
+  paper: SearchResult
+  searchQuery?: string
+}): Promise<{ paperId: string }> {
   const response = await fetch('/api/library', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paperId })
+    body: JSON.stringify(
+      paper.type === 'search'
+        ? {
+            searchQuery,
+            searchResult: {
+              canonical_id: paper.canonicalId || paper.id,
+              title: paper.title,
+              abstract: paper.abstract,
+              authors: paper.authors,
+              year: paper.year,
+              venue: paper.journal,
+              doi: paper.doi,
+              url: paper.url,
+              pdfUrl: paper.pdfUrl,
+              citationCount: paper.citationCount,
+              relevanceScore: paper.relevanceScore,
+              source: paper.source,
+            },
+          }
+        : { paperId: paper.id }
+    )
   })
   if (!response.ok) throw new Error('Failed to add paper to library')
+  const data = await response.json()
+  return { paperId: data.paperId || paper.id }
 }
 
 // =============================================================================
@@ -200,6 +232,7 @@ export function useLibraryDrawer({
   const [expandedAbstract, setExpandedAbstract] = useState<string | null>(null)
   const [addedPapers, setAddedPapers] = useState<Set<string>>(new Set())
   const [savedToLibraryPapers, setSavedToLibraryPapers] = useState<Set<string>>(new Set())
+  const [resolvedPaperIds, setResolvedPaperIds] = useState<Map<string, string>>(new Map())
   const [isTyping, setIsTyping] = useState(false)
   
   const loadMoreRef = useRef<HTMLDivElement>(null)
@@ -216,6 +249,8 @@ export function useLibraryDrawer({
     hasNextPage,
     isFetchingNextPage,
     isLoading: isLoadingLibrary,
+    error: libraryError,
+    refetch: refetchLibrary,
   } = useInfiniteQuery({
     queryKey: ['library', 'papers'],
     queryFn: ({ pageParam = 0 }) => fetchLibraryPapers({ offset: pageParam, limit: LIBRARY_PAGE_SIZE }),
@@ -233,7 +268,9 @@ export function useLibraryDrawer({
 
   const { 
     data: fastSearchData,
-    isFetching: isFetchingFast
+    isFetching: isFetchingFast,
+    error: fastSearchError,
+    refetch: refetchFastSearch,
   } = useQuery({
     queryKey: ['papers', 'search', 'fast', debouncedQuery],
     queryFn: async ({ signal }) => {
@@ -304,6 +341,7 @@ export function useLibraryDrawer({
     if (isOpen) {
       setAddedPapers(new Set())
       setSavedToLibraryPapers(new Set())
+      setResolvedPaperIds(new Map())
       setIsTyping(false)
       if (initialQuery) {
         setQuery(initialQuery)
@@ -363,19 +401,37 @@ export function useLibraryDrawer({
   }, [libraryPapers, query])
 
   const libraryIdsSet = useMemo(
-    () => new Set(libraryPapers.map(p => p.id)),
+    () => new Set(libraryPapers.flatMap((paper) => {
+      const ids = [paper.id]
+      if (paper.canonicalId) {
+        ids.push(paper.canonicalId)
+      }
+      return ids
+    })),
     [libraryPapers]
   )
 
   const enrichedOnlineResults = useMemo(() => {
     return onlineResults.map(paper => ({
       ...paper,
-      type: libraryIdsSet.has(paper.id) ? 'library' as const : 'search' as const
+      type: libraryIdsSet.has(paper.id) || resolvedPaperIds.has(paper.id) ? 'library' as const : 'search' as const
     }))
-  }, [onlineResults, libraryIdsSet])
+  }, [onlineResults, libraryIdsSet, resolvedPaperIds])
 
   const results = searchMode === 'library' ? filteredLibraryPapers : enrichedOnlineResults
   const isSearching = searchMode === 'online' && (isSearchingOnline || isTyping)
+  const hasSearchRequest = searchMode === 'online' && debouncedQuery.length >= 3
+  const activeError = searchMode === 'library'
+    ? libraryError
+    : hasSearchRequest
+      ? fastSearchError
+      : null
+  const errorMessage = activeError instanceof Error
+    ? activeError.message
+    : searchMode === 'library'
+      ? 'Failed to load your saved papers.'
+      : 'Failed to search papers.'
+  const showErrorState = !!activeError && results.length === 0 && !isSearching && !isLoadingLibrary
 
   // Display flags
   const showEmptyLibrary = searchMode === 'library' && libraryPapers.length === 0 && !query && !isLoadingLibrary
@@ -395,10 +451,16 @@ export function useLibraryDrawer({
     setAddedPapers(prev => new Set(prev).add(paper.id))
 
     try {
+      let projectPaperId = paper.id
       if (paper.type === 'search') {
-        await addToLibraryMutation.mutateAsync(paper.id)
+        const { paperId } = await addToLibraryMutation.mutateAsync({
+          paper,
+          searchQuery: debouncedQuery || query,
+        })
+        projectPaperId = paperId
+        setResolvedPaperIds((prev) => new Map(prev).set(paper.id, paperId))
       }
-      onAddToProject?.(paper.id, paper.title)
+      onAddToProject?.(projectPaperId, paper.title)
     } catch (error) {
       setAddedPapers(prev => {
         const next = new Set(prev)
@@ -407,7 +469,7 @@ export function useLibraryDrawer({
       })
       console.error('Error adding paper:', error)
     }
-  }, [currentProjectId, onAddToProject, addedPapers, addToLibraryMutation])
+  }, [currentProjectId, onAddToProject, addedPapers, addToLibraryMutation, debouncedQuery, query])
 
   const handleSaveToLibrary = useCallback(async (paper: SearchResult) => {
     if (savedToLibraryPapers.has(paper.id) || paper.type === 'library') return
@@ -415,7 +477,11 @@ export function useLibraryDrawer({
     setSavedToLibraryPapers(prev => new Set(prev).add(paper.id))
 
     try {
-      await addToLibraryMutation.mutateAsync(paper.id)
+      const { paperId } = await addToLibraryMutation.mutateAsync({
+        paper,
+        searchQuery: debouncedQuery || query,
+      })
+      setResolvedPaperIds((prev) => new Map(prev).set(paper.id, paperId))
     } catch (error) {
       setSavedToLibraryPapers(prev => {
         const next = new Set(prev)
@@ -424,16 +490,23 @@ export function useLibraryDrawer({
       })
       console.error('Error saving paper to library:', error)
     }
-  }, [savedToLibraryPapers, addToLibraryMutation])
+  }, [savedToLibraryPapers, addToLibraryMutation, debouncedQuery, query])
 
   const handleSelectForProject = useCallback(async (paper: SearchResult) => {
     if (!onSelectForProject) return
     
+    let selectedPaperId = resolvedPaperIds.get(paper.id) || paper.id
+
     if (paper.type === 'search') {
       setSavedToLibraryPapers(prev => new Set(prev).add(paper.id))
       
       try {
-        await addToLibraryMutation.mutateAsync(paper.id)
+        const { paperId } = await addToLibraryMutation.mutateAsync({
+          paper,
+          searchQuery: debouncedQuery || query,
+        })
+        selectedPaperId = paperId
+        setResolvedPaperIds((prev) => new Map(prev).set(paper.id, paperId))
       } catch (error) {
         setSavedToLibraryPapers(prev => {
           const next = new Set(prev)
@@ -446,17 +519,28 @@ export function useLibraryDrawer({
     }
     
     onSelectForProject({
-      id: paper.id,
+      id: selectedPaperId,
       title: paper.title,
       authors: paper.authors,
       year: paper.year
     })
-  }, [onSelectForProject, addToLibraryMutation])
+  }, [onSelectForProject, addToLibraryMutation, debouncedQuery, query, resolvedPaperIds])
 
   const handleUploadPdf = useCallback((paperId: string) => {
     uploadTargetRef.current = paperId
     fileInputRef.current?.click()
   }, [])
+
+  const retry = useCallback(() => {
+    if (searchMode === 'library') {
+      void refetchLibrary()
+      return
+    }
+
+    if (debouncedQuery.length >= 3) {
+      void refetchFastSearch()
+    }
+  }, [debouncedQuery.length, refetchFastSearch, refetchLibrary, searchMode])
 
   const handleFileSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -526,10 +610,10 @@ export function useLibraryDrawer({
     canAdd: !!currentProjectId,
     canSave: libraryOnlyMode && !currentProjectId && !onSelectForProject,
     canSelect: !!onSelectForProject,
-    isAdded: addedPapers.has(paper.id),
-    isSaved: savedToLibraryPapers.has(paper.id) || paper.type === 'library',
-    isSelected: selectedPaperIds.includes(paper.id),
-  }), [currentProjectId, libraryOnlyMode, onSelectForProject, addedPapers, savedToLibraryPapers, selectedPaperIds])
+    isAdded: addedPapers.has(paper.id) || addedPapers.has(resolvedPaperIds.get(paper.id) || ''),
+    isSaved: savedToLibraryPapers.has(paper.id) || resolvedPaperIds.has(paper.id) || paper.type === 'library',
+    isSelected: selectedPaperIds.includes(resolvedPaperIds.get(paper.id) || paper.id),
+  }), [currentProjectId, libraryOnlyMode, onSelectForProject, addedPapers, savedToLibraryPapers, selectedPaperIds, resolvedPaperIds])
 
   return {
     // State
@@ -558,10 +642,12 @@ export function useLibraryDrawer({
 
     // Display flags
     showEmptyLibrary,
+    showErrorState,
     showNoResults,
     showSearchPrompt,
     showMinCharsHint,
     showSkeletons,
+    errorMessage,
 
     // Handlers
     handleAddToProject,
@@ -570,6 +656,7 @@ export function useLibraryDrawer({
     handleUploadPdf,
     handleFileSelected,
     getPaperActions,
+    retry,
 
     // Constants
     LIBRARY_PAGE_SIZE,

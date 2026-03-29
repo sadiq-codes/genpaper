@@ -1,6 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
+type SortKey = 'added_at' | 'title' | 'year'
+type SourceFilter = 'all' | 'upload' | 'search'
+type BookmarkedFilter = 'all' | 'bookmarked' | 'not-bookmarked'
+
+interface UnifiedPaper {
+  id: string
+  title: string
+  authors: string[]
+  publication_date: string | null
+  venue: string | null
+  doi: string | null
+  pdf_url: string | null
+  source: string | null
+  citation_count: number | null
+  processing_status: string | null
+  owner_id: string | null
+  metadata: Record<string, unknown> | null
+  isBookmarked: boolean
+  libraryNotes: string | null
+  libraryAddedAt: string | null
+  projects: Array<{ id: string; topic: string }>
+  firstAddedAt: string
+}
+
+function getSortComparator(sortBy: SortKey) {
+  return (a: UnifiedPaper, b: UnifiedPaper) => {
+    switch (sortBy) {
+      case 'title':
+        return a.title.localeCompare(b.title)
+      case 'year': {
+        const yearA = a.publication_date ? new Date(a.publication_date).getTime() : 0
+        const yearB = b.publication_date ? new Date(b.publication_date).getTime() : 0
+        return yearB - yearA
+      }
+      case 'added_at':
+      default:
+        return new Date(b.firstAddedAt).getTime() - new Date(a.firstAddedAt).getTime()
+    }
+  }
+}
+
 /**
  * GET /api/library/all-papers
  * 
@@ -23,9 +64,15 @@ export async function GET(request: NextRequest) {
     }
 
     const url = new URL(request.url)
-    const projectFilter = url.searchParams.get('projectId') // Optional: filter by project
+    const searchQuery = (url.searchParams.get('q') || '').trim().toLowerCase()
+    const sortBy = ((url.searchParams.get('sort') as SortKey | null) || 'added_at')
+    const sourceFilter = ((url.searchParams.get('source') as SourceFilter | null) || 'all')
+    const projectFilter = url.searchParams.get('project') || url.searchParams.get('projectId') || 'all'
+    const bookmarkedFilter = ((url.searchParams.get('bookmarked') as BookmarkedFilter | null) || 'all')
+    const offset = Math.max(0, Number(url.searchParams.get('offset') || '0') || 0)
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || '30') || 30))
 
-        // Shared select fields — exclude abstract for list view (server-serialization)
+    // Shared select fields — exclude abstract for list view (server-serialization)
     const paperFields = `
       id,
       title,
@@ -64,7 +111,7 @@ export async function GET(request: NextRequest) {
 
       // Citations query — use inner join on research_projects to scope to user's projects
       // This avoids needing project IDs upfront (no sequential dependency)
-      projectFilter
+      projectFilter !== 'all'
         ? supabase
             .from('project_citations')
             .select(`
@@ -105,27 +152,6 @@ export async function GET(request: NextRequest) {
     const projectCitations = citationsResult.data || []
 
     // Step 4: Build unified paper map
-    interface UnifiedPaper {
-      id: string
-      title: string
-      authors: string[]
-      publication_date: string | null
-      venue: string | null
-      doi: string | null
-      pdf_url: string | null
-      source: string | null
-      citation_count: number | null
-      processing_status: string | null
-      owner_id: string | null
-      metadata: Record<string, unknown> | null
-      // Unified fields
-      isBookmarked: boolean
-      libraryNotes: string | null
-      libraryAddedAt: string | null
-      projects: Array<{ id: string; topic: string }>
-      firstAddedAt: string
-    }
-
     const paperMap = new Map<string, UnifiedPaper>()
 
     // Add library papers
@@ -195,15 +221,58 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Convert to array and sort by firstAddedAt (most recent first)
-    const papers = Array.from(paperMap.values()).sort(
-      (a, b) => new Date(b.firstAddedAt).getTime() - new Date(a.firstAddedAt).getTime()
-    )
+    const allPapers = Array.from(paperMap.values())
+
+    const stats = {
+      total: allPapers.length,
+      uploaded: allPapers.filter((paper) => paper.source === 'upload').length,
+      searched: allPapers.filter((paper) => paper.source !== 'upload').length,
+      bookmarked: allPapers.filter((paper) => paper.isBookmarked).length,
+      projects: userProjects.length,
+    }
+
+    let filteredPapers = allPapers
+
+    if (searchQuery) {
+      filteredPapers = filteredPapers.filter((paper) =>
+        paper.title.toLowerCase().includes(searchQuery) ||
+        paper.authors.some((author) => author.toLowerCase().includes(searchQuery)) ||
+        paper.venue?.toLowerCase().includes(searchQuery) ||
+        paper.libraryNotes?.toLowerCase().includes(searchQuery)
+      )
+    }
+
+    if (sourceFilter !== 'all') {
+      filteredPapers = filteredPapers.filter((paper) => paper.source === sourceFilter)
+    }
+
+    if (projectFilter !== 'all') {
+      if (projectFilter === 'none') {
+        filteredPapers = filteredPapers.filter((paper) => paper.projects.length === 0)
+      } else {
+        filteredPapers = filteredPapers.filter((paper) => paper.projects.some((project) => project.id === projectFilter))
+      }
+    }
+
+    if (bookmarkedFilter === 'bookmarked') {
+      filteredPapers = filteredPapers.filter((paper) => paper.isBookmarked)
+    } else if (bookmarkedFilter === 'not-bookmarked') {
+      filteredPapers = filteredPapers.filter((paper) => !paper.isBookmarked)
+    }
+
+    filteredPapers = filteredPapers.toSorted(getSortComparator(sortBy))
+
+    const totalCount = filteredPapers.length
+    const papers = filteredPapers.slice(offset, offset + limit)
 
     return NextResponse.json({
       papers,
-      count: papers.length,
+      count: totalCount,
+      offset,
+      limit,
+      hasMore: offset + papers.length < totalCount,
       projects: userProjects || [],
+      stats,
     })
 
   } catch (error) {
