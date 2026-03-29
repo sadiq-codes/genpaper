@@ -8,6 +8,7 @@ import Image from "next/image"
 import { createImplicitClient } from "@/lib/supabase/implicit-client"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
+import { SectionLoadingState } from "@/components/ui/async-state"
 
 function ResetPasswordContent() {
   const [password, setPassword] = useState("")
@@ -317,7 +318,11 @@ function ResetPasswordContent() {
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen" />}>
+    <Suspense fallback={(
+      <div className="w-full max-w-sm mx-auto px-6">
+        <SectionLoadingState title="Loading reset flow..." className="min-h-[320px]" />
+      </div>
+    )}>
       <ResetPasswordContent />
     </Suspense>
   )

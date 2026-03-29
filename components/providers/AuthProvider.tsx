@@ -1,7 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { User, Session, AuthChangeEvent } from '@supabase/supabase-js'
 
@@ -45,73 +44,15 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
   const [user, setUser] = useState<User | null>(initialUser)
   const [session, setSession] = useState<Session | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [pendingRecovery, setPendingRecovery] = useState(() =>
-    typeof window !== 'undefined' && window.location.hash.includes('type=recovery')
-  )
-  const router = useRouter()
-  const pathname = usePathname()
-  const routerRef = useRef(router)
-  routerRef.current = router
 
   useEffect(() => {
     const supabase = createClient()
-    const url = new URL(window.location.href)
-    const queryType = url.searchParams.get('type')
-    const getAuthHash = () => {
-      const hash = window.location.hash.startsWith('#')
-        ? window.location.hash.substring(1)
-        : window.location.hash
-      const params = new URLSearchParams(hash)
-      return {
-        type: params.get('type'),
-        accessToken: params.get('access_token'),
-        refreshToken: params.get('refresh_token'),
-      }
-    }
-    const initialHash = getAuthHash()
-    const hashType = initialHash.type
-    const hashHasRecovery = hashType === 'recovery'
 
-    const navigateToReset = () => {
-      setPendingRecovery(true)
-      routerRef.current.replace('/reset-password')
-    }
-
-    // Get initial session
     const initSession = async () => {
       try {
-        let { data: { session: currentSession } } = await supabase.auth.getSession()
-
-        // NOTE: email auth code exchange is handled in dedicated auth pages
-        // (/login, /reset-password) to avoid duplicate exchanges in dev mode.
-
-        // @supabase/ssr uses PKCE flow, but some email links can still arrive with
-        // implicit-flow hash tokens. Restore client session from hash when present.
-        if (!currentSession) {
-          const { accessToken, refreshToken } = getAuthHash()
-          if (accessToken && refreshToken) {
-            const { data, error: setErr } = await supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            })
-            if (!setErr && data.session) {
-              currentSession = data.session
-            } else {
-              console.error('[AuthProvider] Failed to set session from hash tokens:', setErr?.message)
-            }
-            window.history.replaceState(null, '', window.location.pathname + window.location.search)
-          }
-        }
-
+        const { data: { session: currentSession } } = await supabase.auth.getSession()
         setSession(currentSession ?? null)
-        if (currentSession?.user) {
-          setUser(currentSession.user)
-        }
-
-        if ((hashHasRecovery || queryType === 'recovery') && currentSession) {
-          navigateToReset()
-          return
-        }
+        setUser(currentSession?.user ?? initialUser ?? null)
       } catch (error) {
         console.error('AuthProvider: Failed to get session:', error)
       } finally {
@@ -121,11 +62,8 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
 
     initSession()
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event: AuthChangeEvent, newSession: Session | null) => {
-        console.log('Auth state changed:', event, newSession?.user?.email)
-
         // `INITIAL_SESSION` can legitimately have a null session on the client even when
         // SSR knows the user via cookies. Don't clobber the hydrated user in that case.
         if (event === 'INITIAL_SESSION' && !newSession?.user && initialUser) {
@@ -137,11 +75,7 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
         setUser(newSession?.user ?? null)
         setIsLoading(false)
 
-        // Handle specific events
-        if (event === 'PASSWORD_RECOVERY') {
-          navigateToReset()
-          return
-        } else if (event === 'SIGNED_OUT') {
+        if (event === 'SIGNED_OUT') {
           setUser(null)
           setSession(null)
         } else if (event === 'TOKEN_REFRESHED') {
@@ -156,29 +90,11 @@ export function AuthProvider({ children, initialUser = null }: AuthProviderProps
     }
   }, [initialUser])
 
-  // Clear the recovery gate once client-side navigation lands on /reset-password.
-  // Safety timeout prevents a permanent blank screen if navigation somehow stalls.
-  useEffect(() => {
-    if (!pendingRecovery) return
-
-    if (pathname === '/reset-password') {
-      setPendingRecovery(false)
-      return
-    }
-
-    const timer = setTimeout(() => setPendingRecovery(false), 5_000)
-    return () => clearTimeout(timer)
-  }, [pendingRecovery, pathname])
-
   const value: AuthContextType = {
     user,
     session,
     isLoading,
     isAuthenticated: !!user,
-  }
-
-  if (pendingRecovery) {
-    return null
   }
 
   return (

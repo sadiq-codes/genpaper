@@ -1,13 +1,14 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, Suspense } from "react"
+import { useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
+import { SectionLoadingState } from "@/components/ui/async-state"
 
 function SignupContent() {
   const [email, setEmail] = useState("")
@@ -16,7 +17,6 @@ function SignupContent() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
-  const [checking, setChecking] = useState(true)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
@@ -45,13 +45,6 @@ function SignupContent() {
       setGoogleLoading(false)
     }
   }
-
-  useEffect(() => {
-    const checkUser = async () => {
-      setChecking(false)
-    }
-    checkUser()
-  }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -93,10 +86,6 @@ function SignupContent() {
     } finally {
       setLoading(false)
     }
-  }
-
-  if (checking) {
-    return <div className="min-h-screen" />
   }
 
   // Success — email verification sent
@@ -327,7 +316,11 @@ function SignupContent() {
 
 export default function SignupPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen" />}>
+    <Suspense fallback={(
+      <div className="w-full max-w-sm mx-auto px-6">
+        <SectionLoadingState title="Loading sign up..." className="min-h-[320px]" />
+      </div>
+    )}>
       <SignupContent />
     </Suspense>
   )

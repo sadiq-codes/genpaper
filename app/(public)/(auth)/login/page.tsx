@@ -8,7 +8,7 @@ import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
-import { LoadingSpinner } from "@/components/ui/loading-spinner"
+import { SectionLoadingState } from "@/components/ui/async-state"
 
 function LoginPageContent() {
   const [email, setEmail] = useState("")
@@ -261,7 +261,15 @@ function LoginPageContent() {
   }
 
   if (checking) {
-    return <LoadingSpinner fullScreen />
+    return (
+      <div className="w-full max-w-sm mx-auto px-6">
+        <SectionLoadingState
+          title="Preparing sign in..."
+          description="Checking your current session and any email sign-in link."
+          className="min-h-[320px]"
+        />
+      </div>
+    )
   }
 
   return (
@@ -408,7 +416,11 @@ function LoginPageContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<LoadingSpinner fullScreen />}>
+    <Suspense fallback={(
+      <div className="w-full max-w-sm mx-auto px-6">
+        <SectionLoadingState title="Loading sign in..." className="min-h-[320px]" />
+      </div>
+    )}>
       <LoginPageContent />
     </Suspense>
   )
