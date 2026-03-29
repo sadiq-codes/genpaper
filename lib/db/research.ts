@@ -11,6 +11,9 @@ import type {
 
 // Browser-side client now imported from centralized location
 
+const PROJECT_LIST_SELECT =
+  'id, user_id, topic, status, has_generated, generation_config, created_at, completed_at, paper_type, has_original_research, research_question, key_findings' as const
+
 export async function createResearchProject(
   userId: string,
   topic: string,
@@ -403,7 +406,7 @@ export async function getUserResearchProjects(
   // Fetch projects
   const { data, error } = await supabase
     .from('research_projects')
-    .select('*')
+    .select(PROJECT_LIST_SELECT)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
@@ -436,7 +439,7 @@ export async function getUserResearchProjects(
   // Map projects with their citation counts
   const projectsWithCitations = data.map((project) => ({
     ...project,
-    latest_version: null,
+    latest_version: undefined,
     citation_count: paperSetByProject.get(project.id)?.size || 0
   }))
 

@@ -9,6 +9,7 @@ import { getAbsoluteUrlFromHeaders } from '@/lib/config'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 import { parseTopicInput } from '@/lib/generation/topic-parser'
 import { trackEvent } from '@/lib/tracking/events'
+import { normalizePaperProcessingStatus } from '@/lib/content/processing-status'
 
 // Projects Actions
 export async function getProjectsAction(limit = 20, offset = 0) {
@@ -100,10 +101,13 @@ export async function createProjectAction(
       return { success: false, error: 'You selected "Use only my papers" but haven\'t added any papers. Upload PDFs or select papers from your library first.' }
     }
 
-    // Check that every selected paper has processed PDF content
+    // Match the lazy paper-content pipeline:
+    // - allow papers that already have full text
+    // - allow papers that can still be upgraded lazily from pdf_url or DOI
+    // - block only papers that have neither usable full text nor an upgrade path
     const { data: paperRows, error: paperCheckError } = await supabase
       .from('papers')
-      .select('id, title, pdf_content')
+      .select('id, title, pdf_content, pdf_url, doi, processing_status')
       .in('id', allPaperIds)
 
     if (paperCheckError) {
@@ -112,21 +116,30 @@ export async function createProjectAction(
     }
 
     const papersById = new Map((paperRows || []).map(p => [p.id, p]))
-    const missingPdf: string[] = []
+    const unavailableForLibraryOnly: string[] = []
 
     for (const id of allPaperIds) {
       const paper = papersById.get(id)
-      if (!paper || !paper.pdf_content || paper.pdf_content.trim().length === 0) {
-        missingPdf.push(paper?.title || 'Unknown paper')
+      const status = normalizePaperProcessingStatus(paper?.processing_status)
+      const hasFullText =
+        typeof paper?.pdf_content === 'string' &&
+        paper.pdf_content.trim().length >= 500 &&
+        status === 'full_text_ready'
+      const canUpgradeLazily =
+        !!paper?.pdf_url ||
+        (typeof paper?.doi === 'string' && paper.doi.trim().length > 0)
+
+      if (!hasFullText && !canUpgradeLazily) {
+        unavailableForLibraryOnly.push(paper?.title || 'Unknown paper')
       }
     }
 
-    if (missingPdf.length > 0) {
-      const titles = missingPdf.slice(0, 3).join(', ')
-      const extra = missingPdf.length > 3 ? ` and ${missingPdf.length - 3} more` : ''
+    if (unavailableForLibraryOnly.length > 0) {
+      const titles = unavailableForLibraryOnly.slice(0, 3).join(', ')
+      const extra = unavailableForLibraryOnly.length > 3 ? ` and ${unavailableForLibraryOnly.length - 3} more` : ''
       return {
         success: false,
-        error: `Upload PDFs before generating with "Use only my papers". Missing PDF content for: ${titles}${extra}`
+        error: `Some selected papers can't be used in "Use only my papers" mode yet. Add a PDF or choose papers with accessible full text: ${titles}${extra}`
       }
     }
   }
