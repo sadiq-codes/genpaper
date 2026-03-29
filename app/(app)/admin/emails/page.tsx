@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -18,7 +19,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Loader2, Send } from 'lucide-react'
+import { Loader2, Mail, RefreshCw, Send, ShieldCheck, Users } from 'lucide-react'
+import { SectionEmptyState, SectionErrorState, SectionLoadingState } from '@/components/ui/async-state'
 
 interface Campaign {
   id: string
@@ -36,6 +38,7 @@ export default function AdminEmailsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [recipientCount, setRecipientCount] = useState(0)
   const [loadingHistory, setLoadingHistory] = useState(true)
+  const [historyError, setHistoryError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchHistory()
@@ -43,14 +46,19 @@ export default function AdminEmailsPage() {
 
   async function fetchHistory() {
     setLoadingHistory(true)
+    setHistoryError(null)
     try {
       const res = await fetch('/api/admin/emails/send')
-      if (res.ok) {
-        const data = await res.json()
-        setCampaigns(data.campaigns || [])
-        setRecipientCount(data.recipientCount || 0)
+      if (!res.ok) {
+        throw new Error('Failed to load campaign history')
       }
-    } catch { /* ignore */ } finally {
+
+      const data = await res.json()
+      setCampaigns(data.campaigns || [])
+      setRecipientCount(data.recipientCount || 0)
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Failed to load campaign history')
+    } finally {
       setLoadingHistory(false)
     }
   }
@@ -86,23 +94,44 @@ export default function AdminEmailsPage() {
     }
   }
 
-  const canSend = subject.trim().length > 0 && bodyHtml.trim().length > 0
+  const plainBody = useMemo(
+    () => bodyHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+    [bodyHtml]
+  )
+  const canSend = subject.trim().length > 0 && bodyHtml.trim().length > 0 && !loadingHistory && !historyError
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Email Campaigns</h1>
-        <p className="text-sm text-muted-foreground">Send emails to all users who haven&apos;t unsubscribed.</p>
+      <div className="rounded-3xl border border-border/60 bg-card/70 p-5 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <Badge variant="outline" className="rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              Broadcast Email
+            </Badge>
+            <div>
+              <h1 className="font-instrument text-3xl tracking-tight">Email Campaigns</h1>
+              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                Compose and review outbound product emails before sending them to subscribed users.
+              </p>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-border/50 bg-background/80 px-4 py-3">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Audience</p>
+            <p className="mt-1 text-sm font-medium">
+              {loadingHistory ? 'Loading recipients...' : historyError ? 'Unavailable' : `${recipientCount} eligible users`}
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="grid md:grid-cols-5 gap-6">
         {/* Compose */}
         <Card className="md:col-span-3">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Compose</CardTitle>
-            <CardDescription>HTML body is wrapped in the GenPaper email layout automatically.</CardDescription>
+          <CardHeader className="pb-4">
+            <CardTitle className="font-instrument text-xl tracking-tight">Compose</CardTitle>
+            <CardDescription>HTML content is wrapped in the GenPaper campaign layout automatically.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-6">
             <div className="space-y-2">
               <Label htmlFor="subject">Subject</Label>
               <Input
@@ -123,9 +152,60 @@ export default function AdminEmailsPage() {
               />
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="grid gap-3 rounded-2xl border border-border/60 bg-muted/20 p-4 sm:grid-cols-3">
+              <ReviewStat
+                icon={Users}
+                label="Recipients"
+                value={loadingHistory ? 'Loading...' : historyError ? 'Unavailable' : recipientCount}
+                detail={historyError ? 'Retry history load before sending' : 'Subscribed users only'}
+              />
+              <ReviewStat
+                icon={Mail}
+                label="Subject"
+                value={subject.trim() ? 'Ready' : 'Missing'}
+                detail={subject.trim() || 'Add a clear campaign title'}
+              />
+              <ReviewStat
+                icon={ShieldCheck}
+                label="Body"
+                value={plainBody ? `${plainBody.length} chars` : 'Empty'}
+                detail={plainBody ? 'Rendered inside email wrapper' : 'Add campaign content'}
+              />
+            </div>
+
+            <div className="rounded-2xl border border-border/60 bg-background/80 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Campaign Review</p>
+                  <h3 className="mt-2 font-instrument text-lg tracking-tight">
+                    {subject.trim() || 'Your campaign subject'}
+                  </h3>
+                </div>
+                <Badge variant={historyError ? 'destructive' : 'outline'} className="rounded-full px-3 py-1">
+                  {historyError ? 'Needs Attention' : 'Ready to Review'}
+                </Badge>
+              </div>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {plainBody || 'Add campaign copy to preview the message summary here.'}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                <span className="rounded-full border border-border/40 px-3 py-1">
+                  {historyError ? 'Recipient count unavailable' : `${recipientCount} subscribed recipient${recipientCount === 1 ? '' : 's'}`}
+                </span>
+                <span className="rounded-full border border-border/40 px-3 py-1">
+                  HTML wrapped automatically
+                </span>
+                <span className="rounded-full border border-border/40 px-3 py-1">
+                  Unsubscribed users excluded
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
-                {recipientCount} eligible recipient{recipientCount !== 1 ? 's' : ''}
+                {historyError
+                  ? 'Recipient count unavailable. Retry the history panel before sending.'
+                  : `${recipientCount} eligible recipient${recipientCount !== 1 ? 's' : ''}`}
               </p>
 
               <AlertDialog>
@@ -139,7 +219,8 @@ export default function AdminEmailsPage() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Send this campaign?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will email <strong>{recipientCount}</strong> users with the subject &ldquo;{subject}&rdquo;. This cannot be undone.
+                      This will email <strong>{recipientCount}</strong> subscribed users with the subject &ldquo;{subject}&rdquo;.
+                      Review the content carefully before continuing. This action cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -154,8 +235,11 @@ export default function AdminEmailsPage() {
               <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">{error}</div>
             )}
             {result && (
-              <div className="rounded-md bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-900 p-3 text-sm text-green-700 dark:text-green-300">
-                Sent to {result.sent} of {result.total} users.{result.failed > 0 && ` ${result.failed} failed.`}
+              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-700 dark:text-emerald-300">
+                <p className="font-medium">Campaign sent.</p>
+                <p className="mt-1">
+                  Sent to {result.sent} of {result.total} users.{result.failed > 0 && ` ${result.failed} failed.`}
+                </p>
               </div>
             )}
           </CardContent>
@@ -163,16 +247,39 @@ export default function AdminEmailsPage() {
 
         {/* Campaign history */}
         <Card className="md:col-span-2">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Past Campaigns</CardTitle>
+          <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
+            <div>
+              <CardTitle className="font-instrument text-xl tracking-tight">Past Campaigns</CardTitle>
+              <CardDescription>Recent sends, recipient counts, and delivery activity.</CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={fetchHistory} disabled={loadingHistory} className="rounded-full">
+              <RefreshCw className={`mr-2 h-3.5 w-3.5 ${loadingHistory ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
           </CardHeader>
           <CardContent className="p-0">
             {loadingHistory ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
+              <SectionLoadingState
+                title="Loading campaign history..."
+                className="min-h-[220px] border-0 bg-transparent"
+              />
+            ) : historyError ? (
+              <SectionErrorState
+                title="Failed to load campaign history"
+                description={historyError}
+                className="min-h-[220px] border-0 bg-transparent"
+                action={(
+                  <Button variant="outline" size="sm" onClick={fetchHistory}>
+                    Try again
+                  </Button>
+                )}
+              />
             ) : campaigns.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No campaigns sent yet.</p>
+              <SectionEmptyState
+                title="No campaigns sent yet"
+                description="Your sent campaigns will appear here."
+                className="min-h-[220px] border-0 bg-transparent"
+              />
             ) : (
               <Table>
                 <TableHeader>
@@ -198,6 +305,29 @@ export default function AdminEmailsPage() {
           </CardContent>
         </Card>
       </div>
+    </div>
+  )
+}
+
+function ReviewStat({
+  icon: Icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  value: string | number
+  detail: string
+}) {
+  return (
+    <div className="rounded-xl border border-border/50 bg-background/70 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Icon className="h-3.5 w-3.5 text-muted-foreground/70" />
+        <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+      </div>
+      <p className="font-instrument text-xl tracking-tight">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
     </div>
   )
 }
