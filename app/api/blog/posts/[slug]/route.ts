@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateBlogRequest } from '@/lib/blog/api-auth'
 import { commitFileToGitHub, getFileFromGitHub, deleteFileFromGitHub } from '@/lib/blog/github'
+import { deleteLocalBlogFile, mirrorBlogFileLocally } from '@/lib/blog/local-sync'
 import matter from 'gray-matter'
 
 const BLOG_PATH = 'content/blog'
@@ -41,6 +42,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (!file) {
       return NextResponse.json({ error: 'Post not found' }, { status: 404 })
     }
+
+    await mirrorBlogFileLocally(`${BLOG_PATH}/${slug}.mdx`, file.content)
     
     const { data, content } = matter(file.content)
     
@@ -135,6 +138,8 @@ published: ${updatedData.published !== false}
       mdxContent,
       commitMessage
     )
+
+    await mirrorBlogFileLocally(`${BLOG_PATH}/${slug}.mdx`, mdxContent)
     
     return NextResponse.json({
       success: true,
@@ -186,6 +191,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       `${BLOG_PATH}/${slug}.mdx`,
       `Delete blog post: ${data.title || slug}`
     )
+
+    await deleteLocalBlogFile(`${BLOG_PATH}/${slug}.mdx`)
     
     return NextResponse.json({
       success: true,

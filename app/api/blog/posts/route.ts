@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authenticateBlogRequest, isApiKeyAuth } from '@/lib/blog/api-auth'
 import { commitFileToGitHub, getFileFromGitHub, listFilesInGitHub } from '@/lib/blog/github'
+import { mirrorBlogFileLocally } from '@/lib/blog/local-sync'
 import { sendDraftNotification } from '@/lib/blog/notifications'
 import matter from 'gray-matter'
 
@@ -78,6 +79,8 @@ export async function GET(request: NextRequest) {
         const file = await getFileFromGitHub(`${BLOG_PATH}/${filename}`)
         
         if (!file) return null
+
+        await mirrorBlogFileLocally(`${BLOG_PATH}/${filename}`, file.content)
         
         const { data } = matter(file.content)
         
@@ -186,6 +189,8 @@ export async function POST(request: NextRequest) {
       mdxContent,
       commitMessage
     )
+
+    await mirrorBlogFileLocally(`${BLOG_PATH}/${slug}.mdx`, mdxContent)
     
     // Send notification for drafts (AI-created posts)
     if (!published && isApiKeyAuth(request)) {

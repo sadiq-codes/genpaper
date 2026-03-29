@@ -7,7 +7,7 @@ import rehypeAutolinkHeadings from "rehype-autolink-headings"
 import { getAllPostSlugs, getPostBySlug, getRelatedPosts } from "@/lib/blog/mdx"
 import { formatDate } from "@/lib/utils"
 import type { Metadata } from "next"
-import { ArrowLeft } from "lucide-react"
+import { ArrowLeft, ArrowUpRight } from "lucide-react"
 
 interface Props {
   params: Promise<{ slug: string }>
@@ -131,7 +131,7 @@ export default async function BlogPostPage({ params }: Props) {
       />
 
       {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-md border-b border-border">
+      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <Link href="/" className="flex items-center gap-2.5">
@@ -145,7 +145,20 @@ export default async function BlogPostPage({ params }: Props) {
               <span className="text-lg font-semibold tracking-tight text-foreground/80">GenPaper</span>
             </Link>
 
-            <div className="hidden md:flex items-center space-x-8">
+            <div className="flex items-center gap-2 md:gap-8">
+              <Link
+                href="/blog"
+                className="inline-flex h-9 items-center justify-center rounded-full border border-border/60 px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted md:hidden"
+              >
+                Blog
+              </Link>
+              <Link
+                href="/signup"
+                className="inline-flex h-9 items-center justify-center rounded-full bg-accent px-4 text-sm font-medium text-accent-foreground shadow transition-colors hover:bg-accent/90 md:hidden"
+              >
+                Get Started
+              </Link>
+              <div className="hidden md:flex items-center space-x-8">
               <Link
                 href="/#features"
                 className="text-muted-foreground hover:text-foreground transition-colors text-sm font-medium"
@@ -176,124 +189,140 @@ export default async function BlogPostPage({ params }: Props) {
               >
                 Get Started
               </Link>
+              </div>
             </div>
           </div>
         </div>
       </nav>
 
       {/* Article */}
-      <article className="pt-24 pb-16 px-4">
-        <div className="max-w-3xl mx-auto">
+      <article className="px-4 pb-20 pt-24 sm:pt-28">
+        <div className="mx-auto max-w-5xl">
           {/* Back link */}
           <Link
             href="/blog"
-            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-8"
+            className="mb-8 inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Blog
           </Link>
 
-          {/* Header */}
-          <header className="mb-8">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-              <time dateTime={post.date}>{formatDate(post.date)}</time>
-              <span>·</span>
-              <span>{post.readingTime}</span>
-              <span>·</span>
-              <span>{post.author}</span>
-            </div>
-            <h1 className="font-instrument text-3xl md:text-4xl lg:text-5xl tracking-tight mb-4">
-              {post.title}
-            </h1>
-            <p className="text-lg text-muted-foreground">
-              {post.description}
-            </p>
-            {post.tags.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-4">
-                {post.tags.map((tag) => (
+          <div className="rounded-4xl border border-border/60 bg-card/70 p-6 shadow-sm sm:p-8">
+            {/* Header */}
+            <header className="mx-auto max-w-3xl">
+              <div className="mb-5 flex flex-wrap items-center gap-2">
+                <span className="inline-flex rounded-full border border-border/60 bg-background/80 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  GenPaper Blog
+                </span>
+                {post.tags.slice(0, 3).map((tag) => (
                   <span
                     key={tag}
-                    className="text-xs px-2 py-1 bg-muted rounded-md text-muted-foreground"
+                    className="inline-flex rounded-full border border-border/60 bg-background/70 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
                   >
                     {tag}
                   </span>
                 ))}
               </div>
+
+              <h1 className="font-instrument text-4xl tracking-tight sm:text-5xl lg:text-6xl">
+                {post.title}
+              </h1>
+              <p className="mt-4 text-lg leading-8 text-muted-foreground sm:text-xl">
+                {post.description}
+              </p>
+
+              <div className="mt-6 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1">
+                  <time dateTime={post.date}>{formatDate(post.date)}</time>
+                </span>
+                <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1">
+                  {post.readingTime}
+                </span>
+                <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1">
+                  {post.author}
+                </span>
+              </div>
+            </header>
+
+            {/* Featured Image */}
+            {post.image && (
+              <div className="relative mx-auto mt-8 aspect-video max-w-4xl overflow-hidden rounded-3xl border border-border/60 bg-muted">
+                <Image
+                  src={post.image}
+                  alt={post.imageAlt || post.title}
+                  fill
+                  className="object-cover"
+                  priority
+                />
+              </div>
             )}
-          </header>
 
-          {/* Featured Image */}
-          {post.image && (
-            <div className="aspect-video relative rounded-lg overflow-hidden mb-8 bg-muted">
-              <Image
-                src={post.image}
-                alt={post.imageAlt || post.title}
-                fill
-                className="object-cover"
-                priority
-              />
+            {/* Content */}
+            <div className="mx-auto mt-10 max-w-3xl rounded-[1.75rem] border border-border/60 bg-background/90 p-6 sm:p-8 lg:p-10">
+              <div className="prose prose-neutral dark:prose-invert max-w-none">
+                <MDXRemote 
+                  source={post.content} 
+                  components={components}
+                  options={{
+                    mdxOptions: {
+                      rehypePlugins: [
+                        rehypeSlug,
+                        [rehypeAutolinkHeadings, { 
+                          behavior: "wrap",
+                          properties: {
+                            className: ["anchor-link"],
+                          }
+                        }],
+                      ],
+                    },
+                  }}
+                />
+              </div>
             </div>
-          )}
 
-          {/* Content */}
-          <div className="prose prose-neutral dark:prose-invert max-w-none">
-            <MDXRemote 
-              source={post.content} 
-              components={components}
-              options={{
-                mdxOptions: {
-                  rehypePlugins: [
-                    rehypeSlug,
-                    [rehypeAutolinkHeadings, { 
-                      behavior: "wrap",
-                      properties: {
-                        className: ["anchor-link"],
-                      }
-                    }],
-                  ],
-                },
-              }}
-            />
-          </div>
-
-          {/* CTA */}
-          <div className="mt-12 p-6 bg-muted rounded-lg text-center">
-            <h3 className="font-instrument text-xl tracking-tight mb-2">
-              Ready to write your research paper?
-            </h3>
-            <p className="text-muted-foreground mb-4">
-              GenPaper helps you create high-quality academic papers with AI assistance.
-            </p>
-            <Link
-              href="/signup"
-              className="inline-flex h-10 items-center justify-center rounded-md bg-accent px-6 text-sm font-medium text-accent-foreground shadow transition-colors hover:bg-accent/90"
-            >
-              Get Started Free
-            </Link>
+            {/* CTA */}
+            <div className="mx-auto mt-10 max-w-3xl rounded-[1.75rem] border border-border/60 bg-muted/40 p-6 text-center sm:p-8">
+              <h3 className="font-instrument text-2xl tracking-tight">
+                Ready to write your research paper?
+              </h3>
+              <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
+                GenPaper helps you turn research into a structured academic draft with faster outlining, writing, and revision support.
+              </p>
+              <Link
+                href="/signup"
+                className="mt-5 inline-flex h-11 items-center justify-center rounded-full bg-accent px-6 text-sm font-medium text-accent-foreground shadow transition-colors hover:bg-accent/90"
+              >
+                Get Started Free
+              </Link>
+            </div>
           </div>
         </div>
       </article>
 
       {/* Related Posts */}
       {relatedPosts.length > 0 && (
-        <section className="py-16 px-4 border-t border-border">
-          <div className="max-w-6xl mx-auto">
-            <h2 className="font-instrument text-2xl tracking-tight mb-8 text-center">
+        <section className="border-t border-border px-4 py-16">
+          <div className="mx-auto max-w-6xl">
+            <h2 className="mb-8 text-center font-instrument text-3xl tracking-tight">
               Related Articles
             </h2>
             <div className="grid gap-8 md:grid-cols-3">
               {relatedPosts.map((related) => (
-                <Link key={related.slug} href={`/blog/${related.slug}`}>
-                  <div className="border border-border rounded-lg p-6 bg-card hover:border-accent/50 transition-colors">
-                    <div className="text-xs text-muted-foreground mb-2">
+                <Link key={related.slug} href={`/blog/${related.slug}`} className="group">
+                  <div className="rounded-3xl border border-border/60 bg-card p-6 transition-colors hover:border-accent/50">
+                    <div className="mb-2 text-xs text-muted-foreground">
                       {formatDate(related.date)} · {related.readingTime}
                     </div>
-                    <h3 className="font-instrument text-lg tracking-tight mb-2 hover:text-accent transition-colors">
+                    <h3 className="mb-2 font-instrument text-xl tracking-tight transition-colors group-hover:text-accent">
                       {related.title}
                     </h3>
                     <p className="text-sm text-muted-foreground line-clamp-2">
                       {related.description}
                     </p>
+                    <div className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-foreground/80 transition-colors group-hover:text-accent">
+                      Read article
+                      <ArrowUpRight className="h-4 w-4" />
+                    </div>
                   </div>
                 </Link>
               ))}
