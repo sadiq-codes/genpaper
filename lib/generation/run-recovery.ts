@@ -1,4 +1,5 @@
 import { launchOneShotWorker } from "@/lib/generation/worker-launcher";
+import { updateResearchProjectStatus } from "@/lib/db/research";
 import {
   getRun,
   updateRunStatus,
@@ -47,6 +48,8 @@ async function markRunFailed(
   message: string,
   jobId?: string
 ): Promise<void> {
+  const run = await getRun(runId).catch(() => null);
+
   if (jobId) {
     await failGenerationJobForRecovery(jobId, message).catch((err) => {
       console.error("[run-recovery] Failed to mark job failed:", err);
@@ -57,6 +60,11 @@ async function markRunFailed(
     error_message: message,
     current_stage: "failed",
   });
+  if (run?.project_id) {
+    await updateResearchProjectStatus(run.project_id, "failed").catch((err) => {
+      console.error("[run-recovery] Failed to sync project status:", err);
+    });
+  }
   await emitEvent(runId, "error", { message });
   nextLaunchAllowedAtByRun.delete(runId);
 }
@@ -96,6 +104,15 @@ export async function reconcileRunHealth(runId: string): Promise<GenerationRun |
   if (!run) return null;
 
   if (isRunTerminal(run)) {
+    if (run.project_id) {
+      const projectStatus =
+        run.status === "completed"
+          ? "complete"
+          : "failed";
+      await updateResearchProjectStatus(run.project_id, projectStatus).catch((err) => {
+        console.error("[run-recovery] Failed to sync terminal project status:", err);
+      });
+    }
     nextLaunchAllowedAtByRun.delete(runId);
     return run;
   }

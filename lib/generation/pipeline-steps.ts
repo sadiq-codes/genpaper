@@ -665,7 +665,7 @@ export async function runBuildContextsPhase(
     localRegion: undefined
   }
   
-  onProgress?.('writing', 40, 'Matching evidence to sections...')
+  onProgress?.('contexts', 40, 'Matching evidence to sections...')
   
   let sectionContexts: SectionContext[]
   
@@ -686,7 +686,7 @@ export async function runBuildContextsPhase(
       ).length
       
       info({ enrichedSections: enrichedCount, totalSections: sectionContexts.length }, 'Hybrid contexts built')
-      onProgress?.('writing', 45, 'Sections enriched with insights')
+      onProgress?.('contexts', 45, 'Sections enriched with insights')
     } catch (error) {
       warn({ error }, 'Hybrid enrichment failed, using RAG-only')
       throwIfCancelled(signal)
@@ -698,7 +698,7 @@ export async function runBuildContextsPhase(
   }
   throwIfCancelled(signal)
   
-  onProgress?.('writing', 48, 'Evidence gathered — writing soon')
+  onProgress?.('contexts', 48, 'Evidence gathered — writing soon')
   
   return sectionContexts
 }

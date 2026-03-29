@@ -44,6 +44,11 @@ import {
   buildOutlineBlueprintFromProfileSections,
   dedupePlannedOutline,
 } from "@/lib/generation/outline-planner";
+import {
+  classifyGenerationFailure,
+  getGenerationFailureSubstep,
+  wrapGenerationSubstepError,
+} from "@/lib/generation/telemetry";
 
 export interface GenerationPipelineInput {
   runId: string;
@@ -111,8 +116,10 @@ export async function handleGenerationPipelineFailure(
   input: Pick<GenerationPipelineInput, "runId" | "projectId"> & { userId?: string },
   error: unknown
 ): Promise<void> {
-  const errorMessage =
-    error instanceof Error ? error.message : "Generation failed";
+  const errorMessage = error instanceof Error ? error.message : "Generation failed";
+  const run = input.runId ? await getRun(input.runId).catch(() => null) : null;
+  const failure = classifyGenerationFailure(errorMessage, run?.current_stage);
+  const failureSubstep = getGenerationFailureSubstep(error);
 
   if (input.runId) {
     await emitError(input.runId, errorMessage);
@@ -127,6 +134,10 @@ export async function handleGenerationPipelineFailure(
       projectId: input.projectId,
       runId: input.runId,
       error: errorMessage,
+      failureCategory: failure.category,
+      failureReason: failure.reason,
+      failureStage: run?.current_stage ?? null,
+      failureSubstep,
     }).catch(() => {});
 
     sendFailureNotification(input.userId, input.projectId, errorMessage).catch(() => {});
@@ -173,11 +184,34 @@ export async function runGenerationPipeline(
 }> {
   const { runId, projectId, userId, config } = input;
   const onProgress = createProgressCallback(runId);
+  const runTimedStep = async <T>(stepName: string, fn: () => Promise<T>): Promise<T> => {
+    const startedAt = Date.now();
+    try {
+      const result = await runStep(stepName, fn);
+      trackEvent(userId, "generation_stage_timing", {
+        projectId,
+        runId,
+        stage: stepName,
+        durationMs: Date.now() - startedAt,
+        success: true,
+      }).catch(() => {});
+      return result;
+    } catch (error) {
+      trackEvent(userId, "generation_stage_timing", {
+        projectId,
+        runId,
+        stage: stepName,
+        durationMs: Date.now() - startedAt,
+        success: false,
+      }).catch(() => {});
+      throw wrapGenerationSubstepError(stepName, error);
+    }
+  };
 
   // =========================================================================
   // Step 1: Initialize (+ normalize findings if present)
   // =========================================================================
-  await runStep("init", async () => {
+  await runTimedStep("init", async () => {
     const run = await getRun(runId);
     if (!run || run.status === "cancelled" || signal?.aborted) {
       throw new Error("Run was cancelled");
@@ -238,7 +272,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   // Step 2: Generate Profile
   // =========================================================================
-  await runStep("profile", async () => {
+  await runTimedStep("profile", async () => {
     const run = await getRun(runId);
     if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
@@ -308,7 +342,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   // Step 3: Discover Papers
   // =========================================================================
-  await runStep("discover", async () => {
+  await runTimedStep("discover", async () => {
     const run = await getRun(runId);
     if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
@@ -347,7 +381,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   // Step 4: Content Readiness Gate (early, before extraction)
   // =========================================================================
-  await runStep("content-readiness", async () => {
+  await runTimedStep("content-readiness", async () => {
     const run = await getRun(runId);
     if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
@@ -374,7 +408,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   // Step 5: Check Extraction Cache
   // =========================================================================
-  const extractionCheck = await runStep("extract-check", async () => {
+  const extractionCheck = await runTimedStep("extract-check", async () => {
     const run = await getRun(runId);
     if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
@@ -403,7 +437,7 @@ export async function runGenerationPipeline(
   const totalBatches = extractionCheck.totalBatches;
 
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-    await runStep(`extract-batch-${batchIndex}`, async () => {
+    await runTimedStep(`extract-batch-${batchIndex}`, async () => {
       const run = await getRun(runId);
       if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
@@ -426,27 +460,21 @@ export async function runGenerationPipeline(
   }
 
   // =========================================================================
-  // Step N: Analyze Findings & Build Contexts (merged for efficiency)
+  // Step N: Analyze Findings
   // =========================================================================
-  const contextsResult = await runStep(
-    "analyze-and-build-contexts",
-    async (): Promise<{
-      contextCount: number;
-      sectionKeys: string[];
-      patterns: number;
-      totalFindings: number;
-    }> => {
-      const run = await getRun(runId);
-      if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
+  const analysisResult = await runTimedStep("analyze-findings", async () => {
+    const run = await getRun(runId);
+    if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
-      const state = await getPipelineState(runId);
-      if (!state.paperIds || !state.profile) {
-        throw new Error("State incomplete for analysis");
-      }
+    const state = await getPipelineState(runId);
+    if (!state.paperIds || !state.profile) {
+      throw new Error("State incomplete for analysis");
+    }
 
-      const papers = await getPapersByIds(state.paperIds);
+    const papers = await getPapersByIds(state.paperIds);
 
-      const analysisResult = await runAnalysisPhase(
+    try {
+      const result = await runAnalysisPhase(
         projectId,
         state.paperIds,
         papers,
@@ -456,28 +484,49 @@ export async function runGenerationPipeline(
         signal
       );
 
-      // Store analysis result
-      await updatePipelineState(runId, { themeAnalysis: analysisResult.analysisResult });
+      await updatePipelineState(runId, { themeAnalysis: result.analysisResult });
+      return result;
+    } catch (error) {
+      throw wrapGenerationSubstepError("analyze-findings", error);
+    }
+  });
 
-      // Build theme result for context building
-      const themeResult: HybridThemeExtractionResult = {
-        analysisResult: analysisResult.analysisResult,
-        extractionStats: analysisResult.extractionStats,
-      };
+  // =========================================================================
+  // Step N+1: Build Contexts
+  // =========================================================================
+  const contextsResult = await runTimedStep("build-contexts", async (): Promise<{
+    contextCount: number;
+    sectionKeys: string[];
+    patterns: number;
+    totalFindings: number;
+  }> => {
+    const run = await getRun(runId);
+    if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
-      const pipelineConfig: PipelineConfig = {
-        topic: config.topic,
-        paperType: config.paperType as PaperTypeKey,
-        length: Number(config.length) || 5500,
-        useLibraryOnly: config.useLibraryOnly,
-        libraryPaperIds: config.libraryPaperIds || [],
-        temperature: config.temperature,
-        maxTokens: config.maxTokens,
-        sources: config.sources,
-        originalResearch: config.originalResearch,
-      };
+    const state = await getPipelineState(runId);
+    if (!state.paperIds || !state.profile) {
+      throw new Error("State incomplete for context building");
+    }
 
-      // Build contexts
+    const papers = await getPapersByIds(state.paperIds);
+    const themeResult: HybridThemeExtractionResult = {
+      analysisResult: analysisResult.analysisResult,
+      extractionStats: analysisResult.extractionStats,
+    };
+
+    const pipelineConfig: PipelineConfig = {
+      topic: config.topic,
+      paperType: config.paperType as PaperTypeKey,
+      length: Number(config.length) || 5500,
+      useLibraryOnly: config.useLibraryOnly,
+      libraryPaperIds: config.libraryPaperIds || [],
+      temperature: config.temperature,
+      maxTokens: config.maxTokens,
+      sources: config.sources,
+      originalResearch: config.originalResearch,
+    };
+
+    try {
       const contexts = await runBuildContextsPhase(
         state.profile,
         papers,
@@ -487,7 +536,6 @@ export async function runGenerationPipeline(
         signal
       );
 
-      // Store context summaries in pipeline state
       await updatePipelineState(runId, {
         contextSummaries: contexts.map((c) => ({
           sectionKey: c.sectionKey,
@@ -498,7 +546,6 @@ export async function runGenerationPipeline(
         completedSectionIndices: [],
       });
 
-      // Cache full contexts so subsequent steps don't rebuild them
       await saveContextCache(runId, contexts);
 
       return {
@@ -507,8 +554,10 @@ export async function runGenerationPipeline(
         patterns: analysisResult.analysisResult.patterns.length,
         totalFindings: analysisResult.extractionStats.totalFindings,
       };
+    } catch (error) {
+      throw wrapGenerationSubstepError("build-contexts", error);
     }
-  );
+  });
 
   // =========================================================================
   // Steps N+3 to M: Generate Sections
@@ -518,7 +567,7 @@ export async function runGenerationPipeline(
   // Validate context cache before entering section steps.
   // If this is missing, section-0 can spend most of its budget rebuilding contexts
   // and then time out before writing starts.
-  await runStep("verify-context-cache", async () => {
+  await runTimedStep("verify-context-cache", async () => {
     if (signal?.aborted) throw new Error("Run was cancelled");
     let cachedContexts = await loadContextCache<SectionContext>(runId);
 
@@ -585,7 +634,7 @@ export async function runGenerationPipeline(
   });
 
   for (let sectionIndex = 0; sectionIndex < sectionCount; sectionIndex++) {
-    await runStep(`section-${sectionIndex}`, async () => {
+    await runTimedStep(`section-${sectionIndex}`, async () => {
       const run = await getRun(runId);
       if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
@@ -671,7 +720,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   // Completion Gate: lightweight truncation repair only
   // =========================================================================
-  await runStep("completion-gate", async () => {
+  await runTimedStep("completion-gate", async () => {
     const run = await getRun(runId);
     if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 
@@ -760,7 +809,7 @@ export async function runGenerationPipeline(
   // =========================================================================
   // Final Step: Finalize
   // =========================================================================
-  const finalResult = await runStep("finalize", async () => {
+  const finalResult = await runTimedStep("finalize", async () => {
     const run = await getRun(runId);
     if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
 

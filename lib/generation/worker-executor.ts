@@ -11,10 +11,15 @@ import {
   handleGenerationPipelineFailure,
 } from "@/lib/generation/pipeline-runner";
 import {
+  classifyGenerationFailure,
+  getGenerationFailureSubstep,
+} from "@/lib/generation/telemetry";
+import {
   resetPipelineForRetry,
   getRun,
   updateRunStatus,
 } from "@/lib/generation/run-manager";
+import { trackEvent } from "@/lib/tracking/events";
 
 export interface WorkerExecutionOptions {
   workerId: string;
@@ -35,6 +40,12 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function parseTimeMs(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 export async function processGenerationJob(
   job: GenerationJob,
   options: WorkerExecutionOptions
@@ -48,6 +59,21 @@ export async function processGenerationJob(
   console.log(
     `[generation-worker] Claimed job ${job.id} (run=${job.run_id}, attempt=${job.attempts}/${job.max_attempts})`
   );
+
+  const claimTimeMs = parseTimeMs(job.started_at) ?? Date.now();
+  const createdTimeMs = parseTimeMs(job.created_at);
+  const queueLatencyMs =
+    createdTimeMs !== null ? Math.max(0, claimTimeMs - createdTimeMs) : null;
+
+  trackEvent(job.user_id, "generation_job_claimed", {
+    projectId: job.project_id,
+    runId: job.run_id,
+    jobId: job.id,
+    attempt: job.attempts,
+    maxAttempts: job.max_attempts,
+    retryCount: Math.max(0, job.attempts - 1),
+    queueLatencyMs,
+  }).catch(() => {});
 
   const heartbeat = setInterval(async () => {
     try {
@@ -113,6 +139,8 @@ export async function processGenerationJob(
     const isCancelled =
       run?.status === "cancelled" ||
       errorMessage.toLowerCase().includes("run was cancelled");
+    const failure = classifyGenerationFailure(errorMessage, run?.current_stage);
+    const failureSubstep = getGenerationFailureSubstep(error);
 
     if (isCancelled) {
       await cancelGenerationJobForRun(job.run_id);
@@ -135,6 +163,20 @@ export async function processGenerationJob(
         error_message: errorMessage,
       });
       await markGenerationJobRetryable(job.id, workerId, errorMessage);
+      trackEvent(job.user_id, "generation_retry_scheduled", {
+        projectId: job.project_id,
+        runId: job.run_id,
+        jobId: job.id,
+        attempt: job.attempts,
+        maxAttempts: job.max_attempts,
+        retryCount: job.attempts,
+        completedSections,
+        totalSections,
+        failureCategory: failure.category,
+        failureReason: failure.reason,
+        failureStage: run?.current_stage ?? null,
+        failureSubstep,
+      }).catch(() => {});
       console.warn(
         `[generation-worker] Requeued job ${job.id} after error (attempt ${job.attempts}/${job.max_attempts}, ${completedSections}/${totalSections} sections preserved): ${errorMessage}`
       );
@@ -142,7 +184,7 @@ export async function processGenerationJob(
     }
 
     await handleGenerationPipelineFailure(
-      { runId: job.run_id, projectId: job.project_id },
+      { runId: job.run_id, projectId: job.project_id, userId: job.user_id },
       error
     );
     await failGenerationJob(job.id, workerId, errorMessage);

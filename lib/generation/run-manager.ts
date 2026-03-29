@@ -181,11 +181,15 @@ export async function updateRunStatus(
   }
 ): Promise<void> {
   const supabase = createServiceClient();
-  
+  const existingRun =
+    status === 'running'
+      ? await getRun(runId).catch(() => null)
+      : null;
+
   const updateData: Record<string, unknown> = { status, ...updates };
   
   // Set timestamps based on status
-  if (status === 'running' && !updates?.current_stage) {
+  if (status === 'running' && !existingRun?.started_at) {
     updateData.started_at = new Date().toISOString();
   }
   if (status === 'completed' || status === 'failed' || status === 'cancelled') {
