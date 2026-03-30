@@ -5,7 +5,7 @@ import { useState, Suspense, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
-import { createImplicitClient } from "@/lib/supabase/implicit-client"
+import { createClient } from "@/lib/supabase/client"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
 import { SectionLoadingState } from "@/components/ui/async-state"
@@ -21,7 +21,7 @@ function ResetPasswordContent() {
   const [initializing, setInitializing] = useState(true)
   const router = useRouter()
   const searchParams = useSearchParams()
-  const supabase = createImplicitClient()
+  const supabase = createClient()
   const authCode = searchParams.get("code")
   const authErrorCode = searchParams.get("error_code")
   const authErrorDescription = searchParams.get("error_description")
@@ -48,46 +48,12 @@ function ResetPasswordContent() {
         }
 
         if (authCode) {
-          const codeStatusKey = `reset-code-status:${authCode}`
-          const existingStatus = sessionStorage.getItem(codeStatusKey)
-
-          if (existingStatus === "pending" || existingStatus === "done") {
-            const hasSession = await waitForSession()
-            if (!hasSession && existingStatus === "done") {
-              setError(invalidResetLinkMessage)
-            }
-            return
-          }
-
-          const { data: { session: existingSession } } = await supabase.auth.getSession()
-          if (existingSession) {
-            window.history.replaceState(null, "", "/reset-password")
-            return
-          }
-
-          sessionStorage.setItem(codeStatusKey, "pending")
-          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(authCode)
-          if (exchangeError) {
-            console.error(
-              "[reset-password] exchangeCodeForSession failed:",
-              exchangeError.message,
-              exchangeError.status,
-              (exchangeError as { code?: string }).code
-            )
-            sessionStorage.removeItem(codeStatusKey)
-            setError(invalidResetLinkMessage)
-            return
-          }
-
-          sessionStorage.setItem(codeStatusKey, "done")
-          const hasSession = await waitForSession()
-          if (!hasSession) {
-            setError("This password reset session is missing or expired. Please request a new reset link.")
-            return
-          }
-
-          // Cleanup one-time code params after successful exchange.
-          window.history.replaceState(null, "", "/reset-password")
+          const callbackParams = new URLSearchParams({
+            code: authCode,
+            type: "recovery",
+            next: "/reset-password",
+          })
+          window.location.replace(`/auth/callback?${callbackParams.toString()}`)
           return
         }
 
