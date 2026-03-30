@@ -440,7 +440,6 @@ export function isRunTerminal(run: GenerationRun): boolean {
 
 import type { PaperProfile } from "@/lib/generation/paper-profile-types";
 import type { AnalysisResult } from "@/lib/analysis/cross-document";
-import type { SectionContext } from "@/lib/prompts/types";
 import type { StructuredCitation } from "@/lib/generation/unified-generator";
 
 /**
@@ -469,6 +468,7 @@ export interface PipelineState {
     title: string;
     expectedWords: number;
   }>;
+  contextCacheMeta?: ContextCacheMeta;
   
   // Phase 5: Section Generation
   sectionResults?: Array<{
@@ -502,6 +502,19 @@ export interface PipelineState {
       key_findings?: string;
     };
   };
+}
+
+export interface ContextCacheMeta {
+  version: number;
+  key: string;
+  findingsHash: string;
+  paperIds: string[];
+  sectionKeys: string[];
+  profileSignature: string;
+  configSignature: string;
+  source: "built" | "reused";
+  sourceRunId?: string | null;
+  createdAt: string;
 }
 
 /**
@@ -620,10 +633,22 @@ export async function markExtractionBatchComplete(
  */
 export async function clearPipelineState(runId: string): Promise<void> {
   const supabase = createServiceClient();
+  const state: PipelineState = await getPipelineState(runId).catch(() => ({} as PipelineState));
+  const preservedState: Partial<PipelineState> = {};
+
+  if (state.config) {
+    preservedState.config = state.config;
+  }
+  if (state.profile) {
+    preservedState.profile = state.profile;
+  }
+  if (state.contextCacheMeta) {
+    preservedState.contextCacheMeta = state.contextCacheMeta;
+  }
   
   const { error } = await supabase
     .from("generation_runs")
-    .update({ pipeline_state: {}, context_cache: null })
+    .update({ pipeline_state: preservedState })
     .eq("id", runId);
   
   if (error) {
@@ -672,6 +697,21 @@ export async function resetPipelineForRetry(runId: string): Promise<{
 // =============================================================================
 
 import { gzipSync, gunzipSync } from "zlib";
+
+function decodeContextCacheValue<T = unknown>(encoded: string | null | undefined): T[] | null {
+  if (!encoded) {
+    return null;
+  }
+
+  try {
+    const compressed = Buffer.from(encoded, "base64");
+    const json = gunzipSync(compressed).toString("utf-8");
+    return JSON.parse(json) as T[];
+  } catch (err) {
+    console.error("[context-cache] Decompression/parse failed:", err);
+    return null;
+  }
+}
 
 /**
  * Save section contexts to a compressed cache column.
@@ -723,12 +763,108 @@ export async function loadContextCache<T = unknown>(
     return null;
   }
 
-  try {
-    const compressed = Buffer.from(data.context_cache as string, "base64");
-    const json = gunzipSync(compressed).toString("utf-8");
-    return JSON.parse(json) as T[];
-  } catch (err) {
-    console.error("[context-cache] Decompression/parse failed:", err);
+  return decodeContextCacheValue<T>(data.context_cache as string);
+}
+
+export async function findReusableContextCache<T = unknown>(
+  projectId: string,
+  cacheKey: string,
+  excludeRunId?: string
+): Promise<{ runId: string; contexts: T[]; meta: ContextCacheMeta } | null> {
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from("generation_runs")
+    .select("id, context_cache, pipeline_state, created_at")
+    .eq("project_id", projectId)
+    .not("context_cache", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error || !data) {
+    if (error) {
+      console.error(`[context-cache] Failed to query reusable caches: ${error.message}`);
+    }
     return null;
   }
+
+  for (const row of data as Array<{
+    id: string;
+    context_cache: string | null;
+    pipeline_state: PipelineState | null;
+    created_at: string;
+  }>) {
+    if (excludeRunId && row.id === excludeRunId) {
+      continue;
+    }
+
+    const meta = row.pipeline_state?.contextCacheMeta;
+    if (!meta || meta.key !== cacheKey) {
+      continue;
+    }
+
+    const contexts = decodeContextCacheValue<T>(row.context_cache);
+    if (!contexts || contexts.length === 0) {
+      continue;
+    }
+
+    return {
+      runId: row.id,
+      contexts,
+      meta,
+    };
+  }
+
+  return null;
+}
+
+export async function findReusableProjectProfile(
+  projectId: string,
+  excludeRunId?: string
+): Promise<{
+  runId: string;
+  profile: PaperProfile;
+  config: NonNullable<PipelineState["config"]>;
+} | null> {
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from("generation_runs")
+    .select("id, pipeline_state, created_at")
+    .eq("project_id", projectId)
+    .eq("status", "completed")
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error || !data) {
+    if (error) {
+      console.error(`[profile-reuse] Failed to query reusable profiles: ${error.message}`);
+    }
+    return null;
+  }
+
+  for (const row of data as Array<{
+    id: string;
+    pipeline_state: PipelineState | null;
+    created_at: string;
+  }>) {
+    if (excludeRunId && row.id === excludeRunId) {
+      continue;
+    }
+
+    const profile = row.pipeline_state?.profile;
+    const config = row.pipeline_state?.config;
+
+    if (!profile || !config) {
+      continue;
+    }
+
+    return {
+      runId: row.id,
+      profile,
+      config,
+    };
+  }
+
+  return null;
 }

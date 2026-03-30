@@ -13,7 +13,11 @@ import {
   clearPipelineState,
   saveContextCache,
   loadContextCache,
+  findReusableContextCache,
+  findReusableProjectProfile,
+  type ContextCacheMeta,
 } from "@/lib/generation/run-manager";
+import { createHash } from "crypto";
 import { trackEvent } from "@/lib/tracking/events";
 import { sendEmail } from "@/lib/email/service";
 import { generationFailedEmail } from "@/lib/email/templates/generation-failed";
@@ -40,6 +44,8 @@ import type { PaperTypeKey } from "@/lib/prompts/types";
 import type { PaperStatus } from "@/types/simplified";
 import type { SectionContext } from "@/lib/prompts/types";
 import type { HybridThemeExtractionResult } from "@/lib/synthesis-engine/pipeline-integration";
+import type { PaperProfile } from "@/lib/generation/paper-profile-types";
+import type { AnalysisResult } from "@/lib/analysis/cross-document";
 import {
   buildOutlineBlueprintFromProfileSections,
   dedupePlannedOutline,
@@ -109,6 +115,132 @@ export function createProgressCallback(runId: string) {
         data.totalSections as number
       );
     }
+  };
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableStringify(item)).join(",")}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, entryValue]) => entryValue !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`);
+
+  return `{${entries.join(",")}}`;
+}
+
+function hashValue(value: unknown): string {
+  return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+function buildProfileReuseSignature(config: {
+  topic: string;
+  paperType: string;
+  length: number | string;
+  customInstructions?: string;
+  originalResearch?: {
+    has_original_research: boolean;
+    research_question?: string;
+    key_findings?: string;
+  };
+}): string {
+  return stableStringify({
+    topic: config.topic,
+    paperType: config.paperType,
+    length: Number(config.length) || 5500,
+    customInstructions: config.customInstructions,
+    originalResearch: config.originalResearch
+      ? {
+          has_original_research: !!config.originalResearch.has_original_research,
+          research_question: config.originalResearch.research_question,
+          key_findings: config.originalResearch.key_findings,
+        }
+      : null,
+  });
+}
+
+function summarizeContexts(contexts: SectionContext[]) {
+  return contexts.map((context) => ({
+    sectionKey: context.sectionKey,
+    title: context.title || context.sectionKey,
+    expectedWords: context.expectedWords || 300,
+  }));
+}
+
+function buildContextCacheMeta(
+  profile: PaperProfile,
+  paperIds: string[],
+  analysisResult: AnalysisResult,
+  config: PipelineConfig,
+  source: ContextCacheMeta["source"],
+  sourceRunId?: string | null
+): ContextCacheMeta {
+  const normalizedPaperIds = Array.from(new Set(paperIds.filter(Boolean))).sort();
+  const profileSignature = hashValue({
+    topic: profile.topic,
+    paperType: profile.paperType,
+    hasOriginalResearch: profile.hasOriginalResearch,
+    discipline: profile.discipline,
+    structure: profile.structure,
+    sourceExpectations: profile.sourceExpectations,
+    titleContract: profile.titleContract,
+    paperSubtype: profile.paperSubtype,
+    outline: profile.outline,
+  });
+  const configSignature = hashValue({
+    topic: config.topic,
+    paperType: config.paperType,
+    length: Number(config.length) || 5500,
+    useLibraryOnly: !!config.useLibraryOnly,
+    libraryPaperIds: [...(config.libraryPaperIds || [])].sort(),
+    temperature: config.temperature ?? null,
+    maxTokens: config.maxTokens ?? null,
+    sources: [...(config.sources || [])].sort(),
+    originalResearch: config.originalResearch || null,
+  });
+  const sectionKeys = profile.outline?.sections?.map((section) => section.sectionKey)
+    || profile.structure.appropriateSections.map((section) => section.key);
+  const key = hashValue({
+    version: 1,
+    findingsHash: analysisResult.findingsHash,
+    paperIds: normalizedPaperIds,
+    profileSignature,
+    configSignature,
+  });
+
+  return {
+    version: 1,
+    key,
+    findingsHash: analysisResult.findingsHash,
+    paperIds: normalizedPaperIds,
+    sectionKeys,
+    profileSignature,
+    configSignature,
+    source,
+    sourceRunId: sourceRunId || null,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function toThemeResult(
+  analysisResult: AnalysisResult,
+  papersProcessed: number
+): HybridThemeExtractionResult {
+  return {
+    analysisResult,
+    extractionStats: {
+      papersProcessed,
+      papersExtracted: analysisResult.analyzedPapers,
+      papersFromCache: analysisResult.analyzedPapers,
+      totalFindings: analysisResult.totalFindings,
+      extractionTimeMs: 0,
+    },
   };
 }
 
@@ -289,7 +421,26 @@ export async function runGenerationPipeline(
       originalResearch: config.originalResearch,
     };
 
-    const profile = await runProfilePhase(pipelineConfig, onProgress, signal);
+    const reusableProfile = await findReusableProjectProfile(projectId, runId);
+    const currentProfileSignature = buildProfileReuseSignature({
+      topic: pipelineConfig.topic,
+      paperType: pipelineConfig.paperType,
+      length: pipelineConfig.length,
+      customInstructions: pipelineConfig.customInstructions,
+      originalResearch: pipelineConfig.originalResearch,
+    });
+
+    const profile =
+      reusableProfile &&
+      buildProfileReuseSignature(reusableProfile.config) === currentProfileSignature
+        ? (() => {
+            onProgress?.("profiling", 9, "Reusing paper structure from the previous run...");
+            console.log(
+              `[profile-reuse] Reusing profile from run ${reusableProfile.runId} for project ${projectId}`
+            );
+            return reusableProfile.profile;
+          })()
+        : await runProfilePhase(pipelineConfig, onProgress, signal);
 
     // Store profile in state
     await updatePipelineState(runId, { profile });
@@ -518,6 +669,7 @@ export async function runGenerationPipeline(
       topic: config.topic,
       paperType: config.paperType as PaperTypeKey,
       length: Number(config.length) || 5500,
+      customInstructions: config.customInstructions,
       useLibraryOnly: config.useLibraryOnly,
       libraryPaperIds: config.libraryPaperIds || [],
       temperature: config.temperature,
@@ -527,6 +679,41 @@ export async function runGenerationPipeline(
     };
 
     try {
+      const cacheMeta = buildContextCacheMeta(
+        state.profile,
+        state.paperIds,
+        analysisResult.analysisResult,
+        pipelineConfig,
+        "built"
+      );
+      const reusableCache = await findReusableContextCache<SectionContext>(
+        projectId,
+        cacheMeta.key,
+        runId
+      );
+
+      if (reusableCache) {
+        onProgress?.("contexts", 41, "Reusing prepared evidence from an earlier run...");
+        await saveContextCache(runId, reusableCache.contexts);
+        await updatePipelineState(runId, {
+          contextSummaries: summarizeContexts(reusableCache.contexts),
+          contextCacheMeta: {
+            ...cacheMeta,
+            source: "reused",
+            sourceRunId: reusableCache.runId,
+          },
+          sectionResults: [],
+          completedSectionIndices: [],
+        });
+
+        return {
+          contextCount: reusableCache.contexts.length,
+          sectionKeys: reusableCache.contexts.map((context) => context.sectionKey),
+          patterns: analysisResult.analysisResult.patterns.length,
+          totalFindings: analysisResult.extractionStats.totalFindings,
+        };
+      }
+
       const contexts = await runBuildContextsPhase(
         state.profile,
         papers,
@@ -537,11 +724,8 @@ export async function runGenerationPipeline(
       );
 
       await updatePipelineState(runId, {
-        contextSummaries: contexts.map((c) => ({
-          sectionKey: c.sectionKey,
-          title: c.title || c.sectionKey,
-          expectedWords: c.expectedWords || 300,
-        })),
+        contextSummaries: summarizeContexts(contexts),
+        contextCacheMeta: cacheMeta,
         sectionResults: [],
         completedSectionIndices: [],
       });
@@ -597,10 +781,44 @@ export async function runGenerationPipeline(
         originalResearch: config.originalResearch,
       };
 
+      if (state.themeAnalysis) {
+        const cacheMeta = buildContextCacheMeta(
+          state.profile,
+          state.paperIds,
+          state.themeAnalysis as AnalysisResult,
+          pipelineConfig,
+          "built"
+        );
+        const reusableCache = await findReusableContextCache<SectionContext>(
+          projectId,
+          cacheMeta.key,
+          runId
+        );
+
+        if (reusableCache && reusableCache.contexts.length >= sectionCount) {
+          await saveContextCache(runId, reusableCache.contexts);
+          await updatePipelineState(runId, {
+            contextSummaries: summarizeContexts(reusableCache.contexts),
+            contextCacheMeta: {
+              ...cacheMeta,
+              source: "reused",
+              sourceRunId: reusableCache.runId,
+            },
+          });
+          cachedContexts = reusableCache.contexts;
+        }
+      }
+
+      if (cachedContexts && cachedContexts.length >= sectionCount) {
+        return { cachedContextCount: cachedContexts.length };
+      }
+
       const rebuiltContexts = await runBuildContextsPhase(
         state.profile,
         papers,
-        null,
+        state.themeAnalysis
+          ? toThemeResult(state.themeAnalysis as AnalysisResult, papers.length)
+          : null,
         pipelineConfig,
         onProgress,
         signal
@@ -612,11 +830,16 @@ export async function runGenerationPipeline(
 
       await saveContextCache(runId, rebuiltContexts);
       await updatePipelineState(runId, {
-        contextSummaries: rebuiltContexts.map((c) => ({
-          sectionKey: c.sectionKey,
-          title: c.title || c.sectionKey,
-          expectedWords: c.expectedWords || 300,
-        })),
+        contextSummaries: summarizeContexts(rebuiltContexts),
+        contextCacheMeta: state.themeAnalysis
+          ? buildContextCacheMeta(
+              state.profile,
+              state.paperIds,
+              state.themeAnalysis as AnalysisResult,
+              pipelineConfig,
+              "built"
+            )
+          : state.contextCacheMeta,
       });
 
       cachedContexts = rebuiltContexts;
