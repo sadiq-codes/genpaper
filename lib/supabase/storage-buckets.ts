@@ -32,8 +32,29 @@ export async function ensureStorageBucket(
   throw error
 }
 
+export function parseStorageObjectUrl(url: string): { bucketName: string; path: string } | null {
+  try {
+    const parsed = new URL(url)
+    const match = parsed.pathname.match(
+      /^\/storage\/v1\/object\/(?:public|sign|authenticated)\/([^/]+)\/(.+)$/
+    )
+    if (!match) {
+      return null
+    }
+
+    return {
+      bucketName: decodeURIComponent(match[1]),
+      path: decodeURIComponent(match[2]),
+    }
+  } catch {
+    return null
+  }
+}
+
 export function getStoragePathFromPublicUrl(url: string, bucketName: string): string | null {
-  const escapedBucket = bucketName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = url.match(new RegExp(`/${escapedBucket}/(.+?)(?:\\?|$)`))
-  return match ? decodeURIComponent(match[1]) : null
+  const parsed = parseStorageObjectUrl(url)
+  if (!parsed || parsed.bucketName !== bucketName) {
+    return null
+  }
+  return parsed.path
 }
