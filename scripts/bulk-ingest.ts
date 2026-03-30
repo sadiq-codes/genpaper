@@ -20,12 +20,15 @@
  *   npx tsx scripts/bulk-ingest.ts --with-pdfs --pdf-concurrency 3     # parallel PDF downloads
  *
  * Environment variables (required):
- *   CONTACT_EMAIL               — polite pool access for OpenAlex (no rate limits)
- *   NEXT_PUBLIC_SUPABASE_URL    — Supabase project URL
- *   SUPABASE_SERVICE_ROLE_KEY   — Supabase service role key
- *   OPENAI_API_KEY              — OpenAI key (or set EMBEDDING_SERVER_URL for self-hosted)
- *   EMBEDDING_SERVER_URL        — self-hosted embedding server (optional)
- *   GROBID_URL                  — GROBID server URL for PDF extraction (optional)
+ *   CONTACT_EMAIL                 — polite pool access for OpenAlex (no rate limits)
+ *   NEXT_PUBLIC_SUPABASE_URL      — Supabase project URL
+ *   SUPABASE_SERVICE_ROLE_KEY     — Supabase service role key
+ *   OPENAI_API_KEY                — used when embedding fallback is direct OpenAI
+ *   AZURE_OPENAI_RESOURCE_NAME    — used when Azure embeddings are configured
+ *   AZURE_OPENAI_API_KEY          — used when Azure embeddings are configured
+ *   AZURE_OPENAI_EMBEDDING_DEPLOYMENT — optional Azure embedding deployment override
+ *   EMBEDDING_SERVER_URL          — optional self-hosted TEI endpoint (highest priority)
+ *   GROBID_URL                    — GROBID server URL for PDF extraction (optional)
  *
  * How it works:
  *   1. Cursor-paginate through OpenAlex /works endpoint (200 papers per page)
@@ -36,8 +39,8 @@
  *   6. Saves cursor to disk for resume capability
  *
  * Cost estimate (5M papers, metadata only):
- *   - OpenAI text-embedding-3-small: ~$60-100 one-time
- *   - Self-hosted all-MiniLM-L6-v2: $0 (just compute time, ~24-48 hours)
+ *   - Managed embeddings (Azure/OpenAI): depends on your configured provider
+ *   - Self-hosted TEI: lower API cost, higher infrastructure/runtime management
  *
  * Cost estimate with PDF processing (highly-cited subset):
  *   - Storage: ~100GB for 100K papers with PDFs
@@ -647,7 +650,8 @@ async function batchInsertPapers(
     metadata: p.metadata,
     owner_id: null,       // Global paper
     is_public: false,
-    processing_status: 'full_text_ready',
+    // Use abstract_ready for papers without PDF content (full_text_ready requires pdf_content)
+    processing_status: 'abstract_ready',
   }))
 
   const { error } = await supabase
@@ -691,7 +695,7 @@ async function batchInsertChunks(
   
   const { error } = await supabase
     .from('paper_chunks')
-    .upsert(rowsWithoutEmbedding, { onConflict: 'id', ignoreDuplicates: true })
+    .upsert(rowsWithoutEmbedding, { onConflict: 'paper_id,chunk_index', ignoreDuplicates: true })
 
   if (error) {
     throw new Error(`Chunks insert failed: ${error.message}`)
@@ -916,6 +920,10 @@ async function main() {
           await batchInsertPapers(paperRows.slice(d, d + DB_BATCH))
           // Then insert chunks
           await batchInsertChunks(chunkRows.slice(d, d + DB_BATCH))
+          // Small delay between DB batches to avoid overwhelming Supabase
+          if (d + DB_BATCH < paperRows.length) {
+            await sleep(50)
+          }
         }
         progress.totalIngested += batch.length
 
@@ -997,8 +1005,8 @@ async function main() {
       break
     }
 
-    // Small delay to be polite (OpenAlex is generous but no need to hammer)
-    await sleep(100)
+    // Delay between pages to be polite to OpenAlex and give DB breathing room
+    await sleep(200)
   }
 
   // Clean up progress file on completion
