@@ -7,6 +7,7 @@ import dotenv from 'dotenv'
 dotenv.config({ path: '.env.local' })
 
 import { createClient } from '@supabase/supabase-js'
+import { getEmbeddingProviderName } from '@/lib/ai/vercel-client'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,6 +18,7 @@ async function checkProgress() {
   console.log('==================================================')
   console.log('📊 Paper Database Status')
   console.log('==================================================')
+  console.log('Embedding provider:   ', getEmbeddingProviderName())
 
   // Total papers
   const { count: totalPapers } = await supabase

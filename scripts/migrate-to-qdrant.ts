@@ -14,6 +14,7 @@ dotenv.config({ path: '.env.local' })
 
 import { createClient } from '@supabase/supabase-js'
 import { QdrantClient } from '@qdrant/js-client-rest'
+import { EMBEDDING_CONFIG } from '@/lib/ai/config'
 
 const BATCH_SIZE = 500
 
@@ -74,6 +75,7 @@ async function main() {
   console.log('📦 Migrate Embeddings to Qdrant')
   console.log('='.repeat(60))
   console.log(`Qdrant URL:    ${process.env.QDRANT_URL}`)
+  console.log(`Expected dims: ${EMBEDDING_CONFIG.dimensions}`)
   console.log(`Batch size:    ${batchSize}`)
   console.log(`Dry run:       ${dryRun}`)
   console.log('='.repeat(60))
@@ -127,7 +129,7 @@ async function main() {
     const points = papers
       .map(p => {
         const vector = parseEmbedding(p.embedding)
-        if (!vector || vector.length !== 1024) return null
+        if (!vector || vector.length !== EMBEDDING_CONFIG.dimensions) return null
         return {
           id: p.id,
           vector,
@@ -181,7 +183,7 @@ async function main() {
     const points = chunks
       .map(c => {
         const vector = parseEmbedding(c.embedding)
-        if (!vector || vector.length !== 1024) return null
+        if (!vector || vector.length !== EMBEDDING_CONFIG.dimensions) return null
         return {
           id: c.id,
           vector,

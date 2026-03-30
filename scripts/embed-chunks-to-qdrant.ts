@@ -1,11 +1,11 @@
 #!/usr/bin/env tsx
 
 /**
- * Embed all chunks from Supabase to Qdrant
- * 
- * Reads chunk text from Supabase, generates embeddings with TEI,
- * and stores in Qdrant.
- * 
+ * Embed all chunks from Supabase to Qdrant.
+ *
+ * Reads chunk text from Supabase, generates embeddings using the shared app
+ * embedding configuration, and stores them in Qdrant.
+ *
  * Usage:
  *   npx tsx scripts/embed-chunks-to-qdrant.ts
  *   npx tsx scripts/embed-chunks-to-qdrant.ts --batch-size 16 --concurrency 4
@@ -16,9 +16,10 @@ dotenv.config({ path: '.env.local' })
 
 import { createClient } from '@supabase/supabase-js'
 import { QdrantClient } from '@qdrant/js-client-rest'
+import { getEmbeddingProviderName } from '@/lib/ai/vercel-client'
+import { generateEmbeddings as generateSharedEmbeddings } from '@/lib/utils/embedding'
 
 const COLLECTION = 'paper_chunks'
-const TEI_URL = process.env.EMBEDDING_SERVER_URL || 'http://20.121.195.131:8080'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -29,42 +30,8 @@ const qdrant = new QdrantClient({
   url: process.env.QDRANT_URL!,
 })
 
-/**
- * Truncate text to fit TEI's token limit (512 tokens max)
- * BGE tokenizer: ~1 token per 3-4 chars, be conservative with 3
- * 480 tokens * 3 chars = 1440, but some texts tokenize worse
- * Use 1000 chars to be very safe
- */
-function truncateText(text: string, maxChars: number = 1000): string {
-  if (!text) return ''
-  if (text.length <= maxChars) return text
-  // Try to truncate at word boundary
-  const truncated = text.slice(0, maxChars)
-  const lastSpace = truncated.lastIndexOf(' ')
-  if (lastSpace > maxChars * 0.8) {
-    return truncated.slice(0, lastSpace)
-  }
-  return truncated
-}
-
-/**
- * Generate embeddings using TEI server
- */
 async function generateEmbeddings(texts: string[]): Promise<number[][]> {
-  const truncatedTexts = texts.map(t => truncateText(t))
-  
-  const response = await fetch(`${TEI_URL}/embed`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ inputs: truncatedTexts }),
-  })
-  
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`TEI error: ${response.status} ${errorText}`)
-  }
-  
-  return response.json()
+  return generateSharedEmbeddings(texts)
 }
 
 /**
@@ -100,13 +67,11 @@ async function processBatch(
     return chunks.length
   } catch (err) {
     console.error(`  Batch error: ${err}`)
-    // Try one by one with aggressive truncation as fallback
+    // Fallback to one-at-a-time retries so a single bad chunk does not stop the run.
     let success = 0
     for (const chunk of chunks) {
       try {
-        // Very aggressive truncation for problematic chunks
-        const shortContent = truncateText(chunk.content || '', 800)
-        const [embedding] = await generateEmbeddings([shortContent])
+        const [embedding] = await generateEmbeddings([chunk.content || ''])
         await qdrant.upsert(COLLECTION, {
           wait: true,
           points: [{
@@ -115,32 +80,13 @@ async function processBatch(
             payload: {
               paper_id: chunk.paper_id,
               chunk_index: chunk.chunk_index,
-              content: chunk.content, // Store full content, just truncate for embedding
+              content: chunk.content,
             },
           }],
         })
         success++
       } catch (innerErr) {
-        // Ultra aggressive last resort
-        try {
-          const ultraShort = (chunk.content || '').slice(0, 500)
-          const [embedding] = await generateEmbeddings([ultraShort])
-          await qdrant.upsert(COLLECTION, {
-            wait: true,
-            points: [{
-              id: chunk.id,
-              vector: embedding,
-              payload: {
-                paper_id: chunk.paper_id,
-                chunk_index: chunk.chunk_index,
-                content: chunk.content,
-              },
-            }],
-          })
-          success++
-        } catch (finalErr) {
-          console.error(`  Failed chunk ${chunk.id}: ${finalErr}`)
-        }
+        console.error(`  Failed chunk ${chunk.id}: ${innerErr}`)
       }
     }
     return success
@@ -165,7 +111,7 @@ async function main() {
   console.log('='.repeat(60))
   console.log(`Supabase URL:  ${process.env.NEXT_PUBLIC_SUPABASE_URL}`)
   console.log(`Qdrant URL:    ${process.env.QDRANT_URL}`)
-  console.log(`TEI URL:       ${TEI_URL}`)
+  console.log(`Embeddings:    ${getEmbeddingProviderName()}`)
   console.log(`Batch size:    ${batchSize}`)
   console.log(`Concurrency:   ${concurrency}`)
   console.log('='.repeat(60))
@@ -187,14 +133,6 @@ async function main() {
   // Check Qdrant
   const collectionInfo = await qdrant.getCollection(COLLECTION)
   console.log(`  Qdrant: ✅ (${collectionInfo.points_count} existing points)`)
-  
-  // Check TEI
-  const teiHealth = await fetch(`${TEI_URL}/health`)
-  if (!teiHealth.ok) {
-    console.error('  TEI: ❌ Not responding')
-    process.exit(1)
-  }
-  console.log(`  TEI: ✅ Healthy`)
   
   // Test embedding
   const testEmbed = await generateEmbeddings(['test'])

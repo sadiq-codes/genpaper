@@ -1,13 +1,13 @@
 #!/usr/bin/env tsx
 
 /**
- * Re-embed all chunks in Qdrant using current TEI server
- * 
+ * Re-embed all chunks in Qdrant using the shared app embedding configuration.
+ *
  * This script:
  * 1. Scrolls through all chunks in Qdrant
- * 2. Re-generates embeddings using the current TEI server
+ * 2. Re-generates embeddings using the configured provider
  * 3. Updates the vectors in place (keeps same IDs and payloads)
- * 
+ *
  * Usage:
  *   npx tsx scripts/reembed-qdrant-chunks.ts
  *   npx tsx scripts/reembed-qdrant-chunks.ts --batch-size 50
@@ -18,104 +18,17 @@ import dotenv from 'dotenv'
 dotenv.config({ path: '.env.local' })
 
 import { QdrantClient } from '@qdrant/js-client-rest'
+import { getEmbeddingProviderName } from '@/lib/ai/vercel-client'
+import { generateEmbeddings as generateSharedEmbeddings } from '@/lib/utils/embedding'
 
-const BATCH_SIZE = 8 // TEI batch size (conservative)
-const PARALLEL_BATCHES = 4 // Number of parallel batches to process
+const BATCH_SIZE = 8
 const COLLECTION = 'paper_chunks'
 
 const qdrant = new QdrantClient({
   url: process.env.QDRANT_URL!,
 })
-
-const TEI_URL = process.env.EMBEDDING_SERVER_URL || 'http://20.121.195.131:8080'
-
-/**
- * Truncate text to approximately N tokens (rough estimate: 1 token ≈ 4 chars)
- * BGE tokenizer is more aggressive, use 3.5 chars per token to be safe
- */
-function truncateToTokens(text: string, maxTokens: number = 450): string {
-  const maxChars = Math.floor(maxTokens * 3.5)
-  if (text.length <= maxChars) return text
-  // Try to truncate at word boundary
-  const truncated = text.slice(0, maxChars)
-  const lastSpace = truncated.lastIndexOf(' ')
-  if (lastSpace > maxChars * 0.8) {
-    return truncated.slice(0, lastSpace)
-  }
-  return truncated
-}
-
-/**
- * Generate embeddings using TEI server
- * TEI has max 512 tokens per text, and max 16384 batch tokens
- * With batch of 32, each text can be ~500 tokens max
- * Being conservative: 400 tokens * 3 chars = 1200 chars max
- */
 async function generateEmbeddings(texts: string[]): Promise<number[][]> {
-  // Very aggressive truncation: 400 tokens * 3 chars = 1200 chars
-  const truncatedTexts = texts.map(t => truncateToTokens(t, 380))
-  
-  try {
-    const response = await fetch(`${TEI_URL}/embed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inputs: truncatedTexts }),
-    })
-    
-    if (response.ok) {
-      return response.json()
-    }
-    
-    const errorText = await response.text()
-    
-    // If batch fails, fall back to smaller batches
-    if (response.status === 413) {
-      console.warn('  Batch too long, using smaller batches...')
-      const results: number[][] = []
-      
-      // Process in batches of 8 with aggressive truncation
-      for (let i = 0; i < texts.length; i += 8) {
-        const smallBatch = texts.slice(i, i + 8).map(t => truncateToTokens(t, 350))
-        const smallResponse = await fetch(`${TEI_URL}/embed`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inputs: smallBatch }),
-        })
-        
-        if (smallResponse.ok) {
-          const embeddings = await smallResponse.json()
-          results.push(...embeddings)
-        } else {
-          // Last resort: process one by one
-          for (const text of texts.slice(i, i + 8)) {
-            const shortText = truncateToTokens(text, 300)
-            const singleResponse = await fetch(`${TEI_URL}/embed`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ inputs: [shortText] }),
-            })
-            if (singleResponse.ok) {
-              results.push((await singleResponse.json())[0])
-            } else {
-              // Ultra short as absolute last resort
-              const ultraShort = text.slice(0, 500)
-              const lastResponse = await fetch(`${TEI_URL}/embed`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ inputs: [ultraShort] }),
-              })
-              results.push((await lastResponse.json())[0])
-            }
-          }
-        }
-      }
-      return results
-    }
-    
-    throw new Error(`TEI error: ${response.status} ${errorText}`)
-  } catch (err) {
-    throw err
-  }
+  return generateSharedEmbeddings(texts)
 }
 
 async function main() {
@@ -132,10 +45,10 @@ async function main() {
   }
   
   console.log('='.repeat(60))
-  console.log('🔄 Re-embed Qdrant Chunks with Current TEI Model')
+  console.log('🔄 Re-embed Qdrant Chunks')
   console.log('='.repeat(60))
   console.log(`Qdrant URL:    ${process.env.QDRANT_URL}`)
-  console.log(`TEI URL:       ${TEI_URL}`)
+  console.log(`Embeddings:    ${getEmbeddingProviderName()}`)
   console.log(`Batch size:    ${batchSize}`)
   console.log(`Dry run:       ${dryRun}`)
   console.log('='.repeat(60))
@@ -147,14 +60,6 @@ async function main() {
   const collectionInfo = await qdrant.getCollection(COLLECTION)
   const totalChunks = collectionInfo.points_count || 0
   console.log(`  Qdrant: ✅ (${totalChunks} chunks in ${COLLECTION})`)
-  
-  // Check TEI
-  const teiHealth = await fetch(`${TEI_URL}/health`)
-  if (!teiHealth.ok) {
-    console.error('  TEI: ❌ Not responding')
-    process.exit(1)
-  }
-  console.log(`  TEI: ✅ Healthy`)
   
   // Test embedding dimensions
   const testEmbed = await generateEmbeddings(['test'])

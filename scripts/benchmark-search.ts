@@ -9,6 +9,7 @@ dotenv.config({ path: '.env.local' })
 
 import { createClient } from '@supabase/supabase-js'
 import { QdrantClient } from '@qdrant/js-client-rest'
+import { getEmbeddingProviderName } from '@/lib/ai/vercel-client'
 import { generateEmbeddings } from '@/lib/utils/embedding'
 
 const supabase = createClient(
@@ -28,21 +29,21 @@ const TEST_QUERIES = [
   'protein folding structure prediction',
 ]
 
-async function benchmarkEmbedding(): Promise<{ bgeMs: number }> {
-  console.log('\n📊 Benchmark: Embedding Generation (BGE-large)')
+async function benchmarkEmbedding(): Promise<{ embeddingMs: number }> {
+  const providerName = getEmbeddingProviderName()
+  console.log(`\n📊 Benchmark: Embedding Generation (${providerName})`)
   console.log('─'.repeat(50))
   
   const texts = TEST_QUERIES.slice(0, 3)
   
-  // BGE-large (self-hosted)
-  const bgeStart = performance.now()
+  const embeddingStart = performance.now()
   await generateEmbeddings(texts)
-  const bgeMs = performance.now() - bgeStart
+  const embeddingMs = performance.now() - embeddingStart
   
-  console.log(`  BGE-large (self-hosted): ${bgeMs.toFixed(1)}ms for ${texts.length} texts`)
-  console.log(`  Per text: ${(bgeMs / texts.length).toFixed(1)}ms`)
+  console.log(`  ${providerName}: ${embeddingMs.toFixed(1)}ms for ${texts.length} texts`)
+  console.log(`  Per text: ${(embeddingMs / texts.length).toFixed(1)}ms`)
   
-  return { bgeMs }
+  return { embeddingMs }
 }
 
 async function benchmarkSearch(): Promise<{ pgvectorMs: number; qdrantMs: number }> {
@@ -171,12 +172,13 @@ async function main() {
   console.log('📊 SUMMARY')
   console.log('='.repeat(60))
   
+  const providerName = getEmbeddingProviderName()
   const searchSpeedup = search.pgvectorMs / search.qdrantMs
   const batchSpeedup = batch.pgvectorMs / batch.qdrantMs
   
   console.log(`
-  Embedding (BGE-large self-hosted):
-    ${(embedding.bgeMs / 3).toFixed(1)}ms per text
+  Embedding (${providerName}):
+    ${(embedding.embeddingMs / 3).toFixed(1)}ms per text
     
   Vector Search:
     pgvector: ${(search.pgvectorMs / 5).toFixed(1)}ms/query

@@ -20,10 +20,14 @@
  *   --doc-type thesis                    # Filter by document type
  *
  * Environment variables (required):
- *   CORE_API_KEY                  — CORE API key (get from https://core.ac.uk/services/api)
- *   NEXT_PUBLIC_SUPABASE_URL      — Supabase project URL
- *   SUPABASE_SERVICE_ROLE_KEY     — Supabase service role key
- *   OPENAI_API_KEY                — OpenAI key (or set EMBEDDING_SERVER_URL for self-hosted)
+ *   CORE_API_KEY                    — CORE API key (get from https://core.ac.uk/services/api)
+ *   NEXT_PUBLIC_SUPABASE_URL        — Supabase project URL
+ *   SUPABASE_SERVICE_ROLE_KEY       — Supabase service role key
+ *   OPENAI_API_KEY                  — used when embedding fallback is direct OpenAI
+ *   AZURE_OPENAI_RESOURCE_NAME      — used when Azure embeddings are configured
+ *   AZURE_OPENAI_API_KEY            — used when Azure embeddings are configured
+ *   AZURE_OPENAI_EMBEDDING_DEPLOYMENT — optional Azure embedding deployment override
+ *   EMBEDDING_SERVER_URL            — optional self-hosted TEI endpoint (highest priority)
  *
  * How it works:
  *   1. Fetch papers from CORE with DOI and abstract (49M+ available)
