@@ -1,8 +1,8 @@
 export const runtime = 'nodejs'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { ensureStorageBucket, PAPER_PDFS_BUCKET } from '@/lib/supabase/storage-buckets'
 import { sanitizeFilename } from '@/lib/utils/text'
 
@@ -17,12 +17,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const user = await requireAuth()
 
     const { id: paperId } = await params
     if (!paperId) {
@@ -120,10 +115,6 @@ export async function POST(
       pdfUrl,
     })
   } catch (error) {
-    console.error('Error uploading PDF:', error)
-    return NextResponse.json(
-      { error: 'Failed to upload PDF' },
-      { status: 500 }
-    )
+    return handleError(error, 'Error uploading PDF')
   }
 }

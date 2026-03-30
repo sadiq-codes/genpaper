@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 /**
  * Citation Instances API
@@ -62,12 +63,8 @@ function truncateQuote(quote: string, maxWords: number = MAX_QUOTE_WORDS): strin
  */
 export async function POST(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const body = await request.json() as CitationInstancesRequest
     const projectId = typeof body.projectId === 'string' ? body.projectId : ''
@@ -222,10 +219,6 @@ export async function POST(request: NextRequest) {
     )
 
   } catch (error) {
-    console.error('[citation-instances] POST error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    return handleError(error, '[citation-instances] POST error')
   }
 }

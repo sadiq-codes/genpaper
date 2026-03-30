@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 
 /**
@@ -15,12 +16,8 @@ import { CitationService } from '@/lib/citations/immediate-bibliography'
  */
 export async function POST(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const { projectId } = await request.json()
 
@@ -63,10 +60,6 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Citation backfill error:', error)
-    return NextResponse.json(
-      { error: 'Failed to backfill citations' },
-      { status: 500 }
-    )
+    return handleError(error, 'Citation backfill error')
   }
 }

@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server'
+import { after } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { getUserResearchProjects, deleteResearchProject, createResearchProject } from '@/lib/db/research'
+import { scheduleBulkPaperContentPreparationByIds } from '@/lib/services/paper-content-service'
 import {
   requireAuth,
   parseQuery,
@@ -100,6 +102,16 @@ export async function POST(request: NextRequest) {
     }
 
     const project = await createResearchProject(user.id, topic.trim(), generationConfig)
+
+    if (selectedPapers && selectedPapers.length > 0) {
+      after(() => {
+        scheduleBulkPaperContentPreparationByIds(selectedPapers, {
+          searchQuery: `projects_api_create:${project.id}`,
+          waitForStructuredExtraction: false,
+          reason: 'projects_api_create',
+        })
+      })
+    }
 
     return success({
       project,

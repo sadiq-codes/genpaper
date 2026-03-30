@@ -5,9 +5,10 @@
  * Handles TipTap JSON with proper citation formatting.
  */
 
-import { createClient } from '@/lib/supabase/server'
 import { trackEvent } from '@/lib/tracking/events'
 import { NextRequest, NextResponse } from 'next/server'
+import { handleError, requireAuth } from '@/lib/api/helpers'
+import { isAppError } from '@/lib/errors'
 import { parseDocument } from '@/lib/export/document-parser'
 import { generateDocx } from '@/lib/export/docx-generator'
 import { generateLatexZip } from '@/lib/export/latex-generator'
@@ -35,13 +36,7 @@ interface ExportRequest {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    
-    // Verify user is authenticated
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const user = await requireAuth()
 
     // Check export permission (free tier cannot export)
     const exportCheck = await checkCanExportPdf(user.id)
@@ -121,6 +116,10 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
+    if (isAppError(error)) {
+      return handleError(error, '[Export] Error')
+    }
+
     console.error('[Export] Error:', error)
     
     // Provide more specific error messages

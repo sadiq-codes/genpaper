@@ -3,27 +3,29 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { after } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { ensureStorageBucket, PAPER_PDFS_BUCKET } from '@/lib/supabase/storage-buckets'
 import { addPaperToLibrary } from '@/lib/db/library'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { sanitizeFilename } from '@/lib/utils/text'
 import { info, warn, logError } from '@/lib/utils/logger'
 import { generateEmbeddings } from '@/lib/utils/embedding'
+import { schedulePaperContentPreparationById } from '@/lib/services/paper-content-service'
 
 /**
  * Simplified PDF Upload API
  * 
- * This API now follows a lazy processing model:
+ * This API now follows an early-preparation model:
  * 1. Upload PDF to storage
  * 2. Create paper record with minimal metadata (title from filename)
  * 3. Set processing_status = 'pending'
  * 4. Add to user's library
- * 5. Return immediately (fast!)
+ * 5. Schedule non-blocking content preparation
+ * 6. Return immediately (fast!)
  * 
- * Actual text extraction, chunking, and embedding happens later:
- * - When user clicks "AI Generate" (before generation)
- * - When user clicks "Write Myself" (background after editor loads)
+ * Heavy text extraction, chunking, and structured evidence preparation runs
+ * after the response is sent so generation does not pay the cold-start cost later.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -41,15 +43,10 @@ export async function POST(request: NextRequest) {
       }, { status: 413 })
     }
     
-    // Check authentication
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      logError(new Error('Authentication failed'), { error: authError })
-      return Response.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    
+    // Check authentication using the shared helper so transient auth outages
+    // surface as a proper service error instead of looking like bad credentials.
+    const user = await requireAuth()
+
     info('Authentication successful')
 
     // Parse form data
@@ -208,6 +205,14 @@ export async function POST(request: NextRequest) {
     const libraryPaper = await addPaperToLibrary(user.id, paperId, `Uploaded: ${sanitizedFileName}`)
     info({ libraryPaperId: libraryPaper.id }, 'Added to library successfully')
 
+    after(() => {
+      schedulePaperContentPreparationById(paperId, {
+        searchQuery: 'library_upload',
+        waitForStructuredExtraction: false,
+        reason: 'library_upload',
+      })
+    })
+
     info('Upload completed successfully (pending processing)')
 
     // Return success response matching PdfUploadResult type expected by usePdfUpload hook
@@ -229,11 +234,8 @@ export async function POST(request: NextRequest) {
     } else {
       logError(new Error('PDF upload error'), { error: error as unknown })
     }
-    
-    return Response.json({
-      error: error instanceof Error ? error.message : 'Failed to process PDF upload',
-      details: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : String(error)) : undefined
-    }, { status: 500 })
+
+    return handleError(error, 'PDF upload error')
   }
 }
 

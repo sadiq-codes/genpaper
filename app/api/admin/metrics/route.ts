@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { isAdmin } from '@/lib/admin'
 import { reconcileRunHealth } from '@/lib/generation/run-recovery'
 import { classifyGenerationFailure } from '@/lib/generation/telemetry'
@@ -43,25 +43,25 @@ function average(values: number[]) {
 }
 
 export async function GET() {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user || !isAdmin(user.id)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  try {
+    const user = await requireAuth()
+    if (!isAdmin(user.id)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-  const svc = createServiceClient()
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-  const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+    const svc = createServiceClient()
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString()
 
-  const [
-    { data: rawRuns },
-    { data: events },
-    { data: jobs },
-  ] = await Promise.all([
-    svc
-      .from('generation_runs')
-      .select(`
+    const [
+      { data: rawRuns },
+      { data: events },
+      { data: jobs },
+    ] = await Promise.all([
+      svc
+        .from('generation_runs')
+        .select(`
         id,
         project_id,
         user_id,
@@ -114,8 +114,8 @@ export async function GET() {
           topic
         )
       `)
-      .gte('created_at', thirtyDaysAgo),
-  ])
+        .gte('created_at', thirtyDaysAgo),
+    ])
 
   const runsById = new Map((rawRuns || []).map((run) => [run.id, run]))
   const inconsistentRunIds = (jobs || [])
@@ -353,41 +353,44 @@ export async function GET() {
 
   recentFailures.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
-  return NextResponse.json({
-    generationStats,
-    stageCounts,
-    paperTypeCounts,
-    startsByDay,
-    completionsByDay,
-    failuresByDay,
-    latency: {
-      medianMinutes: percentile(durations, 50),
-      p95Minutes: percentile(durations, 95),
-      sampleSize: durations.length,
-    },
-    failureReasons: Array.from(failureReasons.entries())
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 8)
-      .map(([reason, count]) => ({ reason, count })),
-    activeRuns,
-    stuckJobs,
-    recentFailures: recentFailures.slice(0, 12),
-    stageTimings,
-    queueLatency: {
-      medianSeconds: percentile(queueLatencyValues, 50),
-      p95Seconds: percentile(queueLatencyValues, 95),
-      sampleSize: queueLatencyValues.length,
-    },
-    retryStats: {
-      totalRetries: Math.max(retryEvents, totalRetriesFromJobs),
-      retriedRuns,
-      maxAttemptsObserved: Math.max(0, ...(jobs || []).map((job) => job.attempts)),
-    },
-    failureCategories: Array.from(failureCategories.entries())
-      .sort(([, a], [, b]) => b - a)
-      .map(([category, count]) => ({ category, count })),
-    topProjects: Array.from(projectRunCounts.values())
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8),
-  })
+    return NextResponse.json({
+      generationStats,
+      stageCounts,
+      paperTypeCounts,
+      startsByDay,
+      completionsByDay,
+      failuresByDay,
+      latency: {
+        medianMinutes: percentile(durations, 50),
+        p95Minutes: percentile(durations, 95),
+        sampleSize: durations.length,
+      },
+      failureReasons: Array.from(failureReasons.entries())
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 8)
+        .map(([reason, count]) => ({ reason, count })),
+      activeRuns,
+      stuckJobs,
+      recentFailures: recentFailures.slice(0, 12),
+      stageTimings,
+      queueLatency: {
+        medianSeconds: percentile(queueLatencyValues, 50),
+        p95Seconds: percentile(queueLatencyValues, 95),
+        sampleSize: queueLatencyValues.length,
+      },
+      retryStats: {
+        totalRetries: Math.max(retryEvents, totalRetriesFromJobs),
+        retriedRuns,
+        maxAttemptsObserved: Math.max(0, ...(jobs || []).map((job) => job.attempts)),
+      },
+      failureCategories: Array.from(failureCategories.entries())
+        .sort(([, a], [, b]) => b - a)
+        .map(([category, count]) => ({ category, count })),
+      topProjects: Array.from(projectRunCounts.values())
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8),
+    })
+  } catch (error) {
+    return handleError(error, 'Error in admin metrics API')
+  }
 }

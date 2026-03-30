@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 type SortKey = 'added_at' | 'title' | 'year'
 type SourceFilter = 'all' | 'upload' | 'search'
@@ -55,13 +56,8 @@ function getSortComparator(sortBy: SortKey) {
  */
 export async function GET(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const url = new URL(request.url)
     const searchQuery = (url.searchParams.get('q') || '').trim().toLowerCase()
@@ -276,10 +272,6 @@ export async function GET(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Error in library/all-papers GET API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return handleError(error, 'Error in library/all-papers GET API')
   }
 }

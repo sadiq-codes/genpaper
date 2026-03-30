@@ -1,7 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
-import { ensurePaperContentReadyById } from '@/lib/services/paper-content-service'
+import { schedulePaperContentPreparationById } from '@/lib/services/paper-content-service'
 
 /**
  * GET /api/editor/papers?projectId=xxx
@@ -13,12 +15,8 @@ import { ensurePaperContentReadyById } from '@/lib/services/paper-content-servic
  */
 export async function GET(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const projectId = request.nextUrl.searchParams.get('projectId')
     if (!projectId) {
@@ -150,8 +148,7 @@ export async function GET(request: NextRequest) {
       { headers: { 'Cache-Control': 'no-store, max-age=0' } }
     )
   } catch (error) {
-    console.error('Fetch papers error:', error)
-    return NextResponse.json({ error: 'Failed to fetch papers' }, { status: 500 })
+    return handleError(error, 'Fetch papers error')
   }
 }
 
@@ -164,12 +161,8 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const { projectId, paperId } = await request.json()
 
@@ -247,14 +240,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Trigger ingestion in the dedicated content service (fire-and-forget).
-    ensurePaperContentReadyById(paperId, {
-      searchQuery: 'editor_add_paper',
-      waitForStructuredExtraction: false,
-    }).then(result => {
-      console.log(`[Editor Papers] Processing result for ${paperId}:`, result.paperId)
-    }).catch(err => {
-      console.warn('[Editor Papers] Background processing failed:', err)
+    after(() => {
+      schedulePaperContentPreparationById(paperId, {
+        searchQuery: 'editor_add_paper',
+        waitForStructuredExtraction: false,
+        reason: 'editor_add_paper',
+      })
     })
 
     // Return the paper data for UI update
@@ -277,11 +268,7 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Add paper error:', error)
-    return NextResponse.json(
-      { error: 'Failed to add paper' },
-      { status: 500 }
-    )
+    return handleError(error, 'Add paper error')
   }
 }
 
@@ -291,12 +278,8 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const { searchParams } = new URL(request.url)
     const projectId = searchParams.get('projectId')
@@ -365,10 +348,6 @@ export async function DELETE(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Remove paper error:', error)
-    return NextResponse.json(
-      { error: 'Failed to remove paper' },
-      { status: 500 }
-    )
+    return handleError(error, 'Remove paper error')
   }
 }

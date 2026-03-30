@@ -6,19 +6,15 @@ import {
   getProjectPapersWithCSL
 } from '@/lib/db/research'
 import { z } from 'zod'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const { id: projectId } = await params
 
@@ -97,11 +93,7 @@ export async function GET(
     })
 
   } catch (error) {
-    console.error('Error in projects/[id] GET API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return handleError(error, 'Error in projects/[id] GET API')
   }
 }
 
@@ -117,11 +109,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const { id: projectId } = await params
     if (!projectId) {
@@ -155,7 +144,7 @@ export async function PATCH(
     }
 
     return NextResponse.json({ success: true })
-  } catch {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  } catch (error) {
+    return handleError(error, 'Error in projects/[id] PATCH API')
   }
 }

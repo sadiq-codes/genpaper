@@ -8,9 +8,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getPapersProcessingStatus, type ProcessingResult } from '@/lib/content/background-processor'
-import { ensureBulkPaperContentReadyByIds } from '@/lib/services/paper-content-service'
+import { handleError, requireAuth } from '@/lib/api/helpers'
+import {
+  ensureBulkPaperContentReadyByIds,
+  scheduleBulkPaperContentPreparationByIds,
+} from '@/lib/services/paper-content-service'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300 // 5 minutes max for processing
@@ -37,13 +42,8 @@ interface ProcessRequest {
  */
 export async function POST(request: NextRequest) {
   try {
-    // Auth check
+    const user = await requireAuth()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const body: ProcessRequest = await request.json()
     const { paperIds, projectId, waitForCompletion = false } = body
@@ -165,11 +165,12 @@ export async function POST(request: NextRequest) {
 
     // Async mode - start processing and return immediately
     console.log('[Process API] Starting async processing')
-    ensureBulkPaperContentReadyByIds(targetPaperIds, {
-      searchQuery: 'papers_process_api',
-      waitForStructuredExtraction: false,
-    }).catch(err => {
-      console.error('[Process API] Background paper processing error:', err)
+    after(() => {
+      scheduleBulkPaperContentPreparationByIds(targetPaperIds, {
+        searchQuery: 'papers_process_api',
+        waitForStructuredExtraction: false,
+        reason: 'papers_process_api',
+      })
     })
 
     return NextResponse.json({
@@ -179,11 +180,7 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('[Process API] Error:', error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Processing failed' },
-      { status: 500 }
-    )
+    return handleError(error, '[Process API] Error')
   }
 }
 
@@ -194,13 +191,8 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    // Auth check
+    await requireAuth()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const url = new URL(request.url)
     const paperIdsParam = url.searchParams.get('paperIds')
@@ -262,10 +254,6 @@ export async function GET(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('[Process API] Status check error:', error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Status check failed' },
-      { status: 500 }
-    )
+    return handleError(error, '[Process API] Status check error')
   }
 }

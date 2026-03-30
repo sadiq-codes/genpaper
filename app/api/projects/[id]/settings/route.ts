@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { 
   getProjectCitationStyle,
   updateProjectCitationStyle 
@@ -15,15 +16,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
     
     const { id: projectId } = await params
     
@@ -61,11 +55,7 @@ export async function GET(
       }
     })
   } catch (error) {
-    console.error('Error getting project settings:', error)
-    return NextResponse.json(
-      { error: 'Failed to get project settings' },
-      { status: 500 }
-    )
+    return handleError(error, 'Error getting project settings')
   }
 }
 
@@ -78,15 +68,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
+    const user = await requireAuth()
     
     const { id: projectId } = await params
     
@@ -137,10 +119,6 @@ export async function PATCH(
       }
     })
   } catch (error) {
-    console.error('Error updating project settings:', error)
-    return NextResponse.json(
-      { error: 'Failed to update project settings' },
-      { status: 500 }
-    )
+    return handleError(error, 'Error updating project settings')
   }
 }

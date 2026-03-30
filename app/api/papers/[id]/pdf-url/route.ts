@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { getStoragePathFromPublicUrl, PAPER_PDFS_BUCKET } from '@/lib/supabase/storage-buckets'
 
 export async function GET(
@@ -8,13 +9,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const { id: paperId } = await params
 
@@ -102,10 +98,6 @@ export async function GET(
     return NextResponse.json({ url: paper.pdf_url, isExternal: false, fallback: true })
 
   } catch (error) {
-    console.error('Error in papers/[id]/pdf-url GET API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return handleError(error, 'Error in papers/[id]/pdf-url GET API')
   }
 }

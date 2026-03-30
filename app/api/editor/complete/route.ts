@@ -3,6 +3,7 @@ import { getAutocompleteLanguageModel, getFastAutocompleteLanguageModel } from '
 import { generateObject } from 'ai'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { 
   retrieveEditorContext, 
   formatEditorContextForPrompt, 
@@ -460,12 +461,8 @@ export async function POST(request: NextRequest) {
   try {
     // Auth check
     const authStartTime = Date.now()
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
     timings.auth = Date.now() - authStartTime
 
     // Check daily usage limits (read-only). Usage is incremented on explicit accept.
@@ -1252,10 +1249,6 @@ export async function POST(request: NextRequest) {
     }
 
   } catch (error) {
-    console.error('Editor completion error:', error)
-    return NextResponse.json(
-      { error: 'Failed to generate completion' },
-      { status: 500 }
-    )
+    return handleError(error, 'Editor completion error')
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 /**
  * PUT /api/citations/[paperId] - Update CSL JSON for a citation in a project
@@ -57,13 +58,8 @@ export async function PUT(
       return NextResponse.json({ error: 'Invalid paper ID' }, { status: 400 })
     }
 
-    // Authentication check
+    const user = await requireAuth()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     // Parse and validate request body
     const body = await request.json()
@@ -161,11 +157,7 @@ export async function PUT(
     })
 
   } catch (error) {
-    console.error('Update citation API error:', error)
-    return NextResponse.json({
-      error: 'Internal server error',
-      message: 'An unexpected error occurred'
-    }, { status: 500 })
+    return handleError(error, 'Update citation API error')
   }
 }
 
@@ -187,13 +179,8 @@ export async function GET(
       return NextResponse.json({ error: 'Invalid or missing project ID' }, { status: 400 })
     }
 
-    // Authentication check
+    const user = await requireAuth()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     // Verify project ownership
     const { data: project, error: projectError } = await supabase
@@ -304,10 +291,6 @@ export async function GET(
     })
 
   } catch (error) {
-    console.error('Get citation API error:', error)
-    return NextResponse.json({
-      error: 'Internal server error',
-      message: 'An unexpected error occurred'
-    }, { status: 500 })
+    return handleError(error, 'Get citation API error')
   }
 }

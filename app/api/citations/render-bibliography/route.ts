@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 
 /**
@@ -17,13 +18,8 @@ const RenderBibliographySchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    // Authentication check
+    const user = await requireAuth()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     // Parse and validate query parameters
     const { searchParams } = new URL(request.url)
@@ -91,24 +87,15 @@ export async function GET(request: NextRequest) {
     }
 
   } catch (error) {
-    console.error('Render bibliography API error:', error)
-    return NextResponse.json({
-      error: 'Internal server error',
-      message: 'An unexpected error occurred'
-    }, { status: 500 })
+    return handleError(error, 'Render bibliography API error')
   }
 }
 
 // Also support POST for complex requests
 export async function POST(request: NextRequest) {
   try {
-    // Authentication check
+    const user = await requireAuth()
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     // Parse and validate request body
     const body = await request.json()
@@ -168,11 +155,7 @@ export async function POST(request: NextRequest) {
     }
 
   } catch (error) {
-    console.error('Render bibliography POST API error:', error)
-    return NextResponse.json({
-      error: 'Internal server error',
-      message: 'An unexpected error occurred'
-    }, { status: 500 })
+    return handleError(error, 'Render bibliography POST API error')
   }
 }
 

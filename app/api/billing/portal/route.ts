@@ -1,7 +1,7 @@
 import { CustomerPortal } from '@polar-sh/nextjs'
 import { type NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { getUserSubscription } from '@/lib/billing/subscription-service'
+import { getAuthenticatedUser } from '@/lib/api/helpers'
 
 /**
  * Polar Customer Portal Route
@@ -12,12 +12,11 @@ import { getUserSubscription } from '@/lib/billing/subscription-service'
 export const GET = CustomerPortal({
   accessToken: process.env.POLAR_ACCESS_TOKEN!,
   server: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox',
-  getCustomerId: async (req: NextRequest) => {
+  getCustomerId: async (_req: NextRequest) => {
     // Get authenticated user
-    const supabase = await createClient()
-    const { data: { user }, error } = await supabase.auth.getUser()
+    const user = await getAuthenticatedUser()
     
-    if (error || !user) {
+    if (!user) {
       throw new Error('Unauthorized')
     }
     

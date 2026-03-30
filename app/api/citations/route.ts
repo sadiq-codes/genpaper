@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import z from 'zod'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 
@@ -31,13 +32,8 @@ const BatchResolveSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const url = new URL(request.url)
     const projectId = url.searchParams.get('projectId')
@@ -177,20 +173,14 @@ export async function GET(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Error in citations GET:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return handleError(error, 'Error in citations GET')
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     // Robust body parsing: handle client disconnects / empty body gracefully
     // (prevents "Unexpected end of JSON input" noise in dev + on aborted requests)
@@ -396,20 +386,14 @@ export async function POST(request: NextRequest) {
     }
 
   } catch (error) {
-    console.error('Error in citations POST:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return handleError(error, 'Error in citations POST')
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const url = new URL(request.url)
     const citationId = url.searchParams.get('id')
@@ -511,20 +495,14 @@ export async function PUT(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Error in citations PUT:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return handleError(error, 'Error in citations PUT')
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const url = new URL(request.url)
     const citationId = url.searchParams.get('id')
@@ -590,7 +568,6 @@ export async function DELETE(request: NextRequest) {
     }
 
   } catch (error) {
-    console.error('Error in citations DELETE:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return handleError(error, 'Error in citations DELETE')
   }
 }

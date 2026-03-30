@@ -17,6 +17,7 @@ import { getProjectCitationStyle } from '@/lib/citations/citation-settings'
 import { shouldSkipRAG, type IntentClassification } from '@/lib/ai/intent-classifier'
 import { checkAndIncrementChatUsage, formatTimeUntilReset } from '@/lib/billing/usage-limits'
 import { normalizePaperProcessingStatus, isChunkReadyStatus } from '@/lib/content'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 // =============================================================================
 // TYPES
@@ -425,16 +426,8 @@ export async function POST(request: NextRequest) {
   console.log('[Chat API] POST request received')
   
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Verify user is authenticated
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      })
-    }
 
     // Check daily usage limits (free tier: 10 chats/day, paid: unlimited)
     const usageCheck = await checkAndIncrementChatUsage(user.id)
@@ -924,11 +917,7 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Editor chat error:', error)
-    return new Response(
-      JSON.stringify({ error: 'Failed to process chat message' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    )
+    return handleError(error, 'Editor chat error')
   }
 }
 
@@ -938,15 +927,8 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    await requireAuth()
     const supabase = await createClient()
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      })
-    }
 
     const projectId = request.nextUrl.searchParams.get('projectId')
     if (!projectId) {
@@ -1018,11 +1000,7 @@ export async function GET(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Failed to load chat history:', error)
-    return new Response(
-      JSON.stringify({ error: 'Failed to load chat history' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    )
+    return handleError(error, 'Failed to load chat history')
   }
 }
 
@@ -1032,15 +1010,8 @@ export async function GET(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    await requireAuth()
     const supabase = await createClient()
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      })
-    }
 
     const projectId = request.nextUrl.searchParams.get('projectId')
     if (!projectId) {
@@ -1065,10 +1036,6 @@ export async function DELETE(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Failed to clear chat history:', error)
-    return new Response(
-      JSON.stringify({ error: 'Failed to clear chat history' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    )
+    return handleError(error, 'Failed to clear chat history')
   }
 }

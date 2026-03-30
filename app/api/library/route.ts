@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { after } from 'next/server'
 import { z } from 'zod'
 import { 
   getUserLibraryPapers, 
@@ -8,6 +9,7 @@ import {
 } from '@/lib/db/library'
 import { ensurePaperMetadata } from '@/lib/services/paper-content-service'
 import type { RankedPaper } from '@/lib/services/paper-aggregation'
+import { schedulePaperContentPreparationById } from '@/lib/services/paper-content-service'
 import {
   getAuthenticatedUser,
   unauthorized,
@@ -155,6 +157,14 @@ export async function POST(request: NextRequest) {
       : paperId!
 
     const libraryPaper = await addPaperToLibrary(user.id, resolvedPaperId, collectionId)
+
+    after(() => {
+      schedulePaperContentPreparationById(resolvedPaperId, {
+        searchQuery: searchQuery || 'library_save',
+        waitForStructuredExtraction: false,
+        reason: searchResult ? 'library_save_search_result' : 'library_save_existing',
+      })
+    })
 
     return success({ success: true, paperId: resolvedPaperId, libraryPaper })
 

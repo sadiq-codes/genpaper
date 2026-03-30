@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 import { isAdmin } from '@/lib/admin'
 import { reconcileRunHealth } from '@/lib/generation/run-recovery'
 import { classifyGenerationFailure } from '@/lib/generation/telemetry'
@@ -30,21 +30,17 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ runId: string }> }
 ) {
-  const { runId } = await params
-  const supabase = await createClient()
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser()
+  try {
+    const { runId } = await params
+    const user = await requireAuth()
+    if (!isAdmin(user.id)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-  if (authError || !user || !isAdmin(user.id)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const svc = createServiceClient()
-  const { data: run, error: runError } = await svc
-    .from('generation_runs')
-    .select(`
+    const svc = createServiceClient()
+    const { data: run, error: runError } = await svc
+      .from('generation_runs')
+      .select(`
       id,
       project_id,
       user_id,
@@ -62,16 +58,16 @@ export async function GET(
         topic
       )
     `)
-    .eq('id', runId)
-    .maybeSingle()
+      .eq('id', runId)
+      .maybeSingle()
 
-  if (runError) {
-    return NextResponse.json({ error: runError.message }, { status: 500 })
-  }
+    if (runError) {
+      return NextResponse.json({ error: runError.message }, { status: 500 })
+    }
 
-  if (!run) {
-    return NextResponse.json({ error: 'Run not found' }, { status: 404 })
-  }
+    if (!run) {
+      return NextResponse.json({ error: 'Run not found' }, { status: 404 })
+    }
 
   const [
     { data: job, error: jobError },
@@ -312,51 +308,54 @@ export async function GET(
       ? getMinutesBetween(effectiveRun.started_at || effectiveRun.created_at, effectiveRun.completed_at)
       : getMinutesBetween(effectiveRun.started_at || effectiveRun.created_at, new Date().toISOString())
 
-  return NextResponse.json({
-    run: {
-      id: effectiveRun.id,
-      projectId: effectiveRun.project_id,
-      projectTitle: project?.topic || 'Untitled project',
-      userId: effectiveRun.user_id,
-      status: effectiveRun.status,
-      progress: effectiveRun.progress,
-      stage: effectiveRun.current_stage,
-      section: effectiveRun.current_section,
-      errorMessage: effectiveRun.error_message,
-      createdAt: effectiveRun.created_at,
-      startedAt: effectiveRun.started_at,
-      completedAt: effectiveRun.completed_at,
-      ageMinutes: Math.max(0, Math.round((Date.now() - new Date(effectiveRun.created_at).getTime()) / 1000 / 60)),
-      durationMinutes,
-    },
-    queue: {
-      latencySeconds: queueLatencySeconds,
-      source: jobClaimEvent ? 'claim-event' : job?.started_at ? 'job-started-at' : 'unknown',
-    },
-    job: job
-      ? {
-          id: job.id,
-          status: job.status,
-          attempts: job.attempts,
-          maxAttempts: job.max_attempts,
-          workerId: job.worker_id,
-          leaseUntil: job.lease_until,
-          lastHeartbeatAt: job.last_heartbeat_at,
-          createdAt: job.created_at,
-          startedAt: job.started_at,
-          completedAt: job.completed_at,
-          updatedAt: job.updated_at,
-          errorMessage: job.error_message,
-        }
-      : null,
-    pipeline: {
-      totalSections: contextSummaries.length,
-      completedSections: completedSectionIndices.length,
-      discoveredPapers: paperIds.length,
-    },
-    failure,
-    retryHistory: retryEvents,
-    stageTimeline,
-    activity,
-  })
+    return NextResponse.json({
+      run: {
+        id: effectiveRun.id,
+        projectId: effectiveRun.project_id,
+        projectTitle: project?.topic || 'Untitled project',
+        userId: effectiveRun.user_id,
+        status: effectiveRun.status,
+        progress: effectiveRun.progress,
+        stage: effectiveRun.current_stage,
+        section: effectiveRun.current_section,
+        errorMessage: effectiveRun.error_message,
+        createdAt: effectiveRun.created_at,
+        startedAt: effectiveRun.started_at,
+        completedAt: effectiveRun.completed_at,
+        ageMinutes: Math.max(0, Math.round((Date.now() - new Date(effectiveRun.created_at).getTime()) / 1000 / 60)),
+        durationMinutes,
+      },
+      queue: {
+        latencySeconds: queueLatencySeconds,
+        source: jobClaimEvent ? 'claim-event' : job?.started_at ? 'job-started-at' : 'unknown',
+      },
+      job: job
+        ? {
+            id: job.id,
+            status: job.status,
+            attempts: job.attempts,
+            maxAttempts: job.max_attempts,
+            workerId: job.worker_id,
+            leaseUntil: job.lease_until,
+            lastHeartbeatAt: job.last_heartbeat_at,
+            createdAt: job.created_at,
+            startedAt: job.started_at,
+            completedAt: job.completed_at,
+            updatedAt: job.updated_at,
+            errorMessage: job.error_message,
+          }
+        : null,
+      pipeline: {
+        totalSections: contextSummaries.length,
+        completedSections: completedSectionIndices.length,
+        discoveredPapers: paperIds.length,
+      },
+      failure,
+      retryHistory: retryEvents,
+      stageTimeline,
+      activity,
+    })
+  } catch (error) {
+    return handleError(error, 'Error in admin metrics run API')
+  }
 }

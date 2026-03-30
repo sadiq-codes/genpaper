@@ -1,6 +1,6 @@
-import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { getDailyUsageStats } from '@/lib/billing/usage-limits'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 /**
  * GET /api/billing/usage
@@ -10,12 +10,7 @@ import { getDailyUsageStats } from '@/lib/billing/usage-limits'
  */
 export async function GET() {
   try {
-    const supabase = await createClient()
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const user = await requireAuth()
 
     const stats = await getDailyUsageStats(user.id)
     
@@ -35,10 +30,6 @@ export async function GET() {
       resetsAt: stats.resetsAt.toISOString(),
     })
   } catch (error) {
-    console.error('Failed to get usage stats:', error)
-    return NextResponse.json(
-      { error: 'Failed to get usage stats' },
-      { status: 500 }
-    )
+    return handleError(error, 'Failed to get usage stats')
   }
 }

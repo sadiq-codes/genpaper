@@ -2,19 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getPaper } from '@/lib/db/papers'
 import { isInLibrary } from '@/lib/db/library'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await requireAuth()
     const supabase = await createClient()
-    
-    // Check authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const { id: paperId } = await params
 
@@ -48,10 +44,6 @@ export async function GET(
     })
 
   } catch (error) {
-    console.error('Error in papers/[id] GET API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' }, 
-      { status: 500 }
-    )
+    return handleError(error, 'Error in papers/[id] GET API')
   }
 } 
