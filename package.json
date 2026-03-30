@@ -21,6 +21,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
+    "ingest": "bun run scripts/ingest.ts",
     "worker:generation": "bun --conditions react-server scripts/generation-worker.ts",
     "worker:generation:once": "bun --conditions react-server scripts/generation-worker-once.ts",
     "types:generate": "supabase gen types typescript --linked > types/supabase.ts",

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getUserResearchProjects, createResearchProject } from '@/lib/db/research'
 import { headers } from 'next/headers'
@@ -10,6 +11,7 @@ import { CitationService } from '@/lib/citations/immediate-bibliography'
 import { parseTopicInput } from '@/lib/generation/topic-parser'
 import { trackEvent } from '@/lib/tracking/events'
 import { normalizePaperProcessingStatus } from '@/lib/content/processing-status'
+import { scheduleBulkPaperContentPreparationByIds } from '@/lib/services/paper-content-service'
 
 // Projects Actions
 export async function getProjectsAction(limit = 20, offset = 0) {
@@ -213,6 +215,16 @@ export async function createProjectAction(
           console.error('  ✗ Failed to link paper:', result.reason)
         }
       }
+    }
+
+    if (allPaperIds.length > 0) {
+      after(() => {
+        scheduleBulkPaperContentPreparationByIds(allPaperIds, {
+          searchQuery: `project_create:${project.id}`,
+          waitForStructuredExtraction: false,
+          reason: 'project_create',
+        })
+      })
     }
     
     revalidatePath('/projects')
