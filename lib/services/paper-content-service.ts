@@ -14,10 +14,12 @@ import {
 import {
   normalizePaperProcessingStatus,
   isFullTextReadyStatus,
+  canMarkFullTextReady,
 } from '@/lib/content/processing-status'
 import { setPaperProcessingStatus } from '@/lib/content/processing-status-service'
 import { normalizeTitle } from '@/lib/search/deduplication'
 import type { RankedPaper } from '@/lib/services/paper-aggregation'
+import { parseStorageObjectUrl } from '@/lib/supabase/storage-buckets'
 
 type PdfFailureType =
   | 'paywall-or-landing'
@@ -74,6 +76,14 @@ export interface BulkPaperProcessingByIdOptions extends EnsurePaperContentByIdOp
   concurrency?: number
 }
 
+export interface SchedulePaperContentPreparationOptions extends EnsurePaperContentByIdOptions {
+  reason?: string
+}
+
+export interface ScheduleBulkPaperContentPreparationOptions extends BulkPaperProcessingByIdOptions {
+  reason?: string
+}
+
 export interface BulkMetadataRegistrationOptions {
   concurrency?: number
 }
@@ -127,7 +137,34 @@ function classifyPersistentPdfFailure(failureType: PdfFailureType): Exclude<Pers
   return 'transient_fail'
 }
 
-function getPdfAttemptSkipReason(metadata: Record<string, unknown>): string | null {
+function shouldRetrySupabaseStoragePdf(
+  metadata: Record<string, unknown>,
+  pdfUrl?: string | null
+): boolean {
+  if (!pdfUrl || !parseStorageObjectUrl(pdfUrl)) {
+    return false
+  }
+
+  const status = normalizePersistentPdfFetchStatus(metadata.pdf_fetch_status)
+  if (status !== 'permanent_fail') {
+    return false
+  }
+
+  const reason = typeof metadata.pdf_fail_reason === 'string'
+    ? metadata.pdf_fail_reason.toLowerCase()
+    : ''
+
+  return reason.includes('http-4xx') || reason.includes('bucket not found')
+}
+
+function getPdfAttemptSkipReason(
+  metadata: Record<string, unknown>,
+  pdfUrl?: string | null
+): string | null {
+  if (shouldRetrySupabaseStoragePdf(metadata, pdfUrl)) {
+    return null
+  }
+
   const status = normalizePersistentPdfFetchStatus(metadata.pdf_fetch_status)
   if (status === 'permanent_fail') {
     return 'previous permanent PDF failure'
@@ -517,7 +554,7 @@ export async function ensurePaperContentReady(
         return returnAsAbstractReady(`📚 Abstract-ready paper, skipping PDF ingestion: ${paperDTO.title}`)
       }
 
-      const skipReason = getPdfAttemptSkipReason(paperMetadata)
+      const skipReason = getPdfAttemptSkipReason(paperMetadata, paperDTO.pdf_url)
       if (skipReason) {
         return returnAsAbstractReady(`📚 Abstract-ready paper, skipping PDF ingestion (${skipReason}): ${paperDTO.title}`)
       }
@@ -736,7 +773,11 @@ export async function ensurePaperContentReady(
             metadataPatch = {}
           }
 
-          await setPaperProcessingStatus(paperId, 'full_text_ready', {
+          const nextStatus = canMarkFullTextReady(persistedFullText, persistedSource)
+            ? 'full_text_ready'
+            : 'abstract_ready'
+
+          await setPaperProcessingStatus(paperId, nextStatus, {
             serviceClient,
             pdfContent: persistedFullText,
             contentSource: persistedSource,
@@ -770,6 +811,24 @@ export async function ensurePaperContentReadyById(
 ): Promise<PaperProcessResult> {
   const paper = await getPaperForIngestion(paperId)
   return ensurePaperContentReady(paper, options.searchQuery || '', options, paperId)
+}
+
+export function schedulePaperContentPreparationById(
+  paperId: string,
+  options: SchedulePaperContentPreparationOptions = {}
+): void {
+  const { reason = 'background_preparation', ...contentOptions } = options
+
+  void ensurePaperContentReadyById(paperId, contentOptions)
+    .then(result => {
+      console.log(`[PaperContent] Early preparation finished (${reason}) for ${result.paperId}`)
+    })
+    .catch(error => {
+      console.warn(
+        `[PaperContent] Early preparation failed (${reason}) for ${paperId}:`,
+        error instanceof Error ? error.message : error
+      )
+    })
 }
 
 export async function ensureBulkPaperMetadata(
@@ -868,6 +927,31 @@ export async function ensureBulkPaperContentReadyByIds(
   }
 
   return { papers: readyPapers, paperIds: readyIds }
+}
+
+export function scheduleBulkPaperContentPreparationByIds(
+  paperIds: string[],
+  options: ScheduleBulkPaperContentPreparationOptions = {}
+): void {
+  const uniquePaperIds = Array.from(new Set(paperIds.filter(Boolean)))
+  if (uniquePaperIds.length === 0) {
+    return
+  }
+
+  const { reason = 'background_preparation', ...contentOptions } = options
+
+  void ensureBulkPaperContentReadyByIds(uniquePaperIds, contentOptions)
+    .then(result => {
+      console.log(
+        `[PaperContent] Early bulk preparation finished (${reason}) for ${result.paperIds.length}/${uniquePaperIds.length} papers`
+      )
+    })
+    .catch(error => {
+      console.warn(
+        `[PaperContent] Early bulk preparation failed (${reason}) for ${uniquePaperIds.length} papers:`,
+        error instanceof Error ? error.message : error
+      )
+    })
 }
 
 async function runStructuredExtraction(

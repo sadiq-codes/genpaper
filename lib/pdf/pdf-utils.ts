@@ -7,7 +7,7 @@
 
 import { getSB } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { ensureStorageBucket, PAPER_PDFS_BUCKET } from '@/lib/supabase/storage-buckets'
+import { ensureStorageBucket, PAPER_PDFS_BUCKET, parseStorageObjectUrl } from '@/lib/supabase/storage-buckets'
 
 // Configuration constants
 export const PDF_BUCKET = PAPER_PDFS_BUCKET
@@ -71,6 +71,47 @@ function getAcademicHeaders(url: string): Record<string, string> {
   return headers
 }
 
+function validatePdfBuffer(buffer: Buffer, sourceUrl: string): Buffer {
+  if (buffer.length < 4 || !buffer.toString('ascii', 0, 4).startsWith('%PDF')) {
+    const header = buffer.toString('ascii', 0, Math.min(50, buffer.length))
+
+    if (header.includes('<!DOCTYPE') || header.includes('<html')) {
+      throw new Error(`URL returned HTML page instead of PDF. This is likely a publisher landing page requiring subscription access.`)
+    }
+
+    throw new Error(`Invalid PDF header: ${header}`)
+  }
+
+  console.log(`✅ Successfully downloaded PDF: ${buffer.length} bytes from ${sourceUrl}`)
+  return buffer
+}
+
+async function downloadSupabaseStorageBuffer(url: string): Promise<Buffer | null> {
+  const storageObject = parseStorageObjectUrl(url)
+  if (!storageObject) {
+    return null
+  }
+
+  const supabase = createServiceClient()
+  const { data, error } = await supabase.storage
+    .from(storageObject.bucketName)
+    .download(storageObject.path)
+
+  if (error) {
+    throw new Error(`Storage download failed for ${storageObject.bucketName}/${storageObject.path}: ${error.message}`)
+  }
+  if (!data) {
+    throw new Error(`Storage download returned no data for ${storageObject.bucketName}/${storageObject.path}`)
+  }
+
+  const buffer = Buffer.from(await data.arrayBuffer())
+  if (buffer.length > MAX_PDF_SIZE) {
+    throw new Error(`PDF too large during download: ${buffer.length} bytes`)
+  }
+
+  return validatePdfBuffer(buffer, url)
+}
+
 /**
  * Downloads PDF from URL with size and timeout limits
  */
@@ -79,6 +120,11 @@ export async function downloadPdfBuffer(url: string): Promise<Buffer> {
   const timeoutId = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT)
 
   try {
+    const supabaseBuffer = await downloadSupabaseStorageBuffer(url)
+    if (supabaseBuffer) {
+      return supabaseBuffer
+    }
+
     // Add random delay to avoid rate limiting
     const delay = Math.random() * 2000 + 1000 // 1-3 seconds
     await new Promise(resolve => setTimeout(resolve, delay))
@@ -145,22 +191,7 @@ export async function downloadPdfBuffer(url: string): Promise<Buffer> {
       offset += chunk.length
     }
 
-    const finalBuffer = Buffer.from(buffer)
-    
-    // Verify PDF header
-    if (finalBuffer.length < 4 || !finalBuffer.toString('ascii', 0, 4).startsWith('%PDF')) {
-      const header = finalBuffer.toString('ascii', 0, Math.min(50, finalBuffer.length))
-      
-      // Check if this looks like HTML content
-      if (header.includes('<!DOCTYPE') || header.includes('<html')) {
-        throw new Error(`URL returned HTML page instead of PDF. This is likely a publisher landing page requiring subscription access.`)
-      }
-      
-      throw new Error(`Invalid PDF header: ${header}`)
-    }
-
-    console.log(`✅ Successfully downloaded PDF: ${totalSize} bytes from ${url}`)
-    return finalBuffer
+    return validatePdfBuffer(Buffer.from(buffer), url)
 
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {

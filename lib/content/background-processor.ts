@@ -18,6 +18,7 @@ import pLimit from 'p-limit'
 import {
   normalizePaperProcessingStatus,
   isChunkReadyStatus,
+  canMarkFullTextReady,
   type PaperProcessingStatus,
 } from './processing-status'
 import { setPaperProcessingStatus } from './processing-status-service'
@@ -325,14 +326,18 @@ async function createChunksFromContent(paperId: string, content: string): Promis
       })
       .eq('id', paperId)
 
-    await setPaperProcessingStatus(paperId, 'full_text_ready', {
+    const nextStatus = canMarkFullTextReady(content, 'pdf')
+      ? 'full_text_ready'
+      : 'abstract_ready'
+
+    await setPaperProcessingStatus(paperId, nextStatus, {
       serviceClient: supabase,
       pdfContent: content,
       contentSource: 'pdf',
     })
     
-    console.log(`[BackgroundProcessor] Paper ${paperId} full-text ready, ${chunksCreated} chunks created`)
-    return { paperId, status: 'full_text_ready', chunksCreated }
+    console.log(`[BackgroundProcessor] Paper ${paperId} ${nextStatus}, ${chunksCreated} chunks created`)
+    return { paperId, status: nextStatus, chunksCreated }
     
   } catch (error) {
     console.error(`[BackgroundProcessor] Failed to create chunks for ${paperId}:`, error)

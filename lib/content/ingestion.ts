@@ -60,6 +60,15 @@ function isStatementTimeoutMessage(message: string): boolean {
   return message.toLowerCase().includes('statement timeout')
 }
 
+function isDuplicateKeyMessage(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('duplicate') ||
+    normalized.includes('violates unique constraint') ||
+    normalized.includes('23505')
+  )
+}
+
 async function waitMs(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -411,7 +420,7 @@ export async function createChunksForPaper(
     }))
     
     // Insert to Supabase WITHOUT embeddings (Qdrant only for embeddings)
-    const chunkDataWithoutEmbeddings = chunkDataWithEmbeddings.map(({ embedding, ...rest }) => rest)
+    const chunkDataWithoutEmbeddings = chunkDataWithEmbeddings.map(({ embedding: _embedding, ...rest }) => rest)
     
     // Insert chunks in smaller batches to reduce statement-timeout risk.
     const DB_BATCH_SIZE = 20
@@ -431,8 +440,9 @@ export async function createChunksForPaper(
       )
     }
 
-    for (let i = 0; i < dedupedChunks.length; i += DB_BATCH_SIZE) {
-      const batch = dedupedChunks.slice(i, i + DB_BATCH_SIZE)
+    const upsertBatchWithRetries = async (
+      batch: typeof dedupedChunks
+    ): Promise<string | null> => {
       let batchErrorMessage: string | null = null
 
       for (let attempt = 1; attempt <= DB_TIMEOUT_MAX_RETRIES; attempt++) {
@@ -446,8 +456,7 @@ export async function createChunksForPaper(
           })
 
         if (!batchError) {
-          batchErrorMessage = null
-          break
+          return null
         }
 
         batchErrorMessage = batchError.message
@@ -462,44 +471,99 @@ export async function createChunksForPaper(
         break
       }
 
-      if (batchErrorMessage) {
-        // Fallback for transient/duplicate-sensitive failures: retry rows one-by-one.
-        if (batchErrorMessage.includes('ON CONFLICT DO UPDATE command cannot affect row a second time') ||
-            isStatementTimeoutMessage(batchErrorMessage)) {
-          console.warn(`⚠️ Batch upsert failed for paper ${paperId}, retrying row-by-row: ${batchErrorMessage}`)
-          for (const row of batch) {
-            let singleErrorMessage: string | null = null
+      return batchErrorMessage
+    }
 
-            for (let attempt = 1; attempt <= DB_TIMEOUT_MAX_RETRIES; attempt++) {
-              const { error: singleError } = await serviceClient
-                .from('paper_chunks')
-                .upsert(row, {
-                  onConflict: 'id',
-                  ignoreDuplicates: false
-                })
+    const insertSingleRowWithRetries = async (
+      row: (typeof dedupedChunks)[number]
+    ): Promise<string | null> => {
+      let singleErrorMessage: string | null = null
 
-              if (!singleError) {
-                singleErrorMessage = null
-                break
-              }
+      for (let attempt = 1; attempt <= DB_TIMEOUT_MAX_RETRIES; attempt++) {
+        const { error: singleError } = await serviceClient
+          .from('paper_chunks')
+          .insert(row)
 
-              singleErrorMessage = singleError.message
-              if (isStatementTimeoutMessage(singleErrorMessage) && attempt < DB_TIMEOUT_MAX_RETRIES) {
-                const backoffMs = DB_TIMEOUT_BACKOFF_MS * attempt
-                await waitMs(backoffMs)
-                continue
-              }
-              break
-            }
+        if (!singleError) {
+          return null
+        }
 
-            if (singleErrorMessage) {
-              error = { message: singleErrorMessage }
-              break
-            }
-          }
-          if (error) break
+        singleErrorMessage = singleError.message
+        if (isDuplicateKeyMessage(singleErrorMessage)) {
+          return null
+        }
+        if (isStatementTimeoutMessage(singleErrorMessage) && attempt < DB_TIMEOUT_MAX_RETRIES) {
+          const backoffMs = DB_TIMEOUT_BACKOFF_MS * attempt
+          await waitMs(backoffMs)
           continue
         }
+        break
+      }
+
+      const { data: existingRow } = await serviceClient
+        .from('paper_chunks')
+        .select('id')
+        .eq('id', row.id)
+        .limit(1)
+
+      if (existingRow && existingRow.length > 0) {
+        return null
+      }
+
+      return singleErrorMessage
+    }
+
+    const insertBatchWithAdaptiveFallback = async (
+      batch: typeof dedupedChunks
+    ): Promise<string | null> => {
+      const pending = [batch]
+
+      while (pending.length > 0) {
+        const currentBatch = pending.shift()
+        if (!currentBatch || currentBatch.length === 0) {
+          continue
+        }
+
+        const batchErrorMessage = await upsertBatchWithRetries(currentBatch)
+        if (!batchErrorMessage) {
+          continue
+        }
+
+        const canSplitFurther =
+          currentBatch.length > 1 &&
+          (
+            batchErrorMessage.includes('ON CONFLICT DO UPDATE command cannot affect row a second time') ||
+            isStatementTimeoutMessage(batchErrorMessage)
+          )
+
+        if (canSplitFurther) {
+          const midpoint = Math.ceil(currentBatch.length / 2)
+          console.warn(
+            `⚠️ Batch upsert failed for paper ${paperId} at size ${currentBatch.length}, splitting into ${midpoint} and ${currentBatch.length - midpoint}: ${batchErrorMessage}`
+          )
+          pending.unshift(currentBatch.slice(midpoint))
+          pending.unshift(currentBatch.slice(0, midpoint))
+          continue
+        }
+
+        if (currentBatch.length === 1 && isStatementTimeoutMessage(batchErrorMessage)) {
+          const singleErrorMessage = await insertSingleRowWithRetries(currentBatch[0])
+          if (!singleErrorMessage) {
+            continue
+          }
+          return singleErrorMessage
+        }
+
+        return batchErrorMessage
+      }
+
+      return null
+    }
+
+    for (let i = 0; i < dedupedChunks.length; i += DB_BATCH_SIZE) {
+      const batch = dedupedChunks.slice(i, i + DB_BATCH_SIZE)
+      const batchErrorMessage = await insertBatchWithAdaptiveFallback(batch)
+      if (batchErrorMessage) {
         error = { message: batchErrorMessage }
         break
       }

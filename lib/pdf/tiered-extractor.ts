@@ -51,6 +51,28 @@ export async function extractPdfMetadataTiered(
   } = options
 
   const notes: string[] = []
+  let doiLookupMetadata: Partial<TieredExtractionResult> | null = null
+
+  const mergeWithDoiMetadata = (
+    result: Partial<TieredExtractionResult> | null | undefined
+  ): Partial<TieredExtractionResult> | null => {
+    if (!result) return result || null
+    if (!doiLookupMetadata) return result
+
+    return {
+      title: result.title || doiLookupMetadata.title,
+      authors: result.authors?.length ? result.authors : doiLookupMetadata.authors,
+      abstract: result.abstract || doiLookupMetadata.abstract,
+      venue: result.venue || doiLookupMetadata.venue,
+      doi: result.doi || doiLookupMetadata.doi,
+      year: result.year || doiLookupMetadata.year,
+      fullText: result.fullText,
+      metadata: {
+        ...doiLookupMetadata.metadata,
+        ...result.metadata,
+      },
+    }
+  }
 
   try {
     // Guardrail: decide if we should attempt GROBID at all
@@ -63,12 +85,9 @@ export async function extractPdfMetadataTiered(
       try {
         const crossrefData = await fetchCrossrefMetadata(doi)
         if (crossrefData) {
-          return {
+          doiLookupMetadata = {
             ...crossrefData,
-            extractionMethod: 'doi-lookup',
-            extractionTimeMs: Date.now() - startTime,
-            confidence: 'high',
-            metadata: { processingNotes: ['DOI found, used Crossref API'] }
+            metadata: { processingNotes: ['DOI found, used Crossref API metadata as fallback'] }
           }
         }
       } catch (error) {
@@ -83,7 +102,9 @@ export async function extractPdfMetadataTiered(
         throw new Error('GROBID disabled')
       }
       info('Attempting GROBID extraction')
-      const grobidResult = await grobidParse(pdfBuffer, grobidUrl!, maxTimeoutMs)
+      const grobidResult = mergeWithDoiMetadata(
+        await grobidParse(pdfBuffer, grobidUrl!, maxTimeoutMs)
+      )
       if (grobidResult && grobidResult.title && grobidResult.fullText) {
         return {
           ...grobidResult,
@@ -109,7 +130,9 @@ export async function extractPdfMetadataTiered(
     if (!isScanned) {
       try {
         info('Attempting text layer extraction')
-        const textLayerResult = await withTimeout(() => parseTextLayer(pdfBuffer), maxTimeoutMs)
+        const textLayerResult = mergeWithDoiMetadata(
+          await withTimeout(() => parseTextLayer(pdfBuffer), maxTimeoutMs)
+        )
         if (textLayerResult && textLayerResult.fullText) {
           return {
             ...textLayerResult,
@@ -137,7 +160,9 @@ export async function extractPdfMetadataTiered(
     if (enableOcr) {
       try {
         info('Attempting OCR extraction')
-        const ocrResult = await withTimeout(() => ocrParse(pdfBuffer, maxTimeoutMs), maxTimeoutMs)
+        const ocrResult = mergeWithDoiMetadata(
+          await withTimeout(() => ocrParse(pdfBuffer, maxTimeoutMs), maxTimeoutMs)
+        )
         if (ocrResult && ocrResult.fullText) {
           return {
             ...ocrResult,
@@ -161,6 +186,20 @@ export async function extractPdfMetadataTiered(
 
     // 4️⃣ Final fallback - minimal extraction
     warn('All extraction methods failed, using fallback')
+    if (doiLookupMetadata) {
+      return {
+        ...doiLookupMetadata,
+        fullText: undefined,
+        extractionMethod: 'doi-lookup',
+        extractionTimeMs: Date.now() - startTime,
+        confidence: 'low',
+        metadata: {
+          ...doiLookupMetadata.metadata,
+          processingNotes: [...notes, 'Used DOI metadata fallback; no reliable full text extracted']
+        }
+      }
+    }
+
     return {
       title: 'Extraction Failed',
       authors: [], // Don't use placeholder - empty array is handled by display layer
@@ -597,7 +636,6 @@ async function fetchCrossrefMetadata(doi: string): Promise<Partial<TieredExtract
       venue: work['container-title']?.[0] || undefined,
       doi: work.DOI,
       year: work.published?.['date-parts']?.[0]?.[0]?.toString(),
-      fullText: `${work.title?.[0] || ''}\n\n${work.abstract || ''}`.trim()
     }
   } catch (err) {
     warn('Crossref metadata fetch failed', { doi, error: err })

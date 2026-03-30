@@ -15,6 +15,7 @@ import { searchChunks as qdrantSearchChunks, isQdrantConfigured } from '@/lib/qd
 // Import the unified chunk processor
 import { createChunksForPaper } from '@/lib/content/ingestion'
 import { setPaperProcessingStatus } from '@/lib/content/processing-status-service'
+import { canMarkFullTextReady } from '@/lib/content/processing-status'
 
 // Type definitions for database query results  
 interface DatabasePaper {
@@ -635,8 +636,15 @@ async function queuePdfProcessing(paperId: string, pdfUrl: string, _title: strin
 
       await createChunksForPaper(paperId, text)
       
-      // Full-text extraction + chunking complete
-      await setPaperProcessingStatus(paperId, 'full_text_ready', { serviceClient: supabase })
+      const nextStatus = canMarkFullTextReady(text, 'pdf')
+        ? 'full_text_ready'
+        : 'abstract_ready'
+
+      await setPaperProcessingStatus(paperId, nextStatus, {
+        serviceClient: supabase,
+        pdfContent: text,
+        contentSource: 'pdf',
+      })
     }
   } catch (err) {
     // Update status to failed on error
