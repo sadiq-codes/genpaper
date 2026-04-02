@@ -46,7 +46,7 @@ function getRagCacheKey(query: string, paperIds: string[], options: EditorRetrie
   // Sort paper IDs for consistent key
   const sortedPaperIds = [...paperIds].sort().join(',')
   // Include options in key
-  const optionsKey = `${options.maxChunks || 10}:${options.maxClaims || 7}:${options.minChunkScore || 0.3}:${options.minClaimScore || 0.3}`
+  const optionsKey = `${options.maxChunks || 10}:${options.maxClaims || 7}:${options.minChunkScore || 0.3}:${options.minClaimScore || 0.3}:${options.maxChunksPerPaper || 0}`
   
   return `${normalizedQuery}|${sortedPaperIds}|${optionsKey}`
 }
@@ -57,54 +57,6 @@ function getRagCacheKey(query: string, paperIds: string[], options: EditorRetrie
 // The embedding cache has been moved to a shared utility (embedding-cache.ts)
 // to be used by both editor-context and chunk-retriever.
 // This provides consistent caching and query normalization across all RAG paths.
-
-// =============================================================================
-// DIVERSITY FILTER
-// =============================================================================
-
-/**
- * Apply diversity filter to ensure chunks come from multiple papers.
- * This prevents one paper from dominating the context.
- */
-function applyDiversityFilter(
-  chunks: RetrievedChunk[],
-  maxPerPaper: number,
-  totalLimit: number
-): RetrievedChunk[] {
-  // Group chunks by paper
-  const byPaper = new Map<string, RetrievedChunk[]>()
-  
-  for (const chunk of chunks) {
-    const existing = byPaper.get(chunk.paper_id) || []
-    if (existing.length < maxPerPaper) {
-      existing.push(chunk)
-      byPaper.set(chunk.paper_id, existing)
-    }
-  }
-  
-  // Round-robin selection to maximize paper diversity
-  const result: RetrievedChunk[] = []
-  let index = 0
-  const paperIds = Array.from(byPaper.keys())
-  
-  while (result.length < totalLimit && paperIds.length > 0) {
-    const paperId = paperIds[index % paperIds.length]
-    const paperChunks = byPaper.get(paperId)!
-    
-    if (paperChunks.length > 0) {
-      result.push(paperChunks.shift()!)
-    } else {
-      // Remove exhausted paper
-      paperIds.splice(index % paperIds.length, 1)
-      if (paperIds.length === 0) break
-      continue
-    }
-    
-    index++
-  }
-  
-  return result
-}
 
 // =============================================================================
 // TYPES
@@ -144,6 +96,47 @@ export interface CitationVerificationResult {
   evidence?: string
 }
 
+function getAutocompleteMmrSettings(
+  query: string,
+  maxChunks: number,
+  maxChunksPerPaper: number
+): { diversity: number; candidatesLimit: number } {
+  const trimmed = query.trim()
+  const words = trimmed.split(/\s+/).filter(Boolean)
+  const lower = trimmed.toLowerCase()
+
+  const looksCitationLike =
+    /\b(?:doi|et al\.?|ibid|cf\.|see|fig(?:ure)?|table|section|pp?\.)\b/i.test(trimmed) ||
+    /\b(?:19|20)\d{2}\b/.test(trimmed) ||
+    /10\.\d{4,9}\/[-._;()/:a-z0-9]+/i.test(trimmed)
+  const looksExactLookup =
+    trimmed.length <= 50 ||
+    words.length <= 6 ||
+    /^[A-Z][A-Za-z0-9\-: ]{0,80}$/.test(trimmed)
+  const looksExploratory =
+    words.length >= 14 ||
+    /\?$/.test(trimmed) ||
+    /\b(?:compare|contrast|relationship|mechanism|impact|explain|how|why|evidence|factors|drivers)\b/.test(lower)
+
+  let diversity = 0.45
+  let candidatesLimit = Math.max(maxChunks * 4, 32)
+
+  if (looksCitationLike || looksExactLookup) {
+    diversity = 0.32
+  } else if (looksExploratory) {
+    diversity = 0.58
+    candidatesLimit = Math.max(maxChunks * 6, 48)
+  }
+
+  if (maxChunksPerPaper <= 1) {
+    diversity = Math.max(diversity, 0.65)
+  } else if (maxChunksPerPaper <= 2) {
+    diversity = Math.max(diversity, 0.5)
+  }
+
+  return { diversity, candidatesLimit }
+}
+
 // =============================================================================
 // MAIN SERVICE
 // =============================================================================
@@ -170,7 +163,7 @@ export async function retrieveEditorContext(
     maxChunks = 15,
     minChunkScore = 0.2,
     boostedPaperIds,
-    maxChunksPerPaper = 3, // Default: max 3 chunks per paper for diversity
+    maxChunksPerPaper = 3, // Used as a signal for how aggressively autocomplete should diversify
     deboostPaperIds,
     // maxClaims and minClaimScore are no longer used - claims search disabled (pgvector deprecated)
   } = options
@@ -178,6 +171,7 @@ export async function retrieveEditorContext(
   // When paperIds is empty, search ALL papers (global corpus)
   // Pass null to match_paper_chunks to disable paper filtering
   const globalSearch = !paperIds || paperIds.length === 0
+  const mmrSettings = getAutocompleteMmrSettings(query, maxChunks, maxChunksPerPaper)
 
   // Check RAG cache first
   const cacheKey = getRagCacheKey(query, paperIds, options)
@@ -217,11 +211,15 @@ export async function retrieveEditorContext(
     
     try {
       const results = await qdrantSearchChunks(queryEmbedding, {
-        limit: maxChunks * 2,
+        limit: maxChunks,
         minScore: minChunkScore,
         paperIds: globalSearch ? undefined : paperIds,
         boostPaperIds: boostedPaperIds?.length ? boostedPaperIds : undefined,
         deboostPaperIds: deboostPaperIds?.length ? deboostPaperIds : undefined,
+        mmr: {
+          diversity: mmrSettings.diversity,
+          candidatesLimit: mmrSettings.candidatesLimit,
+        },
       })
       return results.map(r => ({
         paper_id: r.paper_id,
@@ -235,9 +233,8 @@ export async function retrieveEditorContext(
     }
   })()
 
-  // Apply diversity filter: limit chunks per paper to ensure variety
   const rawChunks = await chunkSearchPromise
-  const chunks = applyDiversityFilter(rawChunks, maxChunksPerPaper, maxChunks)
+  const chunks = rawChunks.slice(0, maxChunks)
   const searchTime = Date.now() - searchStartTime
 
   // Claims search disabled - paper_claims table uses pgvector embeddings which have been deprecated
