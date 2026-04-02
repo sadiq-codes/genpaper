@@ -46,11 +46,11 @@ export async function GET() {
   try {
     const user = await requireAuth()
     if (!isAdmin(user.id)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
-    const svc = createServiceClient()
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  const svc = createServiceClient()
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
     const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString()
 
@@ -80,7 +80,7 @@ export async function GET() {
       `)
       .gte('created_at', thirtyDaysAgo),
     svc
-      .from('app_events')
+    .from('app_events')
       .select('event_type, created_at, user_id, metadata')
       .in('event_type', [
         'generation_started',
@@ -353,8 +353,8 @@ export async function GET() {
 
   recentFailures.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
-    return NextResponse.json({
-      generationStats,
+  return NextResponse.json({
+    generationStats,
       stageCounts,
       paperTypeCounts,
       startsByDay,

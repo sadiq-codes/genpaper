@@ -230,7 +230,7 @@ export default function AdminMetricsPage() {
           <Badge variant="outline" className="rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
             Generation Sentry
           </Badge>
-          <div>
+        <div>
             <h1 className="font-instrument text-3xl tracking-tight">Paper Generation Health</h1>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
               Real-time visibility into generation throughput, latency, failures, and stuck work.
@@ -245,7 +245,7 @@ export default function AdminMetricsPage() {
           <Button variant="outline" size="sm" onClick={fetchMetrics} disabled={loading} className="rounded-full">
             <RefreshCw className={`mr-2 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
-          </Button>
+        </Button>
         </div>
       </div>
 
@@ -286,7 +286,7 @@ export default function AdminMetricsPage() {
                       ? `${derived.topRisk.label} is the primary risk right now. Open any active or failed run to inspect queue wait, retries, stage timing, and failure context.`
                       : 'Queue wait, retries, failures, and stuck work are all within healthy thresholds right now.'}
                   </p>
-                </div>
+      </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
                   {derived.signalStates.map((signal) => (
@@ -421,9 +421,9 @@ export default function AdminMetricsPage() {
                     value={metrics.latency.p95Minutes ? `${metrics.latency.p95Minutes.toFixed(1)}m` : 'N/A'}
                     detail={metrics.latency.sampleSize > 0 ? '95th percentile completion time' : 'Waiting for completed run samples'}
                   />
-                </div>
-              </CardContent>
-            </Card>
+            </div>
+          </CardContent>
+        </Card>
 
             <div className="grid gap-6 xl:grid-cols-2">
               <MetricsTableCard
@@ -512,12 +512,12 @@ export default function AdminMetricsPage() {
             </div>
 
             <Card className="border-border/60">
-              <CardHeader className="pb-3">
+          <CardHeader className="pb-3">
                 <CardTitle className="font-instrument text-lg tracking-tight">Recent Incidents</CardTitle>
                 <p className="text-sm text-muted-foreground">
                   Latest failed runs with project links, stage context, and error details.
                 </p>
-              </CardHeader>
+          </CardHeader>
               <CardContent className="space-y-3">
                 {metrics.recentFailures.length === 0 ? (
                   <p className="rounded-2xl border border-border/40 bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
@@ -604,8 +604,8 @@ function MetricCard({
           </div>
         </div>
         <p className="line-clamp-2 text-sm text-muted-foreground">{detail}</p>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
   )
 }
 
@@ -699,19 +699,19 @@ function MetricsTableCard({
 }) {
   return (
     <Card className="border-border/60">
-      <CardHeader className="pb-3">
+          <CardHeader className="pb-3">
         <CardTitle className="font-instrument text-lg tracking-tight">{title}</CardTitle>
         <p className="text-sm text-muted-foreground">{description}</p>
-      </CardHeader>
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Type</TableHead>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
               <TableHead className="w-40 text-right">Value</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
             {rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={2} className="py-10 text-center text-muted-foreground">
@@ -719,17 +719,17 @@ function MetricsTableCard({
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map(([type, count]) => (
-                <TableRow key={type}>
-                  <TableCell className="font-medium">{type.replace(/_/g, ' ')}</TableCell>
-                  <TableCell className="text-right font-mono text-muted-foreground">{count}</TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+              rows.map(([type, count], index) => (
+                <TableRow key={`${type}-${index}`}>
+                        <TableCell className="font-medium">{type.replace(/_/g, ' ')}</TableCell>
+                        <TableCell className="text-right font-mono text-muted-foreground">{count}</TableCell>
+                      </TableRow>
+                    ))
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
   )
 }
 
