@@ -118,6 +118,10 @@ export async function searchChunks(
     boostFactor?: number
     deboostPaperIds?: string[] // De-boost scores for these papers (recently cited)
     deboostFactor?: number // Multiplier for de-boosted papers (default: 0.4 = 40% of original)
+    mmr?: {
+      diversity?: number
+      candidatesLimit?: number
+    }
   } = {}
 ): Promise<SearchResult[]> {
   const qdrant = getQdrantClient()
@@ -129,6 +133,7 @@ export async function searchChunks(
     boostFactor = 1.15,
     deboostPaperIds,
     deboostFactor = 0.6, // Reduce to 60% of original score (softer penalty)
+    mmr,
   } = options
   
   // Build filter
@@ -144,13 +149,29 @@ export async function searchChunks(
     }
   }
   
-  const results = await qdrant.search(COLLECTIONS.PAPER_CHUNKS, {
-    vector: embedding,
-    limit: limit * 2, // Fetch extra for score filtering
-    filter,
-    with_payload: true,
-    score_threshold: minScore,
-  })
+  const adjustedLimit = limit * 2 // Fetch extra for post-score adjustments
+
+  const results = mmr
+    ? (await qdrant.query(COLLECTIONS.PAPER_CHUNKS, {
+        query: {
+          nearest: embedding,
+          mmr: {
+            diversity: mmr.diversity ?? 0.5,
+            candidates_limit: mmr.candidatesLimit ?? Math.max(adjustedLimit * 4, adjustedLimit),
+          },
+        },
+        limit: adjustedLimit,
+        filter,
+        with_payload: true,
+        score_threshold: minScore,
+      })).points
+    : await qdrant.search(COLLECTIONS.PAPER_CHUNKS, {
+        vector: embedding,
+        limit: adjustedLimit,
+        filter,
+        with_payload: true,
+        score_threshold: minScore,
+      })
   
   // Apply boost/de-boost and format results
   const boostedSet = new Set(boostPaperIds || [])
