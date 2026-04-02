@@ -34,9 +34,9 @@ import fs from 'fs'
 
 const OPENALEX_BASE = 'https://api.openalex.org/works'
 const PAGE_SIZE = 50     // Reduced from 200 to ease DB load
-const EMBED_BATCH = 25   // Reduced from 100 to ease DB load
-const DB_BATCH = 50      // Reduced from 200 to ease DB load
-const DB_DELAY_MS = 2000 // Delay between DB batches to let Supabase breathe
+const EMBED_BATCH = 20   // Smaller batches to reduce DB pressure
+const DB_BATCH = 25      // Smaller batches to reduce DB pressure
+const DB_DELAY_MS = 4000 // Longer delay between DB batches to avoid timeouts
 const PAPER_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 const PROGRESS_FILE = '.bulk-ingest-disciplines-progress.json'
 const MAX_RATE_LIMIT_RETRIES = 5  // Max retries before moving on
