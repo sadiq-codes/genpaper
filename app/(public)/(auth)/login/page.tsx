@@ -2,13 +2,22 @@
 
 import type React from "react"
 import { useState, useEffect, Suspense } from "react"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
 import { Input } from "@/components/ui/input"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
 import { SectionLoadingState } from "@/components/ui/async-state"
+
+function sanitizeNextPath(raw: string | null): string {
+  const fallback = "/projects"
+  if (!raw || typeof raw !== "string") return fallback
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return fallback
+  if (trimmed.includes("\0") || trimmed.includes("\n")) return fallback
+  return trimmed
+}
 
 function LoginPageContent() {
   const [email, setEmail] = useState("")
@@ -21,9 +30,10 @@ function LoginPageContent() {
   const [resendLoading, setResendLoading] = useState(false)
   const [resendMessage, setResendMessage] = useState("")
   const [googleLoading, setGoogleLoading] = useState(false)
+  const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
-  const nextPath = searchParams.get("next") || "/projects"
+  const nextPath = sanitizeNextPath(searchParams.get("next"))
   const authCode = searchParams.get("code")
   const authType = searchParams.get("type")
   const authError = searchParams.get("error")
@@ -66,11 +76,16 @@ function LoginPageContent() {
     let cancelled = false
 
     const redirectAfterAuth = () => {
-      if (authType === "recovery") {
-        window.location.href = "/reset-password"
-        return
+      const go = () => {
+        if (authType === "recovery") {
+          router.replace("/reset-password")
+          router.refresh()
+          return
+        }
+        router.replace(nextPath)
+        router.refresh()
       }
-      window.location.href = nextPath
+      requestAnimationFrame(go)
     }
 
     const waitForSession = async (attempts = 6, delayMs = 150) => {
@@ -164,7 +179,7 @@ function LoginPageContent() {
     return () => {
       cancelled = true
     }
-  }, [authCode, authError, authErrorCode, authErrorDescription, authType, nextPath, supabase])
+  }, [authCode, authError, authErrorCode, authErrorDescription, authType, nextPath, router, supabase])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -222,7 +237,10 @@ function LoginPageContent() {
         return
       }
 
-      window.location.href = nextPath
+      requestAnimationFrame(() => {
+        router.replace(nextPath)
+        router.refresh()
+      })
     } catch (error) {
       console.error("Sign-in error:", error)
       setError("Network error. Please check your connection and try again.")

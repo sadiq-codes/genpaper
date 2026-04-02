@@ -189,6 +189,9 @@ export default async function EditorPage({ params, searchParams }: EditorPagePro
         isWriteMode={isWriteMode}
         initialAutocompletePrefs={autocompletePrefs}
         generationRunId={activeRun?.id}
+        initialGenerationProgress={activeRun?.progress}
+        initialGenerationStage={activeRun?.current_stage}
+        initialGenerationSection={activeRun?.current_section}
         startGenerationImmediately={isNewlyCreated}
       />
     </div>
