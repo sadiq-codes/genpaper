@@ -2,6 +2,7 @@ export const runtime = 'nodejs'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { createClient } from '@/lib/supabase/server'
 import { handleError, requireAuth } from '@/lib/api/helpers'
 import { CHAT_IMAGES_BUCKET, ensureStorageBucket } from '@/lib/supabase/storage-buckets'
 
@@ -17,7 +18,8 @@ function generateFilename(projectId: string, file: File): string {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireAuth()
+    const user = await requireAuth()
+    const supabase = await createClient()
 
     const formData = await request.formData()
     const file = formData.get('file') as File | null
@@ -34,6 +36,17 @@ export async function POST(request: NextRequest) {
     }
     if (file.size > MAX_IMAGE_SIZE) {
       return NextResponse.json({ error: 'File too large. Maximum size is 5MB' }, { status: 413 })
+    }
+
+    const { data: project, error: projectError } = await supabase
+      .from('research_projects')
+      .select('id')
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (projectError || !project) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
     const serviceClient = createServiceClient()

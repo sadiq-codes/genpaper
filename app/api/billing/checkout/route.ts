@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { handleError, requireAuth } from '@/lib/api/helpers'
 
 /**
  * Polar Checkout Route
@@ -16,28 +17,29 @@ const polarToken = process.env.POLAR_ACCESS_TOKEN || ''
 const isProd = process.env.NODE_ENV === 'production'
 
 export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams
-  const productId = searchParams.get('products')
-  const customerEmail = searchParams.get('customerEmail')
-  const customerExternalId = searchParams.get('customerExternalId')
-
-  // Validate required params
-  if (!productId) {
-    return NextResponse.json(
-      { error: 'Missing products parameter' },
-      { status: 400 }
-    )
-  }
-
-  if (!polarToken) {
-    console.error('[Checkout] POLAR_ACCESS_TOKEN not configured')
-    return NextResponse.json(
-      { error: 'Payment system not configured' },
-      { status: 500 }
-    )
-  }
-
   try {
+    const user = await requireAuth()
+    const searchParams = request.nextUrl.searchParams
+    const productId = searchParams.get('products')
+    const customerEmail = user.email || null
+    const customerExternalId = user.id
+
+    // Validate required params
+    if (!productId) {
+      return NextResponse.json(
+        { error: 'Missing products parameter' },
+        { status: 400 }
+      )
+    }
+
+    if (!polarToken) {
+      console.error('[Checkout] POLAR_ACCESS_TOKEN not configured')
+      return NextResponse.json(
+        { error: 'Payment system not configured' },
+        { status: 500 }
+      )
+    }
+
     const apiUrl = isProd 
       ? 'https://api.polar.sh/v1/checkouts/custom/'
       : 'https://sandbox-api.polar.sh/v1/checkouts/custom/'
@@ -91,13 +93,6 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   } catch (error) {
-    console.error('[Checkout] Error creating checkout:', error)
-    return NextResponse.json(
-      { 
-        error: 'Failed to create checkout session', 
-        details: error instanceof Error ? error.message : 'Unknown error' 
-      },
-      { status: 500 }
-    )
+    return handleError(error, '[Checkout] Error creating checkout')
   }
 }

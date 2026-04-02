@@ -3,7 +3,8 @@ import { createHmac } from 'crypto'
 import { createServiceClient } from '@/lib/supabase/service'
 
 function verifyToken(userId: string, token: string): boolean {
-  const secret = process.env.CRON_SECRET || 'fallback-secret'
+  const secret = process.env.CRON_SECRET
+  if (!secret) return false
   const expected = createHmac('sha256', secret).update(userId).digest('hex')
   return token === expected
 }

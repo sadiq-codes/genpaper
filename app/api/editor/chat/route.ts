@@ -128,12 +128,16 @@ interface ChatRAGProfile {
   maxEvidenceTokens: number
   retrieveLimit: number
   useReranking: boolean
+  mmrDiversity: number
+  mmrCandidatesLimit: number
 }
 
 const DEFAULT_CHAT_RAG_PROFILE: ChatRAGProfile = {
   maxEvidenceTokens: 8000,
   retrieveLimit: 100,
   useReranking: false,
+  mmrDiversity: 0.52,
+  mmrCandidatesLimit: 140,
 }
 
 // Short-lived cache to avoid repeatedly probing mentioned-paper retrieval when
@@ -173,6 +177,8 @@ function getAdaptiveChatRAGProfile(
       maxEvidenceTokens: 5000,
       retrieveLimit: 70,
       useReranking: false,
+      mmrDiversity: 0.32,
+      mmrCandidatesLimit: 90,
     }
   }
 
@@ -186,6 +192,8 @@ function getAdaptiveChatRAGProfile(
     maxEvidenceTokens: 3500,
     retrieveLimit: 45,
     useReranking: false,
+    mmrDiversity: 0.4,
+    mmrCandidatesLimit: 70,
   }
 }
 
@@ -235,6 +243,8 @@ async function getRAGContext(
       maxEvidenceTokens: profile.maxEvidenceTokens,
       useReranking: profile.useReranking,
       retrieveLimit: profile.retrieveLimit,
+      mmrDiversity: profile.mmrDiversity,
+      mmrCandidatesLimit: profile.mmrCandidatesLimit,
     })
 
     console.log('[Chat API] RAG query:', query?.slice(0, 100))
