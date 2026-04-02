@@ -26,12 +26,20 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet: Array<{ name: string; value: string; options: Record<string, unknown> }>) {
+        setAll(
+          cookiesToSet: Array<{ name: string; value: string; options: Record<string, unknown> }>,
+          headers?: Record<string, string>
+        ) {
           // Note: request.cookies.set only accepts (name, value) - options are applied on the response
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           supabaseResponse = NextResponse.next({
             request,
           })
+          if (headers) {
+            Object.entries(headers).forEach(([key, value]) => {
+              supabaseResponse.headers.set(key, value)
+            })
+          }
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
           )

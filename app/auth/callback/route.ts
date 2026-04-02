@@ -5,11 +5,20 @@ import { trackEvent } from '@/lib/tracking/events'
 import { sendEmail } from '@/lib/email/service'
 import { welcomeEmail } from '@/lib/email/templates/welcome'
 
+function sanitizeNextPath(raw: string | null): string {
+  const fallback = '/projects'
+  if (!raw || typeof raw !== 'string') return fallback
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return fallback
+  if (trimmed.includes('\0') || trimmed.includes('\n')) return fallback
+  return trimmed
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
   const type = searchParams.get('type')
-  const next = searchParams.get('next') ?? '/projects'
+  const next = sanitizeNextPath(searchParams.get('next'))
   const toRedirectUrl = (path: string) => getAbsoluteUrlFromHeaders(request.headers, path)
   const toRecoveryError = (description = 'Email link is invalid or has expired') => {
     const params = new URLSearchParams({

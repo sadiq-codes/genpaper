@@ -53,6 +53,11 @@ function shouldRetryAuthRequest(input: RequestInfo | URL, init?: RequestInit): b
   return method === 'GET' || method === 'POST'
 }
 
+function isAuthRequest(input: RequestInfo | URL): boolean {
+  const url = getRequestUrl(input)
+  return url.includes('/auth/v1/')
+}
+
 function extractErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined
   const err = error as { code?: unknown; cause?: unknown }
@@ -84,8 +89,10 @@ export function isTransientAuthNetworkError(error: unknown): boolean {
   const message = extractErrorMessage(error).toLowerCase()
   return (
     message.includes('fetch failed') ||
+    message.includes('failed to fetch') ||
     message.includes('network error') ||
-    message.includes('connect timeout')
+    message.includes('connect timeout') ||
+    message.includes('chrome-extension://')
   )
 }
 
@@ -102,7 +109,17 @@ export function createSupabaseAuthRetryFetch(
 
   return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     if (!shouldRetryAuthRequest(input, init)) {
-      return baseFetch(input, init)
+      try {
+        return await baseFetch(input, init)
+      } catch (error) {
+        // For non-retried auth endpoints (e.g. OTP/login helpers), return a
+        // structured transient failure response instead of bubbling low-level
+        // fetch crashes caused by flaky networks or extension interception.
+        if (isAuthRequest(input) && isTransientAuthNetworkError(error)) {
+          return createTransientAuthFailureResponse()
+        }
+        throw error
+      }
     }
 
     // Request bodies are single-use. Prepare clones only when needed.
