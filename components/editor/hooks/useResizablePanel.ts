@@ -53,23 +53,25 @@ export function useResizablePanel({
   defaultWidth = 380,
   storageKey,
 }: UseResizablePanelOptions = {}): UseResizablePanelReturn {
-  // Initialize width from localStorage if available
-  const [width, setWidth] = useState(() => {
-    if (typeof window !== 'undefined' && storageKey) {
-      const stored = localStorage.getItem(storageKey)
-      if (stored) {
-        const parsed = parseInt(stored, 10)
-        if (!isNaN(parsed) && parsed >= minWidth && parsed <= maxWidth) {
-          return parsed
-        }
-      }
-    }
-    return defaultWidth
-  })
+  // Keep the initial render deterministic for SSR/hydration.
+  const [width, setWidth] = useState(defaultWidth)
   
   const [isDragging, setIsDragging] = useState(false)
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
+
+  // Restore persisted width after mount to avoid server/client mismatches.
+  useEffect(() => {
+    if (!storageKey || typeof window === 'undefined') return
+
+    const stored = localStorage.getItem(storageKey)
+    if (!stored) return
+
+    const parsed = parseInt(stored, 10)
+    if (!isNaN(parsed) && parsed >= minWidth && parsed <= maxWidth) {
+      setWidth(parsed)
+    }
+  }, [minWidth, maxWidth, storageKey])
   
   // Save width to localStorage when it changes
   useEffect(() => {

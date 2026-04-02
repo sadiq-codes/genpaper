@@ -16,6 +16,12 @@ interface GenerationProgressProps {
   onCancel?: () => void
   /** Optional: Pass existing runId to resume watching */
   runId?: string
+  /** Optional: Server-known progress snapshot for immediate resume UI */
+  initialProgress?: number
+  /** Optional: Server-known stage snapshot for immediate resume UI */
+  initialStage?: string | null
+  /** Optional: Server-known section snapshot for immediate resume UI */
+  initialSection?: string | null
   /** Skip status probe and start immediately (newly created project path) */
   startImmediately?: boolean
 }
@@ -52,6 +58,7 @@ const ORDERED_STAGES = ["profiling", "search", "planning", "writing", "finishing
 const STAGE_MAPPING: Record<string, string> = {
   'start': 'start',
   'initialization': 'initialization',
+  'resuming': 'writing',
   'profiling': 'profiling',
   'search': 'search',
   'planning': 'planning',
@@ -248,6 +255,9 @@ export function GenerationProgress({
   onError,
   onCancel,
   runId: initialRunId,
+  initialProgress,
+  initialStage,
+  initialSection,
   startImmediately = false,
 }: GenerationProgressProps) {
   // Use reducer for batched state updates - prevents multiple re-renders per SSE event
@@ -616,6 +626,22 @@ export function GenerationProgress({
   // Start generation on mount
   useEffect(() => {
     if (initialRunId) {
+      dispatch({
+        type: 'PROGRESS_UPDATE',
+        payload: {
+          progress: initialProgress ?? 0,
+          stage: initialStage || 'resuming',
+          message: initialStage === 'resuming' || !initialStage
+            ? 'Resuming generation…'
+            : 'Reconnecting to generation…',
+        },
+      })
+      if (initialSection) {
+        dispatch({
+          type: 'SECTION_STARTED',
+          payload: { sectionTitle: initialSection },
+        })
+      }
       // Already have a runId - just connect to events
       setConnectionState(prev => ({ ...prev, runId: initialRunId }))
     } else if (startImmediately) {
@@ -625,7 +651,7 @@ export function GenerationProgress({
       // Check for existing run first, then start if needed
       checkExistingRunAndStart()
     }
-  }, [initialRunId, startImmediately, startGeneration, checkExistingRunAndStart])
+  }, [initialRunId, initialProgress, initialSection, initialStage, startImmediately, startGeneration, checkExistingRunAndStart])
 
   // Connect to events when we have a runId
   useEffect(() => {

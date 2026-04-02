@@ -85,6 +85,12 @@ interface ResearchEditorProps {
   initialAutocompletePrefs?: AutocompletePrefs
   /** Existing active generation run ID for immediate resume */
   generationRunId?: string
+  /** Initial server-known progress for an already-running generation */
+  initialGenerationProgress?: number
+  /** Initial server-known stage for an already-running generation */
+  initialGenerationStage?: string | null
+  /** Initial server-known section for an already-running generation */
+  initialGenerationSection?: string | null
   /** New project path: skip status probe and start generation immediately */
   startGenerationImmediately?: boolean
 }
@@ -103,6 +109,9 @@ export function ResearchEditor({
   isWriteMode = false,
   initialAutocompletePrefs = DEFAULT_PREFS,
   generationRunId,
+  initialGenerationProgress,
+  initialGenerationStage,
+  initialGenerationSection,
   startGenerationImmediately = false,
 }: ResearchEditorProps) {
   // ============================================================================
@@ -110,11 +119,7 @@ export function ResearchEditor({
   // ============================================================================
   
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(() => {
-    if (typeof window === 'undefined') return true
-    const stored = localStorage.getItem('editor-sidebar-open')
-    return stored === null ? true : stored === '1'
-  })
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [activeTab, setActiveTab] = useState<"chat" | "research">("research")
   const [isMobile, setIsMobile] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -132,6 +137,14 @@ export function ResearchEditor({
   // Default to unlocked while loading so paid users are never blocked by a slow fetch.
   // Server-side export API still enforces tier check.
   const exportLocked = subscription ? subscription.tier === 'free' : false
+
+  // Restore persisted sidebar state after mount to avoid hydration mismatches.
+  useEffect(() => {
+    const stored = localStorage.getItem('editor-sidebar-open')
+    if (stored !== null) {
+      setSidebarOpen(stored === '1')
+    }
+  }, [])
 
   // Persist sidebar state to localStorage
   useEffect(() => {
@@ -689,6 +702,9 @@ export function ResearchEditor({
             onError={handleGenerationError}
             onCancel={handleGenerationCancel}
             runId={generationRunId}
+            initialProgress={initialGenerationProgress}
+            initialStage={initialGenerationStage}
+            initialSection={initialGenerationSection}
             startImmediately={startGenerationImmediately && !generationRunId}
           />
         )}
