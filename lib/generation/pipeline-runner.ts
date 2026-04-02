@@ -407,6 +407,16 @@ export async function runGenerationPipeline(
   await runTimedStep("profile", async () => {
     const run = await getRun(runId);
     if (run?.status === "cancelled" || signal?.aborted) throw new Error("Run was cancelled");
+    const existingState = await getPipelineState(runId);
+
+    if (existingState.profile) {
+      onProgress?.("profiling", 9, "Resuming from saved paper structure...");
+      return {
+        sectionsCount: existingState.profile.outline?.sections.length || 0,
+        discipline: existingState.profile.discipline.primary,
+        reused: true,
+      };
+    }
 
     const pipelineConfig: PipelineConfig = {
       topic: config.topic,
@@ -500,6 +510,11 @@ export async function runGenerationPipeline(
     const state = await getPipelineState(runId);
     if (!state.profile) throw new Error("Profile not found in state");
 
+    if (state.paperIds && state.paperIds.length > 0) {
+      onProgress?.("search", 18, "Reusing saved source list...");
+      return { paperCount: state.paperIds.length, paperIds: state.paperIds, reused: true };
+    }
+
     const pipelineConfig: PipelineConfig = {
       topic: config.topic,
       paperType: config.paperType as PaperTypeKey,
@@ -541,6 +556,22 @@ export async function runGenerationPipeline(
       throw new Error("State incomplete for content readiness");
     }
 
+    if (
+      state.themeAnalysis ||
+      (state.contextSummaries && state.contextSummaries.length > 0) ||
+      state.contextCacheMeta
+    ) {
+      onProgress?.("planning", 25, "Reusing prepared source readiness...");
+      return {
+        readyPaperIds: state.paperIds,
+        fullTextReadyPaperIds: state.paperIds,
+        targetFullTextReady: state.paperIds.length,
+        upgradedToFullText: 0,
+        rechunked: 0,
+        reused: true,
+      };
+    }
+
     const papers = await getPapersByIds(state.paperIds);
     const readiness = await runContentReadinessPhase(
       config.topic,
@@ -565,6 +596,20 @@ export async function runGenerationPipeline(
 
     const state = await getPipelineState(runId);
     if (!state.paperIds) throw new Error("Paper IDs not found in state");
+
+    if (
+      state.themeAnalysis ||
+      (state.contextSummaries && state.contextSummaries.length > 0) ||
+      state.contextCacheMeta
+    ) {
+      onProgress?.("planning", 27, "Reusing extracted findings...");
+      return {
+        cachedPaperIds: state.paperIds,
+        pendingPaperIds: [],
+        totalBatches: 0,
+        reused: true,
+      };
+    }
 
     const papers = await getPapersByIds(state.paperIds);
     const result = await runExtractionCheckPhase(state.paperIds, papers, onProgress, signal);
@@ -622,6 +667,21 @@ export async function runGenerationPipeline(
       throw new Error("State incomplete for analysis");
     }
 
+    if (state.themeAnalysis) {
+      onProgress?.("planning", 35, "Reusing saved research patterns...");
+      return {
+        analysisResult: state.themeAnalysis as AnalysisResult,
+        extractionStats: {
+          papersProcessed: state.paperIds.length,
+          papersExtracted: state.paperIds.length,
+          papersFromCache: state.paperIds.length,
+          totalFindings: 0,
+          extractionTimeMs: 0,
+        },
+        reused: true,
+      };
+    }
+
     const papers = await getPapersByIds(state.paperIds);
 
     try {
@@ -657,6 +717,19 @@ export async function runGenerationPipeline(
     const state = await getPipelineState(runId);
     if (!state.paperIds || !state.profile) {
       throw new Error("State incomplete for context building");
+    }
+
+    if (state.contextSummaries && state.contextSummaries.length > 0) {
+      const cachedContexts = await loadContextCache<SectionContext>(runId);
+      if (cachedContexts && cachedContexts.length >= state.contextSummaries.length) {
+        onProgress?.("contexts", 41, "Reusing prepared evidence from this run...");
+        return {
+          contextCount: cachedContexts.length,
+          sectionKeys: state.contextSummaries.map((summary) => summary.sectionKey),
+          patterns: state.themeAnalysis?.patterns.length || 0,
+          totalFindings: 0,
+        };
+      }
     }
 
     const papers = await getPapersByIds(state.paperIds);
