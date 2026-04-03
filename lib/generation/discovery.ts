@@ -29,6 +29,7 @@ import type { PaperWithAuthors, PaperSource, OriginalResearchConfig } from '@/ty
 import type { UnifiedSearchOptions } from '@/lib/services/search-orchestrator'
 import { unifiedSearch } from '@/lib/search'
 import { buildEnhancedSearchQueries } from '@/lib/search/query-rewrite'
+import { quickRelevanceCheck } from '@/lib/search/semantic-rerank'
 
 function getPaperRelevanceScore(paper: PaperWithAuthors): number {
   const metadata = (paper.metadata || {}) as Record<string, unknown>
@@ -303,7 +304,19 @@ export async function collectPapers(
         console.log(`   ✅ Reached target PDF-backed paper count (${finalPdfCount})`)
       }
 
-      const rankedPdfCandidates = allPapers
+      const topicFilteredPapers = allPapers.filter((paper) =>
+        quickRelevanceCheck(topic, paper.title, paper.abstract, discipline)
+      )
+      if (topicFilteredPapers.length > 0) {
+        const dropped = allPapers.length - topicFilteredPapers.length
+        if (dropped > 0) {
+          console.log(`🎯 Final topic filter: dropped ${dropped}/${allPapers.length} broad-match papers before selection`)
+        }
+      } else {
+        console.warn('⚠️ Final topic filter removed all discovered papers; keeping broad-match discovery results as fallback')
+      }
+
+      const rankedPdfCandidates = (topicFilteredPapers.length > 0 ? topicFilteredPapers : allPapers)
         .filter(hasPdfUrl)
         .sort((a, b) => getPaperSelectionScore(b) - getPaperSelectionScore(a))
       discoveredPapers = rankedPdfCandidates.slice(0, remainingPdfSlots)

@@ -29,7 +29,7 @@ const SECTION_TYPE_PATTERNS: Array<[SectionType, RegExp]> = [
   ['literature', /literature|review|thematic|related|theoretical/],
   ['methodology', /method|approach|design|materials|procedure/],
   ['results', /result|finding|data\s?analysis/],
-  ['discussion', /discussion|interpret|implication/],
+  ['discussion', /discussion|interpret|implication|impact|response|challenge|contradiction|mechanism/],
   ['conclusion', /conclusion|summary|future/],
   ['non-content', /appendix|appendices|reference|bibliograph|acknowledge|supplementary/],
 ]
@@ -45,7 +45,9 @@ export function inferSectionType(key: string, title?: string): SectionType {
     if (pattern.test(normalized)) return type
   }
 
-  return 'non-content'
+  // Unknown sections are more often substantive body/discussion sections than
+  // true non-content sections, so reserve non-content for explicit matches.
+  return 'discussion'
 }
 
 /**
