@@ -1560,6 +1560,100 @@ function extractXofYClaims(text: string): Array<{ x: number; y: number }> {
   return parsed
 }
 
+function replaceXofYClaims(
+  text: string | undefined,
+  replacement: { x: number; y: number }
+): string | undefined {
+  if (!text) return text
+  return text.replace(
+    /(\d+)\s+of\s+(\d+)/gi,
+    `${replacement.x} of ${replacement.y}`
+  )
+}
+
+function repairPatternDenominatorClaims(pattern: Pattern): Pattern {
+  const replacement = {
+    x: pattern.support.count,
+    y: pattern.support.total,
+  }
+
+  return {
+    ...pattern,
+    claim: replaceXofYClaims(pattern.claim, replacement) || pattern.claim,
+    summary: replaceXofYClaims(pattern.summary, replacement),
+    values: pattern.values
+      ? {
+          ...pattern.values,
+          summary: replaceXofYClaims(pattern.values.summary, replacement) || pattern.values.summary,
+        }
+      : undefined,
+  }
+}
+
+function filterValidPaperSupports(
+  papers: PaperSupport[],
+  findingMap: Map<string, FindingWithPaper>,
+  paperIds: Set<string>
+): PaperSupport[] {
+  return dedupePaperSupports(
+    papers.filter((paperSupport) => {
+      if (!paperIds.has(paperSupport.paperId)) return false
+      const finding = findingMap.get(paperSupport.findingId)
+      if (!finding) return false
+      return finding.paperId === paperSupport.paperId
+    })
+  )
+}
+
+function repairAnalysisIntegrity(result: AnalysisResult, findings: FindingWithPaper[]): AnalysisResult {
+  const findingMap = new Map(findings.map(finding => [finding.id, finding]))
+  const paperIds = new Set(findings.map(finding => finding.paperId))
+
+  const repairedPatterns = result.patterns.map((pattern) => {
+    const validSupports = filterValidPaperSupports(pattern.support.papers, findingMap, paperIds)
+    const supportCount = countUniqueSupportPapers(validSupports)
+    const repairedPattern: Pattern = {
+      ...pattern,
+      support: {
+        papers: validSupports,
+        count: supportCount,
+        total: pattern.support.total,
+      },
+      strength: deriveStrengthFromSupport(supportCount, pattern.support.total),
+    }
+
+    return repairPatternDenominatorClaims(repairedPattern)
+  })
+
+  const repairedContradictions = result.contradictions
+    .map((contradiction) => {
+      const repairedSides = contradiction.sides
+        .map((side) => ({
+          ...side,
+          papers: filterValidPaperSupports(side.papers, findingMap, paperIds),
+        }))
+        .filter((side) => side.papers.length > 0)
+
+      return {
+        ...contradiction,
+        sides: repairedSides,
+      }
+    })
+    .filter((contradiction) => contradiction.sides.length >= 2)
+
+  const repairedGaps = result.gaps.map((gap) => ({
+    ...gap,
+    suggestedBy: dedupeStrings(gap.suggestedBy.filter((paperId) => paperIds.has(paperId))),
+  }))
+
+  return {
+    ...result,
+    patterns: repairedPatterns,
+    contradictions: repairedContradictions,
+    gaps: repairedGaps,
+  }
+}
+
 function validateAnalysisIntegrity(result: AnalysisResult, findings: FindingWithPaper[]): string[] {
   const findingMap = new Map(findings.map(finding => [finding.id, finding]))
   const paperIds = new Set(findings.map(finding => finding.paperId))
@@ -1665,8 +1759,8 @@ function validateAnalysisIntegrity(result: AnalysisResult, findings: FindingWith
 }
 
 function enforceAnalysisIntegrity(result: AnalysisResult, findings: FindingWithPaper[]): AnalysisResult {
-  const errors = validateAnalysisIntegrity(result, findings)
-  if (errors.length === 0) {
+  const initialErrors = validateAnalysisIntegrity(result, findings)
+  if (initialErrors.length === 0) {
     return {
       ...result,
       diagnostics: {
@@ -1676,9 +1770,25 @@ function enforceAnalysisIntegrity(result: AnalysisResult, findings: FindingWithP
     }
   }
 
+  const repairedResult = repairAnalysisIntegrity(result, findings)
+  const remainingErrors = validateAnalysisIntegrity(repairedResult, findings)
+  if (remainingErrors.length === 0) {
+    console.warn(
+      `⚠️ Analysis integrity issues repaired (${initialErrors.length} issue(s))`
+    )
+    return {
+      ...repairedResult,
+      diagnostics: {
+        ...(repairedResult.diagnostics || {}),
+        integrityRepairApplied: true,
+        integrityErrors: initialErrors,
+      },
+    }
+  }
+
   const failureMessage =
-    `Analysis integrity validation failed (${errors.length} issue(s)):\n` +
-    errors.slice(0, 10).join('\n')
+    `Analysis integrity validation failed (${remainingErrors.length} issue(s)):\n` +
+    remainingErrors.slice(0, 10).join('\n')
 
   if (STRICT_INTEGRITY_MODE) {
     throw new Error(failureMessage)
@@ -1686,11 +1796,11 @@ function enforceAnalysisIntegrity(result: AnalysisResult, findings: FindingWithP
   console.error(`❌ ${failureMessage}`)
 
   return {
-    ...result,
+    ...repairedResult,
     diagnostics: {
-      ...(result.diagnostics || {}),
-      integrityRepairApplied: false,
-      integrityErrors: errors,
+      ...(repairedResult.diagnostics || {}),
+      integrityRepairApplied: true,
+      integrityErrors: remainingErrors,
     },
   }
 }
