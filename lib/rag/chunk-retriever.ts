@@ -86,6 +86,7 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
 export interface RetrievalRequest {
   query: string
   paperIds: string[]
+  queryEmbedding?: number[]
   config?: Partial<RetrievalConfig>
 }
 
@@ -144,7 +145,7 @@ export class ChunkRetriever {
     }
     
     // Step 1: Initial retrieval
-    const rawChunks = await this.searchChunks(request.query, request.paperIds, config)
+    const rawChunks = await this.searchChunks(request.query, request.paperIds, config, request.queryEmbedding)
     const retrievalTime = Date.now() - startTime
     
     if (rawChunks.length === 0) {
@@ -393,19 +394,20 @@ export class ChunkRetriever {
   private async searchChunks(
     query: string, 
     paperIds: string[], 
-    config: RetrievalConfig
+    config: RetrievalConfig,
+    embedding?: number[]
   ): Promise<RetrievedChunk[]> {
     // Use service client to bypass RLS - this runs in background generation jobs
     const supabase = createServiceClient()
     
     switch (config.mode) {
       case 'hybrid':
-        return this.hybridSearch(query, paperIds, config, supabase)
+        return this.hybridSearch(query, paperIds, config, supabase, embedding)
       case 'keyword':
         return this.keywordSearch(query, paperIds, config, supabase)
       case 'vector':
       default:
-        return this.vectorSearch(query, paperIds, config, supabase)
+        return this.vectorSearch(query, paperIds, config, supabase, embedding)
     }
   }
   
@@ -422,11 +424,12 @@ export class ChunkRetriever {
     query: string,
     paperIds: string[],
     config: RetrievalConfig,
-    supabase: ReturnType<typeof createServiceClient>
+    supabase: ReturnType<typeof createServiceClient>,
+    embedding?: number[]
   ): Promise<RetrievedChunk[]> {
     // Run vector and keyword searches in parallel
     const [vectorResults, keywordResults] = await Promise.all([
-      this.vectorSearch(query, paperIds, config, supabase),
+      this.vectorSearch(query, paperIds, config, supabase, embedding),
       this.keywordSearch(query, paperIds, config, supabase)
     ])
     

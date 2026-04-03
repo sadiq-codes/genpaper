@@ -9,6 +9,7 @@ import {
   type EvidenceStrength
 } from './base-retrieval'
 import { ChunkRetriever } from './chunk-retriever'
+import { getEmbeddingsWithCache } from './embedding-cache'
 import { ContextBuilder } from './context-builder'
 import { getPaperProcessingStatusMap, isChunkReadyStatus } from '@/lib/content'
 import { createDeterministicChunkId } from '@/lib/utils/deterministic-id'
@@ -41,6 +42,7 @@ import type { GeneratedOutline, SectionContext } from '@/lib/prompts/types'
 export interface GenerationRetrievalParams {
   query: string
   paperIds: string[]
+  queryEmbedding?: number[]
   limit?: number
   minScore?: number
   /** Search mode: 'hybrid' (default), 'vector', or 'keyword' */
@@ -191,6 +193,77 @@ function getContextBuilder(params: GenerationRetrievalParams): ContextBuilder {
   return contextBuilderInstance
 }
 
+interface RetrievalConfidence {
+  avgScore: number
+  avgVectorScore: number
+  distinctPapers: number
+  strongVectorChunks: number
+  isLowConfidence: boolean
+  isVeryLowConfidence: boolean
+}
+
+function assessRetrievalConfidence(chunks: RetrievedChunk[]): RetrievalConfidence {
+  if (chunks.length === 0) {
+    return {
+      avgScore: 0,
+      avgVectorScore: 0,
+      distinctPapers: 0,
+      strongVectorChunks: 0,
+      isLowConfidence: true,
+      isVeryLowConfidence: true,
+    }
+  }
+
+  const avgScore =
+    chunks.reduce((sum, chunk) => sum + normalizeScore(chunk.score), 0) / chunks.length
+  const vectorScores = chunks
+    .map((chunk) => normalizeScore(chunk.vector_score))
+    .filter((score) => score > 0)
+  const avgVectorScore = vectorScores.length > 0
+    ? vectorScores.reduce((sum, score) => sum + score, 0) / vectorScores.length
+    : 0
+  const distinctPapers = new Set(chunks.map((chunk) => chunk.paper_id)).size
+  const strongVectorChunks = chunks.filter((chunk) => normalizeScore(chunk.vector_score) >= 0.18).length
+
+  return {
+    avgScore,
+    avgVectorScore,
+    distinctPapers,
+    strongVectorChunks,
+    isLowConfidence:
+      avgVectorScore < 0.12 &&
+      strongVectorChunks < Math.min(3, chunks.length) &&
+      avgScore < 0.12,
+    isVeryLowConfidence:
+      avgVectorScore < 0.08 &&
+      strongVectorChunks === 0 &&
+      avgScore < 0.08,
+  }
+}
+
+function buildNarrowRetrievalQuery(query: string): string {
+  const [title] = query.split(':', 1)
+  const trimmedTitle = title?.trim() || ''
+  if (trimmedTitle.length >= 8) {
+    return trimmedTitle
+  }
+
+  const firstSentence = query.split(/[.!?]/, 1)[0]?.trim() || ''
+  return firstSentence.length >= 8 ? firstSentence : query.trim()
+}
+
+function pruneLowConfidenceChunks<T extends RetrievedChunk>(chunks: T[]): T[] {
+  const pruned = chunks.filter((chunk) => {
+    const vectorScore = normalizeScore(chunk.vector_score)
+    const rerankScore = typeof chunk.metadata?.rerank_score === 'number'
+      ? Number(chunk.metadata.rerank_score)
+      : 0
+    return vectorScore >= 0.12 || rerankScore >= 0.2 || normalizeScore(chunk.score) >= 0.12
+  })
+
+  return pruned.length >= Math.min(5, chunks.length) ? pruned : chunks
+}
+
 // =============================================================================
 // MAIN SERVICE
 // =============================================================================
@@ -238,7 +311,8 @@ export class GenerationContextService {
     
     const retrievalResult = await retriever.retrieve({
       query,
-      paperIds
+      paperIds,
+      queryEmbedding: params.queryEmbedding
     })
     
     // Get paper metadata
@@ -301,7 +375,8 @@ export class GenerationContextService {
     topic: string,
     paperIds: string[],
     chunkLimit: number,
-    allPapers: PaperWithAuthors[]
+    allPapers: PaperWithAuthors[],
+    queryEmbedding?: number[]
   ): Promise<PaperChunk[]> {
     if (!topic || topic.trim().length < 10) {
       throw new ContentRetrievalError('Topic must be at least 10 characters long')
@@ -328,6 +403,7 @@ export class GenerationContextService {
       // INCREASED minimum from 60 to 90: More material for synthesis
       const retrievalResult = await this.retrieve({
         query: topic,
+        queryEmbedding,
         paperIds: papersWithChunks,
         limit: Math.max(chunkLimit * 2, 90),
         // REDUCED from 0.15 to 0.1: Allow more papers through for niche topics
@@ -338,6 +414,45 @@ export class GenerationContextService {
         useCompression: false // Don't compress for getRelevantChunks
       })
       retrievedChunks = retrievalResult.chunks
+
+      const initialConfidence = assessRetrievalConfidence(retrievedChunks)
+      if (initialConfidence.isLowConfidence) {
+        const narrowQuery = buildNarrowRetrievalQuery(topic)
+
+        if (narrowQuery && narrowQuery !== topic) {
+          console.warn(
+            `⚠️ Low-confidence retrieval for "${topic.slice(0, 60)}..." (avgScore=${initialConfidence.avgScore.toFixed(3)}, avgVector=${initialConfidence.avgVectorScore.toFixed(3)}). Retrying with narrower query "${narrowQuery.slice(0, 60)}..."`
+          )
+
+          const [narrowQueryEmbedding] = await getEmbeddingsWithCache([narrowQuery])
+          const narrowedResult = await this.retrieve({
+            query: narrowQuery,
+            queryEmbedding: narrowQueryEmbedding,
+            paperIds: papersWithChunks,
+            limit: Math.max(chunkLimit * 2, 70),
+            minScore: 0.16,
+            mode: 'vector',
+            maxChunksPerPaper: 2,
+            minDistinctPapers: Math.min(10, papersWithChunks.length),
+            rerankTopK: 40,
+            useCompression: false
+          })
+          const narrowedConfidence = assessRetrievalConfidence(narrowedResult.chunks)
+          const shouldUseNarrowed =
+            narrowedResult.chunks.length > 0 && (
+              narrowedConfidence.avgVectorScore > initialConfidence.avgVectorScore + 0.03 ||
+              narrowedConfidence.strongVectorChunks > initialConfidence.strongVectorChunks ||
+              narrowedConfidence.avgScore > initialConfidence.avgScore + 0.03
+            )
+
+          if (shouldUseNarrowed) {
+            retrievedChunks = narrowedResult.chunks
+            console.log(
+              `✅ Narrow-query retry improved retrieval confidence (${initialConfidence.avgVectorScore.toFixed(3)} → ${narrowedConfidence.avgVectorScore.toFixed(3)})`
+            )
+          }
+        }
+      }
     } else {
       console.warn('⚠️ No chunked papers available during retrieval. Using abstract-only fallback.')
     }
@@ -348,10 +463,25 @@ export class GenerationContextService {
       ...chunk,
       id: chunk.id || createDeterministicChunkId(chunk.paper_id, chunk.content, index),
       paper: allPapers.find(p => p.id === chunk.paper_id),
-      metadata: { source: 'generation_context_service', score: chunk.score },
+      metadata: {
+        ...chunk.metadata,
+        source: 'generation_context_service',
+        score: chunk.score
+      },
       // Default to full_text for database chunks (they come from PDF ingestion)
       evidence_strength: (chunk.evidence_strength || 'full_text') as EvidenceStrength
     }))
+
+    const prePruneConfidence = assessRetrievalConfidence(allChunks)
+    if (prePruneConfidence.isVeryLowConfidence) {
+      const prunedChunks = pruneLowConfidenceChunks(allChunks)
+      if (prunedChunks.length !== allChunks.length) {
+        console.warn(
+          `⚠️ Very low-confidence retrieval (${prePruneConfidence.avgScore.toFixed(3)} avg score). Pruned ${allChunks.length - prunedChunks.length} weak chunks before fallback handling.`
+        )
+        allChunks = prunedChunks
+      }
+    }
     
     const originalCount = allChunks.length
     
@@ -375,7 +505,11 @@ export class GenerationContextService {
           ...chunk,
           id: chunk.id || createDeterministicChunkId(chunk.paper_id, chunk.content, index),
           paper: allPapers.find(p => p.id === chunk.paper_id),
-          metadata: { source: 'generation_context_service', score: chunk.score },
+          metadata: {
+            ...chunk.metadata,
+            source: 'generation_context_service',
+            score: chunk.score
+          },
           evidence_strength: (chunk.evidence_strength || 'full_text') as EvidenceStrength
         }))
         .filter(chunk => {
@@ -474,21 +608,28 @@ export class GenerationContextService {
     allPapers: PaperWithAuthors[] = []
   ): Promise<SectionContext[]> {
     const allPaperIds = allPapers.map(p => p.id)
+    const sectionQueries = outline.sections.map(
+      section => `${section.title}: ${(section.keyPoints || []).join('. ')}`
+    )
     
     console.log(`📊 Building section contexts for ${outline.sections.length} sections...`)
+    const sectionEmbeddings = await getEmbeddingsWithCache(sectionQueries)
+    console.log(`📊 Batched ${sectionEmbeddings.length} section query embeddings`)
 
-    const sectionContexts = await Promise.all(outline.sections.map(async (section) => {
+    const sectionContexts = await Promise.all(outline.sections.map(async (section, sectionIndex) => {
       let contextChunks: PaperChunk[] = []
       try {
         const startTime = Date.now()
+        const sectionQuery = sectionQueries[sectionIndex] || `${section.title}: ${(section.keyPoints || []).join('. ')}`
         
         // Retrieval-only: do NOT require or rely on outline paper assignment.
         // Always retrieve from the full paper pool; the retriever + reranker determine relevance.
         contextChunks = await this.getRelevantChunks(
-          `${section.title}: ${(section.keyPoints || []).join('. ')}`,
+          sectionQuery,
           allPaperIds,
           120, // Larger-than-final pool - token budget determines final selection
-          allPapers
+          allPapers,
+          sectionEmbeddings[sectionIndex]
         )
         
         const retrievalTime = Date.now() - startTime
