@@ -23,9 +23,10 @@ import { type SectionType, inferSectionType, getPaperTypeConfig } from '@/lib/ge
 export function isLiteratureFocusedSection(
   sectionKey: string,
   paperType: PaperTypeKey,
-  sectionType?: SectionType
+  sectionType?: SectionType,
+  sectionTitle?: string
 ): boolean {
-  const type = sectionType ?? inferSectionType(sectionKey)
+  const type = sectionType ?? inferSectionType(sectionKey, sectionTitle)
 
   if (type === 'non-content') return false
 
@@ -59,7 +60,7 @@ export function buildConstraintsFromProfile(profile: PaperProfile): StructuralCo
     name: section.title || section.key,
     isLiteratureFocused: section.isLiteratureFocused !== undefined 
       ? section.isLiteratureFocused 
-      : isLiteratureFocusedSection(section.key, paperType, section.sectionType),
+      : isLiteratureFocusedSection(section.key, paperType, section.sectionType, section.title),
     required: true,
     purpose: section.purpose,
     minWords: section.minWords,
@@ -118,7 +119,12 @@ export function annotateOutlineSections(
 }> {
   return outlineSections.map(section => ({
     ...section,
-    isLiteratureFocused: isLiteratureFocusedSection(section.sectionKey, paperType, section.sectionType)
+    isLiteratureFocused: isLiteratureFocusedSection(
+      section.sectionKey,
+      paperType,
+      section.sectionType,
+      section.title
+    )
   }))
 }
 

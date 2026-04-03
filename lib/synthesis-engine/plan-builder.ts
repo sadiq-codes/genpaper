@@ -14,7 +14,7 @@
  * @module lib/synthesis-engine/plan-builder
  */
 
-import { generateText } from 'ai'
+import { generateObject } from 'ai'
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { getLanguageModel } from '@/lib/ai/vercel-client'
@@ -28,6 +28,20 @@ import type {
 import { type SectionType, inferSectionType } from '@/lib/generation/paper-type-config'
 
 const PLAN_BUILDER_TIMEOUT_MS = 90_000
+const PLAN_BUILDER_SCHEMA_RETRIES = 2
+const PLAN_BUILDER_TEMPERATURE = 0.1
+const PLAN_BUILDER_MAX_OUTPUT_TOKENS = 8_000
+const PLAN_BUILDER_RETRY_TOKEN_BUDGETS = [
+  PLAN_BUILDER_MAX_OUTPUT_TOKENS,
+  10_000,
+  12_000,
+] as const
+const MAX_PATTERN_PAPER_REFS_IN_PROMPT = 6
+const MAX_CONTRADICTION_PAPER_REFS_PER_SIDE = 4
+const MAX_PAPERS_IN_PROMPT = 60
+const MAX_PLANNER_INPUT_PAPERS = 18
+const MAX_SUMMARY_LENGTH = 220
+const MAX_TITLE_LENGTH = 120
 
 // =============================================================================
 // Zod Schema - Flexible, No Hardcoded Enums
@@ -35,33 +49,33 @@ const PLAN_BUILDER_TIMEOUT_MS = 90_000
 
 const PatternPlanSchema = z.object({
   patternId: z.string().describe('ID of the pattern from analysis'),
-  claim: z.string().describe('The pattern claim to discuss'),
-  importance: z.string().describe('How important: "central", "supporting", "minor", etc.'),
-  presentationApproach: z.string().describe('How to present this pattern'),
+  claim: z.string().max(240).describe('The pattern claim to discuss'),
+  importance: z.string().max(40).describe('How important: "central", "supporting", "minor", etc.'),
+  presentationApproach: z.string().max(220).describe('How to present this pattern'),
   data: z.object({
-    supportStatement: z.string().describe('Statement about support, e.g., "6 of 8 studies (75%) found..."'),
-    valuesSummary: z.string().nullable().describe('Summary of quantitative values if available'),
-    contextNotes: z.string().nullable().describe('Important context to mention')
+    supportStatement: z.string().max(180).describe('Statement about support, e.g., "6 of 8 studies (75%) found..."'),
+    valuesSummary: z.string().max(180).nullable().describe('Summary of quantitative values if available'),
+    contextNotes: z.string().max(220).nullable().describe('Important context to mention')
   }),
   supportingPaperIds: z.array(z.string())
 })
 
 const ContradictionPlanSchema = z.object({
   contradictionId: z.string().describe('ID of the contradiction from analysis'),
-  description: z.string().describe('What the contradiction is'),
-  presentationApproach: z.string().describe('How to present this fairly'),
-  resolutionStrategy: z.string().nullable().describe('How to explain or resolve'),
+  description: z.string().max(240).describe('What the contradiction is'),
+  presentationApproach: z.string().max(220).describe('How to present this fairly'),
+  resolutionStrategy: z.string().max(220).nullable().describe('How to explain or resolve'),
   sides: z.array(z.object({
-    position: z.string(),
+    position: z.string().max(180),
     paperIds: z.array(z.string())
   }))
 })
 
 const GapPlanSchema = z.object({
   gapId: z.string().describe('ID of the gap from analysis'),
-  description: z.string().describe('What the gap is'),
-  importance: z.string().describe('Why this gap matters'),
-  suggestedFutureWork: z.string().nullable().describe('Potential research to address it')
+  description: z.string().max(220).describe('What the gap is'),
+  importance: z.string().max(180).describe('Why this gap matters'),
+  suggestedFutureWork: z.string().max(220).nullable().describe('Potential research to address it')
 })
 
 const SectionPlanSchema = z.object({
@@ -69,23 +83,23 @@ const SectionPlanSchema = z.object({
   outlineSectionKey: z.string().describe('The outline section key this maps to, e.g., "introduction", "literatureReview", "discussion"'),
   isLiteratureFocused: z.boolean().describe('True if this section discusses existing literature (should get synthesis enrichment)'),
   
-  title: z.string().describe('Section title'),
-  purpose: z.string().describe('What this section accomplishes'),
+  title: z.string().max(120).describe('Section title'),
+  purpose: z.string().max(220).describe('What this section accomplishes'),
   content: z.object({
     patterns: z.array(PatternPlanSchema).describe('Patterns to discuss in this section (only for literature-focused sections)'),
     contradictions: z.array(ContradictionPlanSchema).describe('Contradictions to discuss'),
     gaps: z.array(GapPlanSchema).describe('Gaps to discuss'),
-    additionalPoints: z.array(z.string()).describe('Other points to make')
+    additionalPoints: z.array(z.string().max(160)).describe('Other points to make')
   }),
   papers: z.object({
     primary: z.array(z.string()).describe('Must cite these paper IDs'),
     supporting: z.array(z.string()).describe('Can cite these if needed')
   }),
   writingGuidance: z.object({
-    approach: z.string().describe('How to write this section: synthesis, critical analysis, comparison, etc.'),
-    tone: z.string().describe('Tone: objective, evaluative, exploratory, etc.'),
-    transitionFrom: z.string().nullable().describe('How to connect from previous section'),
-    transitionTo: z.string().nullable().describe('How to lead into next section'),
+    approach: z.string().max(220).describe('How to write this section: synthesis, critical analysis, comparison, etc.'),
+    tone: z.string().max(60).describe('Tone: objective, evaluative, exploratory, etc.'),
+    transitionFrom: z.string().max(180).nullable().describe('How to connect from previous section'),
+    transitionTo: z.string().max(180).nullable().describe('How to lead into next section'),
     // NEW: Structured paragraph guidance
     paragraphStrategy: z.enum([
       'pattern_first',       // Lead with main pattern, then supporting evidence
@@ -102,72 +116,86 @@ const SectionPlanSchema = z.object({
   }),
   targetWordCount: z.number().describe('Target word count for this section'),
   keyPointsToMake: z.array(z.object({
-    point: z.string().describe('The key point to make'),
+    point: z.string().max(180).describe('The key point to make'),
     supportingPatternIds: z.array(z.string()).describe('Pattern IDs that support this point'),
     requiredCitations: z.array(z.string()).describe('Paper IDs that MUST be cited for this point')
   })).min(2).describe('REQUIRED: At least 2-3 key points per section. Each point should be a specific claim the section will make.'),
   // NEW: Repetition prevention
-  mustNotRepeat: z.array(z.string()).describe('Key claims/points already established in previous sections - do not restate')
+  mustNotRepeat: z.array(z.string().max(180)).describe('Key claims/points already established in previous sections - do not restate')
 })
 
 const SynthesisPlanSchema = z.object({
   overview: z.object({
-    title: z.string().describe('Suggested title for the synthesis'),
-    abstract: z.string().describe('Brief overview of what the synthesis covers'),
+    title: z.string().max(160).describe('Suggested title for the synthesis'),
+    abstract: z.string().max(300).describe('Brief overview of what the synthesis covers'),
     totalSections: z.number(),
     totalWordCount: z.number(),
-    narrativeStrategy: z.string().describe('Overall approach to the synthesis')
+    narrativeStrategy: z.string().max(220).describe('Overall approach to the synthesis')
   }),
   sections: z.array(SectionPlanSchema),
   globalGuidance: z.object({
-    audienceLevel: z.string().describe('Target audience'),
-    writingStyle: z.string().describe('Writing style to use'),
-    citationApproach: z.string().describe('How to handle citations'),
-    keyThemes: z.array(z.string()).describe('Themes running through the synthesis')
+    audienceLevel: z.string().max(80).describe('Target audience'),
+    writingStyle: z.string().max(120).describe('Writing style to use'),
+    citationApproach: z.string().max(160).describe('How to handle citations'),
+    keyThemes: z.array(z.string().max(120)).describe('Themes running through the synthesis')
   })
 })
 
-function normalizePlannerShape(input: unknown): unknown {
-  if (!input || typeof input !== 'object') return input
-  const obj = input as Record<string, unknown>
-  const sections = Array.isArray(obj.sections) ? obj.sections : []
+function truncateForPrompt(value: string | null | undefined, maxLength: number): string {
+  if (!value) return ''
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`
+}
 
-  const normalizedSections = sections.map((section) => {
-    if (!section || typeof section !== 'object') return section
-    const s = { ...(section as Record<string, unknown>) }
+function formatPaperRefs(
+  refs: Array<{ paperTitle: string; paperId: string }>,
+  limit: number
+): string {
+  const visible = refs
+    .slice(0, limit)
+    .map((ref) => `${truncateForPrompt(ref.paperTitle, 60)} (${ref.paperId})`)
 
-    // Some model responses return `papers` as array instead of object.
-    if (Array.isArray(s.papers)) {
-      s.papers = { primary: s.papers, supporting: [] }
-    } else if (!s.papers || typeof s.papers !== 'object') {
-      s.papers = { primary: [], supporting: [] }
-    } else {
-      const p = s.papers as Record<string, unknown>
-      s.papers = {
-        primary: Array.isArray(p.primary) ? p.primary : [],
-        supporting: Array.isArray(p.supporting) ? p.supporting : [],
-      }
-    }
-
-    // Ensure writingGuidance exists with safe defaults if shape drifts.
-    if (!s.writingGuidance || typeof s.writingGuidance !== 'object') {
-      s.writingGuidance = {
-        approach: 'Synthesize key evidence with clear transitions.',
-        tone: 'objective',
-        transitionFrom: null,
-        transitionTo: null,
-        paragraphStrategy: 'general_to_specific',
-        synthesisLevel: 'moderate',
-      }
-    }
-
-    return s
-  })
-
-  return {
-    ...obj,
-    sections: normalizedSections,
+  const remaining = refs.length - visible.length
+  if (remaining > 0) {
+    visible.push(`+${remaining} more`)
   }
+
+  return visible.join(', ')
+}
+
+function isSchemaValidationFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+
+  const err = error as {
+    name?: unknown
+    message?: unknown
+    cause?: unknown
+  }
+
+  const name = typeof err.name === 'string' ? err.name : ''
+  const message = typeof err.message === 'string' ? err.message.toLowerCase() : ''
+
+  if (
+    name === 'AI_TypeValidationError' ||
+    name === 'TypeValidationError' ||
+    name === 'AI_NoObjectGeneratedError' ||
+    name === 'NoObjectGeneratedError'
+  ) {
+    return true
+  }
+
+  if (
+    message.includes('schema') ||
+    message.includes('validation') ||
+    message.includes('type validation') ||
+    message.includes('no object generated') ||
+    message.includes('json')
+  ) {
+    return true
+  }
+
+  return err.cause ? isSchemaValidationFailure(err.cause) : false
 }
 
 function uniqueIds(ids: string[], limit = Number.POSITIVE_INFINITY): string[] {
@@ -182,6 +210,435 @@ function uniqueIds(ids: string[], limit = Number.POSITIVE_INFINITY): string[] {
   }
 
   return deduped
+}
+
+function uniqueStrings(values: string[], limit = Number.POSITIVE_INFINITY): string[] {
+  const deduped: string[] = []
+  const seen = new Set<string>()
+
+  for (const value of values) {
+    const normalized = value.replace(/\s+/g, ' ').trim()
+    if (!normalized) continue
+    const key = normalized.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(normalized)
+    if (deduped.length >= limit) break
+  }
+
+  return deduped
+}
+
+function compactSupportStatement(statement: string | undefined): string | undefined {
+  if (!statement) return undefined
+  const normalized = truncateForPrompt(statement, 120)
+  const countMatch = normalized.match(/(\d+\s+of\s+\d+\s+papers?(?:\s+\(\d+%\))?)/i)
+  return countMatch ? countMatch[1] : normalized
+}
+
+function isWeakPlannerText(value: string | undefined): boolean {
+  if (!value) return true
+  const normalized = value.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (!normalized) return true
+  if (normalized.length < 45) return true
+  const genericLeadIn =
+    /^(state|summarize|discuss|analyze|analyse|examine|review|present|describe|highlight|outline|explore|consider|address|cover)\b/
+  const hasEvidenceSignal =
+    /\b(\d+%?|\d+\s+of\s+\d+|pattern|contradiction|gap|evidence|citation|cross-study|compare|mechanism|limitation|support)\b/
+  return genericLeadIn.test(normalized) && !hasEvidenceSignal.test(normalized)
+}
+
+function isWeakKeyPoint(
+  keyPoint: SectionPlan['keyPointsToMake'][number],
+  isLiteratureFocused: boolean
+): boolean {
+  if (!keyPoint.point || isWeakPlannerText(keyPoint.point)) return true
+  if (!isLiteratureFocused) return false
+  return keyPoint.supportingPatternIds.length === 0 && keyPoint.requiredCitations.length === 0
+}
+
+function normalizeStructuredKeyPoints(
+  keyPoints: SectionPlan['keyPointsToMake'],
+  limit: number
+): SectionPlan['keyPointsToMake'] {
+  const deduped: SectionPlan['keyPointsToMake'] = []
+  const seen = new Set<string>()
+
+  for (const keyPoint of keyPoints) {
+    const point = keyPoint.point.replace(/\s+/g, ' ').trim()
+    if (!point) continue
+    const normalized = point.toLowerCase()
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    deduped.push({
+      point,
+      supportingPatternIds: uniqueIds(keyPoint.supportingPatternIds, 4),
+      requiredCitations: uniqueIds(keyPoint.requiredCitations, 4),
+    })
+    if (deduped.length >= limit) break
+  }
+
+  return deduped
+}
+
+function buildPatternKeyPoint(
+  pattern: SectionPlan['content']['patterns'][number]
+): SectionPlan['keyPointsToMake'][number] {
+  const support = compactSupportStatement(pattern.data.supportStatement)
+  const values = pattern.data.valuesSummary ? truncateForPrompt(pattern.data.valuesSummary, 48) : undefined
+  const evidenceTail = values
+    ? `, with reported values ${values}`
+    : support
+      ? `, supported by ${support}`
+      : ''
+  const point = `${truncateForPrompt(pattern.claim, 150)}${evidenceTail}`
+
+  return {
+    point: truncateForPrompt(point, 180),
+    supportingPatternIds: [pattern.patternId],
+    requiredCitations: uniqueIds(pattern.supportingPaperIds, 3),
+  }
+}
+
+function buildContradictionKeyPoint(
+  contradiction: SectionPlan['content']['contradictions'][number]
+): SectionPlan['keyPointsToMake'][number] {
+  return {
+    point: truncateForPrompt(`The literature remains divided on ${contradiction.description}`, 180),
+    supportingPatternIds: [],
+    requiredCitations: uniqueIds(contradiction.sides.flatMap(side => side.paperIds), 4),
+  }
+}
+
+function buildGapKeyPoint(
+  gap: SectionPlan['content']['gaps'][number]
+): SectionPlan['keyPointsToMake'][number] {
+  const point = gap.suggestedFutureWork
+    ? `A key uncertainty remains around ${gap.description}, pointing to ${truncateForPrompt(gap.suggestedFutureWork, 70)}`
+    : `A key uncertainty remains around ${gap.description}`
+  return {
+    point: truncateForPrompt(point, 180),
+    supportingPatternIds: [],
+    requiredCitations: [],
+  }
+}
+
+function buildEvidenceFirstApproach(
+  section: SectionPlan,
+  sectionType: SectionType
+): string {
+  if (section.content.contradictions.length > 0) {
+    return 'Structure the section around the main disagreement, compare the strongest evidence on each side, and then interpret why the studies diverge.'
+  }
+  if (section.content.gaps.length > 0 && section.content.patterns.length === 0) {
+    return 'Use the strongest established findings as context, then show where the literature still stops short and why those gaps matter.'
+  }
+  if (section.content.patterns.length > 0) {
+    return 'Build the section around the strongest findings, using representative evidence and only enough methodological caveat to sharpen the interpretation.'
+  }
+  if (sectionType === 'introduction') {
+    return 'Frame the stakes with the most relevant evidence, narrow to the review scope, and preview the logic of the synthesis without drifting into generic background.'
+  }
+  return 'Keep the section anchored in concrete findings and let the interpretation grow out of the evidence rather than generic summary.'
+}
+
+function strengthenPlannerSections(
+  sections: SectionPlan[]
+): {
+  rewrittenKeyPointSections: string[]
+  rewrittenApproachSections: string[]
+  expandedPrimarySections: string[]
+} {
+  const rewrittenKeyPointSections: string[] = []
+  const rewrittenApproachSections: string[] = []
+  const expandedPrimarySections: string[] = []
+  const claimsEstablished: string[] = []
+
+  for (const section of sections) {
+    const sectionType = inferSectionType(section.outlineSectionKey, section.title)
+    const existingKeyPoints = normalizeStructuredKeyPoints(section.keyPointsToMake, 4)
+    const preservedSpecific = existingKeyPoints.filter(kp => !isWeakKeyPoint(kp, section.isLiteratureFocused))
+
+    if (section.isLiteratureFocused) {
+      const derivedKeyPoints: SectionPlan['keyPointsToMake'] = []
+      const patternLimit = sectionType === 'conclusion' ? 1 : 2
+      const contradictionLimit = sectionType === 'introduction' ? 0 : 1
+      const gapLimit = sectionType === 'discussion' || sectionType === 'conclusion' ? 2 : 1
+
+      derivedKeyPoints.push(...section.content.patterns.slice(0, patternLimit).map(buildPatternKeyPoint))
+      derivedKeyPoints.push(...section.content.contradictions.slice(0, contradictionLimit).map(buildContradictionKeyPoint))
+      derivedKeyPoints.push(...section.content.gaps.slice(0, gapLimit).map(buildGapKeyPoint))
+
+      const strengthened = normalizeStructuredKeyPoints(
+        [...preservedSpecific, ...derivedKeyPoints],
+        4
+      )
+
+      const evidenceAnchoredCount = existingKeyPoints.filter(
+        kp => kp.supportingPatternIds.length > 0 || kp.requiredCitations.length > 0
+      ).length
+      const shouldRewriteKeyPoints =
+        strengthened.length >= 2 &&
+        (
+          existingKeyPoints.length < 2 ||
+          evidenceAnchoredCount < Math.min(2, existingKeyPoints.length) ||
+          existingKeyPoints.every(kp => isWeakKeyPoint(kp, true))
+        )
+
+      if (shouldRewriteKeyPoints) {
+        section.keyPointsToMake = strengthened
+        rewrittenKeyPointSections.push(section.title)
+      } else {
+        section.keyPointsToMake = existingKeyPoints
+      }
+    } else {
+      section.keyPointsToMake = existingKeyPoints
+    }
+
+    if (isWeakPlannerText(section.writingGuidance.approach)) {
+      section.writingGuidance.approach = buildEvidenceFirstApproach(section, sectionType)
+      rewrittenApproachSections.push(section.title)
+    }
+
+    const evidenceDrivenPrimary = uniqueIds([
+      ...section.keyPointsToMake.flatMap(keyPoint => keyPoint.requiredCitations),
+      ...section.content.patterns.flatMap(pattern => pattern.supportingPaperIds),
+      ...section.content.contradictions.flatMap(contradiction => contradiction.sides.flatMap(side => side.paperIds)),
+    ], section.isLiteratureFocused ? 10 : 5)
+
+    const mergedPrimary = uniqueIds([...evidenceDrivenPrimary, ...section.papers.primary], section.isLiteratureFocused ? 10 : 5)
+    if (mergedPrimary.some(paperId => !section.papers.primary.includes(paperId))) {
+      expandedPrimarySections.push(section.title)
+    }
+    section.papers.primary = mergedPrimary
+    section.papers.supporting = uniqueIds(
+      [...section.papers.supporting, ...section.papers.primary].filter(id => !section.papers.primary.includes(id)),
+      12
+    )
+
+    section.mustNotRepeat = claimsEstablished.length > 0 ? uniqueStrings(claimsEstablished, 12) : []
+    claimsEstablished.push(...section.keyPointsToMake.map(keyPoint => keyPoint.point))
+  }
+
+  return {
+    rewrittenKeyPointSections,
+    rewrittenApproachSections,
+    expandedPrimarySections,
+  }
+}
+
+type PlannerSectionEvidenceAssignment = {
+  outlineSectionKey: string
+  title: string
+  sectionType: SectionType
+  isLiteratureFocused: boolean
+  patternIds: string[]
+  contradictionIds: string[]
+  gapIds: string[]
+  paperIds: string[]
+}
+
+const PLANNER_TOKEN_STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'from', 'that', 'this', 'these', 'those', 'into',
+  'within', 'across', 'about', 'under', 'over', 'between', 'during', 'after',
+  'before', 'study', 'studies', 'section', 'marine', 'heatwave', 'heatwaves',
+  'coastal', 'species', 'effects', 'effect', 'impact', 'impacts'
+])
+
+function tokenizePlannerText(value: string | undefined): string[] {
+  if (!value) return []
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map(token => token.trim())
+    .filter(token => token.length >= 4 && !PLANNER_TOKEN_STOPWORDS.has(token))
+}
+
+function scoreTokenOverlap(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) return 0
+  const rightSet = new Set(right)
+  let overlap = 0
+  for (const token of left) {
+    if (rightSet.has(token)) overlap += 1
+  }
+  return overlap
+}
+
+function getSectionPatternQuota(sectionType: SectionType): number {
+  switch (sectionType) {
+    case 'introduction':
+      return 2
+    case 'conclusion':
+      return 2
+    case 'discussion':
+      return 3
+    case 'literature':
+      return 4
+    default:
+      return 3
+  }
+}
+
+function scorePatternForSection(
+  section: {
+    sectionType: SectionType
+    title: string
+    sectionKey: string
+    keyPoints?: string[]
+  },
+  pattern: SynthesisPlanInput['analysis']['patterns'][number],
+  assignedCount: number
+): number {
+  const sectionTokens = tokenizePlannerText(
+    `${section.sectionKey} ${section.title} ${(section.keyPoints || []).join(' ')}`
+  )
+  const patternTokens = tokenizePlannerText(
+    `${pattern.claim} ${pattern.summary} ${pattern.direction || ''} ${pattern.limitations || ''}`
+  )
+  const overlap = scoreTokenOverlap(sectionTokens, patternTokens)
+  const supportRatio = pattern.support.total > 0 ? pattern.support.count / pattern.support.total : 0
+  let score = overlap * 4 + pattern.confidence * 3 + supportRatio * 2
+
+  switch (section.sectionType) {
+    case 'literature':
+      score += 2
+      break
+    case 'discussion':
+      score += pattern.limitations ? 1.5 : 0.5
+      break
+    case 'introduction':
+      score += supportRatio >= 0.5 ? 1 : 0
+      break
+    case 'conclusion':
+      score += pattern.confidence >= 0.75 ? 1 : 0
+      break
+    default:
+      break
+  }
+
+  const quotaPenalty = assignedCount / Math.max(getSectionPatternQuota(section.sectionType), 1)
+  return score - quotaPenalty * 2
+}
+
+function chooseBestSectionIndex(
+  scores: number[]
+): number {
+  let bestIndex = 0
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (let i = 0; i < scores.length; i++) {
+    if (scores[i] > bestScore) {
+      bestScore = scores[i]
+      bestIndex = i
+    }
+  }
+  return bestIndex
+}
+
+function buildPlannerSectionEvidenceAssignments(
+  input: SynthesisPlanInput
+): PlannerSectionEvidenceAssignment[] {
+  const { analysis, papers, outlineSections } = input
+  const paperById = new Map(papers.map(paper => [paper.id, paper]))
+
+  const assignments = outlineSections.map((section) => ({
+    outlineSectionKey: section.sectionKey,
+    title: section.title,
+    sectionType: inferSectionType(section.sectionKey, section.title),
+    isLiteratureFocused: section.isLiteratureFocused,
+    keyPoints: section.keyPoints || [],
+    patternIds: [] as string[],
+    contradictionIds: [] as string[],
+    gapIds: [] as string[],
+    paperIds: [] as string[],
+  }))
+
+  const literatureSections = assignments.filter(section => section.isLiteratureFocused)
+  if (literatureSections.length === 0) {
+    return assignments.map(({ keyPoints: _keyPoints, ...assignment }) => assignment)
+  }
+
+  const rankedPatterns = [...analysis.patterns].sort((left, right) => {
+    const leftScore = left.confidence * 2 + (left.support.total > 0 ? left.support.count / left.support.total : 0)
+    const rightScore = right.confidence * 2 + (right.support.total > 0 ? right.support.count / right.support.total : 0)
+    return rightScore - leftScore
+  })
+
+  for (const pattern of rankedPatterns) {
+    const scores = literatureSections.map((section) =>
+      scorePatternForSection(section, pattern, section.patternIds.length)
+    )
+    const targetIndex = chooseBestSectionIndex(scores)
+    literatureSections[targetIndex]?.patternIds.push(pattern.id)
+  }
+
+  const discussionSections = literatureSections.filter(section => section.sectionType === 'discussion')
+  const conclusionSections = literatureSections.filter(section => section.sectionType === 'conclusion')
+  const contradictionPreferredSections =
+    literatureSections.filter(section =>
+      /contradiction|challenge|debate|discussion|method/i.test(`${section.sectionKey} ${section.title}`)
+    )
+  const contradictionTargets = contradictionPreferredSections.length > 0
+    ? contradictionPreferredSections
+    : (discussionSections.length > 0 ? discussionSections : literatureSections)
+
+  analysis.contradictions.forEach((contradiction, index) => {
+    contradictionTargets[index % contradictionTargets.length]?.contradictionIds.push(contradiction.id)
+  })
+
+  const gapPreferredSections =
+    literatureSections.filter(section =>
+      /future|gap|conclusion|discussion|direction/i.test(`${section.sectionKey} ${section.title}`)
+    )
+  const gapTargets = gapPreferredSections.length > 0
+    ? gapPreferredSections
+    : (conclusionSections.length > 0 ? conclusionSections : literatureSections)
+
+  analysis.gaps.forEach((gap, index) => {
+    gapTargets[index % gapTargets.length]?.gapIds.push(gap.id)
+  })
+
+  for (const section of assignments) {
+    const relatedPaperIds = uniqueIds([
+      ...section.patternIds.flatMap((patternId) => {
+        const pattern = analysis.patterns.find(item => item.id === patternId)
+        return pattern ? pattern.support.papers.map(paper => paper.paperId) : []
+      }),
+      ...section.contradictionIds.flatMap((contradictionId) => {
+        const contradiction = analysis.contradictions.find(item => item.id === contradictionId)
+        return contradiction ? contradiction.sides.flatMap(side => side.papers.map(paper => paper.paperId)) : []
+      }),
+      ...section.gapIds.flatMap((gapId) => {
+        const gap = analysis.gaps.find(item => item.id === gapId)
+        return gap ? gap.suggestedBy : []
+      }),
+    ], section.isLiteratureFocused ? 10 : 5)
+
+    const sectionTokens = tokenizePlannerText(
+      `${section.outlineSectionKey} ${section.title} ${section.keyPoints.join(' ')}`
+    )
+    const additionalPaperIds = papers
+      .map((paper) => ({
+        id: paper.id,
+        score: scoreTokenOverlap(
+          sectionTokens,
+          tokenizePlannerText(`${paper.title} ${paper.domain} ${paper.authors.join(' ')}`)
+        ),
+      }))
+      .filter(candidate => candidate.score > 0 && !relatedPaperIds.includes(candidate.id))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, section.isLiteratureFocused ? 4 : 2)
+      .map(candidate => candidate.id)
+
+    const prioritizedPaperIds = uniqueIds(
+      [...relatedPaperIds, ...additionalPaperIds].filter(paperId => paperById.has(paperId)),
+      section.isLiteratureFocused ? 10 : 5
+    )
+
+    section.paperIds = prioritizedPaperIds
+  }
+
+  return assignments.map(({ keyPoints: _keyPoints, ...assignment }) => assignment)
 }
 
 function computePrimaryDominance(
@@ -377,6 +834,13 @@ For each key point, specify:
 - supportingPatternIds: Which patterns from the analysis support this (can be empty for structural points)
 - requiredCitations: Paper IDs that MUST be cited (can be empty for methodological or concluding points)
 
+Literature-focused sections MUST be evidence-first:
+- The first 2 key points should be concrete, section-specific claims grounded in the provided patterns, contradictions, or gaps
+- Avoid vague planner language like "Discuss impacts" or "Review responses"
+- When support statements or values are available, reflect that specificity in the key point
+- If a key point makes a literature claim, requiredCitations should usually be non-empty
+- Key points should read like substantive claims, not outline placeholders or canned signposting
+
 Section-type guidance:
 - Introduction: State the research problem and its significance
 - Literature Review/Thematic Analysis: Present synthesized findings with specific evidence from patterns
@@ -384,6 +848,7 @@ Section-type guidance:
 - Conclusion: Summarize key contributions and propose future directions
 
 Derive all key points from the actual patterns, contradictions, and gaps provided in the analysis above.
+Use the deterministic section evidence candidates as your starting allocation. Refine them only when another section is clearly better suited.
 
 ═══════════════════════════════════════════════════════════════════════════════
 CONTENT ALLOCATION
@@ -431,7 +896,10 @@ NARRATIVE FLOW
 
 Remember: This is a PLAN for writing, not the synthesis itself. Be specific about what to write and how.`
 
-function buildPrompt(input: SynthesisPlanInput): string {
+function buildPrompt(
+  input: SynthesisPlanInput,
+  sectionAssignments: PlannerSectionEvidenceAssignment[]
+): string {
   const { 
     analysis, 
     papers, 
@@ -442,28 +910,29 @@ function buildPrompt(input: SynthesisPlanInput): string {
     structuralConstraints,
     outlineSections
   } = input
+  const paperById = new Map(papers.map((paper) => [paper.id, paper]))
   
   // Format patterns
   const patternsText = analysis.patterns.map(p => {
     let text = `[Pattern ${p.id}]
-  Claim: ${p.claim}
-  Summary: ${p.summary}
+  Claim: ${truncateForPrompt(p.claim, MAX_SUMMARY_LENGTH)}
+  Summary: ${truncateForPrompt(p.summary, MAX_SUMMARY_LENGTH)}
   Support: ${p.support.count}/${p.support.total} papers
   Consistency: ${p.consistency}
   Confidence: ${(p.confidence * 100).toFixed(0)}%`
     
     if (p.values?.summary) {
-      text += `\n  Values: ${p.values.summary}`
+      text += `\n  Values: ${truncateForPrompt(p.values.summary, 160)}`
     }
     if (p.direction) {
-      text += `\n  Direction: ${p.direction}`
+      text += `\n  Direction: ${truncateForPrompt(p.direction, 80)}`
     }
     if (p.limitations) {
-      text += `\n  Limitations: ${p.limitations}`
+      text += `\n  Limitations: ${truncateForPrompt(p.limitations, 160)}`
     }
     
     // List supporting papers
-    text += `\n  Papers: ${p.support.papers.map(ps => `${ps.paperTitle} (${ps.paperId})`).join(', ')}`
+    text += `\n  Papers: ${formatPaperRefs(p.support.papers, MAX_PATTERN_PAPER_REFS_IN_PROMPT)}`
     
     return text
   }).join('\n\n')
@@ -472,16 +941,19 @@ function buildPrompt(input: SynthesisPlanInput): string {
   const contradictionsText = analysis.contradictions.length > 0
     ? analysis.contradictions.map(c => {
         let text = `[Contradiction ${c.id}]
-  Description: ${c.description}
+  Description: ${truncateForPrompt(c.description, MAX_SUMMARY_LENGTH)}
   Severity: ${c.severity}`
         
         c.sides.forEach((s, i) => {
-          text += `\n  Side ${i + 1}: ${s.position}`
-          text += `\n    Papers: ${s.papers.map(p => p.paperTitle).join(', ')}`
+          text += `\n  Side ${i + 1}: ${truncateForPrompt(s.position, 160)}`
+          text += `\n    Papers: ${s.papers
+            .slice(0, MAX_CONTRADICTION_PAPER_REFS_PER_SIDE)
+            .map(p => truncateForPrompt(p.paperTitle, 60))
+            .join(', ')}${s.papers.length > MAX_CONTRADICTION_PAPER_REFS_PER_SIDE ? `, +${s.papers.length - MAX_CONTRADICTION_PAPER_REFS_PER_SIDE} more` : ''}`
         })
         
         if (c.possibleExplanation) {
-          text += `\n  Possible Explanation: ${c.possibleExplanation}`
+          text += `\n  Possible Explanation: ${truncateForPrompt(c.possibleExplanation, 180)}`
         }
         
         return text
@@ -491,15 +963,28 @@ function buildPrompt(input: SynthesisPlanInput): string {
   // Format gaps
   const gapsText = analysis.gaps.length > 0
     ? analysis.gaps.map(g => `[Gap ${g.id}]
-  Description: ${g.description}
+  Description: ${truncateForPrompt(g.description, 180)}
   Type: ${g.type}
-  Relevance: ${g.relevance}`).join('\n\n')
+  Relevance: ${truncateForPrompt(g.relevance, 120)}`).join('\n\n')
     : 'No gaps identified.'
   
+  const plannerRelevantPaperIds = uniqueIds(
+    sectionAssignments.flatMap((assignment) => assignment.paperIds),
+    MAX_PLANNER_INPUT_PAPERS
+  )
+  const promptPapers = (plannerRelevantPaperIds.length > 0
+    ? plannerRelevantPaperIds
+        .map((paperId) => paperById.get(paperId))
+        .filter((paper): paper is PaperInfo => Boolean(paper))
+    : papers
+  ).slice(0, Math.min(MAX_PAPERS_IN_PROMPT, MAX_PLANNER_INPUT_PAPERS))
+
   // Format papers
-  const papersText = papers.map(p => 
-    `- ${p.title} (${p.id}) - ${p.authors.join(', ')}${p.year ? ` (${p.year})` : ''} - ${p.domain}`
+  const papersText = promptPapers.map(p => 
+    `- ${truncateForPrompt(p.title, MAX_TITLE_LENGTH)} (${p.id}) - ${truncateForPrompt(p.authors.join(', '), 80)}${p.year ? ` (${p.year})` : ''} - ${truncateForPrompt(p.domain, 60)}`
   ).join('\n')
+
+  const omittedPaperCount = Math.max(0, papers.length - promptPapers.length)
   
   // NEW: Build paper type constraints text
   let paperTypeText = ''
@@ -538,6 +1023,31 @@ ${outlineSections.map((s, i) =>
 ).join('\n')}
 `
   }
+
+  const sectionEvidenceText = sectionAssignments.length > 0
+    ? `
+SECTION EVIDENCE CANDIDATES (DETERMINISTIC PRE-ASSIGNMENT):
+Use these as the default allocation for section content. You may move an item only if another section is clearly a better fit.
+
+${sectionAssignments.map((assignment, index) => {
+  const candidatePapers = assignment.paperIds
+    .slice(0, 5)
+    .map((paperId) => {
+      const paper = paperById.get(paperId)
+      return paper
+        ? `${truncateForPrompt(paper.title, 60)} (${paperId})`
+        : paperId
+    })
+    .join(', ')
+
+  return `${index + 1}. ${assignment.outlineSectionKey}: "${assignment.title}" [${assignment.sectionType}]
+  Candidate patterns: ${assignment.patternIds.length > 0 ? assignment.patternIds.join(', ') : '(none)'}
+  Candidate contradictions: ${assignment.contradictionIds.length > 0 ? assignment.contradictionIds.join(', ') : '(none)'}
+  Candidate gaps: ${assignment.gapIds.length > 0 ? assignment.gapIds.join(', ') : '(none)'}
+  Priority papers: ${candidatePapers || '(none)'}`  
+}).join('\n\n')}
+`
+    : ''
   
   // Build constraints
   const constraints: string[] = []
@@ -558,11 +1068,12 @@ ${outlineSections.map((s, i) =>
   return `Create a synthesis plan based on the following analysis:
 ${paperTypeText}
 ${outlineText}
+${sectionEvidenceText}
 SUMMARY:
-${analysis.summary}
+${truncateForPrompt(analysis.summary, 300)}
 
 KEY INSIGHTS:
-${analysis.keyInsights.map((k, i) => `${i + 1}. ${k}`).join('\n')}
+${analysis.keyInsights.map((k, i) => `${i + 1}. ${truncateForPrompt(k, 140)}`).join('\n')}
 
 PATTERNS (${analysis.patterns.length}):
 ${patternsText}
@@ -575,6 +1086,7 @@ ${gapsText}
 
 PAPERS (${papers.length}):
 ${papersText}
+${omittedPaperCount > 0 ? `\n- +${omittedPaperCount} additional papers omitted from the prompt list for brevity; use all provided paper IDs from patterns/contradictions/gaps when planning citation distribution.` : ''}
 ${constraintsText}
 Plan a coherent synthesis that:
 1. Creates EXACTLY ${outlineSections?.length || 'the same number of'} sections - one for EACH outline section, including non-literature sections like Methodology, Results, Discussion, Conclusion
@@ -619,45 +1131,80 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
     paperType: input.paperType,
     outlineSections: input.outlineSections?.length || 0
   }, 'Building synthesis plan')
+  const sectionAssignments = buildPlannerSectionEvidenceAssignments(input)
+  info({
+    stage: 'synthesis-pipeline',
+    step: 'planner-section-evidence-assignment',
+    sections: sectionAssignments.map((assignment) => ({
+      outlineKey: assignment.outlineSectionKey,
+      sectionType: assignment.sectionType,
+      patternCount: assignment.patternIds.length,
+      contradictionCount: assignment.contradictionIds.length,
+      gapCount: assignment.gapIds.length,
+      paperCount: assignment.paperIds.length,
+    })),
+    plannerInputPapers: uniqueIds(sectionAssignments.flatMap((assignment) => assignment.paperIds), MAX_PLANNER_INPUT_PAPERS).length,
+  }, 'Prepared deterministic section evidence assignments for planner')
   
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), PLAN_BUILDER_TIMEOUT_MS)
-    const { text } = await generateText({
-      model: getLanguageModel(),
-      system: SYSTEM_PROMPT + '\n\nIMPORTANT: Respond with ONLY a valid JSON object. No markdown fences, no explanation, just the JSON.',
-      prompt: buildPrompt(input),
-      temperature: 0.3,
-      maxOutputTokens: 4000,
-      abortSignal: controller.signal,
-    }).finally(() => clearTimeout(timeoutId))
-    
-    // Parse JSON from LLM response (strip markdown fences if present)
-    let jsonStr = text.trim()
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (fenceMatch) {
-      jsonStr = fenceMatch[1].trim()
-    }
-    
-    let rawParsed: unknown
-    try {
-      rawParsed = JSON.parse(jsonStr)
-    } catch {
-      // Try to find JSON object in the response
-      const jsonStart = jsonStr.indexOf('{')
-      const jsonEnd = jsonStr.lastIndexOf('}')
-      if (jsonStart >= 0 && jsonEnd > jsonStart) {
-        rawParsed = JSON.parse(jsonStr.slice(jsonStart, jsonEnd + 1))
-      } else {
-        throw new Error('No valid JSON found in plan-builder response')
+    let object: z.infer<typeof SynthesisPlanSchema> | null = null
+
+    for (let attempt = 0; attempt <= PLAN_BUILDER_SCHEMA_RETRIES; attempt++) {
+      const maxOutputTokens =
+        PLAN_BUILDER_RETRY_TOKEN_BUDGETS[attempt] ?? PLAN_BUILDER_RETRY_TOKEN_BUDGETS[PLAN_BUILDER_RETRY_TOKEN_BUDGETS.length - 1]
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), PLAN_BUILDER_TIMEOUT_MS)
+
+      try {
+        const result = await generateObject({
+          model: getLanguageModel(),
+          schema: SynthesisPlanSchema,
+          schemaName: 'synthesis_plan',
+          schemaDescription: 'Structured section-by-section synthesis plan for an academic paper.',
+          system: SYSTEM_PROMPT,
+          prompt: buildPrompt(input, sectionAssignments),
+          temperature: PLAN_BUILDER_TEMPERATURE,
+          maxOutputTokens,
+          abortSignal: controller.signal,
+          providerOptions: {
+            openai: {
+              strictJsonSchema: true,
+            },
+            azure: {
+              strictJsonSchema: true,
+            },
+          },
+        })
+
+        object = result.object
+        break
+      } catch (error) {
+        const canRetry =
+          attempt < PLAN_BUILDER_SCHEMA_RETRIES &&
+          isSchemaValidationFailure(error)
+
+        if (!canRetry) {
+          throw error
+        }
+
+        warn(
+          {
+            attempt: attempt + 1,
+            maxAttempts: PLAN_BUILDER_SCHEMA_RETRIES + 1,
+            maxOutputTokens,
+            error_name: error instanceof Error ? error.name : 'UnknownError',
+            error_message: error instanceof Error ? error.message : String(error),
+          },
+          'Plan builder schema validation failed, retrying structured output'
+        )
+      } finally {
+        clearTimeout(timeoutId)
       }
     }
-    
-    // Normalize common schema drifts before strict validation.
-    const normalized = normalizePlannerShape(rawParsed)
 
-    // Validate with Zod (lenient: strip unknown fields)
-    const object = SynthesisPlanSchema.parse(normalized)
+    if (!object) {
+      throw new Error('Plan builder did not return a structured object')
+    }
     
     const timeMs = Date.now() - startTime
     
@@ -682,13 +1229,14 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
     
     // Transform to final plan with IDs
     const sections: SectionPlan[] = object.sections.map((s, i) => {
+      const outlineSection = input.outlineSections?.find(section => section.sectionKey === s.outlineSectionKey)
       // Collect key points as claims that shouldn't be repeated in later sections
       const sectionClaims = s.keyPointsToMake.map(kp => kp.point)
       
       const sectionPlan: SectionPlan = {
         id: uuidv4(),
         outlineSectionKey: s.outlineSectionKey,
-        isLiteratureFocused: s.isLiteratureFocused,
+        isLiteratureFocused: outlineSection?.isLiteratureFocused ?? s.isLiteratureFocused,
         title: s.title,
         purpose: s.purpose,
         content: {
@@ -880,6 +1428,33 @@ export async function buildSynthesisPlan(input: SynthesisPlanInput): Promise<Syn
           uniquePrimaryAfter: paperRebalance.uniquePrimaryAfter,
         },
         'Rebalanced section paper priorities for stronger citation diversity'
+      )
+    }
+
+    const plannerStrengthening = strengthenPlannerSections(plan.sections)
+    if (
+      plannerStrengthening.rewrittenKeyPointSections.length > 0 ||
+      plannerStrengthening.rewrittenApproachSections.length > 0 ||
+      plannerStrengthening.expandedPrimarySections.length > 0
+    ) {
+      info(
+        {
+          stage: 'synthesis-pipeline',
+          step: 'plan-strengthening',
+          rewrittenKeyPointSections:
+            plannerStrengthening.rewrittenKeyPointSections.length > 0
+              ? plannerStrengthening.rewrittenKeyPointSections
+              : null,
+          rewrittenApproachSections:
+            plannerStrengthening.rewrittenApproachSections.length > 0
+              ? plannerStrengthening.rewrittenApproachSections
+              : null,
+          expandedPrimarySections:
+            plannerStrengthening.expandedPrimarySections.length > 0
+              ? plannerStrengthening.expandedPrimarySections
+              : null,
+        },
+        'Strengthened weak planner sections with evidence-first guidance'
       )
     }
     

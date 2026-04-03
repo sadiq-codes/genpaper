@@ -587,7 +587,7 @@ export async function enrichAndBuildContexts(
       totalSections: enrichedContexts.length,
       enrichedSections: enrichedCount,
       durationMs: Date.now() - startTime
-    }, 'Outline enrichment complete')
+    }, 'Outline enrichment returned contexts')
     
     return enrichedContexts
   } catch (error) {

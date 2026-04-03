@@ -85,6 +85,8 @@ export interface EnrichedSectionContext extends SectionContext {
   paperPriority?: PaperPriority
 }
 
+type SynthesisEnrichmentMode = 'auto' | 'planner_only' | 'fallback_only'
+
 // =============================================================================
 // Main Enrichment Function
 // =============================================================================
@@ -115,6 +117,7 @@ export async function enrichOutlineSections(
   topic: string
 ): Promise<EnrichedSectionContext[]> {
   const startTime = Date.now()
+  const enrichmentMode = getSynthesisEnrichmentMode()
   
   // Step 1: Build structural constraints from profile
   const constraints = buildConstraintsFromProfile(profile)
@@ -141,32 +144,47 @@ export async function enrichOutlineSections(
   
   // Step 4: Try to build synthesis plan
   let synthesisPlan: SynthesisPlan | undefined
-  
-  try {
-    const planResult = await buildSynthesisPlan({
-      projectId: 'enrichment',
-      analysis: analysisResult,
-      papers: paperInfos,
-      paperType: constraints.paperType,
-      paperProfile: profile,
-      structuralConstraints: constraints,
-      outlineSections: annotatedSections as OutlineSectionInput[],
-      targetWordCount: outline.totalEstimatedWords || 
-        outline.sections.reduce((sum, s) => sum + (s.expectedWords || 300), 0),
-      audienceLevel: 'academic'
-    })
-    
-    if (planResult.success && planResult.plan) {
-      synthesisPlan = planResult.plan
-      info({
-        sections: synthesisPlan.sections.length,
-        patternsPlanned: synthesisPlan.sections.reduce((sum, s) => sum + s.content.patterns.length, 0),
-        contradictionsPlanned: synthesisPlan.sections.reduce((sum, s) => sum + s.content.contradictions.length, 0),
-        gapsPlanned: synthesisPlan.sections.reduce((sum, s) => sum + s.content.gaps.length, 0)
-      }, 'Synthesis plan built for outline enrichment')
+
+  if (enrichmentMode !== 'fallback_only') {
+    try {
+      const planResult = await buildSynthesisPlan({
+        projectId: 'enrichment',
+        analysis: analysisResult,
+        papers: paperInfos,
+        paperType: constraints.paperType,
+        paperProfile: profile,
+        structuralConstraints: constraints,
+        outlineSections: annotatedSections as OutlineSectionInput[],
+        targetWordCount: outline.totalEstimatedWords || 
+          outline.sections.reduce((sum, s) => sum + (s.expectedWords || 300), 0),
+        audienceLevel: 'academic'
+      })
+      
+      if (planResult.success && planResult.plan) {
+        const hasCompleteCoverage = hasCompletePlanCoverage(planResult.plan, annotatedSections)
+        if (hasCompleteCoverage) {
+          synthesisPlan = planResult.plan
+        } else if (enrichmentMode === 'planner_only') {
+          throw new Error('Planner-only mode requires complete plan coverage for all outline sections')
+        }
+
+        info({
+          sections: planResult.plan.sections.length,
+          patternsPlanned: planResult.plan.sections.reduce((sum, s) => sum + s.content.patterns.length, 0),
+          contradictionsPlanned: planResult.plan.sections.reduce((sum, s) => sum + s.content.contradictions.length, 0),
+          gapsPlanned: planResult.plan.sections.reduce((sum, s) => sum + s.content.gaps.length, 0),
+          enrichmentMode,
+          hasCompleteCoverage,
+        }, 'Synthesis plan built for outline enrichment')
+      } else if (enrichmentMode === 'planner_only') {
+        throw new Error(planResult.error || 'Planner-only mode requires a successful synthesis plan')
+      }
+    } catch (planError) {
+      if (enrichmentMode === 'planner_only') {
+        throw planError
+      }
+      warn({ error: planError, enrichmentMode }, 'Synthesis plan failed, will enrich with raw analysis data')
     }
-  } catch (planError) {
-    warn({ error: planError }, 'Synthesis plan failed, will enrich with raw analysis data')
   }
   
   // Step 5: Build basic section contexts with RAG chunks
@@ -178,10 +196,15 @@ export async function enrichOutlineSections(
   
   // Step 6: Enrich each section
   const establishedClaims: string[] = []
+  const literatureSectionIndexes = annotatedSections
+    .map((section, index) => (section.isLiteratureFocused ? index : -1))
+    .filter(index => index >= 0)
+  let fallbackSectionsUsed = 0
   const enrichedContexts: EnrichedSectionContext[] = baseContexts.map((baseContext, index) => {
     const outlineSection = outline.sections[index]
     const annotatedSection = annotatedSections[index]
     const isLitFocused = annotatedSection.isLiteratureFocused
+    const literatureSectionPosition = literatureSectionIndexes.indexOf(index)
     
     // Find matching plan section (if we have a plan)
     const planSection = synthesisPlan?.sections.find(
@@ -201,9 +224,15 @@ export async function enrichOutlineSections(
       ? distributeAnalysisToSection(
           outlineSection.sectionKey,
           outlineSection.title,
-          analysisResult
+          analysisResult,
+          literatureSectionPosition,
+          literatureSectionIndexes.length
         )
       : undefined
+
+    if (isLitFocused && !planSection) {
+      fallbackSectionsUsed += 1
+    }
     
     // Add writing guidance and paper priority for ALL sections (from plan)
     if (planSection) {
@@ -263,7 +292,8 @@ export async function enrichOutlineSections(
       enriched.paperPriority = buildFallbackPaperPriority(
         baseContext.candidatePaperIds,
         fallbackSynthesisContent,
-        isLitFocused
+        isLitFocused,
+        analysisResult
       )
     }
     
@@ -288,6 +318,7 @@ export async function enrichOutlineSections(
     info({
       stage: 'synthesis-pipeline',
       step: 'section-enrichment',
+      enrichmentMode,
       sectionIndex: index,
       section: {
         key: outlineSection.sectionKey,
@@ -325,6 +356,12 @@ export async function enrichOutlineSections(
   })
   
   info({
+    enrichmentMode,
+    resolvedPath: synthesisPlan
+      ? (fallbackSectionsUsed > 0 ? 'partial_fallback' : 'planner')
+      : 'fallback',
+    plannerUsed: !!synthesisPlan,
+    fallbackSectionsUsed,
     totalSections: enrichedContexts.length,
     enrichedSections: enrichedContexts.filter(s => s.hasSynthesisEnrichment).length,
     durationMs: Date.now() - startTime
@@ -352,6 +389,28 @@ function uniqueStrings(values: string[], limit = Number.POSITIVE_INFINITY): stri
   }
 
   return deduped
+}
+
+function getSynthesisEnrichmentMode(): SynthesisEnrichmentMode {
+  const rawValue = process.env.SYNTHESIS_ENRICHMENT_MODE?.trim().toLowerCase()
+  if (rawValue === 'planner_only' || rawValue === 'fallback_only' || rawValue === 'auto') {
+    return rawValue
+  }
+  return 'auto'
+}
+
+function hasCompletePlanCoverage(
+  plan: SynthesisPlan,
+  outlineSections: OutlineSectionInput[]
+): boolean {
+  const outlineKeys = new Set(outlineSections.map(section => section.sectionKey))
+  return outlineSections.every((section) =>
+    plan.sections.some((planSection) =>
+      planSection.outlineSectionKey === section.sectionKey ||
+      (!outlineKeys.has(planSection.outlineSectionKey) &&
+        planSection.title.toLowerCase() === section.title.toLowerCase())
+    )
+  )
 }
 
 function deriveFallbackKeyPoints(
@@ -407,11 +466,17 @@ function getFallbackApproach(
 function buildFallbackPaperPriority(
   candidatePaperIds: string[],
   synthesisContent: SynthesisContent | undefined,
-  isLiteratureFocused: boolean
+  isLiteratureFocused: boolean,
+  analysis: AnalysisResult
 ): PaperPriority {
+  const selectedGapIds = new Set(synthesisContent?.gaps.map(gap => gap.gapId) ?? [])
+  const gapPaperIds = analysis.gaps
+    .filter(gap => selectedGapIds.has(gap.id))
+    .flatMap(gap => gap.suggestedBy)
   const synthesisPaperIds = synthesisContent ? uniqueStrings([
     ...synthesisContent.patterns.flatMap(p => p.supportingPaperIds),
     ...synthesisContent.contradictions.flatMap(c => c.sides.flatMap(s => s.paperIds)),
+    ...gapPaperIds,
   ]) : []
 
   const preferredPrimaryCount = isLiteratureFocused ? 8 : 4
@@ -434,42 +499,86 @@ function buildFallbackPaperPriority(
 function distributeAnalysisToSection(
   sectionKey: string,
   sectionTitle: string,
-  analysis: AnalysisResult
+  analysis: AnalysisResult,
+  literatureSectionPosition: number,
+  literatureSectionCount: number
 ): SynthesisContent {
   const type = resolveSectionType({ key: sectionKey, title: sectionTitle })
+  const literaturePosition = literatureSectionPosition >= 0 ? literatureSectionPosition : 0
+  const literatureCount = Math.max(literatureSectionCount, 1)
+  const literaturePatterns = takeDistributedSlice(analysis.patterns, literaturePosition, literatureCount, {
+    perSection: 3,
+    overlap: 1,
+  }).map(patternToPatternPlan)
+  const literatureContradictions = takeDistributedSlice(
+    analysis.contradictions,
+    literaturePosition,
+    Math.max(Math.min(literatureCount, analysis.contradictions.length || 1), 1),
+    { perSection: 1, overlap: 0 }
+  ).map(contradictionToContradictionPlan)
+  const literatureGaps = takeDistributedSlice(
+    analysis.gaps,
+    literaturePosition,
+    Math.max(Math.min(literatureCount, analysis.gaps.length || 1), 1),
+    { perSection: 1, overlap: 0 }
+  ).map(gapToGapPlan)
 
   switch (type) {
     case 'introduction':
       return {
-        patterns: analysis.patterns.slice(0, 2).map(patternToPatternPlan),
+        patterns: literaturePatterns.slice(0, 2),
         contradictions: [],
         gaps: [],
       }
     case 'literature':
       return {
-        patterns: analysis.patterns.map(patternToPatternPlan),
-        contradictions: analysis.contradictions.map(contradictionToContradictionPlan),
+        patterns: literaturePatterns,
+        contradictions: literatureContradictions,
         gaps: [],
       }
     case 'discussion':
       return {
-        patterns: analysis.patterns.filter(p => p.confidence > 0.7).slice(0, 3).map(patternToPatternPlan),
-        contradictions: analysis.contradictions.map(contradictionToContradictionPlan),
-        gaps: analysis.gaps.map(gapToGapPlan),
+        patterns: literaturePatterns.filter(p => p.importance !== 'minor').slice(0, 3),
+        contradictions: literatureContradictions,
+        gaps: literatureGaps,
       }
     case 'conclusion':
       return {
         patterns: [],
         contradictions: [],
-        gaps: analysis.gaps.slice(0, 3).map(gapToGapPlan),
+        gaps: literatureGaps,
       }
     default:
       return {
-        patterns: analysis.patterns.slice(0, 3).map(patternToPatternPlan),
-        contradictions: analysis.contradictions.slice(0, 1).map(contradictionToContradictionPlan),
+        patterns: literaturePatterns,
+        contradictions: literatureContradictions,
         gaps: [],
       }
   }
+}
+
+function takeDistributedSlice<T>(
+  items: T[],
+  sectionPosition: number,
+  sectionCount: number,
+  options: { perSection: number; overlap: number }
+): T[] {
+  if (items.length === 0) return []
+
+  const normalizedSectionCount = Math.max(sectionCount, 1)
+  const normalizedPosition = Math.min(Math.max(sectionPosition, 0), normalizedSectionCount - 1)
+  const baseChunkSize = Math.max(Math.ceil(items.length / normalizedSectionCount), 1)
+  const windowSize = Math.max(options.perSection, baseChunkSize)
+  const stride = Math.max(windowSize - options.overlap, 1)
+  const maxStart = Math.max(items.length - windowSize, 0)
+  const start = Math.min(normalizedPosition * stride, maxStart)
+  const slice = items.slice(start, start + windowSize)
+
+  if (slice.length > 0) {
+    return slice
+  }
+
+  return items.slice(-windowSize)
 }
 
 /**
