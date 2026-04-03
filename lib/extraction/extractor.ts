@@ -23,6 +23,14 @@ import type {
   ExtractionResult
 } from './types'
 
+const EXTRACTION_TIMEOUT_MS = 90_000
+const EXTRACTION_MAX_OUTPUT_TOKENS = 8_000
+const EXTRACTION_RETRY_TOKEN_BUDGETS = [
+  EXTRACTION_MAX_OUTPUT_TOKENS,
+  10_000,
+  12_000,
+] as const
+
 // =============================================================================
 // Zod Schema - Flexible, No Hardcoded Enums
 // =============================================================================
@@ -152,15 +160,54 @@ export async function extractPaper(input: ExtractionInput): Promise<ExtractionRe
       : input.text
     
     console.log(`\n🔬 Extracting findings from paper (${text.length} chars)...`)
-    
-    const { object } = await generateObject({
-      model: getExtractionLanguageModel(),
-      schema: ExtractionSchema,
-      system: SYSTEM_PROMPT,
-      prompt: buildPrompt(text),
-      temperature: 0.1,
-      maxOutputTokens: 8000,
-    })
+
+    let object: z.infer<typeof ExtractionSchema> | null = null
+
+    for (let attempt = 0; attempt < EXTRACTION_RETRY_TOKEN_BUDGETS.length; attempt++) {
+      const maxOutputTokens = EXTRACTION_RETRY_TOKEN_BUDGETS[attempt]
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), EXTRACTION_TIMEOUT_MS)
+
+      try {
+        const result = await generateObject({
+          model: getExtractionLanguageModel(),
+          schema: ExtractionSchema,
+          schemaName: 'paper_extraction',
+          schemaDescription: 'Structured extraction of citation-ready findings from an academic paper.',
+          system: SYSTEM_PROMPT,
+          prompt: buildPrompt(text),
+          temperature: 0.1,
+          maxOutputTokens,
+          abortSignal: controller.signal,
+          providerOptions: {
+            openai: {
+              strictJsonSchema: true,
+            },
+            azure: {
+              strictJsonSchema: true,
+            },
+          },
+        })
+        object = result.object
+        break
+      } catch (error) {
+        const canRetry =
+          attempt < EXTRACTION_RETRY_TOKEN_BUDGETS.length - 1 &&
+          (isLikelyLengthOrParseTruncation(error) || isLikelyTimeoutOrAbort(error))
+        if (!canRetry) {
+          throw error
+        }
+        console.warn(
+          `⚠️ Extraction produced invalid/truncated JSON at ${maxOutputTokens} tokens; retrying with ${EXTRACTION_RETRY_TOKEN_BUDGETS[attempt + 1]} tokens`
+        )
+      } finally {
+        clearTimeout(timeoutId)
+      }
+    }
+
+    if (!object) {
+      throw new Error('Extraction did not return a structured object')
+    }
     
     // Transform to our types with IDs
     const findings: Finding[] = object.findings.map(f => ({
@@ -235,4 +282,38 @@ function calculateOverallConfidence(findings: Finding[]): number {
   if (findings.length === 0) return 0
   const sum = findings.reduce((acc, f) => acc + f.confidence, 0)
   return sum / findings.length
+}
+
+function getErrorText(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message
+  }
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+function isLikelyLengthOrParseTruncation(error: unknown): boolean {
+  const text = getErrorText(error).toLowerCase()
+  return (
+    text.includes('finishreason') && text.includes('length')
+  ) || text.includes('unterminated string') ||
+    text.includes('unexpected end') ||
+    text.includes('unexpected end of json') ||
+    text.includes('expected \',\' or \'}\'') ||
+    text.includes('unexpected non-whitespace character after json') ||
+    text.includes('json parsing failed') ||
+    text.includes('no object generated')
+}
+
+function isLikelyTimeoutOrAbort(error: unknown): boolean {
+  const text = getErrorText(error).toLowerCase()
+  return (
+    text.includes('aborterror') ||
+    text.includes('aborted') ||
+    text.includes('timeout') ||
+    text.includes('timed out')
+  )
 }
