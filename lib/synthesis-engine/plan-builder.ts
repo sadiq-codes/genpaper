@@ -566,7 +566,7 @@ function buildPlannerSectionEvidenceAssignments(
 
   for (const pattern of rankedPatterns) {
     const scores = literatureSections.map((section) =>
-      scorePatternForSection(section, pattern, section.patternIds.length)
+      scorePatternForSection({ ...section, sectionKey: section.outlineSectionKey }, pattern, section.patternIds.length)
     )
     const targetIndex = chooseBestSectionIndex(scores)
     literatureSections[targetIndex]?.patternIds.push(pattern.id)
@@ -576,7 +576,7 @@ function buildPlannerSectionEvidenceAssignments(
   const conclusionSections = literatureSections.filter(section => section.sectionType === 'conclusion')
   const contradictionPreferredSections =
     literatureSections.filter(section =>
-      /contradiction|challenge|debate|discussion|method/i.test(`${section.sectionKey} ${section.title}`)
+      /contradiction|challenge|debate|discussion|method/i.test(`${section.outlineSectionKey} ${section.title}`)
     )
   const contradictionTargets = contradictionPreferredSections.length > 0
     ? contradictionPreferredSections
@@ -588,7 +588,7 @@ function buildPlannerSectionEvidenceAssignments(
 
   const gapPreferredSections =
     literatureSections.filter(section =>
-      /future|gap|conclusion|discussion|direction/i.test(`${section.sectionKey} ${section.title}`)
+      /future|gap|conclusion|discussion|direction/i.test(`${section.outlineSectionKey} ${section.title}`)
     )
   const gapTargets = gapPreferredSections.length > 0
     ? gapPreferredSections
