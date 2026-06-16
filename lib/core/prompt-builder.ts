@@ -7,7 +7,7 @@
 
 import Mustache from 'mustache'
 import type { PaperTypeKey } from '@/lib/prompts/types'
-import type { ChatCOStarContext, CompleteCOStarContext } from '@/lib/prompts/costar-context'
+import type { CompleteCOStarContext } from '@/lib/prompts/costar-context'
 import type { ChatAUTOMATContext } from '@/lib/prompts/automat-context'
 
 /**
@@ -381,16 +381,6 @@ Provide specific, actionable feedback on:
     
     const path = sections.slice(0, index + 1)
     return path.join(' → ')
-  }
-
-  /**
-   * Build chat system prompt from template and CO-STAR context
-   */
-  static buildChatPrompt(
-    template: PromptTemplate,
-    context: ChatCOStarContext
-  ): string {
-    return Mustache.render(template.system, context)
   }
 
   /**

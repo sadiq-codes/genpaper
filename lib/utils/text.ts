@@ -453,36 +453,6 @@ function isInsideSpecialContext(prevContext: string, _current: string): boolean 
 }
 
 /**
- * Create token-based overlap from the end of a chunk (async version)
- * @deprecated Use createTokenOverlapSync with a TokenCounter for better performance
- */
-async function _createTokenOverlap(text: string, targetOverlapTokens: number): Promise<string> {
-  if (targetOverlapTokens <= 0 || !text.trim()) {
-    return ''
-  }
-  
-  // Split into sentences and take from the end
-  const sentences = splitIntoSentences(text)
-  let overlap = ''
-  let tokens = 0
-  
-  // Build overlap from last sentences working backwards
-  for (let i = sentences.length - 1; i >= 0 && tokens < targetOverlapTokens; i--) {
-    const sentence = sentences[i]
-    const sentenceTokens = await getTokenCount(sentence)
-    
-    if (tokens + sentenceTokens <= targetOverlapTokens) {
-      overlap = sentence + (overlap ? ' ' + overlap : '')
-      tokens += sentenceTokens
-    } else {
-      break
-    }
-  }
-  
-  return overlap
-}
-
-/**
  * Create token-based overlap from the end of a chunk (sync version with cached counter)
  * Uses a pre-created TokenCounter for efficient batch processing
  */

@@ -123,30 +123,6 @@ export interface COStarBaseContext {
 }
 
 /**
- * Extended context for editor chat
- */
-export interface ChatCOStarContext extends COStarBaseContext {
-  // Document state
-  documentContent: string
-  contentTruncated: boolean
-  documentStructure?: string
-  selectedText?: string
-  
-  // Sources
-  papersContext: string
-  ragContext: string
-  
-  // Mentioned papers (explicitly referenced by user with @)
-  mentionedPapersContext?: string
-  
-  // Tools (optional - can use default list)
-  tools?: Array<{ name: string; description: string }>
-  
-  // Additional audience notes
-  audienceNotes?: string
-}
-
-/**
  * Extended context for autocomplete
  * 
  * Note: suggestionType/suggestionObjective removed - the LLM now analyzes
@@ -297,54 +273,6 @@ export function buildBaseContext(
     styleGuidance: getStyleGuidance(paperType),
     expertiseLevel: inferExpertiseLevel(documentContent),
     writingStage: inferWritingStage(documentContent),
-  }
-}
-
-/**
- * Build full context for editor chat
- */
-export function buildChatContext(params: {
-  topic: string
-  paperType: string
-  currentSection?: string
-  documentContent: string
-  documentStructure?: string
-  selectedText?: string
-  papersContext: string
-  ragContext: string
-  mentionedPapersContext?: string
-  maxContentLength?: number
-}): ChatCOStarContext {
-  const {
-    topic,
-    paperType,
-    currentSection = '',
-    documentContent,
-    documentStructure,
-    selectedText,
-    papersContext,
-    ragContext,
-    mentionedPapersContext,
-    maxContentLength = 6000, // ~1.5-2 pages of context
-  } = params
-  
-  const base = buildBaseContext(topic, paperType, currentSection, documentContent)
-  
-  // Truncate content if needed
-  const truncated = documentContent.length > maxContentLength
-  const content = truncated 
-    ? documentContent.slice(0, maxContentLength) 
-    : documentContent
-  
-  return {
-    ...base,
-    documentContent: content,
-    contentTruncated: truncated,
-    documentStructure,
-    selectedText,
-    papersContext,
-    ragContext,
-    mentionedPapersContext,
   }
 }
 

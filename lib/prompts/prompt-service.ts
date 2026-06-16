@@ -4,7 +4,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import { PromptBuilder, type PromptTemplate } from '@/lib/core/prompt-builder'
 import type { PromptData, BuiltPrompt, TemplateOptions } from '@/lib/core/prompt-builder'
-import type { ChatCOStarContext, CompleteCOStarContext } from './costar-context'
+import type { CompleteCOStarContext } from './costar-context'
 import type { ChatAUTOMATContext } from './automat-context'
 
 /**
@@ -44,15 +44,6 @@ export class PromptService {
 
   static async buildUnified(data: PromptData, options: TemplateOptions = {}): Promise<BuiltPrompt> {
     return this.build('unified', data, options)
-  }
-
-  /**
-   * Build chat system prompt using CO-STAR framework (legacy)
-   * @deprecated Use buildChatAUTOMATPrompt for new code
-   */
-  static async buildChatPrompt(context: ChatCOStarContext): Promise<string> {
-    const template = await this.loadTemplate('chat')
-    return PromptBuilder.buildChatPrompt(template, context)
   }
 
   /**
@@ -136,9 +127,6 @@ export class PromptService {
       let templatePath: string
       
       switch (templateName) {
-        case 'chat':
-          templatePath = path.join(process.cwd(), 'lib/prompts/chat/system.yaml')
-          break
         case 'chat-automat':
           templatePath = path.join(process.cwd(), 'lib/prompts/chat/automat-system.yaml')
           break

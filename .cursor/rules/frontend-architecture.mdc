@@ -1,0 +1,14 @@
+---
+description: Keep frontend auth, state ownership, and async UI patterns consistent
+alwaysApply: true
+---
+
+# Frontend Architecture
+
+- Keep `AuthProvider` focused on session sync only. Put PKCE exchange, recovery handling, magic link handling, and other special auth flows in dedicated auth pages or routes.
+- Use React Query for server state only: fetched data, cached collections, mutations, optimistic updates, and invalidation.
+- Keep purely presentational and interaction state local: open/closed UI, form inputs before submit, hover state, tab state, and temporary selection state.
+- Put shareable view state in the URL: search text, sort order, filters, pagination, and any state users should keep across refresh/back/forward.
+- Prefer sectional loading over full-screen blocking once the page shell is visible. Only block the full screen for true route transitions or app boot.
+- Reuse shared async state components for loading, empty, and error states instead of custom one-off variants.
+- Treat empty state and error state as different UX states. Do not silently swallow fetch errors and render an empty screen.

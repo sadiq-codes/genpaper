@@ -1580,7 +1580,7 @@ function repairPatternDenominatorClaims(pattern: Pattern): Pattern {
   return {
     ...pattern,
     claim: replaceXofYClaims(pattern.claim, replacement) || pattern.claim,
-    summary: replaceXofYClaims(pattern.summary, replacement),
+    summary: replaceXofYClaims(pattern.summary, replacement) || pattern.summary,
     values: pattern.values
       ? {
           ...pattern.values,

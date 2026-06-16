@@ -322,15 +322,6 @@ export async function checkCanStartGeneration(
 // =============================================================================
 
 /**
- * Record that a paper was generated (increments usage counter)
- * Call this after successful paper generation
- * @deprecated Use recordProjectGenerated instead for accurate billing
- */
-export async function recordPaperGenerated(userId: string): Promise<boolean> {
-  return incrementPaperUsage(userId)
-}
-
-/**
  * Mark a project as generated and increment billing counter
  * This is the correct way to track billing - it uses the project's has_generated flag
  * to ensure we only count the first successful generation.
