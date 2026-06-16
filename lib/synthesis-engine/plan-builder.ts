@@ -23,7 +23,8 @@ import type {
   SynthesisPlan,
   SynthesisPlanInput,
   SynthesisPlanResult,
-  SectionPlan
+  SectionPlan,
+  PaperInfo
 } from './types'
 import { type SectionType, inferSectionType } from '@/lib/generation/paper-type-config'
 
