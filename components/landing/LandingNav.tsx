@@ -1,24 +1,17 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { ArrowRight, Menu, X } from 'lucide-react'
 import Image from 'next/image'
-import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 
-export function LandingNav() {
-  const [user, setUser] = useState<User | null>(null)
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const supabase = createClient()
+interface LandingNavProps {
+  user: User | null
+}
 
-  useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-    }
-    getUser()
-  }, [supabase.auth])
+export function LandingNav({ user }: LandingNavProps) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-background/95 backdrop-blur-md border-b border-border">
@@ -126,20 +119,10 @@ export function LandingNav() {
 
 interface LandingCTAProps {
   variant: 'hero' | 'final'
+  user: User | null
 }
 
-export function LandingCTA({ variant }: LandingCTAProps) {
-  const [user, setUser] = useState<User | null>(null)
-  const supabase = createClient()
-
-  useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-    }
-    getUser()
-  }, [supabase.auth])
-
+export function LandingCTA({ variant, user }: LandingCTAProps) {
   if (variant === 'hero') {
     return (
       <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">

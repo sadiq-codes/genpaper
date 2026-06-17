@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { handleError, requireAuth } from '@/lib/api/helpers'
+import { requireAuth } from '@/lib/api/helpers'
 import { isAdmin } from '@/lib/admin'
 import { reconcileRunHealth } from '@/lib/generation/run-recovery'
 import { classifyGenerationFailure } from '@/lib/generation/telemetry'
@@ -24,8 +24,14 @@ function getDurationSeconds(startedAt: string | null, completedAt: string | null
 function percentile(values: number[], p: number) {
   if (values.length === 0) return null
   const sorted = values.toSorted((a, b) => a - b)
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))
-  return sorted[index]
+  // Use linear interpolation for percentile calculation
+  const rank = (p / 100) * (sorted.length - 1)
+  const lower = Math.floor(rank)
+  const upper = Math.ceil(rank)
+  if (lower === upper) return sorted[lower]
+  // Interpolate between lower and upper
+  const weight = rank - lower
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight
 }
 
 function trimReason(reason: string) {
@@ -50,10 +56,8 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-  const svc = createServiceClient()
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+    const svc = createServiceClient()
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
     const [
       { data: rawRuns },
@@ -63,63 +67,63 @@ export async function GET() {
       svc
         .from('generation_runs')
         .select(`
-        id,
-        project_id,
-        user_id,
-        status,
-        progress,
-        current_stage,
-        current_section,
-        error_message,
-        started_at,
-        completed_at,
-        created_at,
-        research_projects:project_id (
           id,
-          topic
-        )
-      `)
-      .gte('created_at', thirtyDaysAgo),
-    svc
-    .from('app_events')
-      .select('event_type, created_at, user_id, metadata')
-      .in('event_type', [
-        'generation_started',
-        'generation_completed',
-        'generation_failed',
-        'generation_stage_timing',
-        'generation_job_claimed',
-        'generation_retry_scheduled',
-      ])
-      .gte('created_at', thirtyDaysAgo),
-    svc
-      .from('generation_jobs')
-      .select(`
-        id,
-        run_id,
-        project_id,
-        user_id,
-        status,
-        attempts,
-        max_attempts,
-        worker_id,
-        lease_until,
-        last_heartbeat_at,
-        error_message,
-        started_at,
-        completed_at,
-        created_at,
-        updated_at,
-        research_projects:project_id (
+          project_id,
+          user_id,
+          status,
+          progress,
+          current_stage,
+          current_section,
+          error_message,
+          started_at,
+          completed_at,
+          created_at,
+          research_projects:project_id (
+            id,
+            topic
+          )
+        `)
+        .gte('created_at', thirtyDaysAgo),
+      svc
+        .from('app_events')
+        .select('event_type, created_at, user_id, metadata')
+        .in('event_type', [
+          'generation_started',
+          'generation_completed',
+          'generation_failed',
+          'generation_stage_timing',
+          'generation_job_claimed',
+          'generation_retry_scheduled',
+        ])
+        .gte('created_at', thirtyDaysAgo),
+      svc
+        .from('generation_jobs')
+        .select(`
           id,
-          topic
-        )
-      `)
+          run_id,
+          project_id,
+          user_id,
+          status,
+          attempts,
+          max_attempts,
+          worker_id,
+          lease_until,
+          last_heartbeat_at,
+          error_message,
+          started_at,
+          completed_at,
+          created_at,
+          updated_at,
+          research_projects:project_id (
+            id,
+            topic
+          )
+        `)
         .gte('created_at', thirtyDaysAgo),
     ])
 
-  const runsById = new Map((rawRuns || []).map((run) => [run.id, run]))
-  const inconsistentRunIds = (jobs || [])
+    const runsById = new Map((rawRuns || []).map((run) => [run.id, run]))
+    const inconsistentRunIds = (jobs || [])
     .filter((job) => {
       const run = runsById.get(job.run_id)
       if (!run) return false
@@ -135,17 +139,17 @@ export async function GET() {
     })
     .map((job) => job.run_id)
 
-  const reconciledRuns = inconsistentRunIds.length > 0
+    const reconciledRuns = inconsistentRunIds.length > 0
     ? await Promise.all(inconsistentRunIds.map((runId) => reconcileRunHealth(runId)))
     : []
 
-  const reconciledRunMap = new Map(
+    const reconciledRunMap = new Map(
     reconciledRuns
       .filter((run): run is NonNullable<typeof run> => Boolean(run))
       .map((run) => [run.id, run])
-  )
+    )
 
-  const runs = (rawRuns || []).map((run) => {
+    const runs = (rawRuns || []).map((run) => {
     const reconciled = reconciledRunMap.get(run.id)
     return reconciled
       ? {
@@ -160,14 +164,14 @@ export async function GET() {
           created_at: reconciled.created_at,
         }
       : run
-  })
+    })
 
-  const generationStats = { total: 0, completed: 0, failed: 0, cancelled: 0, running: 0, pending: 0 }
-  const stageCounts: Record<string, number> = {}
-  const paperTypeCounts: Record<string, number> = {}
-  const durations: number[] = []
-  const projectRunCounts = new Map<string, { projectId: string; topic: string; count: number }>()
-  const recentFailures: Array<{
+    const generationStats = { total: 0, completed: 0, failed: 0, cancelled: 0, running: 0, pending: 0 }
+    const stageCounts: Record<string, number> = {}
+    const paperTypeCounts: Record<string, number> = {}
+    const durations: number[] = []
+    const projectRunCounts = new Map<string, { projectId: string; topic: string; count: number }>()
+    const recentFailures: Array<{
     runId: string
     projectId: string | null
     projectTitle: string | null
@@ -176,28 +180,28 @@ export async function GET() {
     stage: string | null
     message: string
     category: string
-    substep: string | null
-  }> = []
+      substep: string | null
+    }> = []
 
-  for (const run of runs || []) {
-    generationStats.total += 1
-    if (run.status === 'completed') generationStats.completed += 1
-    else if (run.status === 'failed') generationStats.failed += 1
-    else if (run.status === 'cancelled') generationStats.cancelled += 1
-    else if (run.status === 'pending') generationStats.pending += 1
-    else generationStats.running += 1
+    for (const run of runs || []) {
+      generationStats.total += 1
+      if (run.status === 'completed') generationStats.completed += 1
+      else if (run.status === 'failed') generationStats.failed += 1
+      else if (run.status === 'cancelled') generationStats.cancelled += 1
+      else if (run.status === 'pending') generationStats.pending += 1
+      else generationStats.running += 1
 
-    if (run.current_stage) {
-      stageCounts[run.current_stage] = (stageCounts[run.current_stage] || 0) + 1
-    }
+      if (run.current_stage) {
+        stageCounts[run.current_stage] = (stageCounts[run.current_stage] || 0) + 1
+      }
 
-    const duration = getDurationMinutes(run.started_at || run.created_at, run.completed_at)
-    if (duration !== null && run.status === 'completed') {
-      durations.push(duration)
-    }
+      const duration = getDurationMinutes(run.started_at || run.created_at, run.completed_at)
+      if (duration !== null && run.status === 'completed') {
+        durations.push(duration)
+      }
 
-    const project = Array.isArray(run.research_projects) ? run.research_projects[0] : run.research_projects
-    const projectKey = run.project_id
+      const project = Array.isArray(run.research_projects) ? run.research_projects[0] : run.research_projects
+      const projectKey = run.project_id
     if (projectKey) {
       const existing = projectRunCounts.get(projectKey)
       if (existing) existing.count += 1
@@ -326,12 +330,15 @@ export async function GET() {
       }
     })
 
+  const tenMinutesAgoMs = Date.now() - 10 * 60 * 1000
+  const twentyMinutesAgoMs = Date.now() - 20 * 60 * 1000
+  
   const stuckJobs = (jobs || [])
     .filter((job) => {
       if (job.status !== 'running') return false
-      const leaseExpired = !!job.lease_until && job.lease_until < tenMinutesAgo
-      const heartbeatStale = !!job.last_heartbeat_at && job.last_heartbeat_at < tenMinutesAgo
-      const startedTooLongAgo = !!job.started_at && job.started_at < twentyMinutesAgo
+      const leaseExpired = !!job.lease_until && new Date(job.lease_until).getTime() < tenMinutesAgoMs
+      const heartbeatStale = !!job.last_heartbeat_at && new Date(job.last_heartbeat_at).getTime() < tenMinutesAgoMs
+      const startedTooLongAgo = !!job.started_at && new Date(job.started_at).getTime() < twentyMinutesAgoMs
       return leaseExpired || heartbeatStale || startedTooLongAgo
     })
     .sort((a, b) => new Date(a.started_at || a.created_at).getTime() - new Date(b.started_at || b.created_at).getTime())
@@ -392,6 +399,10 @@ export async function GET() {
         .slice(0, 8),
     })
   } catch (error) {
-    return handleError(error, 'Error in admin metrics API')
+    console.error('[Admin Metrics API] Error:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to fetch metrics' },
+      { status: 500 }
+    )
   }
 }

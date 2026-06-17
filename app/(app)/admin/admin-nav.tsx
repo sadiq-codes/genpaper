@@ -3,10 +3,11 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { BarChart3, FileText, Mail } from 'lucide-react'
+import { BarChart3, FileText, Mail, Server } from 'lucide-react'
 
 const tabs = [
   { label: 'Metrics', href: '/admin/metrics', icon: BarChart3 },
+  { label: 'Infrastructure', href: '/admin/infrastructure', icon: Server },
   { label: 'Blog', href: '/admin/blog', icon: FileText },
   { label: 'Emails', href: '/admin/emails', icon: Mail },
 ]
