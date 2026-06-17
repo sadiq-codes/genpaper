@@ -9,7 +9,8 @@ export default async function AdminLayout({
   children: React.ReactNode
 }) {
   const user = await getUserOrRedirect()
-  if (!isAdmin(user.id)) {
+  const userIsAdmin = await isAdmin(user.id)
+  if (!userIsAdmin) {
     redirect('/projects')
   }
 

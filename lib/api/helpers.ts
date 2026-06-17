@@ -2,8 +2,8 @@ import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import type { User } from '@supabase/supabase-js'
-import { isAppError, ServiceUnavailableError } from '@/lib/errors'
-import { isTransientAuthNetworkError } from '@/lib/supabase/transient-auth-fetch'
+import { isAppError } from '@/lib/errors'
+import { getUser } from '@/lib/auth/cached'
 
 // ============================================================================
 // Auth Helpers
@@ -12,25 +12,11 @@ import { isTransientAuthNetworkError } from '@/lib/supabase/transient-auth-fetch
 /**
  * Get the authenticated user from the current request context.
  * Returns null if not authenticated.
+ * 
+ * Uses React's cache() for request deduplication via lib/auth/cached.ts
  */
 export async function getAuthenticatedUser(): Promise<User | null> {
-  const supabase = await createClient()
-  try {
-    const { data: { user }, error } = await supabase.auth.getUser()
-    if (error) {
-      if (isTransientAuthNetworkError(error)) {
-        throw new ServiceUnavailableError('Authentication service temporarily unavailable', 'supabase-auth')
-      }
-      return null
-    }
-    if (!user) return null
-    return user
-  } catch (error) {
-    if (isTransientAuthNetworkError(error)) {
-      throw new ServiceUnavailableError('Authentication service temporarily unavailable', 'supabase-auth')
-    }
-    throw error
-  }
+  return getUser()
 }
 
 // ============================================================================

@@ -45,9 +45,10 @@ function average(values: number[]) {
 export async function GET() {
   try {
     const user = await requireAuth()
-    if (!isAdmin(user.id)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+    const userIsAdmin = await isAdmin(user.id)
+    if (!userIsAdmin) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
   const svc = createServiceClient()
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()

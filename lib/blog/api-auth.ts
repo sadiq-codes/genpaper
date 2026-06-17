@@ -46,7 +46,8 @@ async function validateSession(): Promise<{ valid: boolean; userId?: string }> {
       return { valid: false }
     }
     
-    return { valid: isAdmin(user.id), userId: user.id }
+    const userIsAdmin = await isAdmin(user.id)
+    return { valid: userIsAdmin, userId: user.id }
   } catch {
     return { valid: false }
   }

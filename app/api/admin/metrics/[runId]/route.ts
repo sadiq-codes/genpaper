@@ -33,7 +33,8 @@ export async function GET(
   try {
     const { runId } = await params
     const user = await requireAuth()
-    if (!isAdmin(user.id)) {
+    const userIsAdmin = await isAdmin(user.id)
+    if (!userIsAdmin) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

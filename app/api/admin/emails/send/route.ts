@@ -7,7 +7,8 @@ import { isAdmin } from '@/lib/admin'
 
 async function requireAdmin() {
   const user = await requireAuth()
-  if (!isAdmin(user.id)) return null
+  const userIsAdmin = await isAdmin(user.id)
+  if (!userIsAdmin) return null
   return user
 }
 

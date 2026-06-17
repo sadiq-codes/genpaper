@@ -12,6 +12,7 @@ export default async function AppLayout({
   children: React.ReactNode
 }) {
   const user = await getUserOrRedirect()
+  const showAdmin = await isAdmin(user.id)
 
   // Get sidebar state from cookies
   const cookieStore = await cookies()
@@ -29,7 +30,7 @@ export default async function AppLayout({
             Skip to content
           </a>
           
-          <AppSidebar showAdmin={isAdmin(user.id)} />
+          <AppSidebar showAdmin={showAdmin} />
           
           <SidebarInset className="min-w-0 overflow-x-hidden">
             {/* Main content area - matches editor layout with bg-muted/30 */}

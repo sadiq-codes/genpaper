@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getAbsoluteUrlFromHeaders } from '@/lib/config'
-import { trackEvent } from '@/lib/tracking/events'
-import { sendEmail } from '@/lib/email/service'
-import { welcomeEmail } from '@/lib/email/templates/welcome'
+
+/**
+ * Auth Callback Handler
+ * 
+ * Handles OAuth and magic link callbacks from Supabase.
+ * Profile creation is now handled by a database trigger (see migration).
+ */
 
 function sanitizeNextPath(raw: string | null): string {
   const fallback = '/projects'
@@ -17,123 +21,45 @@ function sanitizeNextPath(raw: string | null): string {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
-  const type = searchParams.get('type')
   const next = sanitizeNextPath(searchParams.get('next'))
-  const toRedirectUrl = (path: string) => getAbsoluteUrlFromHeaders(request.headers, path)
-  const toRecoveryError = (description = 'Email link is invalid or has expired') => {
+  const type = searchParams.get('type')
+  const error = searchParams.get('error')
+  const errorDescription = searchParams.get('error_description')
+  
+  const toUrl = (path: string) => getAbsoluteUrlFromHeaders(request.headers, path)
+
+  // Handle OAuth errors
+  if (error) {
     const params = new URLSearchParams({
-      error: 'access_denied',
-      error_code: 'otp_expired',
-      error_description: description,
+      error,
+      error_description: errorDescription || 'Authentication failed',
     })
-    return toRedirectUrl(`/reset-password?${params.toString()}`)
+    return NextResponse.redirect(toUrl(`/login?${params.toString()}`))
   }
-  const toLoginWithCode = () => {
-    if (!code) {
-      return toRedirectUrl(`/login?error=${encodeURIComponent('Authentication failed. Please try again.')}`)
-    }
+
+  // No code = direct navigation to callback (shouldn't happen)
+  if (!code) {
+    return NextResponse.redirect(toUrl('/login'))
+  }
+
+  // Exchange code for session
+  const supabase = await createClient()
+  const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
+
+  if (exchangeError) {
+    console.error('[auth/callback] Code exchange failed:', exchangeError.message)
     const params = new URLSearchParams({
-      code,
-      next,
+      error: 'exchange_failed',
+      error_description: 'Sign-in link is invalid or expired. Please try again.',
     })
-    if (type) {
-      params.set('type', type)
-    }
-    return toRedirectUrl(`/login?${params.toString()}`)
+    return NextResponse.redirect(toUrl(`/login?${params.toString()}`))
   }
 
-  if (code) {
-    try {
-      const supabase = await createClient()
-      
-      const { error } = await supabase.auth.exchangeCodeForSession(code)
-      
-      if (!error) {
-        // Get the authenticated user
-        const { data: { user } } = await supabase.auth.getUser()
-        
-        if (user) {
-          // Ensure profile exists - create if missing
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .upsert({
-              id: user.id,
-              email: user.email || '',
-              full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
-              created_at: new Date().toISOString()
-            }, {
-              onConflict: 'id',
-              ignoreDuplicates: false
-            })
-          
-          if (profileError) {
-            console.error('[auth/callback] Profile upsert error:', profileError)
-          }
-
-          // New user detection: send welcome email + track signup (fire-and-forget)
-          const isNewUser = user.created_at &&
-            Date.now() - new Date(user.created_at).getTime() < 120_000
-          if (isNewUser) {
-            const name = user.user_metadata?.full_name || user.user_metadata?.name || user.email || ''
-            trackEvent(user.id, 'signup').catch(() => {})
-            sendEmail({
-              to: user.email || '',
-              subject: "Welcome to GenPaper — let's write your first paper",
-              html: welcomeEmail({ name, userId: user.id }),
-              userId: user.id,
-              emailType: 'drip',
-            }).then(async (sent) => {
-              if (sent) {
-                const { createServiceClient } = await import('@/lib/supabase/service')
-                const svc = createServiceClient()
-                await svc.from('profiles').update({ onboarding_email_step: 1 }).eq('id', user.id)
-              }
-            }).catch(() => {})
-          }
-
-          // Explicit type param (set in forgot-password redirectTo) is the primary signal.
-          // Fall back to recovery_sent_at for emails sent before the redirectTo fix.
-          const isRecovery = type === 'recovery' || (
-            !searchParams.has('next') &&
-            !!user.recovery_sent_at &&
-            Date.now() - new Date(user.recovery_sent_at).getTime() < 3_600_000
-          )
-          if (isRecovery) {
-            return NextResponse.redirect(toRedirectUrl('/reset-password'))
-          }
-        }
-        
-        // Authentication successful, redirect to destination
-        return NextResponse.redirect(toRedirectUrl(next))
-      } else {
-        console.error(
-          '[auth/callback] Code exchange failed:',
-          error.message,
-          error.status,
-          (error as { code?: string }).code
-        )
-        if (type === 'recovery') {
-          return NextResponse.redirect(toRecoveryError())
-        }
-        // Fallback to browser-side exchange. This can recover when the verifier
-        // is only available in the client context.
-        return NextResponse.redirect(toLoginWithCode())
-      }
-    } catch (error) {
-      console.error('[auth/callback] Unexpected error:', error)
-      if (type === 'recovery') {
-        return NextResponse.redirect(toRecoveryError())
-      }
-      return NextResponse.redirect(toLoginWithCode())
-    }
-  }
-
-  // Hash-based recovery fallback: server can't read hash fragments, so redirect
-  // to the client page which picks them up via the Supabase client SDK.
+  // Handle password recovery flow
   if (type === 'recovery') {
-    return NextResponse.redirect(toRedirectUrl('/reset-password'))
+    return NextResponse.redirect(toUrl('/reset-password'))
   }
 
-  // No code provided, redirect to login
-  return NextResponse.redirect(toRedirectUrl('/login'))
+  // Success - redirect to destination
+  return NextResponse.redirect(toUrl(next))
 }

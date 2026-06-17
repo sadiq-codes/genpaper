@@ -1,0 +1,58 @@
+# Caddy reverse proxy configuration for self-hosted Supabase
+#
+# This configuration uses self-signed certificates with Cloudflare Full SSL mode.
+# Cloudflare handles the public SSL certificate, and Caddy uses self-signed certs
+# for the connection between Cloudflare and your server.
+#
+# Setup:
+# 1. Generate self-signed certificates:
+#    mkdir -p /etc/caddy/certs
+#    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+#      -keyout /etc/caddy/certs/key.pem \
+#      -out /etc/caddy/certs/cert.pem \
+#      -subj "/CN=*.your-domain.com"
+#
+# 2. Configure Cloudflare:
+#    - Set SSL/TLS mode to "Full" (not "Full (strict)")
+#    - Create A records for api.your-domain.com and studio.your-domain.com
+#    - Enable Proxied mode (orange cloud)
+#
+# 3. Install and start Caddy:
+#    sudo cp Caddyfile /etc/caddy/Caddyfile
+#    sudo systemctl enable caddy
+#    sudo systemctl start caddy
+
+{
+    # Disable automatic HTTPS since we're using self-signed certs behind Cloudflare
+    auto_https off
+}
+
+# HTTPS (port 443) - for Cloudflare proxied traffic
+:443 {
+    tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+    
+    # API endpoint (Kong gateway)
+    @api host api.your-domain.com
+    handle @api {
+        reverse_proxy localhost:8000
+    }
+    
+    # Studio dashboard
+    @studio host studio.your-domain.com
+    handle @studio {
+        reverse_proxy localhost:3000
+    }
+}
+
+# HTTP (port 80) - fallback for non-proxied requests
+:80 {
+    @api host api.your-domain.com
+    handle @api {
+        reverse_proxy localhost:8000
+    }
+    
+    @studio host studio.your-domain.com
+    handle @studio {
+        reverse_proxy localhost:3000
+    }
+}

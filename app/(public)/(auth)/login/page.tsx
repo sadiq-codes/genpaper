@@ -26,30 +26,37 @@ function LoginPageContent() {
   const [showPassword, setShowPassword] = useState(false)
   const [checking, setChecking] = useState(true)
   const [error, setError] = useState("")
-  const [canResendConfirmation, setCanResendConfirmation] = useState(false)
-  const [resendLoading, setResendLoading] = useState(false)
-  const [resendMessage, setResendMessage] = useState("")
   const [googleLoading, setGoogleLoading] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
   const nextPath = sanitizeNextPath(searchParams.get("next"))
-  const authCode = searchParams.get("code")
-  const authType = searchParams.get("type")
+  
+  // Check for error params from OAuth callback
   const authError = searchParams.get("error")
-  const authErrorCode = searchParams.get("error_code")
   const authErrorDescription = searchParams.get("error_description")
 
-  const safeDecode = (value: string) => {
-    try {
-      return decodeURIComponent(value)
-    } catch {
-      return value
+  // Check existing session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session) {
+          router.replace(nextPath)
+          return
+        }
+        
+        // Show any OAuth errors
+        if (authError || authErrorDescription) {
+          setError(decodeURIComponent(authErrorDescription || authError || "Authentication failed"))
+        }
+      } finally {
+        setChecking(false)
+      }
     }
-  }
-
-  const getEmailAuthRedirectTo = () =>
-    `${window.location.origin}/login?next=${encodeURIComponent(nextPath)}`
+    
+    checkSession()
+  }, [supabase, router, nextPath, authError, authErrorDescription])
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true)
@@ -72,209 +79,36 @@ function LoginPageContent() {
     }
   }
 
-  useEffect(() => {
-    let cancelled = false
-
-    const redirectAfterAuth = () => {
-      const go = () => {
-        if (authType === "recovery") {
-          router.replace("/reset-password")
-          router.refresh()
-          return
-        }
-        router.replace(nextPath)
-        router.refresh()
-      }
-      requestAnimationFrame(go)
-    }
-
-    const waitForSession = async (attempts = 6, delayMs = 150) => {
-      for (let i = 0; i < attempts; i += 1) {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session) return true
-        await new Promise((resolve) => setTimeout(resolve, delayMs))
-      }
-      return false
-    }
-
-    const initializeAuthState = async () => {
-      try {
-        if (authCode) {
-          const codeStatusKey = `login-code-status:${authCode}`
-          const existingStatus = sessionStorage.getItem(codeStatusKey)
-
-          if (existingStatus === "pending" || existingStatus === "done") {
-            const hasSession = await waitForSession()
-            if (hasSession) {
-              redirectAfterAuth()
-              return
-            }
-
-            if (existingStatus === "done") {
-              setError("This sign-in link is invalid or expired. Request a new one and open it in the same browser.")
-              setCanResendConfirmation(true)
-            }
-            return
-          }
-
-          const nextOnlyParams = new URLSearchParams({ next: nextPath })
-          window.history.replaceState(null, "", `/login?${nextOnlyParams.toString()}`)
-
-          sessionStorage.setItem(codeStatusKey, "pending")
-          const { data: { session: existingSession } } = await supabase.auth.getSession()
-          if (existingSession) {
-            sessionStorage.setItem(codeStatusKey, "done")
-            redirectAfterAuth()
-            return
-          }
-
-          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(authCode)
-          if (!exchangeError) {
-            sessionStorage.setItem(codeStatusKey, "done")
-            redirectAfterAuth()
-            return
-          }
-
-          sessionStorage.removeItem(codeStatusKey)
-          console.error(
-            "[login] exchangeCodeForSession failed:",
-            exchangeError.message,
-            exchangeError.status,
-            (exchangeError as { code?: string }).code
-          )
-          setError("This sign-in link is invalid or expired. Request a new one and open it in the same browser.")
-          setCanResendConfirmation(true)
-          return
-        }
-
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session) {
-          redirectAfterAuth()
-          return
-        }
-
-        if (authErrorCode || authErrorDescription) {
-          setError(safeDecode(authErrorDescription || authErrorCode || "Authentication failed"))
-          if ((authErrorCode || "").toLowerCase().includes("otp")) {
-            setCanResendConfirmation(true)
-          }
-          return
-        }
-
-        if (authError) {
-          setError(safeDecode(authError))
-          if (authError.toLowerCase().includes("authentication failed")) {
-            setCanResendConfirmation(true)
-          }
-        }
-      } finally {
-        if (!cancelled) {
-          setChecking(false)
-        }
-      }
-    }
-
-    initializeAuthState()
-
-    return () => {
-      cancelled = true
-    }
-  }, [authCode, authError, authErrorCode, authErrorDescription, authType, nextPath, router, supabase])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError("")
-    setCanResendConfirmation(false)
-    setResendMessage("")
 
     try {
-      const normalizedEmail = email.trim().toLowerCase()
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: normalizedEmail,
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
         password,
       })
 
       if (signInError) {
+        // Map common error codes to user-friendly messages
+        const errorMessages: Record<string, string> = {
+          invalid_credentials: "Invalid email or password",
+          email_not_confirmed: "Please check your email and confirm your account before signing in",
+          user_not_found: "No account found with this email",
+        }
+        
         const code = (signInError as { code?: string }).code
-        const invalidCredentials =
-          code === "invalid_credentials" ||
-          signInError.message === "Invalid login credentials"
-
-        if (invalidCredentials) {
-          const { error: fallbackError } = await supabase.auth.signInWithOtp({
-            email: normalizedEmail,
-            options: {
-              shouldCreateUser: false,
-              emailRedirectTo: getEmailAuthRedirectTo(),
-            },
-          })
-
-          if (!fallbackError) {
-            setError(
-              "Invalid email or password. We sent a sign-in link to your email as a fallback. Open it, then set a new password if needed."
-            )
-          } else {
-            setError("Invalid email or password")
-          }
-
-          setCanResendConfirmation(true)
-          return
-        }
-
-        if (code === "email_not_confirmed") {
-          setError("Please confirm your email before signing in.")
-          setCanResendConfirmation(true)
-          return
-        }
-
-        setError(signInError.message || "Invalid email or password")
+        setError(errorMessages[code || ""] || signInError.message)
         return
       }
 
-      if (!data.session) {
-        setError("Sign in failed. Please try again.")
-        return
-      }
-
-      requestAnimationFrame(() => {
-        router.replace(nextPath)
-        router.refresh()
-      })
-    } catch (error) {
-      console.error("Sign-in error:", error)
+      router.replace(nextPath)
+      router.refresh()
+    } catch {
       setError("Network error. Please check your connection and try again.")
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleResendConfirmation = async () => {
-    const normalizedEmail = email.trim().toLowerCase()
-    if (!normalizedEmail) return
-
-    setResendLoading(true)
-    setResendMessage("")
-
-    try {
-      const { error } = await supabase.auth.resend({
-        type: "signup",
-        email: normalizedEmail,
-        options: {
-          emailRedirectTo: getEmailAuthRedirectTo(),
-        },
-      })
-
-      if (error) {
-        setResendMessage("Could not resend confirmation email.")
-        return
-      }
-
-      setResendMessage("If your account exists and is unconfirmed, we sent a new confirmation email.")
-    } catch {
-      setResendMessage("Network error while resending confirmation email.")
-    } finally {
-      setResendLoading(false)
     }
   }
 
@@ -282,8 +116,7 @@ function LoginPageContent() {
     return (
       <div className="w-full max-w-sm mx-auto px-6">
         <SectionLoadingState
-          title="Preparing sign in..."
-          description="Checking your current session and any email sign-in link."
+          title="Checking session..."
           className="min-h-[320px]"
         />
       </div>
@@ -328,7 +161,7 @@ function LoginPageContent() {
             <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
           </svg>
         )}
-        {googleLoading ? "Connecting\u2026" : "Continue with Google"}
+        {googleLoading ? "Connecting..." : "Continue with Google"}
       </button>
 
       {/* Divider */}
@@ -346,21 +179,6 @@ function LoginPageContent() {
         {error && (
           <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-3">
             <p className="text-sm text-destructive">{error}</p>
-            {canResendConfirmation && (
-              <div className="mt-2">
-                <button
-                  type="button"
-                  onClick={handleResendConfirmation}
-                  disabled={resendLoading || !email.trim()}
-                  className="inline-flex items-center rounded-full border border-border/40 px-3 py-1 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
-                >
-                  {resendLoading ? "Sending..." : "Resend confirmation email"}
-                </button>
-              </div>
-            )}
-            {resendMessage && (
-              <p className="mt-2 text-xs text-muted-foreground">{resendMessage}</p>
-            )}
           </div>
         )}
 
@@ -376,6 +194,7 @@ function LoginPageContent() {
             onChange={(e) => setEmail(e.target.value)}
             className="h-11 rounded-xl border-border/40 bg-background placeholder:text-muted-foreground/30 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
             required
+            autoComplete="email"
           />
         </div>
 
@@ -392,6 +211,7 @@ function LoginPageContent() {
               onChange={(e) => setPassword(e.target.value)}
               className="h-11 pr-10 rounded-xl border-border/40 bg-background placeholder:text-muted-foreground/30 focus-visible:ring-0 focus-visible:border-foreground/20 transition-colors"
               required
+              autoComplete="current-password"
             />
             <button
               type="button"
@@ -410,7 +230,7 @@ function LoginPageContent() {
           className="w-full h-11 rounded-full bg-foreground text-background text-sm font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50 inline-flex items-center justify-center gap-2"
         >
           {loading && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
-          {loading ? "Signing in\u2026" : "Sign In"}
+          {loading ? "Signing in..." : "Sign In"}
         </button>
       </form>
 
@@ -436,7 +256,7 @@ export default function LoginPage() {
   return (
     <Suspense fallback={(
       <div className="w-full max-w-sm mx-auto px-6">
-        <SectionLoadingState title="Loading sign in..." className="min-h-[320px]" />
+        <SectionLoadingState title="Loading..." className="min-h-[320px]" />
       </div>
     )}>
       <LoginPageContent />

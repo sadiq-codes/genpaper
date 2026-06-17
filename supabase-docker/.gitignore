@@ -1,0 +1,17 @@
+# Ignore actual .env file (use .env.example as template)
+.env
+
+# Ignore actual Caddyfile (use Caddyfile.example as template)
+caddy/Caddyfile
+
+# Ignore data volumes (these are created on the server)
+volumes/db/
+volumes/storage/
+volumes/functions/
+volumes/snippets/
+volumes/api/
+volumes/pooler/
+
+# Keep the templates directory
+!volumes/auth/
+!volumes/auth/templates/
