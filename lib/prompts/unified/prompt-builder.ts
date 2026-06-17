@@ -56,6 +56,10 @@ export interface BuildPromptOptions extends TemplateOptions {
 
   // Explicit citation density for this section (from paper profile)
   sectionCitationDensity?: 'none' | 'light' | 'moderate' | 'heavy'
+  
+  // Output language for non-English papers (e.g., "Persian", "Chinese")
+  // When set, the LLM will generate content in this language
+  outputLanguage?: string
 }
 
 /**
@@ -280,6 +284,10 @@ async function generatePromptData(
     literatureStats: quantificationContext,
     // Explicit citation density for this section
     sectionCitationDensity: options.sectionCitationDensity,
+    
+    // Output language for non-English papers
+    // When set, the LLM will write the entire section in this language
+    outputLanguage: options.outputLanguage,
     
     // Synthesis enrichment (from EnrichedSectionContext if available)
     ...synthesisData

@@ -154,6 +154,10 @@ export interface PromptData {
   // Explicit citation density for this section (from paper profile)
   sectionCitationDensity?: 'none' | 'light' | 'moderate' | 'heavy'
 
+  // Output language for non-English papers (e.g., "Persian", "Chinese", "Arabic")
+  // When set, the LLM will generate the entire section in this language
+  outputLanguage?: string
+
   // Dynamic, section-specific table schema guidance (when tables are useful)
   tableSchemaGuidance?: string
   

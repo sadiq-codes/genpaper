@@ -465,7 +465,19 @@ export async function generatePaper(
       discipline: paperProfile.discipline.primary
     }
 
-    const allPapers = await collectPapers(discoveryOptions)
+    const discoveryResult = await collectPapers(discoveryOptions)
+    const allPapers = discoveryResult.papers
+    const translationResult = discoveryResult.translation
+    
+    // If topic was translated, update profile with output language
+    if (translationResult?.wasTranslated) {
+      paperProfile.outputLanguage = translationResult.outputLanguage
+      info({
+        originalLanguage: translationResult.outputLanguage,
+        originalTopic: translationResult.originalTopic.slice(0, 50),
+        searchTopic: translationResult.searchTopic.slice(0, 50)
+      }, `Paper will be generated in ${translationResult.outputLanguage}`)
+    }
     
     // Check cancellation after paper discovery
     checkCancellation('paper discovery')
@@ -807,7 +819,9 @@ export async function generatePaper(
         voiceConfig: paperProfile.voice,
         // Pass quality criteria from profile - eliminates per-section LLM calls
         profileCriteria: paperProfile.qualityCriteria,
-        customInstructions: config.customInstructions
+        customInstructions: config.customInstructions,
+        // Pass output language for non-English papers
+        outputLanguage: paperProfile.outputLanguage
       },
       // Progress callback - called when section starts
       (completed, total, currentSection) => {

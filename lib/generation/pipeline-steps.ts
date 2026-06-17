@@ -178,7 +178,14 @@ export async function runDiscoveryPhase(
     signal,
   }
 
-  const papers = await collectPapers(discoveryOptions)
+  const discoveryResult = await collectPapers(discoveryOptions)
+  const papers = discoveryResult.papers
+  
+  // If topic was translated, update profile with output language
+  if (discoveryResult.translation?.wasTranslated) {
+    profile.outputLanguage = discoveryResult.translation.outputLanguage
+  }
+  
   throwIfCancelled(signal)
   
   if (papers.length === 0) {
@@ -766,7 +773,9 @@ export async function runSectionGenerationPhase(
       hasOriginalResearch: true,
       researchQuestion: config.originalResearch.research_question,
       keyFindings: config.originalResearch.key_findings
-    } : undefined
+    } : undefined,
+    // Output language for non-English papers
+    outputLanguage: profile.outputLanguage
   }
 
   const shouldSplit = sectionTargetWords >= SUBSECTION_SPLIT_THRESHOLD_GENERATE
@@ -964,7 +973,9 @@ export async function runSectionRewritePhase(
       hasOriginalResearch: true,
       researchQuestion: config.originalResearch.research_question,
       keyFindings: config.originalResearch.key_findings
-    } : undefined
+    } : undefined,
+    // Output language for non-English papers
+    outputLanguage: profile.outputLanguage
   }
 
   const shouldSplit = sectionTargetWords >= SUBSECTION_SPLIT_THRESHOLD_REWRITE

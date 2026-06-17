@@ -83,6 +83,16 @@ system: |-
   - Very short sections are invalid.
   - Use subsection headings to structure longer sections.
   
+  {{#outputLanguage}}
+  OUTPUT LANGUAGE (MANDATORY):
+  - Write the ENTIRE section in {{outputLanguage}}.
+  - Use {{outputLanguage}} academic conventions, terminology, and phrasing.
+  - Section headings, subheadings, and all content must be in {{outputLanguage}}.
+  - Citations remain in [@paper_id] format regardless of output language.
+  - The source papers are in English, but your synthesis must be in {{outputLanguage}}.
+  - Ensure natural, fluent {{outputLanguage}} academic prose (not translated-sounding).
+  {{/outputLanguage}}
+  
   {{#literatureStats}}
   LITERATURE BASE: {{usablePapers}} papers ({{totalPapers}} collected)
   {{#dateRange}}Publication range: {{earliest}} - {{latest}}{{/dateRange}}

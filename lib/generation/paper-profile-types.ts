@@ -254,6 +254,15 @@ export interface PaperProfile {
     sections: ProfileOutlineSection[]
     totalEstimatedWords: number
   }
+  
+  /**
+   * Output language for the generated paper.
+   * Set when a non-English topic is detected and translated for search.
+   * The paper will be written in this language while using English sources.
+   * Examples: "Persian", "Chinese", "Arabic", "Russian"
+   * Defaults to undefined (English) if topic was in English.
+   */
+  outputLanguage?: string
 }
 
 /**

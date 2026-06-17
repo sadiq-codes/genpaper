@@ -30,6 +30,7 @@ import type { UnifiedSearchOptions } from '@/lib/services/search-orchestrator'
 import { unifiedSearch } from '@/lib/search'
 import { buildEnhancedSearchQueries } from '@/lib/search/query-rewrite'
 import { quickRelevanceCheck } from '@/lib/search/semantic-rerank'
+import { translateTopicForSearch, translateKeyFindings, type TranslationResult } from '@/lib/search/query-translate'
 
 function getPaperRelevanceScore(paper: PaperWithAuthors): number {
   const metadata = (paper.metadata || {}) as Record<string, unknown>
@@ -63,10 +64,19 @@ function getPaperSelectionScore(paper: PaperWithAuthors): number {
 
 // Removed policy dependency - simplified ingestion logic
 
+/**
+ * Result of paper collection including translation info
+ */
+export interface CollectPapersResult {
+  papers: PaperWithAuthors[]
+  /** Translation info if topic was translated for search */
+  translation: TranslationResult | null
+}
+
 // Main entry ────────────────────────────────────────────────
 export async function collectPapers(
   options: EnhancedGenerationOptions
-): Promise<PaperWithAuthors[]> {
+): Promise<CollectPapersResult> {
   const throwIfCancelled = () => {
     if (options.signal?.aborted) {
       throw new Error('Run was cancelled')
@@ -118,23 +128,37 @@ export async function collectPapers(
   // Search for papers using external APIs
   let discoveredPapers: PaperWithAuthors[] = []
   
+  // Track translation result for passing to pipeline
+  let translationResult: TranslationResult | null = null
+  
   if (!useLibraryOnly && remainingPdfSlots > 0) {
     throwIfCancelled()
     console.log(`🔍 Searching for papers via external APIs...`)
+    
+    // Translate non-English topics for academic API search
+    translationResult = await translateTopicForSearch(topic)
+    const searchTopic = translationResult.searchTopic
     
     // Get original research context if available
     const originalResearch = config?.original_research as OriginalResearchConfig | undefined
     const hasOriginalResearch = originalResearch?.has_original_research
     
+    // Translate key findings if they're in a non-English language
+    let searchKeyFindings = originalResearch?.key_findings
+    if (translationResult.wasTranslated && searchKeyFindings) {
+      searchKeyFindings = await translateKeyFindings(searchKeyFindings, translationResult.outputLanguage)
+    }
+    
     try {
       // Build enhanced search queries if user has original research
-      let searchQueries: string[] = [topic]
+      // Use translated topic for search queries
+      let searchQueries: string[] = [searchTopic]
       
-      if (hasOriginalResearch && originalResearch?.key_findings) {
+      if (hasOriginalResearch && searchKeyFindings) {
         console.log(`🧪 Original research detected - building enhanced search queries...`)
-        searchQueries = await buildEnhancedSearchQueries(topic, {
+        searchQueries = await buildEnhancedSearchQueries(searchTopic, {
           researchQuestion: originalResearch.research_question,
-          keyFindings: originalResearch.key_findings,
+          keyFindings: searchKeyFindings,
         }, discipline)
         console.log(`   📋 Generated ${searchQueries.length} search queries:`)
         searchQueries.forEach((q, i) => console.log(`      ${i + 1}. "${q.slice(0, 80)}${q.length > 80 ? '...' : ''}"`))
@@ -403,7 +427,10 @@ export async function collectPapers(
     }
 
   throwIfCancelled()
-  return finalPapers
+  return {
+    papers: finalPapers,
+    translation: translationResult
+  }
 }
 
 

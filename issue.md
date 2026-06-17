@@ -1,148 +1,218 @@
+Generation run
+Skip to content
+GenPaper
+Navigation
+Admin
 
-Paper Generation Health
-Real-time visibility into generation throughput, latency, failures, and stuck work.
 
-Observation Window
+Metrics
+Infrastructure
+Blog
+Emails
+Back to sentry
+Run Drilldown
+نقد و بررسی مجموعه آثار هنرمند ایرانی منصور ثندریز
+Stage timeline, retries, queue wait, and failure context for run c23e1fb4....
 
-Rolling 30 days
-
+Open project
 Refresh
-Sentry Status
+Run Status
 
-Stable
-Healthy
-Queue wait, retries, failures, and stuck work are all within healthy thresholds right now.
+Failed · 15%
 
-Failure Rate
-
-OK
-0.0%
-
-0 failed out of 0 runs
+search
 
 Queue Wait
 
-—
-N/A
+0s
 
-Waiting for queue samples
+Source: claim event
 
-Retry Pressure
+Retries
 
-OK
-0.0%
+2
 
-0 retries across 0 runs
+Attempt 3 of 3
 
-Stuck Work
+Failure Category
 
-OK
+unknown
+
+discover failed: No papers with PDF URLs were found for topic "نقد و بررسی مجموعه آثار هنرمند ایرانی منصور ثندریز". Refine the topic or add PDF-backed papers to your library.
+
+Stage Timeline
+Ordered stage timings captured for this specific run.
+
+init
+
+0.2s
+
+ok
+17/06/2026, 13:01:04
+profile
+
+28.5s
+
+ok
+17/06/2026, 13:01:33
+discover
+
+11.1s
+
+failed
+17/06/2026, 13:01:44
+init
+
+0.1s
+
+ok
+17/06/2026, 13:01:46
+profile
+
+0.0s
+
+ok
+17/06/2026, 13:01:46
+discover
+
+8.3s
+
+failed
+17/06/2026, 13:01:54
+init
+
+0.1s
+
+ok
+17/06/2026, 13:02:17
+profile
+
+0.0s
+
+ok
+17/06/2026, 13:02:17
+discover
+
+10.4s
+
+failed
+17/06/2026, 13:02:27
+Run Snapshot
+Current state of the run, job, and in-memory pipeline progress.
+
+Status
+failed
+Age
+107 min
+Duration
+1.4 min
+Sections
+0/0
+Papers
 0
+Last heartbeat
+17/06/2026, 13:02:17
+Failure Context
+Structured failure metadata for this run.
 
-No stuck jobs detected
+unknowndiscover
+Stage: search
 
-Runs Started
+discover failed: No papers with PDF URLs were found for topic "نقد و بررسی مجموعه آثار هنرمند ایرانی منصور ثندریز". Refine the topic or add PDF-backed papers to your library.
 
-0
+Retry History
+Each time the worker re-queued this run after a recoverable error.
 
-0 completed, 0 cancelled
+Retry 2 · attempt 2
 
-Active Right Now
+0/0 sections preserved
 
-0
+17/06/2026, 13:01:54
+unknown
+discover
+search
+discover failed: No papers with PDF URLs were found for topic "نقد و بررسی مجموعه آثار هنرمند ایرانی منصور ثندریز". Refine the topic or add PDF-backed papers to your library.
 
-0 running, 0 queued
+Retry 1 · attempt 1
 
-Median Runtime
+0/0 sections preserved
 
-N/A
+17/06/2026, 13:01:44
+unknown
+discover
+search
+discover failed: No papers with PDF URLs were found for topic "نقد و بررسی مجموعه آثار هنرمند ایرانی منصور ثندریز". Refine the topic or add PDF-backed papers to your library.
 
-Waiting for completed run samples
+Run Activity
+Recent generation events emitted by the pipeline for this run.
 
-Queue Latency
+error
 
-N/A
+discover failed: No papers with PDF URLs were found for topic "نقد و بررسی مجموعه آثار هنرمند ایرانی منصور ثندریز". Refine the topic or add PDF-backed papers to your library.
 
-Waiting for queue samples
+17/06/2026, 13:02:27
+initialization
 
-Retries Scheduled
+Resuming generation...
 
-0
+17/06/2026, 13:02:27
+search
 
-0 runs retried, max observed attempt 0
+Searching academic databases...
 
-Failure Rate
+17/06/2026, 13:02:17
+profiling
 
-0.0%
+Resuming from saved paper structure...
 
-0 stuck jobs need attention
+17/06/2026, 13:02:17
+initialization
 
-Throughput Trend
+Preparing to write your paper…
 
-0.0%
-completion success across the last 30 days
+17/06/2026, 13:02:17
+initialization
 
-No generation traffic has been recorded yet.
+Resuming generation...
 
-Top Risk
+17/06/2026, 13:01:54
+search
 
-Stable
+Searching academic databases...
 
-No sentry thresholds are currently in warning or critical range
+17/06/2026, 13:01:46
+profiling
 
-Dominant Stage
+Resuming from saved paper structure...
 
-N/A
+17/06/2026, 13:01:46
+initialization
 
-No recent stage data
+Preparing to write your paper…
 
-P95 Runtime
+17/06/2026, 13:01:46
+search
 
-N/A
+Searching academic databases...
 
-Waiting for completed run samples
+17/06/2026, 13:01:33
+profiling
 
-Top Failure Reasons
-Most frequent failure signatures captured from generation events.
+Tailoring approach for هنرهای تجسمی (Visual Arts) research
 
-Type	Value
-No generation failures recorded yet
-Paper Type Mix
-What kinds of papers are being generated most often.
+17/06/2026, 13:01:33
+profiling
 
-Type	Value
-No paper type telemetry recorded yet
-Failure Categories
-Structured buckets for generation failures.
+Understanding your research area...
 
-Type	Value
-No structured failure categories recorded yet
-Slowest Stages
-Average and p95 timings for completed pipeline stages.
+17/06/2026, 13:01:04
+initialization
 
-Type	Value
-No stage timing telemetry recorded yet
-Active Runs
-Runs that are currently queued or in progress.
+Preparing to write your paper…
 
-No active runs right now.
+17/06/2026, 13:01:04
+start
 
-Stuck Jobs
-Running jobs with stale heartbeats, expired leases, or unusually long duration.
+Preparing to write your paper…
 
-No stuck jobs detected.
-
-Top Projects
-Projects generating the most paper runs in the reporting window.
-
-Type	Value
-No projects have started generation yet
-Stage Activity
-Most common pipeline stages observed across recent generation runs.
-
-Type	Value
-No stage activity recorded yet
-Recent Incidents
-Latest failed runs with project links, stage context, and error details.
-
-No incidents recorded in the current reporting window.
+17/06/2026, 13:01:04
