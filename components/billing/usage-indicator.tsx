@@ -64,7 +64,9 @@ export function UsageIndicator({ className }: { className?: string }) {
           <span className={cn("text-sm font-medium", getStatusColor())}>
             {isPaid 
               ? `${papersUsed}/${papersLimit}` 
-              : `${totalPapersAvailable} paper${totalPapersAvailable !== 1 ? 's' : ''}`
+              : hasPurchased 
+                ? `${purchasedPapers} paper${purchasedPapers !== 1 ? 's' : ''}`
+                : `${papersUsed}/${papersLimit}`
             }
           </span>
           {hasPurchased && (

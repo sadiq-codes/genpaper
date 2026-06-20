@@ -239,11 +239,13 @@ export function ProjectInputSection() {
                   userTier={subscription?.tier}
                 />
                 </span>
+                <span data-tour="generation-mode">
                 <GenerationModeSelect
                   value={generationMode}
                   onValueChange={setGenerationMode}
                   disabled={isLoading}
                 />
+                </span>
               </div>
 
               {/* Right: Submit */}

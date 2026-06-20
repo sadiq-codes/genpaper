@@ -20,6 +20,15 @@ export const PROJECTS_TOUR_STEPS: DriveStep[] = [
     },
   },
   {
+    element: '[data-tour="generation-mode"]',
+    popover: {
+      title: 'AI Generate or Write Yourself',
+      description: 'Choose "AI Generate" to have GenPaper write your paper automatically, or "Write myself" to start with a blank document and use AI assistance as you go.',
+      side: 'top',
+      align: 'start',
+    },
+  },
+  {
     element: '[data-tour="add-sources"]',
     popover: {
       title: 'Add your own sources',

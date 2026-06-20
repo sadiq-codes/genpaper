@@ -462,46 +462,48 @@ export function LandingPageClient({ user }: LandingPageClientProps) {
             </div>
           </Reveal>
 
-          {/* Pay-per-paper option */}
-          <Reveal>
-            <div className="max-w-2xl mx-auto mb-12">
-              <div className="relative rounded-2xl border-2 border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-transparent p-6">
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
-                  <div className="text-center sm:text-left">
-                    <span className="text-xs font-medium tracking-wide uppercase text-amber-600 dark:text-amber-400">
-                      Pay As You Go
-                    </span>
-                    <h3 className="font-semibold text-xl mt-1 mb-2">Just need one paper?</h3>
-                    <p className="text-sm text-muted-foreground">
-                      No subscription required. Buy a single paper anytime.
-                    </p>
-                  </div>
-                  <div className="text-center shrink-0">
-                    <div className="text-3xl font-bold">${PAPER_PRICE}</div>
-                    <div className="text-xs text-muted-foreground mb-3">per paper</div>
-                    <Link
-                      href={user ? "/projects" : "/signup"}
-                      className="inline-flex items-center justify-center rounded-full bg-amber-500 hover:bg-amber-600 text-white px-5 py-2 text-sm font-medium transition-colors"
-                    >
-                      {user ? "Buy Paper" : "Get Started"}
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Reveal>
-
-          {/* Subscription tiers */}
-          <Reveal>
-            <p className="text-center text-sm text-muted-foreground mb-6">
-              Or subscribe for monthly papers + unlimited AI features
-            </p>
-          </Reveal>
-
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            {/* Pay As You Go */}
             <Reveal delay={0}>
-              <PricingCard tier="free" user={user} billingInterval={billingInterval} />
+              <div className="relative rounded-2xl border p-6 flex flex-col h-full bg-card border-border/50 hover:border-border transition-all duration-300">
+                <div className="mb-6">
+                  <h3 className="font-semibold text-lg mb-1">Pay As You Go</h3>
+                  <p className="text-sm text-muted-foreground">Just need one paper?</p>
+                </div>
+
+                <div className="mb-6">
+                  <span className="text-4xl font-bold tracking-tight">${PAPER_PRICE}</span>
+                  <span className="text-muted-foreground text-sm">/paper</span>
+                </div>
+
+                <ul className="space-y-2.5 mb-8 flex-1">
+                  <li className="flex items-start gap-2.5 text-sm">
+                    <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" aria-hidden="true" />
+                    <span className="text-muted-foreground">No subscription required</span>
+                  </li>
+                  <li className="flex items-start gap-2.5 text-sm">
+                    <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" aria-hidden="true" />
+                    <span className="text-muted-foreground">All paper types available</span>
+                  </li>
+                  <li className="flex items-start gap-2.5 text-sm">
+                    <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" aria-hidden="true" />
+                    <span className="text-muted-foreground">Full references & export</span>
+                  </li>
+                  <li className="flex items-start gap-2.5 text-sm">
+                    <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" aria-hidden="true" />
+                    <span className="text-muted-foreground">Never expires</span>
+                  </li>
+                </ul>
+
+                <Link
+                  href={user ? "/projects" : "/signup"}
+                  className="inline-flex items-center justify-center rounded-full px-6 py-2.5 text-sm font-medium transition-all border border-border text-foreground hover:bg-muted"
+                >
+                  {user ? "Buy Paper" : "Get Started"}
+                </Link>
+              </div>
             </Reveal>
+            
             <Reveal delay={100}>
               <PricingCard tier="starter" user={user} billingInterval={billingInterval} />
             </Reveal>
