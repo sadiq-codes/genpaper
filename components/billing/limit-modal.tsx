@@ -167,99 +167,103 @@ function LimitModal({ open, limitType, onClose }: LimitModalProps) {
             </div>
           )}
 
-          {/* Pay-per-paper option - Primary CTA for paper limits */}
+          {/* Pay-per-paper option - Primary CTA */}
           {(isPaperLimit || isGenericUpgrade) && (
-            <div className="relative rounded-2xl border-2 border-foreground/20 p-5 bg-card shadow-lg">
-              <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[11px] font-medium tracking-wide uppercase bg-foreground text-background px-3 py-1 rounded-full">
-                Quick Option
-              </span>
-              
-              <div className="text-center space-y-3">
-                <div>
-                  <h3 className="font-semibold text-lg">Buy a Paper</h3>
-                  <p className="text-sm text-muted-foreground">One-time purchase, no commitment</p>
+            <div className="relative rounded-2xl border-2 border-brand/30 bg-gradient-to-b from-brand/5 to-transparent p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-5">
+                {/* Left: Info */}
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium tracking-wide uppercase text-brand bg-brand/10 px-2 py-0.5 rounded-full">
+                      Recommended
+                    </span>
+                  </div>
+                  <h3 className="font-semibold text-xl">Buy a Paper</h3>
+                  <p className="text-sm text-muted-foreground">One-time purchase. No subscription required.</p>
+                  <ul className="text-sm text-muted-foreground space-y-1 pt-1">
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span>All paper types available</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span>Full references & PDF export</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span>Never expires</span>
+                    </li>
+                  </ul>
                 </div>
                 
-                <div>
-                  <span className="text-4xl font-bold tracking-tight">${PAPER_PRICE}</span>
-                  <span className="text-muted-foreground text-sm"> per paper</span>
+                {/* Right: Price + CTA */}
+                <div className="flex flex-col items-center sm:items-end gap-3 sm:min-w-[140px]">
+                  <div className="text-center sm:text-right">
+                    <span className="text-4xl font-bold tracking-tight">${PAPER_PRICE}</span>
+                    <p className="text-sm text-muted-foreground">per paper</p>
+                  </div>
+                  <Link
+                    href={getPaperCreditCheckoutUrl()}
+                    className="inline-flex w-full sm:w-auto items-center justify-center rounded-full px-6 py-2.5 text-sm font-medium bg-brand text-brand-foreground hover:bg-brand/90 transition-all shadow-sm"
+                  >
+                    Buy Paper
+                  </Link>
                 </div>
-                
-                <ul className="text-sm text-muted-foreground space-y-1">
-                  <li className="flex items-center justify-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-emerald-500" />
-                    All paper types available
-                  </li>
-                  <li className="flex items-center justify-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-emerald-500" />
-                    Full references & PDF export
-                  </li>
-                  <li className="flex items-center justify-center gap-2">
-                    <CheckCircle className="h-4 w-4 text-emerald-500" />
-                    Never expires
-                  </li>
-                </ul>
-                
-                <Link
-                  href={getPaperCreditCheckoutUrl()}
-                  className="inline-flex w-full items-center justify-center rounded-full px-5 py-2.5 text-sm font-medium bg-foreground text-background hover:bg-foreground/90 transition-all shadow-sm"
-                >
-                  Buy Paper
-                </Link>
               </div>
             </div>
           )}
 
-          {/* Divider for subscriptions */}
+          {/* Subscriptions section - collapsible for better focus */}
           {(isPaperLimit || isGenericUpgrade) && tiersToShow.length > 0 && (
-            <div className="flex items-center gap-4">
-              <div className="flex-1 border-t border-border/50" />
-              <span className="text-xs text-muted-foreground font-medium">Or save with a plan</span>
-              <div className="flex-1 border-t border-border/50" />
-            </div>
-          )}
+            <details className="group">
+              <summary className="flex items-center justify-center gap-2 cursor-pointer py-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                <span>Or subscribe for monthly papers</span>
+                <svg className="h-4 w-4 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </summary>
+              
+              <div className="pt-4 space-y-4">
+                {/* Billing toggle */}
+                <div className="flex items-center justify-center gap-3">
+                  <span className={cn(
+                    "text-sm font-medium",
+                    billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'
+                  )}>
+                    Monthly
+                  </span>
+                  <Switch
+                    checked={billingInterval === 'yearly'}
+                    onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
+                    aria-label="Toggle yearly billing"
+                  />
+                  <span className={cn(
+                    "text-sm font-medium",
+                    billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'
+                  )}>
+                    Yearly
+                  </span>
+                  <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full ml-1">
+                    Save 33%
+                  </span>
+                </div>
 
-          {/* Billing toggle - only for subscription options */}
-          {tiersToShow.length > 0 && (
-            <div className="flex items-center justify-center gap-3">
-              <span className={cn(
-                "text-sm font-medium",
-                billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'
-              )}>
-                Monthly
-              </span>
-              <Switch
-                checked={billingInterval === 'yearly'}
-                onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
-                aria-label="Toggle yearly billing"
-              />
-              <span className={cn(
-                "text-sm font-medium",
-                billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'
-              )}>
-                Yearly
-              </span>
-              <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full ml-1">
-                Save 33%
-              </span>
-            </div>
-          )}
-
-          {/* Pricing cards — mirrors landing page */}
-          {tiersToShow.length > 0 && (
-            <div className={cn(
-              "grid gap-4",
-              tiersToShow.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 max-w-xs mx-auto'
-            )}>
-              {tiersToShow.map((tier) => (
-                <PricingCard
-                  key={tier}
-                  tier={tier}
-                  billingInterval={billingInterval}
-                  recommended={tier === 'starter'}
-                />
-              ))}
-            </div>
+                {/* Pricing cards */}
+                <div className={cn(
+                  "grid gap-4",
+                  tiersToShow.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 max-w-xs mx-auto'
+                )}>
+                  {tiersToShow.map((tier) => (
+                    <PricingCard
+                      key={tier}
+                      tier={tier}
+                      billingInterval={billingInterval}
+                      recommended={tier === 'starter'}
+                    />
+                  ))}
+                </div>
+              </div>
+            </details>
           )}
 
           {/* Dismiss */}

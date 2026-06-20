@@ -9,6 +9,7 @@ import { createProjectAction } from '@/components/dashboard/actions'
 import { cn } from '@/lib/utils'
 import { PaperTypeSelect, type PaperTypeValue } from './paper-type-select'
 import { useSubscription } from '@/lib/hooks/use-subscription'
+import { useLimitModal } from '@/components/billing/limit-modal'
 import { GenerationModeSelect, type GenerationMode } from './generation-mode-select'
 import { AddSourceMenu } from './add-source-menu'
 import { AdvancedOptionsPopover } from './advanced-options-popover'
@@ -43,8 +44,23 @@ const PLACEHOLDER_CONFIG: Record<PaperTypeValue, string> = {
  */
 export function ProjectInputSection() {
   const { subscription } = useSubscription()
+  const { showLimitModal } = useLimitModal()
   const [state, formAction, isPending] = useActionState(createProjectAction, null)
   const [isNavigating] = useTransition()
+  
+  // Show paywall modal when billing-related error occurs
+  useEffect(() => {
+    if (state && !state.success && state.error) {
+      // Check if error is billing-related (quota/limit errors)
+      const isBillingError = state.error.includes('limit') || 
+                            state.error.includes('quota') || 
+                            state.error.includes('upgrade') ||
+                            state.error.includes('paper generation')
+      if (isBillingError) {
+        showLimitModal('papers')
+      }
+    }
+  }, [state, showLimitModal])
 
   // Combined loading state for best UX
   const isLoading = isPending || isNavigating
@@ -322,7 +338,10 @@ export function ProjectInputSection() {
             )}
 
             {state && !state.success && state.error && (
-              <p className="text-sm text-destructive">{state.error}</p>
+              // Don't show billing errors as text - paywall modal handles those
+              !(state.error.includes('limit') || state.error.includes('quota') || state.error.includes('upgrade') || state.error.includes('paper generation')) && (
+                <p className="text-sm text-destructive">{state.error}</p>
+              )
             )}
           </div>
         </form>
