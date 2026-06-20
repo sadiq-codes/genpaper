@@ -62,7 +62,10 @@ export function UsageIndicator({ className }: { className?: string }) {
         >
           <FileText className={cn("h-4 w-4", getStatusColor())} />
           <span className={cn("text-sm font-medium", getStatusColor())}>
-            {totalPapersAvailable > 0 ? totalPapersAvailable : 0} paper{totalPapersAvailable !== 1 ? 's' : ''}
+            {isPaid 
+              ? `${papersUsed}/${papersLimit}` 
+              : `${totalPapersAvailable} paper${totalPapersAvailable !== 1 ? 's' : ''}`
+            }
           </span>
           {hasPurchased && (
             <ShoppingCart className="h-3.5 w-3.5 text-amber-500" />

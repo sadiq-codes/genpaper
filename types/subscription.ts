@@ -104,7 +104,7 @@ export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
     features: [
       'Create unlimited projects',
       'Use the editor freely',
-      'Buy credits to generate papers',
+      'Buy papers at $7.99 each',
       '10 AI chat messages per day',
       '10 autocompletes per day',
     ],
