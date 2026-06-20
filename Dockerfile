@@ -66,7 +66,8 @@ RUN bun run build
 # -----------------------------------------------------------------------------
 # Stage 3: Runner (Production)
 # -----------------------------------------------------------------------------
-FROM oven/bun:1-alpine AS runner
+# Use Node.js for runtime - Bun has incomplete node:v8 support causing errors
+FROM node:20-alpine AS runner
 WORKDIR /app
 
 # Set production environment
@@ -88,8 +89,8 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Install sharp for image optimization (using bun)
-RUN bun add sharp 2>/dev/null || true
+# Install sharp for image optimization
+RUN npm install --os=linux --cpu=x64 sharp 2>/dev/null || true
 
 # Switch to non-root user
 USER nextjs
@@ -105,5 +106,5 @@ ENV PORT=3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health/live || exit 1
 
-# Start the application with Bun
-CMD ["bun", "run", "server.js"]
+# Start the application with Node.js
+CMD ["node", "server.js"]
