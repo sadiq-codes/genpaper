@@ -121,10 +121,15 @@ function LimitModal({ open, limitType, onClose }: LimitModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-2xl p-0 gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-3xl p-0 gap-0 overflow-hidden">
         {/* Header */}
         <DialogHeader className="px-6 pt-6 pb-4">
-          {!isGenericUpgrade && config ? (
+          {isPaperLimit || isGenericUpgrade ? (
+            <>
+              <DialogTitle className="text-xl">Choose a plan to continue</DialogTitle>
+              <DialogDescription>Select an option to generate your research paper.</DialogDescription>
+            </>
+          ) : config ? (
             <>
               <div className={`w-10 h-10 rounded-full ${config.iconBg} flex items-center justify-center mb-1`}>
                 {config.icon}
@@ -132,16 +137,11 @@ function LimitModal({ open, limitType, onClose }: LimitModalProps) {
               <DialogTitle className="text-lg">{config.title}</DialogTitle>
               <DialogDescription>{config.description}</DialogDescription>
             </>
-          ) : (
-            <>
-              <DialogTitle className="text-lg">Generate your paper</DialogTitle>
-              <DialogDescription>Choose how you want to generate your research paper.</DialogDescription>
-            </>
-          )}
+          ) : null}
         </DialogHeader>
 
         <div className="px-6 pb-6 space-y-5">
-          {/* Usage bar — limit-specific modals only */}
+          {/* Usage bar — for chat/autocomplete limits only */}
           {!isGenericUpgrade && config && !isPaperLimit && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
@@ -167,103 +167,48 @@ function LimitModal({ open, limitType, onClose }: LimitModalProps) {
             </div>
           )}
 
-          {/* Pay-per-paper option - Primary CTA */}
-          {(isPaperLimit || isGenericUpgrade) && (
-            <div className="relative rounded-2xl border-2 border-brand/30 bg-gradient-to-b from-brand/5 to-transparent p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-5">
-                {/* Left: Info */}
-                <div className="flex-1 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium tracking-wide uppercase text-brand bg-brand/10 px-2 py-0.5 rounded-full">
-                      Recommended
-                    </span>
-                  </div>
-                  <h3 className="font-semibold text-xl">Buy a Paper</h3>
-                  <p className="text-sm text-muted-foreground">One-time purchase. No subscription required.</p>
-                  <ul className="text-sm text-muted-foreground space-y-1 pt-1">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
-                      <span>All paper types available</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
-                      <span>Full references & PDF export</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
-                      <span>Never expires</span>
-                    </li>
-                  </ul>
-                </div>
-                
-                {/* Right: Price + CTA */}
-                <div className="flex flex-col items-center sm:items-end gap-3 sm:min-w-[140px]">
-                  <div className="text-center sm:text-right">
-                    <span className="text-4xl font-bold tracking-tight">${PAPER_PRICE}</span>
-                    <p className="text-sm text-muted-foreground">per paper</p>
-                  </div>
-                  <Link
-                    href={getPaperCreditCheckoutUrl()}
-                    className="inline-flex w-full sm:w-auto items-center justify-center rounded-full px-6 py-2.5 text-sm font-medium bg-brand text-brand-foreground hover:bg-brand/90 transition-all shadow-sm"
-                  >
-                    Buy Paper
-                  </Link>
-                </div>
-              </div>
+          {/* Billing toggle for subscriptions */}
+          {(isPaperLimit || isGenericUpgrade) && tiersToShow.length > 0 && (
+            <div className="flex items-center justify-center gap-3">
+              <span className={cn(
+                "text-sm font-medium",
+                billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'
+              )}>
+                Monthly
+              </span>
+              <Switch
+                checked={billingInterval === 'yearly'}
+                onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
+                aria-label="Toggle yearly billing"
+              />
+              <span className={cn(
+                "text-sm font-medium",
+                billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'
+              )}>
+                Yearly
+              </span>
+              <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full ml-1">
+                Save 33%
+              </span>
             </div>
           )}
 
-          {/* Subscriptions section - collapsible for better focus */}
-          {(isPaperLimit || isGenericUpgrade) && tiersToShow.length > 0 && (
-            <details className="group">
-              <summary className="flex items-center justify-center gap-2 cursor-pointer py-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-                <span>Or subscribe for monthly papers</span>
-                <svg className="h-4 w-4 transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </summary>
+          {/* All pricing options in one grid */}
+          {(isPaperLimit || isGenericUpgrade) && (
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+              {/* Pay per paper card */}
+              <PayPerPaperCard />
               
-              <div className="pt-4 space-y-4">
-                {/* Billing toggle */}
-                <div className="flex items-center justify-center gap-3">
-                  <span className={cn(
-                    "text-sm font-medium",
-                    billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'
-                  )}>
-                    Monthly
-                  </span>
-                  <Switch
-                    checked={billingInterval === 'yearly'}
-                    onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
-                    aria-label="Toggle yearly billing"
-                  />
-                  <span className={cn(
-                    "text-sm font-medium",
-                    billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'
-                  )}>
-                    Yearly
-                  </span>
-                  <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full ml-1">
-                    Save 33%
-                  </span>
-                </div>
-
-                {/* Pricing cards */}
-                <div className={cn(
-                  "grid gap-4",
-                  tiersToShow.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 max-w-xs mx-auto'
-                )}>
-                  {tiersToShow.map((tier) => (
-                    <PricingCard
-                      key={tier}
-                      tier={tier}
-                      billingInterval={billingInterval}
-                      recommended={tier === 'starter'}
-                    />
-                  ))}
-                </div>
-              </div>
-            </details>
+              {/* Subscription cards */}
+              {tiersToShow.map((tier) => (
+                <PricingCard
+                  key={tier}
+                  tier={tier}
+                  billingInterval={billingInterval}
+                  recommended={tier === 'starter'}
+                />
+              ))}
+            </div>
           )}
 
           {/* Dismiss */}
@@ -348,6 +293,53 @@ function PricingCard({
         )}
       >
         Get {config.name}
+      </Link>
+    </div>
+  )
+}
+
+// =============================================================================
+// Pay Per Paper Card
+// =============================================================================
+
+function PayPerPaperCard() {
+  const features = [
+    'One-time purchase',
+    'All paper types',
+    'Full references & PDF',
+    'Never expires',
+  ]
+
+  return (
+    <div className="relative rounded-2xl border p-5 flex flex-col bg-card transition-all border-brand/30 shadow-lg shadow-brand/5">
+      <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[11px] font-medium tracking-wide uppercase bg-brand text-brand-foreground px-3 py-1 rounded-full">
+        Quick Option
+      </span>
+
+      <div className="mb-4">
+        <h3 className="font-semibold text-base mb-0.5">Pay Per Paper</h3>
+        <p className="text-xs text-muted-foreground">No subscription needed</p>
+      </div>
+
+      <div className="mb-4">
+        <span className="text-3xl font-bold tracking-tight">${PAPER_PRICE}</span>
+        <span className="text-muted-foreground text-sm">/paper</span>
+      </div>
+
+      <ul className="space-y-2 mb-5 flex-1">
+        {features.map((feature, i) => (
+          <li key={i} className="flex items-start gap-2 text-sm">
+            <CheckCircle className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
+            <span className="text-muted-foreground">{feature}</span>
+          </li>
+        ))}
+      </ul>
+
+      <Link
+        href={getPaperCreditCheckoutUrl()}
+        className="inline-flex items-center justify-center rounded-full px-5 py-2 text-sm font-medium transition-all bg-brand text-brand-foreground hover:bg-brand/90 shadow-sm"
+      >
+        Buy Paper
       </Link>
     </div>
   )

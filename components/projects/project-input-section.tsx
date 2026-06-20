@@ -51,11 +51,14 @@ export function ProjectInputSection() {
   // Show paywall modal when billing-related error occurs
   useEffect(() => {
     if (state && !state.success && state.error) {
-      // Check if error is billing-related (quota/limit errors)
+      // Check if error is billing-related (quota/limit/subscription errors)
       const isBillingError = state.error.includes('limit') || 
                             state.error.includes('quota') || 
                             state.error.includes('upgrade') ||
-                            state.error.includes('paper generation')
+                            state.error.includes('paper generation') ||
+                            state.error.includes('subscribe') ||
+                            state.error.includes('Buy a paper') ||
+                            state.error.includes('subscription')
       if (isBillingError) {
         showLimitModal('papers')
       }
@@ -339,7 +342,7 @@ export function ProjectInputSection() {
 
             {state && !state.success && state.error && (
               // Don't show billing errors as text - paywall modal handles those
-              !(state.error.includes('limit') || state.error.includes('quota') || state.error.includes('upgrade') || state.error.includes('paper generation')) && (
+              !(state.error.includes('limit') || state.error.includes('quota') || state.error.includes('upgrade') || state.error.includes('paper generation') || state.error.includes('subscribe') || state.error.includes('Buy a paper') || state.error.includes('subscription')) && (
                 <p className="text-sm text-destructive">{state.error}</p>
               )
             )}
