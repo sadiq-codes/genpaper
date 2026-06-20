@@ -25,10 +25,12 @@ export async function GET() {
         tier: 'free',
         tierName: 'Free',
         papersUsed: 0,
-        papersLimit: 1,
-        papersRemaining: 1,
+        papersLimit: 0,
+        papersRemaining: 0,
+        purchasedPapers: 0,
+        totalPapersAvailable: 0,
         periodEndsAt: null,
-        features: ['1 literature review per month', 'Short papers only'],
+        features: ['Create unlimited projects', 'Use the editor freely', 'Buy papers to generate'],
       },
       dailyUsage: {
         chat: {

@@ -16,7 +16,7 @@ import {
   X,
   Sparkles,
 } from "lucide-react"
-import { TIER_CONFIG } from "@/types/subscription"
+import { TIER_CONFIG, PAPER_PRICE } from "@/types/subscription"
 import type { SubscriptionTier, BillingInterval } from "@/types/subscription"
 import { Switch } from "@/components/ui/switch"
 import { getCheckoutUrl } from "@/lib/hooks/use-subscription"
@@ -251,7 +251,7 @@ export function LandingPageClient({ user }: LandingPageClientProps) {
                       href="/signup"
                       className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground text-background px-7 py-3.5 text-sm font-medium hover:bg-foreground/90 transition-all shadow-lg shadow-foreground/10"
                     >
-                      Start Writing — Free <ArrowRight className="h-4 w-4" />
+                      Start Writing <ArrowRight className="h-4 w-4" />
                     </Link>
                     <Link
                       href="/login"
@@ -267,7 +267,7 @@ export function LandingPageClient({ user }: LandingPageClientProps) {
             <Reveal delay={400}>
               <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
                 <span className="flex items-center gap-1.5">
-                  <CheckCircle className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" /> No credit card needed
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" /> ${PAPER_PRICE} per paper
                 </span>
                 <span className="flex items-center gap-1.5">
                   <CheckCircle className="h-3.5 w-3.5 text-emerald-500" aria-hidden="true" /> Verified sources
@@ -429,7 +429,7 @@ export function LandingPageClient({ user }: LandingPageClientProps) {
                 Simple, transparent pricing
               </h2>
               <p className="text-lg text-muted-foreground max-w-xl mx-auto mb-8">
-                Start free. Upgrade when you need more.
+                ${PAPER_PRICE} per paper, or subscribe for more value.
               </p>
               <div className="flex items-center justify-center gap-3">
                 <span
@@ -509,7 +509,7 @@ export function LandingPageClient({ user }: LandingPageClientProps) {
             <p className="text-lg text-muted-foreground mb-10 max-w-xl mx-auto">
               {user
                 ? "Pick up where you left off or start a new project."
-                : "Free to start. No credit card needed. Your first paper in minutes."}
+                : `Create an account and generate your first paper for just $${PAPER_PRICE}.`}
             </p>
           </Reveal>
           <Reveal delay={200}>
@@ -688,7 +688,7 @@ function PricingCard({
     if (tier === "free") {
       return {
         href: user ? "/projects" : "/signup",
-        text: user ? "Current Plan" : "Get Started Free",
+        text: user ? "Current Plan" : "Create Free Account",
       }
     }
     return {

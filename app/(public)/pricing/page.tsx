@@ -17,9 +17,9 @@ import {
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
-import { TIER_CONFIG } from "@/types/subscription"
+import { TIER_CONFIG, PAPER_PRICE } from "@/types/subscription"
 import type { SubscriptionTier, BillingInterval } from "@/types/subscription"
-import { getCheckoutUrl } from "@/lib/hooks/use-subscription"
+import { getCheckoutUrl, getPaperCreditCheckoutUrl } from "@/lib/hooks/use-subscription"
 import { Switch } from "@/components/ui/switch"
 
 export default function PricingPage() {
@@ -164,7 +164,7 @@ export default function PricingPage() {
             Simple, transparent pricing
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-            Choose the plan that fits your research needs. Start free, upgrade anytime.
+            Pay per paper or subscribe for more value. No hidden fees.
           </p>
           
           {/* Billing Interval Toggle */}
@@ -186,9 +186,66 @@ export default function PricingPage() {
         </div>
       </section>
 
-      {/* Pricing Cards */}
+      {/* Pay Per Paper - Hero Card */}
+      <section className="pb-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <Card className="max-w-2xl mx-auto border-2 border-amber-500/50 bg-gradient-to-br from-amber-500/5 to-transparent">
+            <CardContent className="p-8">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="text-center md:text-left">
+                  <Badge className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 mb-3">
+                    Pay As You Go
+                  </Badge>
+                  <h3 className="text-2xl font-bold mb-2">Single Paper</h3>
+                  <p className="text-muted-foreground mb-4">
+                    One-time purchase for a single paper generation. No commitment.
+                  </p>
+                  <ul className="text-sm text-muted-foreground space-y-1">
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-500" />
+                      All paper types available
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-500" />
+                      Full references & export
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-500" />
+                      Never expires
+                    </li>
+                  </ul>
+                </div>
+                <div className="text-center">
+                  <div className="text-4xl font-bold mb-1">${PAPER_PRICE}</div>
+                  <div className="text-sm text-muted-foreground mb-4">per paper</div>
+                  <Button 
+                    size="lg" 
+                    className="bg-amber-500 hover:bg-amber-600 text-white"
+                    onClick={() => {
+                      if (!user) {
+                        // Redirect to signup first
+                        window.location.href = '/signup'
+                      } else {
+                        window.location.href = getPaperCreditCheckoutUrl()
+                      }
+                    }}
+                  >
+                    {user ? 'Buy Paper' : 'Sign Up to Purchase'}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      {/* Subscription Plans */}
       <section className="pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-8">
+            <h2 className="text-xl font-semibold text-foreground mb-2">Or subscribe for more value</h2>
+            <p className="text-muted-foreground">Best for researchers who generate multiple papers</p>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
             {/* Free Tier */}
             <PricingCard
@@ -240,22 +297,22 @@ export default function PricingPage() {
               </thead>
               <tbody className="text-sm">
                 <ComparisonRow
-                  feature="Papers per month"
-                  free="1"
-                  starter="5"
-                  pro="15"
+                  feature="Papers included"
+                  free="0 (buy credits)"
+                  starter="5/month"
+                  pro="15/month"
+                />
+                <ComparisonRow
+                  feature="Cost per paper"
+                  free={`$${PAPER_PRICE}`}
+                  starter="~$4/paper"
+                  pro="~$3.30/paper"
                 />
                 <ComparisonRow
                   feature="Paper types"
-                  free="Literature Review"
-                  starter="Reviews, Articles, Capstones"
-                  pro="All types incl. Theses"
-                />
-                <ComparisonRow
-                  feature="References visible"
-                  free="3 (rest blurred)"
-                  starter="All"
-                  pro="All"
+                  free="All types"
+                  starter="All types"
+                  pro="All types"
                 />
                 <ComparisonRow
                   feature="AI chat"
@@ -271,7 +328,7 @@ export default function PricingPage() {
                 />
                 <ComparisonRow
                   feature="PDF export"
-                  free={false}
+                  free={true}
                   starter={true}
                   pro={true}
                 />
@@ -296,8 +353,16 @@ export default function PricingPage() {
           
           <div className="space-y-6">
             <FaqItem
-              question="Can I cancel anytime?"
-              answer="Yes, you can cancel your subscription at any time. You'll continue to have access to your current plan until the end of your billing period."
+              question="How does pay-per-paper work?"
+              answer={`You can buy individual papers for $${PAPER_PRICE} each. Purchased papers never expire and can be used anytime you're ready to generate.`}
+            />
+            <FaqItem
+              question="What's the difference between buying papers and subscribing?"
+              answer="Buying papers is a one-time purchase with no commitment - great for occasional use. Subscriptions give you monthly papers plus unlimited AI chat and autocomplete - better value if you generate papers regularly."
+            />
+            <FaqItem
+              question="Can I cancel my subscription anytime?"
+              answer="Yes, you can cancel your subscription at any time. You'll continue to have access to your plan until the end of your billing period. Any purchased papers will remain in your account."
             />
             <FaqItem
               question="What payment methods do you accept?"
@@ -305,15 +370,11 @@ export default function PricingPage() {
             />
             <FaqItem
               question="What happens to my papers if I downgrade?"
-              answer="All your papers are saved forever. If you downgrade, you'll still have access to view and edit your existing papers, but you'll be limited to the features of your new plan for new papers."
-            />
-            <FaqItem
-              question="Can I upgrade mid-month?"
-              answer="Yes! When you upgrade, you'll immediately get access to the new plan's features. You'll be charged the prorated difference for the remainder of your billing period."
+              answer="All your papers are saved forever. If you downgrade, you'll still have access to view and edit your existing papers. Any purchased papers remain available."
             />
             <FaqItem
               question="Do you offer student discounts?"
-              answer="We're working on student pricing. In the meantime, our Free tier is a great way to get started, and our Starter plan is designed to be affordable for students."
+              answer={`Our pay-per-paper option at $${PAPER_PRICE} is designed to be accessible for students who only need occasional papers. For regular use, our Starter plan offers better value.`}
             />
           </div>
         </div>
@@ -326,10 +387,10 @@ export default function PricingPage() {
             Ready to write better papers?
           </h2>
           <p className="text-lg text-muted-foreground mb-8">
-            Start with our free plan. No credit card required.
+            Create an account and generate your first paper for just ${PAPER_PRICE}.
           </p>
           <Link href="/signup" className="bg-foreground text-background hover:bg-foreground/90 rounded-full px-8 py-3 text-base font-medium transition-colors inline-flex items-center gap-2">
-            Get Started Free
+            Get Started
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
@@ -461,7 +522,7 @@ function PricingCard({
           size="lg"
         >
           {tier === 'free' 
-            ? (isLoggedIn ? 'Current Plan' : 'Get Started Free')
+            ? (isLoggedIn ? 'Current Plan' : 'Create Free Account')
             : `Get ${config.name}`
           }
         </Button>

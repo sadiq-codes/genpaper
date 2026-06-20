@@ -29,6 +29,10 @@ export interface SubscriptionData {
   papersUsed: number
   papersLimit: number
   papersRemaining: number
+  /** Purchased papers available (pay-per-paper, never expire) */
+  purchasedPapers: number
+  /** Total papers available (subscription + purchased) */
+  totalPapersAvailable: number
   periodEndsAt: string | null
   features: string[]
 }
@@ -164,7 +168,10 @@ export function useSubscription(): UseSubscriptionResult {
   }, [fetchSubscription])
   
   // Computed values
-  const canGenerate = subscription ? subscription.papersRemaining > 0 : false
+  // Can generate if has subscription papers OR purchased papers
+  const canGenerate = subscription 
+    ? (subscription.papersRemaining > 0 || subscription.purchasedPapers > 0)
+    : false
   const isPaid = subscription ? subscription.tier !== 'free' : false
   
   // Daily usage computed values
@@ -250,4 +257,16 @@ export function getCheckoutUrl(
  */
 export function getPortalUrl(): string {
   return '/api/billing/portal'
+}
+
+/**
+ * Get URL to purchase a single paper credit ($7.99)
+ * @param projectId - Optional project ID to redirect back to after purchase
+ */
+export function getPaperCreditCheckoutUrl(projectId?: string): string {
+  const params = new URLSearchParams()
+  if (projectId) {
+    params.set('projectId', projectId)
+  }
+  return `/api/billing/checkout/paper${params.toString() ? '?' + params.toString() : ''}`
 }

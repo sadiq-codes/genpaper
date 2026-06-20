@@ -3,6 +3,11 @@
  * 
  * Defines subscription tiers, limits, and feature gating for GenPaper.
  * Integrated with Polar.sh for payment processing.
+ * 
+ * Pricing Model:
+ * - Free tier: Explore app, create projects, use editor (no AI generation)
+ * - Pay-per-paper: $7.99 for 100 credits (1 paper generation = 100 credits)
+ * - Subscriptions: Starter ($19/mo) and Pro ($49/mo) for heavy users
  */
 
 import type { PaperTypeKey } from './simplified'
@@ -17,6 +22,9 @@ export type SubscriptionStatus = 'active' | 'canceled' | 'past_due' | 'trialing'
 
 export type BillingInterval = 'monthly' | 'yearly'
 
+/** Price for single paper generation ($7.99 per paper) */
+export const PAPER_PRICE = 7.99
+
 export interface UserSubscription {
   tier: SubscriptionTier
   status: SubscriptionStatus
@@ -25,6 +33,8 @@ export interface UserSubscription {
   papersUsedThisPeriod: number
   periodStartedAt: string | null
   periodEndsAt: string | null
+  /** Purchased papers available (pay-per-paper, never expire) */
+  purchasedPapers: number
 }
 
 // =============================================================================
@@ -69,27 +79,32 @@ export interface TierInfo {
 /**
  * Complete tier configuration
  * Single source of truth for all tier-related logic
+ * 
+ * Free tier allows exploration but no paper generation.
+ * Users can generate papers by:
+ * 1. Purchasing individual papers at $7.99 each
+ * 2. Subscribing to Starter or Pro plans
  */
 export const TIER_CONFIG: Record<SubscriptionTier, TierInfo> = {
   free: {
     name: 'Free',
-    description: 'Try GenPaper with limited features',
+    description: 'Explore GenPaper and create projects',
     price: 0,
     yearlyPrice: 0,
     limits: {
-      papersPerMonth: 1,
-      allowedPaperTypes: ['literatureReview'],
-      referencesVisible: 1,
-      editorChatEnabled: true, // Enabled with daily limits
-      pdfExport: false,
+      papersPerMonth: 0, // No free paper generation - must purchase credits or subscribe
+      allowedPaperTypes: 'all', // All paper types available when they purchase credits
+      referencesVisible: 'all', // Full references when they have credits
+      editorChatEnabled: true, // Can use editor without AI
+      pdfExport: true, // PDF export available with purchased papers
       priorityGeneration: false,
-      dailyChatLimit: 10,
-      dailyAutocompleteLimit: 10,
+      dailyChatLimit: 10, // Limited AI chat for exploration
+      dailyAutocompleteLimit: 10, // Limited autocomplete for exploration
     },
     features: [
-      '1 literature review per month',
-      'Preview of references (1 visible)',
-      'Basic generation',
+      'Create unlimited projects',
+      'Use the editor freely',
+      'Buy credits to generate papers',
       '10 AI chat messages per day',
       '10 autocompletes per day',
     ],
@@ -168,7 +183,7 @@ export function isPaperTypeAllowed(tier: SubscriptionTier, paperType: PaperTypeK
 }
 
 /**
- * Get the number of papers remaining for a user
+ * Get the number of papers remaining for a user from their subscription
  */
 export function getPapersRemaining(tier: SubscriptionTier, used: number): number {
   const limit = TIER_CONFIG[tier].limits.papersPerMonth
@@ -177,9 +192,21 @@ export function getPapersRemaining(tier: SubscriptionTier, used: number): number
 
 /**
  * Check if user can generate another paper
+ * Considers both subscription allowance AND purchased papers
  */
-export function canGeneratePaper(tier: SubscriptionTier, used: number): boolean {
-  return getPapersRemaining(tier, used) > 0
+export function canGeneratePaper(tier: SubscriptionTier, used: number, purchasedPapers: number = 0): boolean {
+  // Has subscription papers remaining
+  if (getPapersRemaining(tier, used) > 0) return true
+  // Has purchased papers available
+  if (purchasedPapers > 0) return true
+  return false
+}
+
+/**
+ * Get total papers available (subscription + purchased)
+ */
+export function getTotalPapersAvailable(tier: SubscriptionTier, used: number, purchasedPapers: number = 0): number {
+  return getPapersRemaining(tier, used) + purchasedPapers
 }
 
 /**
@@ -213,6 +240,8 @@ export type SubscriptionEventType =
   | 'payment_succeeded'
   | 'payment_failed'
   | 'paper_generated'
+  | 'paper_credit_purchased'
+  | 'paper_credit_used'
 
 export interface SubscriptionEvent {
   id: string

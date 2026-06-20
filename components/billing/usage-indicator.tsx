@@ -10,10 +10,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { FileText, MessageSquare, Sparkles, ChevronRight } from 'lucide-react'
+import { FileText, MessageSquare, Sparkles, ChevronRight, ShoppingCart } from 'lucide-react'
 import { UpgradeButton } from '@/components/billing/upgrade-button'
-import { useSubscription } from '@/lib/hooks/use-subscription'
+import { useSubscription, getPaperCreditCheckoutUrl } from '@/lib/hooks/use-subscription'
 import { cn } from '@/lib/utils'
+import { PAPER_PRICE } from '@/types/subscription'
 
 /**
  * Compact usage indicator for page headers
@@ -34,10 +35,11 @@ export function UsageIndicator({ className }: { className?: string }) {
     return null
   }
   
-  const { papersUsed, papersLimit, papersRemaining, tier } = subscription
-  const usagePercent = Math.min(100, (papersUsed / papersLimit) * 100)
-  const isAtLimit = papersRemaining === 0
-  const isLow = papersRemaining <= 1 && papersLimit > 1
+  const { papersUsed, papersLimit, papersRemaining, purchasedPapers = 0, totalPapersAvailable = 0, tier } = subscription
+  const usagePercent = papersLimit > 0 ? Math.min(100, (papersUsed / papersLimit) * 100) : 0
+  const hasPurchased = purchasedPapers > 0
+  const isAtLimit = totalPapersAvailable === 0
+  const isLow = totalPapersAvailable <= 1 && (papersLimit > 1 || purchasedPapers > 0)
   
   // Color based on usage level
   const getStatusColor = () => {
@@ -60,12 +62,10 @@ export function UsageIndicator({ className }: { className?: string }) {
         >
           <FileText className={cn("h-4 w-4", getStatusColor())} />
           <span className={cn("text-sm font-medium", getStatusColor())}>
-            {papersUsed}/{papersLimit}
+            {totalPapersAvailable > 0 ? totalPapersAvailable : 0} paper{totalPapersAvailable !== 1 ? 's' : ''}
           </span>
-          {!isPaid && (
-            <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4">
-              Free
-            </Badge>
+          {hasPurchased && (
+            <ShoppingCart className="h-3.5 w-3.5 text-amber-500" />
           )}
         </Button>
       </PopoverTrigger>
@@ -80,30 +80,57 @@ export function UsageIndicator({ className }: { className?: string }) {
             </Badge>
           </div>
           
-          {/* Paper Usage */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-muted-foreground" />
-                <span>Papers</span>
+          {/* Purchased Papers */}
+          {hasPurchased && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <ShoppingCart className="h-4 w-4 text-amber-500" />
+                  <span>Purchased Papers</span>
+                </div>
+                <span className="font-medium text-amber-600">
+                  {purchasedPapers}
+                </span>
               </div>
-              <span className={cn("font-medium", getStatusColor())}>
-                {papersUsed} / {papersLimit}
-              </span>
+              <p className="text-xs text-muted-foreground">
+                Never expire
+              </p>
             </div>
-            <Progress 
-              value={usagePercent} 
-              className={cn(
-                "h-1.5",
-                isAtLimit && "[&>div]:bg-destructive",
-                isLow && !isAtLimit && "[&>div]:bg-warning"
-              )}
-            />
-            <p className="text-xs text-muted-foreground">
-              {isAtLimit 
-                ? "Limit reached"
-                : `${papersRemaining} remaining`}
-            </p>
+          )}
+          
+          {/* Subscription Papers (if subscribed) */}
+          {isPaid && papersLimit > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  <span>Subscription Papers</span>
+                </div>
+                <span className={cn("font-medium", papersRemaining === 0 ? 'text-muted-foreground' : '')}>
+                  {papersUsed} / {papersLimit}
+                </span>
+              </div>
+              <Progress 
+                value={usagePercent} 
+                className={cn(
+                  "h-1.5",
+                  papersRemaining === 0 && "[&>div]:bg-muted"
+                )}
+              />
+              <p className="text-xs text-muted-foreground">
+                {papersRemaining > 0 
+                  ? `${papersRemaining} remaining this month`
+                  : "Resets next billing cycle"}
+              </p>
+            </div>
+          )}
+          
+          {/* Total Available */}
+          <div className="flex items-center justify-between text-sm p-2 bg-muted/50 rounded-md">
+            <span className="font-medium">Total Papers Available</span>
+            <span className={cn("font-bold", isAtLimit ? 'text-destructive' : 'text-foreground')}>
+              {totalPapersAvailable}
+            </span>
           </div>
           
           {/* Daily Usage (Free tier only) */}
@@ -137,11 +164,24 @@ export function UsageIndicator({ className }: { className?: string }) {
             </>
           )}
           
-          {/* Upgrade CTA (Free tier only) */}
-          {!isPaid && (
+          {/* Buy Credits / Upgrade CTA */}
+          {(isAtLimit || !isPaid) && (
             <>
               <div className="h-px bg-border" />
-              <UpgradeButton label="Upgrade for More" size="sm" className="w-full" />
+              <div className="space-y-2">
+                <Button 
+                  asChild 
+                  size="sm" 
+                  className="w-full bg-amber-500 hover:bg-amber-600 text-white"
+                >
+                  <Link href={getPaperCreditCheckoutUrl()}>
+                    Buy Paper (${PAPER_PRICE})
+                  </Link>
+                </Button>
+                {!isPaid && (
+                  <UpgradeButton label="Or Subscribe" size="sm" className="w-full" variant="outline" />
+                )}
+              </div>
             </>
           )}
           

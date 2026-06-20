@@ -9,9 +9,13 @@ import {
   getUserIdByEmail,
   getUserSubscription,
   getTierFromPolarProduct,
+  addPurchasedPaper,
 } from '@/lib/billing/subscription-service'
 import type { SubscriptionTier } from '@/types/subscription'
 import { info, warn, error as logError } from '@/lib/utils/logger'
+
+// Paper credit product ID
+const paperCreditProductId = process.env.POLAR_PRODUCT_PAPER_CREDIT
 
 /**
  * Polar Webhook Handler
@@ -271,22 +275,60 @@ export const POST = Webhooks({
   },
   
   // ==========================================================================
-  // Order Paid (successful payment)
+  // Order Paid (successful payment - handles both subscriptions and one-time purchases)
   // ==========================================================================
   onOrderPaid: async (payload) => {
     info({ payload: payload.type }, 'Polar webhook: order paid')
     
     const order = payload.data
     const customerId = order.customerId
+    const customerEmail = order.customer?.email
     
-    const userId = await getUserIdByPolarCustomerId(customerId)
-    if (!userId) return
+    // Find user by Polar customer ID or email
+    let userId = await getUserIdByPolarCustomerId(customerId)
     
+    if (!userId && customerEmail) {
+      userId = await getUserIdByEmail(customerEmail)
+      if (userId) {
+        // Link Polar customer to our user
+        await linkPolarCustomer(userId, customerId)
+      }
+    }
+    
+    if (!userId) {
+      warn({ customerId, customerEmail }, 'Could not find user for order')
+      return
+    }
+    
+    // Check if this is a single paper purchase ($7.99)
+    const productId = order.productId
+    if (productId === paperCreditProductId) {
+      info({ userId, orderId: order.id }, 'Paper purchase detected')
+      
+      // Add 1 paper to user account
+      const newTotal = await addPurchasedPaper(userId)
+      
+      info({ userId, newTotal }, 'Purchased paper added successfully')
+      
+      await logSubscriptionEvent({
+        userId,
+        eventType: 'paper_credit_purchased',
+        metadata: {
+          orderId: order.id,
+          productId,
+          newTotal,
+        },
+      })
+      return
+    }
+    
+    // Regular subscription payment
     await logSubscriptionEvent({
       userId,
       eventType: 'payment_succeeded',
       metadata: {
         orderId: order.id,
+        productId,
       },
     })
   },

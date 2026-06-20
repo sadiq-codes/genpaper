@@ -31,6 +31,7 @@ interface ProfileSubscriptionRow {
   papers_used_this_period: number
   period_started_at: string | null
   period_ends_at: string | null
+  paper_credits: number
 }
 
 interface LogEventParams {
@@ -75,7 +76,8 @@ export async function getUserSubscription(userId: string): Promise<UserSubscript
       polar_subscription_id,
       papers_used_this_period,
       period_started_at,
-      period_ends_at
+      period_ends_at,
+      paper_credits
     `)
     .eq('id', userId)
     .single()
@@ -98,6 +100,7 @@ export async function getUserSubscription(userId: string): Promise<UserSubscript
     papersUsedThisPeriod: alignedRow.papers_used_this_period,
     periodStartedAt: alignedRow.period_started_at,
     periodEndsAt: alignedRow.period_ends_at,
+    purchasedPapers: alignedRow.paper_credits ?? 0,
   }
 }
 
@@ -275,7 +278,8 @@ async function alignUsagePeriodIfNeeded(
       polar_subscription_id,
       papers_used_this_period,
       period_started_at,
-      period_ends_at
+      period_ends_at,
+      paper_credits
     `)
     .eq('id', userId)
     .single()
@@ -318,6 +322,90 @@ export async function downgradeToFree(userId: string): Promise<boolean> {
     polarSubscriptionId: undefined,
     periodEndsAt: undefined,
   })
+}
+
+// =============================================================================
+// Purchased Papers (Pay-Per-Paper)
+// =============================================================================
+
+/**
+ * Get the number of purchased papers a user has available
+ */
+export async function getPurchasedPapers(userId: string): Promise<number> {
+  const supabase = getServiceClient()
+  
+  const { data, error } = await supabase.rpc('get_paper_credits', {
+    p_user_id: userId,
+  })
+  
+  if (error) {
+    warn({ userId, error }, 'Failed to get purchased papers')
+    return 0
+  }
+  
+  return data as number
+}
+
+/**
+ * Add purchased paper to a user (called after successful $7.99 payment)
+ */
+export async function addPurchasedPaper(userId: string): Promise<number> {
+  const supabase = getServiceClient()
+  
+  const { data, error } = await supabase.rpc('increment_paper_credits', {
+    p_user_id: userId,
+    p_amount: 1,
+  })
+  
+  if (error) {
+    logError({ userId, error }, 'Failed to add purchased paper')
+    return 0
+  }
+  
+  const newTotal = data as number
+  info({ userId, newTotal }, 'Purchased paper added')
+  
+  // Log the event
+  await logSubscriptionEvent({
+    userId,
+    eventType: 'paper_credit_purchased',
+    metadata: { newTotal },
+  })
+  
+  return newTotal
+}
+
+/**
+ * Consume a purchased paper for generation
+ * Returns true if successful, false if no papers available
+ */
+export async function consumePurchasedPaper(userId: string): Promise<boolean> {
+  const supabase = getServiceClient()
+  
+  const { data, error } = await supabase.rpc('use_paper_credit', {
+    p_user_id: userId,
+  })
+  
+  if (error) {
+    logError({ userId, error }, 'Failed to use purchased paper')
+    return false
+  }
+  
+  const success = data as boolean
+  
+  if (success) {
+    info({ userId }, 'Purchased paper used for generation')
+    
+    // Log the event
+    await logSubscriptionEvent({
+      userId,
+      eventType: 'paper_credit_used',
+    })
+  } else {
+    info({ userId }, 'No purchased papers available')
+  }
+  
+  return success
 }
 
 // =============================================================================

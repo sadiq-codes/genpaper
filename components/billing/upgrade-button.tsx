@@ -12,6 +12,8 @@ interface UpgradeButtonProps {
   label?: string
   /** Size variant */
   size?: UpgradeButtonSize
+  /** Button style variant */
+  variant?: 'default' | 'outline' | 'ghost'
   className?: string
 }
 
@@ -27,6 +29,7 @@ interface UpgradeButtonProps {
 export function UpgradeButton({
   label = 'Upgrade',
   size = 'default',
+  variant = 'default',
   className,
 }: UpgradeButtonProps) {
   const { showUpgradeModal } = useLimitModal()
@@ -47,6 +50,7 @@ export function UpgradeButton({
 
   return (
     <Button
+      variant={variant}
       size={size === 'sm' ? 'sm' : 'default'}
       className={cn('gap-1.5', className)}
       onClick={showUpgradeModal}

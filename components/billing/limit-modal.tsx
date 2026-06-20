@@ -19,8 +19,8 @@ import {
   CheckCircle,
   Clock,
 } from 'lucide-react'
-import { useSubscription, getCheckoutUrl } from '@/lib/hooks/use-subscription'
-import { TIER_CONFIG, type SubscriptionTier, type BillingInterval } from '@/types/subscription'
+import { useSubscription, getCheckoutUrl, getPaperCreditCheckoutUrl } from '@/lib/hooks/use-subscription'
+import { TIER_CONFIG, PAPER_PRICE, type SubscriptionTier, type BillingInterval } from '@/types/subscription'
 import { cn } from '@/lib/utils'
 
 // =============================================================================
@@ -106,11 +106,13 @@ function LimitModal({ open, limitType, onClose }: LimitModalProps) {
   if (!limitType) return null
 
   const isGenericUpgrade = limitType === 'upgrade'
+  const isPaperLimit = limitType === 'papers'
   const config = isGenericUpgrade
     ? null
     : getLimitConfig(limitType as Exclude<LimitType, 'upgrade'>, subscription, dailyUsage)
 
   const currentTier = subscription?.tier || 'free'
+  const purchasedPapers = subscription?.purchasedPapers || 0
 
   // Determine which tiers to show (only tiers above current)
   const tiersToShow: SubscriptionTier[] = []
@@ -132,15 +134,15 @@ function LimitModal({ open, limitType, onClose }: LimitModalProps) {
             </>
           ) : (
             <>
-              <DialogTitle className="text-lg">Upgrade your plan</DialogTitle>
-              <DialogDescription>Choose the plan that fits your research needs.</DialogDescription>
+              <DialogTitle className="text-lg">Generate your paper</DialogTitle>
+              <DialogDescription>Choose how you want to generate your research paper.</DialogDescription>
             </>
           )}
         </DialogHeader>
 
         <div className="px-6 pb-6 space-y-5">
           {/* Usage bar — limit-specific modals only */}
-          {!isGenericUpgrade && config && (
+          {!isGenericUpgrade && config && !isPaperLimit && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">{config.usageLabel}</span>
@@ -158,44 +160,107 @@ function LimitModal({ open, limitType, onClose }: LimitModalProps) {
             </div>
           )}
 
-          {/* Billing toggle */}
-          <div className="flex items-center justify-center gap-3">
-            <span className={cn(
-              "text-sm font-medium",
-              billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'
-            )}>
-              Monthly
-            </span>
-            <Switch
-              checked={billingInterval === 'yearly'}
-              onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
-              aria-label="Toggle yearly billing"
-            />
-            <span className={cn(
-              "text-sm font-medium",
-              billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'
-            )}>
-              Yearly
-            </span>
-            <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full ml-1">
-              Save 33%
-            </span>
-          </div>
+          {/* Purchased papers info */}
+          {isPaperLimit && purchasedPapers > 0 && (
+            <div className="text-sm text-muted-foreground text-center">
+              You have <span className="font-semibold text-foreground">{purchasedPapers} purchased paper{purchasedPapers !== 1 ? 's' : ''}</span> available
+            </div>
+          )}
+
+          {/* Pay-per-paper option - Primary CTA for paper limits */}
+          {(isPaperLimit || isGenericUpgrade) && (
+            <div className="relative rounded-2xl border-2 border-foreground/20 p-5 bg-card shadow-lg">
+              <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[11px] font-medium tracking-wide uppercase bg-foreground text-background px-3 py-1 rounded-full">
+                Quick Option
+              </span>
+              
+              <div className="text-center space-y-3">
+                <div>
+                  <h3 className="font-semibold text-lg">Buy a Paper</h3>
+                  <p className="text-sm text-muted-foreground">One-time purchase, no commitment</p>
+                </div>
+                
+                <div>
+                  <span className="text-4xl font-bold tracking-tight">${PAPER_PRICE}</span>
+                  <span className="text-muted-foreground text-sm"> per paper</span>
+                </div>
+                
+                <ul className="text-sm text-muted-foreground space-y-1">
+                  <li className="flex items-center justify-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-emerald-500" />
+                    All paper types available
+                  </li>
+                  <li className="flex items-center justify-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-emerald-500" />
+                    Full references & PDF export
+                  </li>
+                  <li className="flex items-center justify-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-emerald-500" />
+                    Never expires
+                  </li>
+                </ul>
+                
+                <Link
+                  href={getPaperCreditCheckoutUrl()}
+                  className="inline-flex w-full items-center justify-center rounded-full px-5 py-2.5 text-sm font-medium bg-foreground text-background hover:bg-foreground/90 transition-all shadow-sm"
+                >
+                  Buy Paper
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {/* Divider for subscriptions */}
+          {(isPaperLimit || isGenericUpgrade) && tiersToShow.length > 0 && (
+            <div className="flex items-center gap-4">
+              <div className="flex-1 border-t border-border/50" />
+              <span className="text-xs text-muted-foreground font-medium">Or save with a plan</span>
+              <div className="flex-1 border-t border-border/50" />
+            </div>
+          )}
+
+          {/* Billing toggle - only for subscription options */}
+          {tiersToShow.length > 0 && (
+            <div className="flex items-center justify-center gap-3">
+              <span className={cn(
+                "text-sm font-medium",
+                billingInterval === 'monthly' ? 'text-foreground' : 'text-muted-foreground'
+              )}>
+                Monthly
+              </span>
+              <Switch
+                checked={billingInterval === 'yearly'}
+                onCheckedChange={(checked) => setBillingInterval(checked ? 'yearly' : 'monthly')}
+                aria-label="Toggle yearly billing"
+              />
+              <span className={cn(
+                "text-sm font-medium",
+                billingInterval === 'yearly' ? 'text-foreground' : 'text-muted-foreground'
+              )}>
+                Yearly
+              </span>
+              <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full ml-1">
+                Save 33%
+              </span>
+            </div>
+          )}
 
           {/* Pricing cards — mirrors landing page */}
-          <div className={cn(
-            "grid gap-4",
-            tiersToShow.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 max-w-xs mx-auto'
-          )}>
-            {tiersToShow.map((tier) => (
-              <PricingCard
-                key={tier}
-                tier={tier}
-                billingInterval={billingInterval}
-                recommended={tier === 'pro'}
-              />
-            ))}
-          </div>
+          {tiersToShow.length > 0 && (
+            <div className={cn(
+              "grid gap-4",
+              tiersToShow.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 max-w-xs mx-auto'
+            )}>
+              {tiersToShow.map((tier) => (
+                <PricingCard
+                  key={tier}
+                  tier={tier}
+                  billingInterval={billingInterval}
+                  recommended={tier === 'starter'}
+                />
+              ))}
+            </div>
+          )}
 
           {/* Dismiss */}
           <Button variant="ghost" size="sm" className="w-full text-muted-foreground" onClick={onClose}>
@@ -306,15 +371,15 @@ function getLimitConfig(
 ): LimitConfig {
   const baseConfig = {
     papers: {
-      icon: <FileText className="h-5 w-5 text-destructive" />,
-      iconBg: 'bg-destructive/10',
-      title: "You've reached your paper limit",
-      description: "You've used all your papers for this month. Upgrade to generate more research papers.",
-      usageLabel: 'Papers this month',
+      icon: <FileText className="h-5 w-5 text-amber-600" />,
+      iconBg: 'bg-amber-500/10',
+      title: "Generate your paper",
+      description: `Buy a paper for $${PAPER_PRICE} or subscribe for monthly papers.`,
+      usageLabel: 'Papers available',
       used: subscription?.papersUsed || 0,
-      limit: subscription?.papersLimit || 1,
+      limit: subscription?.papersLimit || 0,
       resetsAt: subscription?.periodEndsAt 
-        ? `Resets ${new Date(subscription.periodEndsAt).toLocaleDateString()}`
+        ? `Subscription resets ${new Date(subscription.periodEndsAt).toLocaleDateString()}`
         : null,
     },
     chat: {

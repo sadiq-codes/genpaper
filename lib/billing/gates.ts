@@ -1,12 +1,15 @@
 import 'server-only'
 
-import { getUserSubscription, incrementPaperUsage } from './subscription-service'
+import { getUserSubscription, incrementPaperUsage, consumePurchasedPaper } from './subscription-service'
 import { 
   getTierLimits,
   isPaperTypeAllowed,
   getPapersRemaining,
   getTierRequiredForPaperType,
   TIER_CONFIG,
+  PAPER_PRICE,
+  canGeneratePaper,
+  getTotalPapersAvailable,
 } from '@/types/subscription'
 import type { SubscriptionTier, UserSubscription } from '@/types/subscription'
 import type { PaperTypeKey } from '@/types/simplified'
@@ -23,6 +26,12 @@ export interface GateCheckResult {
   requiredTier?: SubscriptionTier
   currentTier?: SubscriptionTier
   papersRemaining?: number
+  /** Purchased papers available */
+  purchasedPapers?: number
+  /** Total papers available (subscription + purchased) */
+  totalPapersAvailable?: number
+  /** Whether user should be prompted to buy a paper */
+  showBuyPaper?: boolean
 }
 
 function isHasGeneratedSchemaError(error: unknown): boolean {
@@ -143,7 +152,8 @@ async function syncUsageCounterFromAuthoritative(userId: string): Promise<{
 // =============================================================================
 
 /**
- * Check if user can generate a paper (has papers remaining in their quota)
+ * Check if user can generate a paper
+ * Considers both subscription quota AND purchased papers
  */
 export async function checkCanGeneratePaper(userId: string): Promise<GateCheckResult> {
   const subscription = await getUserSubscription(userId)
@@ -153,40 +163,66 @@ export async function checkCanGeneratePaper(userId: string): Promise<GateCheckRe
     return {
       allowed: false,
       reason: 'Unable to verify subscription status',
+      showBuyPaper: true,
     }
   }
   
-  const { tier, status } = subscription
+  const { tier, status, purchasedPapers } = subscription
   
-  // Check subscription status
-  if (status !== 'active' && status !== 'trialing') {
+  // Check subscription status (for paid tiers)
+  if (tier !== 'free' && status !== 'active' && status !== 'trialing') {
+    // Even with inactive subscription, user might have purchased papers
+    if (purchasedPapers > 0) {
+      return {
+        allowed: true,
+        currentTier: tier,
+        papersRemaining: 0,
+        purchasedPapers,
+        totalPapersAvailable: purchasedPapers,
+      }
+    }
+    
     return {
       allowed: false,
       reason: 'Your subscription is not active',
       currentTier: tier,
+      purchasedPapers: 0,
+      showBuyPaper: true,
     }
   }
   
   const papersUsedThisPeriod = await getAuthoritativePapersUsedThisPeriod(userId, subscription)
 
-  // Check paper limit
+  // Check paper limit (subscription allowance)
   const papersRemaining = getPapersRemaining(tier, papersUsedThisPeriod)
+  const totalAvailable = getTotalPapersAvailable(tier, papersUsedThisPeriod, purchasedPapers)
   
-  if (papersRemaining <= 0) {
-    const limit = TIER_CONFIG[tier].limits.papersPerMonth
+  // User can generate if they have subscription papers OR purchased papers
+  if (canGeneratePaper(tier, papersUsedThisPeriod, purchasedPapers)) {
     return {
-      allowed: false,
-      reason: `You've reached your limit of ${limit} paper${limit === 1 ? '' : 's'} this month`,
+      allowed: true,
       currentTier: tier,
-      papersRemaining: 0,
-      requiredTier: tier === 'free' ? 'starter' : tier === 'starter' ? 'pro' : undefined,
+      papersRemaining,
+      purchasedPapers,
+      totalPapersAvailable: totalAvailable,
     }
   }
   
+  // No subscription papers and no purchased papers - prompt to buy or upgrade
+  const limit = TIER_CONFIG[tier].limits.papersPerMonth
+  const reason = tier === 'free'
+    ? `Buy a paper for $${PAPER_PRICE} or subscribe to generate`
+    : `You've used all ${limit} papers this month. Buy more or upgrade your plan.`
+  
   return {
-    allowed: true,
+    allowed: false,
+    reason,
     currentTier: tier,
-    papersRemaining,
+    papersRemaining: 0,
+    purchasedPapers: 0,
+    totalPapersAvailable: 0,
+    requiredTier: tier === 'free' ? 'starter' : tier === 'starter' ? 'pro' : undefined,
+    showBuyPaper: true,
   }
 }
 
@@ -322,11 +358,15 @@ export async function checkCanStartGeneration(
 // =============================================================================
 
 /**
- * Mark a project as generated and increment billing counter
+ * Mark a project as generated and handle billing
  * This is the correct way to track billing - it uses the project's has_generated flag
  * to ensure we only count the first successful generation.
  * 
- * @returns true if this was the first generation (billing incremented)
+ * Billing priority:
+ * 1. Use subscription quota if available
+ * 2. Use purchased paper if subscription quota exhausted
+ * 
+ * @returns true if this was the first generation (billing recorded)
  * @returns false if already generated or project not found
  */
 export async function recordProjectGenerated(projectId: string, userId: string): Promise<boolean> {
@@ -335,7 +375,7 @@ export async function recordProjectGenerated(projectId: string, userId: string):
   const supabase = createServiceClient()
 
   // Atomic compare-and-set: only the first successful generation of a project
-  // can flip has_generated from false -> true and trigger billing increment.
+  // can flip has_generated from false -> true and trigger billing.
   const { data: markedRows, error: markError } = await supabase
     .from('research_projects')
     .update({ has_generated: true })
@@ -380,26 +420,35 @@ export async function recordProjectGenerated(projectId: string, userId: string):
     return false
   }
 
-  const incremented = await incrementPaperUsage(userId)
-  if (!incremented) {
-    // Increment can fail if DB-side usage function is unavailable. Self-heal by
-    // syncing profile counter to authoritative completed-project count.
-    logWarn({ projectId, userId }, 'Project marked generated but usage increment RPC failed; syncing authoritative usage counter')
+  // Try to increment subscription usage first
+  const incrementedSubscription = await incrementPaperUsage(userId)
+  
+  if (incrementedSubscription) {
+    info({ projectId, userId, source: 'subscription' }, 'Project marked as generated, subscription usage incremented')
+    return true
+  }
+  
+  // Subscription quota exhausted or unavailable - try purchased paper
+  const usedPurchased = await consumePurchasedPaper(userId)
+  
+  if (usedPurchased) {
+    info({ projectId, userId, source: 'purchased' }, 'Project marked as generated, purchased paper used')
+    return true
+  }
+  
+  // Both failed - try syncing authoritative usage counter as fallback
+  logWarn({ projectId, userId }, 'Project marked generated but both subscription and credit usage failed; syncing authoritative usage counter')
 
-    const synced = await syncUsageCounterFromAuthoritative(userId)
-    if (synced && synced.after > synced.before) {
-      info(
-        { projectId, userId, before: synced.before, after: synced.after },
-        'Billing counter advanced via authoritative usage sync after increment failure'
-      )
-      return true
-    }
-
-    return false
+  const synced = await syncUsageCounterFromAuthoritative(userId)
+  if (synced && synced.after > synced.before) {
+    info(
+      { projectId, userId, before: synced.before, after: synced.after },
+      'Billing counter advanced via authoritative usage sync after increment failure'
+    )
+    return true
   }
 
-  info({ projectId, userId }, 'Project marked as generated, billing incremented')
-  return true
+  return false
 }
 
 // =============================================================================
@@ -415,6 +464,8 @@ export async function getSubscriptionForDisplay(userId: string): Promise<{
   papersUsed: number
   papersLimit: number
   papersRemaining: number
+  purchasedPapers: number
+  totalPapersAvailable: number
   periodEndsAt: string | null
   features: string[]
 } | null> {
@@ -428,6 +479,8 @@ export async function getSubscriptionForDisplay(userId: string): Promise<{
   
   const tierConfig = TIER_CONFIG[subscription.tier]
   const papersRemaining = getPapersRemaining(subscription.tier, papersUsedThisPeriod)
+  const purchasedPapers = subscription.purchasedPapers ?? 0
+  const totalPapersAvailable = getTotalPapersAvailable(subscription.tier, papersUsedThisPeriod, purchasedPapers)
   
   return {
     tier: subscription.tier,
@@ -435,6 +488,8 @@ export async function getSubscriptionForDisplay(userId: string): Promise<{
     papersUsed: papersUsedThisPeriod,
     papersLimit: tierConfig.limits.papersPerMonth,
     papersRemaining,
+    purchasedPapers,
+    totalPapersAvailable,
     periodEndsAt: subscription.periodEndsAt,
     features: tierConfig.features,
   }

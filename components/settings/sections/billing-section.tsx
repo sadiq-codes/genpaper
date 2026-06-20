@@ -33,6 +33,8 @@ interface BillingSectionProps {
     papersUsed: number
     papersLimit: number
     papersRemaining: number
+    purchasedPapers?: number
+    totalPapersAvailable?: number
     periodEndsAt: string | null
     features: string[]
   } | null
@@ -42,7 +44,12 @@ export function BillingSection({ user, initialSubscription }: BillingSectionProp
   // Use server-prefetched data directly — no client-side fetch needed for initial render
   const [subscription, setSubscription] = useState<SubscriptionData | null>(
     initialSubscription
-      ? { ...initialSubscription, tier: initialSubscription.tier as SubscriptionData['tier'] }
+      ? { 
+          ...initialSubscription, 
+          tier: initialSubscription.tier as SubscriptionData['tier'],
+          purchasedPapers: initialSubscription.purchasedPapers ?? 0,
+          totalPapersAvailable: initialSubscription.totalPapersAvailable ?? initialSubscription.papersRemaining,
+        }
       : null
   )
   const [redirectingTier, setRedirectingTier] = useState<'starter' | 'pro' | 'manage' | null>(null)
