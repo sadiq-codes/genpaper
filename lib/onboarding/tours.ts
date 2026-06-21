@@ -38,6 +38,15 @@ export const PROJECTS_TOUR_STEPS: DriveStep[] = [
     },
   },
   {
+    element: '[data-tour="advanced-options"]',
+    popover: {
+      title: 'Advanced options',
+      description: 'Include your own research findings, or restrict sources to only papers you\'ve uploaded. Great for empirical studies or when you have specific sources to use.',
+      side: 'top',
+      align: 'start',
+    },
+  },
+  {
     element: '[data-tour="start-button"]',
     popover: {
       title: 'Generate your paper',

@@ -238,6 +238,7 @@ export function ProjectInputSection() {
                   onOpenLibrary={() => setIsLibraryOpen(true)}
                 />
                 </span>
+                <span data-tour="advanced-options">
                 <AdvancedOptionsPopover
                   hasOriginalResearch={hasOriginalResearch}
                   onHasOriginalResearchChange={setHasOriginalResearch}
@@ -249,6 +250,7 @@ export function ProjectInputSection() {
                   onUseLibraryOnlyChange={setUseLibraryOnly}
                   disabled={isLoading}
                 />
+                </span>
                 <div className="hidden sm:block w-px h-4 bg-border/30 mx-0.5" />
                 <span data-tour="paper-type">
                 <PaperTypeSelect
