@@ -210,6 +210,7 @@ export async function POST(request: NextRequest) {
         searchQuery: 'library_upload',
         waitForStructuredExtraction: false,
         reason: 'library_upload',
+        userId: user.id,
       })
     })
 

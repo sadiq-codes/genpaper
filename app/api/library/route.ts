@@ -163,6 +163,7 @@ export async function POST(request: NextRequest) {
         searchQuery: searchQuery || 'library_save',
         waitForStructuredExtraction: false,
         reason: searchResult ? 'library_save_search_result' : 'library_save_existing',
+        userId: user.id,
       })
     })
 

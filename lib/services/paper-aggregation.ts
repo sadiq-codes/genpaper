@@ -14,6 +14,7 @@ import pLimit from 'p-limit'
 import { normalizeDoiForLookup } from '@/lib/content/html-extractor'
 import { PaperSources } from '@/types/simplified'
 import { generateQueryRewrites } from '@/lib/search/query-rewrite'
+import { fog } from '@/lib/ai/foglamp'
 import { semanticRerank, quickRelevanceCheck } from '@/lib/search/semantic-rerank'
 import { deduplicatePapers, normalizeTitle } from '@/lib/search/deduplication'
 import { 
@@ -43,6 +44,8 @@ export const DEFAULT_WEIGHTS = {
 
 // Search configuration
 export interface AggregatedSearchOptions extends SearchOptions {
+  /** Authenticated user id, for per-customer trace attribution */
+  userId?: string
   maxResults?: number
   includePreprints?: boolean
   semanticWeight?: number
@@ -241,6 +244,7 @@ export async function parallelSearch(
     skipQueryRewrites = false,
     skipSemanticRerank = false
   } = options
+  const { userId } = options
   
   // Filter to only supported sources to prevent pubmed config mismatch
   // Added pubmed_central and europe_pmc for better open access coverage
@@ -273,7 +277,10 @@ export async function parallelSearch(
     expandedQueries = [query.trim()]
     console.log(`⚡ Fast mode: Skipping query rewrites, using original query only`)
   } else {
-    expandedQueries = await generateQueryRewrites(query, 3, discipline)
+    const rewriteQueries = () => generateQueryRewrites(query, 3, discipline)
+    expandedQueries = userId
+      ? await fog.run({ customer: { id: userId } }, rewriteQueries)
+      : await rewriteQueries()
   }
   const primaryQuery = expandedQueries[0]
   

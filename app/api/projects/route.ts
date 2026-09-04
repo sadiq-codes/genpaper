@@ -109,6 +109,7 @@ export async function POST(request: NextRequest) {
           searchQuery: `projects_api_create:${project.id}`,
           waitForStructuredExtraction: false,
           reason: 'projects_api_create',
+          userId: user.id,
         })
       })
     }

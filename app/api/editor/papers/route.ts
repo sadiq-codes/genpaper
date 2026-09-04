@@ -245,6 +245,7 @@ export async function POST(request: NextRequest) {
         searchQuery: 'editor_add_paper',
         waitForStructuredExtraction: false,
         reason: 'editor_add_paper',
+        userId: user.id,
       })
     })
 

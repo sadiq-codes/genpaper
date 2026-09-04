@@ -19,6 +19,7 @@ import {
 import { setPaperProcessingStatus } from '@/lib/content/processing-status-service'
 import { normalizeTitle } from '@/lib/search/deduplication'
 import type { RankedPaper } from '@/lib/services/paper-aggregation'
+import { fog } from '@/lib/ai/foglamp'
 import { parseStorageObjectUrl } from '@/lib/supabase/storage-buckets'
 
 type PdfFailureType =
@@ -62,6 +63,11 @@ export interface EnsurePaperContentOptions {
   waitForStructuredExtraction?: boolean
   /** Optional cancellation signal from generation pipeline */
   signal?: AbortSignal
+  /**
+   * Authenticated user id, for per-customer trace attribution.
+   * Threaded through to background extraction.
+   */
+  userId?: string
 }
 
 export interface BulkPaperProcessingOptions extends EnsurePaperContentOptions {
@@ -509,7 +515,7 @@ export async function ensurePaperContentReady(
 
       if (!options.skipStructuredExtraction) {
         const extractionText = [paperDTO.title, paperDTO.abstract].filter(Boolean).join('\n\n')
-        const extractionPromise = runStructuredExtraction(paperId, paperDTO, extractionText)
+        const extractionPromise = runStructuredExtraction(paperId, paperDTO, extractionText, options.userId)
         if (options.waitForStructuredExtraction) {
           await extractionPromise
         } else {
@@ -534,7 +540,7 @@ export async function ensurePaperContentReady(
 
       if (!options.skipStructuredExtraction) {
         const extractionText = paperRecord?.pdf_content || [paperDTO.title, paperDTO.abstract].filter(Boolean).join('\n\n')
-        const extractionPromise = runStructuredExtraction(paperId, paperDTO, extractionText)
+        const extractionPromise = runStructuredExtraction(paperId, paperDTO, extractionText, options.userId)
         if (options.waitForStructuredExtraction) {
           await extractionPromise
         } else {
@@ -729,7 +735,7 @@ export async function ensurePaperContentReady(
     console.log(`📚 Ingested paper with ${finalChunkCount} chunks: ${paperDTO.title}`)
 
     if (!options.skipStructuredExtraction && finalChunkCount > 0) {
-      const extractionPromise = runStructuredExtraction(paperId, paperDTO, fullText)
+      const extractionPromise = runStructuredExtraction(paperId, paperDTO, fullText, options.userId)
       if (options.waitForStructuredExtraction) {
         await extractionPromise
       } else {
@@ -877,6 +883,7 @@ export async function ensureBulkPaperContentReady(
         ensurePaperContentReady(paper, searchQuery, {
           skipStructuredExtraction: options.skipStructuredExtraction,
           waitForStructuredExtraction: options.waitForStructuredExtraction,
+          userId: options.userId,
         })
       )
     )
@@ -912,6 +919,7 @@ export async function ensureBulkPaperContentReadyByIds(
           searchQuery: options.searchQuery,
           skipStructuredExtraction: options.skipStructuredExtraction,
           waitForStructuredExtraction: options.waitForStructuredExtraction,
+          userId: options.userId,
         })
       )
     )
@@ -957,7 +965,8 @@ export function scheduleBulkPaperContentPreparationByIds(
 async function runStructuredExtraction(
   paperId: string,
   paper: PaperDTO,
-  fullText: string
+  fullText: string,
+  userId?: string
 ): Promise<void> {
   const alreadyExtracted = await hasExtractionService(paperId)
   if (alreadyExtracted) {
@@ -967,15 +976,18 @@ async function runStructuredExtraction(
 
   console.log(`🔬 Starting extraction for: ${paper.title.slice(0, 50)}...`)
 
-  const textParts = []
+  const textParts: string[] = []
   if (paper.title) textParts.push(`Title: ${paper.title}`)
   if (paper.abstract) textParts.push(`Abstract: ${paper.abstract}`)
   if (fullText) textParts.push(fullText)
 
-  const result = await extractPaper({
+  const runExtraction = () => extractPaper({
     paperId,
     text: textParts.join('\n\n'),
   })
+  const result = userId
+    ? await fog.run({ customer: { id: userId } }, runExtraction)
+    : await runExtraction()
 
   if (result.success && result.extraction) {
     await saveExtractionService(result.extraction)

@@ -130,7 +130,7 @@ export async function GET(request: NextRequest) {
 
     // Route 3: External paper search
     if (params.search) {
-      return handleExternalSearch(supabase, params)
+      return handleExternalSearch(supabase, params, user.id)
     }
 
     // No valid query provided
@@ -280,7 +280,8 @@ async function handleLibraryQuery(
 
 async function handleExternalSearch(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  params: z.infer<typeof PapersRequestSchema>
+  params: z.infer<typeof PapersRequestSchema>,
+  userId: string
 ) {
   const cacheKey = generateCacheKey(params)
   
@@ -310,13 +311,14 @@ async function handleExternalSearch(
     fromYear: params.fromYear,
     toYear: params.toYear,
     openAccessOnly: params.openAccessOnly,
+    userId,
   })
 
   // Explicit content processing stage:
   // - ingest=true: full-text + chunks
   // - ingest=false: metadata registration only
   const processed = params.ingest
-    ? await ensureBulkPaperContentReady(rankedPapers, params.search!)
+    ? await ensureBulkPaperContentReady(rankedPapers, params.search!, { userId })
     : await ensureBulkPaperMetadata(rankedPapers, params.search!)
 
   const response = {

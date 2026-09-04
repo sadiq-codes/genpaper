@@ -137,6 +137,7 @@ export async function POST(request: NextRequest) {
       const processed = await ensureBulkPaperContentReadyByIds(targetPaperIds, {
         searchQuery: 'papers_process_api',
         waitForStructuredExtraction: true,
+        userId: user.id,
       })
 
       const successIds = new Set(processed.paperIds)
@@ -170,6 +171,7 @@ export async function POST(request: NextRequest) {
         searchQuery: 'papers_process_api',
         waitForStructuredExtraction: false,
         reason: 'papers_process_api',
+        userId: user.id,
       })
     })
 
