@@ -12,7 +12,9 @@
  * @module lib/analysis/cross-document/analyzer
  */
 
-import { generateObject } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateObject } = fog.with({ traceName: "Cross-document analyzer" })
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { createHash } from 'crypto'

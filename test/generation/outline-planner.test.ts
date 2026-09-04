@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('server-only', () => ({}))
-vi.mock('ai', () => ({ generateObject: vi.fn() }))
+vi.mock('ai', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  generateObject: vi.fn(),
+}))
 vi.mock('@/lib/ai/vercel-client', () => ({
   getFastAutocompleteLanguageModel: vi.fn(() => ({})),
 }))

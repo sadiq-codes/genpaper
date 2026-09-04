@@ -20,6 +20,7 @@ import {
   updateRunStatus,
 } from "@/lib/generation/run-manager";
 import { trackEvent } from "@/lib/tracking/events";
+import { fog } from "@/lib/ai/foglamp";
 
 export interface WorkerExecutionOptions {
   workerId: string;
@@ -115,12 +116,20 @@ export async function processGenerationJob(
   }, 2000);
 
   try {
-    await runGenerationPipeline(job.payload, async (_stepName, fn) => {
-      if (leaseLost) {
-        throw new WorkerLeaseLostError(job.id);
-      }
-      return fn();
-    }, cancellationController.signal);
+    await fog.run(
+      {
+        workflowName: "Paper generation",
+        workflowRunId: job.run_id,
+        customer: { id: job.user_id },
+        metadata: { projectId: job.project_id, jobId: job.id },
+      },
+      () => runGenerationPipeline(job.payload, async (_stepName, fn) => {
+        if (leaseLost) {
+          throw new WorkerLeaseLostError(job.id);
+        }
+        return fn();
+      }, cancellationController.signal)
+    );
 
     if (leaseLost) {
       throw new WorkerLeaseLostError(job.id);

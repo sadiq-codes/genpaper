@@ -12,7 +12,9 @@
  * @module lib/extraction/extractor
  */
 
-import { generateObject } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateObject } = fog.with({ traceName: "Paper extractor" })
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { getExtractionLanguageModel } from '@/lib/ai/vercel-client'

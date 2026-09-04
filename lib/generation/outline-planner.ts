@@ -1,6 +1,8 @@
 import 'server-only'
 
-import { generateObject } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateObject } = fog.with({ traceName: "Outline planner" })
 import { z } from 'zod'
 import { getFastAutocompleteLanguageModel } from '@/lib/ai/vercel-client'
 

@@ -6,7 +6,9 @@
  * with a more flexible, accurate approach.
  */
 
-import { generateObject } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateObject } = fog.with({ traceName: "Chat intent router" })
 import { z } from 'zod'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createAzure } from '@ai-sdk/azure'

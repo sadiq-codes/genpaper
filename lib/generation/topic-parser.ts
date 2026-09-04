@@ -11,7 +11,9 @@
  * Dropdowns (paperType, length, sources) are authoritative and never overridden.
  */
 
-import { generateObject } from "ai";
+import { fog } from "@/lib/ai/foglamp";
+
+const { generateObject } = fog.with({ traceName: "Topic parser" });
 import { z } from "zod";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAzure } from "@ai-sdk/azure";

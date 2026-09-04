@@ -5,7 +5,9 @@
  * Preserves original language for paper generation output.
  */
 
-import { generateText } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateText } = fog.with({ traceName: "Query translate" })
 import { getLanguageModel } from '@/lib/ai/vercel-client'
 
 // Unicode ranges for non-Latin scripts

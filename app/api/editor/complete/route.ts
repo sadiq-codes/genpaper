@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { getAutocompleteLanguageModel, getFastAutocompleteLanguageModel } from '@/lib/ai/vercel-client'
-import { generateObject } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateObject } = fog.with({ traceName: "Inline autocomplete" })
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { handleError, requireAuth } from '@/lib/api/helpers'
@@ -972,15 +974,17 @@ export async function POST(request: NextRequest) {
 
               let parsed: AIStructuredResponse | null = null
               try {
-                const { object } = await generateObject({
-                  model,
-                  system: attemptSystem,
-                  prompt: userPrompt,
-                  schema: completionSchema,
-                  maxOutputTokens,
-                  temperature: 0.5,
-                  abortSignal: abortController.signal,
-                })
+                const { object } = await fog.run({ customer: { id: user.id } }, () =>
+                  generateObject({
+                    model,
+                    system: attemptSystem,
+                    prompt: userPrompt,
+                    schema: completionSchema,
+                    maxOutputTokens,
+                    temperature: 0.5,
+                    abortSignal: abortController.signal,
+                  })
+                )
 
                 parsed = object
                 timings.llmTotal = Date.now() - llmStartTime

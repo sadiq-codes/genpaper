@@ -7,13 +7,15 @@ import { extractPaper } from '@/lib/extraction/extractor'
 
 // Mock the AI module
 const mockGenerateObject = vi.fn()
-vi.mock('ai', () => ({
-  generateObject: (...args: unknown[]) => mockGenerateObject(...args)
+vi.mock('ai', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  generateObject: (...args: unknown[]) => mockGenerateObject(...args),
 }))
 
 // Mock the language model
 vi.mock('@/lib/ai/vercel-client', () => ({
-  getLanguageModel: () => ({ modelId: 'test-model' })
+  getLanguageModel: () => ({ modelId: 'test-model' }),
+  getExtractionLanguageModel: () => ({ modelId: 'test-model' }),
 }))
 
 describe('Paper Extractor', () => {

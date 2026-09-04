@@ -1,7 +1,9 @@
 import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".env" });
 
 import os from "os";
+import { fog } from "../lib/ai/foglamp";
 import { claimGenerationJobForRun } from "../lib/generation/job-queue";
 import { processGenerationJob } from "../lib/generation/worker-executor";
 
@@ -51,8 +53,11 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`[generation-worker-once] Fatal error: ${message}`);
-  process.exit(1);
-});
+main()
+  .then(() => fog.shutdown())
+  .catch(async (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[generation-worker-once] Fatal error: ${message}`);
+    await fog.shutdown();
+    process.exit(1);
+  });

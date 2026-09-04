@@ -9,6 +9,7 @@ import { headers } from 'next/headers'
 import { getAbsoluteUrlFromHeaders } from '@/lib/config'
 import { CitationService } from '@/lib/citations/immediate-bibliography'
 import { parseTopicInput } from '@/lib/generation/topic-parser'
+import { fog } from '@/lib/ai/foglamp'
 import { trackEvent } from '@/lib/tracking/events'
 import { normalizePaperProcessingStatus } from '@/lib/content/processing-status'
 import { scheduleBulkPaperContentPreparationByIds } from '@/lib/services/paper-content-service'
@@ -159,7 +160,10 @@ export async function createProjectAction(
     }
     
     // Parse freeform topic input to extract clean title + custom instructions
-    const parsed = await parseTopicInput(topic.trim())
+    const parsed = await fog.run(
+      { customer: { id: user.id } },
+      () => parseTopicInput(topic.trim())
+    )
     const projectTitle = parsed.title
     const customInstructions = parsed.customInstructions
     

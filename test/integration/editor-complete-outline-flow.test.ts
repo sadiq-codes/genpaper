@@ -12,7 +12,8 @@ const {
   checkAutocompleteUsageMock: vi.fn(),
 }))
 
-vi.mock('ai', () => ({
+vi.mock('ai', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
   generateObject: generateObjectMock,
 }))
 

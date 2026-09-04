@@ -1,5 +1,7 @@
 import 'server-only'
-import { generateText } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateText } = fog.with({ traceName: "Findings normalizer" })
 import { getLanguageModel } from '@/lib/ai/vercel-client'
 import { info, warn } from '@/lib/utils/logger'
 import type { OriginalResearchConfig } from '@/types/simplified'

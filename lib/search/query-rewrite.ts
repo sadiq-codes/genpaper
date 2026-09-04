@@ -5,7 +5,9 @@
  * Includes spell correction integrated into the rewrite prompt (single LLM call).
  */
 
-import { generateText } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateText } = fog.with({ traceName: "Query rewrite" })
 import { getLanguageModel } from '@/lib/ai/vercel-client'
 
 /**

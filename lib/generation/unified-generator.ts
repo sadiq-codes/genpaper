@@ -1,5 +1,7 @@
 import 'server-only'
-import { generateText } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateText } = fog.with({ agentName: "Section writer" })
 import { getGenerationModel } from '@/lib/ai/vercel-client'
 import { buildUnifiedPrompt, type BuildPromptOptions } from '@/lib/prompts/unified/prompt-builder'
 import type { SectionContext } from '@/lib/prompts/types'

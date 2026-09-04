@@ -14,7 +14,9 @@
  * @module lib/synthesis-engine/plan-builder
  */
 
-import { generateObject } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { generateObject } = fog.with({ traceName: "Synthesis planner" })
 import { z } from 'zod'
 import { v4 as uuidv4 } from 'uuid'
 import { getLanguageModel } from '@/lib/ai/vercel-client'

@@ -1,7 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { trackEvent } from '@/lib/tracking/events'
 import { getChatLanguageModel } from '@/lib/ai/vercel-client'
-import { streamText, convertToModelMessages, type UIMessage } from 'ai'
+import { convertToModelMessages, type UIMessage } from 'ai'
+import { fog } from '@/lib/ai/foglamp'
+
+const { streamText } = fog.with({ agentName: "Editor chat" })
 import { NextRequest } from 'next/server'
 import { documentTools, requiresReview } from '@/lib/ai/tools/document-tools'
 import { ChunkRetriever } from '@/lib/rag/chunk-retriever'
@@ -565,7 +568,10 @@ export async function POST(request: NextRequest) {
       projectError = projectResult.error
     } else {
       const [intentResult, projectResult] = await Promise.all([
-        shouldSkipRAG(ragQuery, mentionedPaperIds.length > 0),
+        fog.run(
+          { sessionId: projectId, customer: { id: user.id } },
+          () => shouldSkipRAG(ragQuery, mentionedPaperIds.length > 0)
+        ),
         projectPromise,
       ])
 
@@ -862,7 +868,10 @@ export async function POST(request: NextRequest) {
 
     // Stream the response with tools
     // When this is a tool result follow-up, disable tools so AI just responds with text
-    const result = streamText({
+    const result = fog.run(
+      { sessionId: projectId, customer: { id: user.id } },
+      () =>
+        streamText({
       model: getChatLanguageModel(),
       system: isToolResultFastPath
         ? systemPrompt
@@ -889,11 +898,12 @@ export async function POST(request: NextRequest) {
               args: 'input' in tc ? tc.input : {},
               state: 'state' in tc && typeof tc.state === 'string' ? tc.state : 'input-available',
               requiresConfirmation: requiresReview(tc.toolName),
-            })),
+              })),
           })
         }
       },
-    })
+        })
+    )
 
     // Build evidence for transparency in chat UI
     // Only include evidence if RAG actually ran and found relevant chunks
