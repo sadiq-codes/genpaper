@@ -36,6 +36,7 @@ yarn-error.log*
 
 # vercel
 .vercel
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
@@ -49,3 +50,6 @@ next-env.d.ts
 *.pdf
 .bulk-ingest-progress.json
 paper.md
+
+# foglamp (local plan/review state, never commit)
+.foglamp/
