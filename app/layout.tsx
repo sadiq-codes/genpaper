@@ -5,7 +5,7 @@ import Script from "next/script"
 import "./globals.css"
 import { AuthProvider } from "@/components/providers/AuthProvider"
 import { TopLoadingBar } from "@/components/ui/top-loading-bar"
-import { FoglampHUD } from "foglamp/hud"
+import { FoglampHUDClient } from "@/components/FoglampHUDClient"
 import { getUser } from "@/lib/auth/cached"
 import { isAppError } from "@/lib/errors"
 
@@ -118,7 +118,7 @@ export default async function RootLayout({
         </Script>
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} ${caveat.variable} ${instrumentSerif.variable} antialiased`} suppressHydrationWarning={true}>
-        <FoglampHUD />
+        <FoglampHUDClient />
         <TopLoadingBar />
         <AuthProvider initialUser={user}>
           {children}
